@@ -422,7 +422,7 @@ else
 	SRC_GAME	:=	$(SRC_GAME_BASE)
 endif
 
-SOURCES_CPP	:=\
+SOURCES_CXX	:=\
 	$(SRC_SYS) \
 	$(SRC_SYS_CORE) \
 	$(SRC_RENDERER) \
