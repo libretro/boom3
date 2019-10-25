@@ -81,7 +81,6 @@ int invert_y_axis = 1;
 
 bool initial_resolution_set = false;
 
-int frametime = 0;
 int framerate = 60;
 int scr_width = 1920, scr_height = 1080;
 
@@ -536,21 +535,37 @@ void Sys_SetKeys(){
 			else if (!(ret & (1 << RETRO_DEVICE_ID_JOYPAD_X)) && (old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_X)))
 				Key_Event(K_ALT, 0);
 			if ((ret & (1 << RETRO_DEVICE_ID_JOYPAD_B)) && !(old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_B)))
-				Key_Event(K_BACKSPACE, 1);
+				Key_Event(K_MOUSE1, 1);
 			else if (!(ret & (1 << RETRO_DEVICE_ID_JOYPAD_B)) && (old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_B)))
-				Key_Event(K_BACKSPACE, 0);
+				Key_Event(K_MOUSE1, 0);
 			if ((ret & (1 << RETRO_DEVICE_ID_JOYPAD_A)) && !(old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_A)))
-				Key_Event(K_ENTER, 1);
+				Key_Event(K_BACKSPACE, 1);
 			else if (!(ret & (1 << RETRO_DEVICE_ID_JOYPAD_A)) && (old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_A)))
-				Key_Event(K_ENTER, 0);
+				Key_Event(K_BACKSPACE, 0);
 			if ((ret & (1 << RETRO_DEVICE_ID_JOYPAD_L)) && !(old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_L)))
 				Key_Event(K_MOUSE2, 1);
 			else if (!(ret & (1 << RETRO_DEVICE_ID_JOYPAD_L)) && (old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_L)))
 				Key_Event(K_MOUSE2, 0);
 			if ((ret & (1 << RETRO_DEVICE_ID_JOYPAD_R)) && !(old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_R)))
-				Key_Event(K_MOUSE1, 1);
+				Key_Event(K_ENTER, 1);
 			else if (!(ret & (1 << RETRO_DEVICE_ID_JOYPAD_R)) && (old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_R)))
-				Key_Event(K_MOUSE1, 0);
+				Key_Event(K_ENTER, 0);
+			if ((ret & (1 << RETRO_DEVICE_ID_JOYPAD_L2)) && !(old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_L2)))
+				Key_Event(K_AUX1, 1);
+			else if (!(ret & (1 << RETRO_DEVICE_ID_JOYPAD_L2)) && (old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_L2)))
+				Key_Event(K_AUX1, 0);
+			if ((ret & (1 << RETRO_DEVICE_ID_JOYPAD_R2)) && !(old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_R2)))
+				Key_Event(K_AUX2, 1);
+			else if (!(ret & (1 << RETRO_DEVICE_ID_JOYPAD_R2)) && (old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_R2)))
+				Key_Event(K_AUX2, 0);
+			if ((ret & (1 << RETRO_DEVICE_ID_JOYPAD_L3)) && !(old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_L3)))
+				Key_Event(K_AUX3, 1);
+			else if (!(ret & (1 << RETRO_DEVICE_ID_JOYPAD_L3)) && (old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_L3)))
+				Key_Event(K_AUX3, 0);
+			if ((ret & (1 << RETRO_DEVICE_ID_JOYPAD_R3)) && !(old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_R3)))
+				Key_Event(K_AUX4, 1);
+			else if (!(ret & (1 << RETRO_DEVICE_ID_JOYPAD_R3)) && (old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_R3)))
+				Key_Event(K_AUX4, 0);
 			
 			int lsx, lsy;
 			lsx = input_cb(0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT,
@@ -804,8 +819,6 @@ void retro_run(void)
 	bool updated = false;
 	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, &updated) && updated)
 		update_variables(false);
-	
-	frametime = Sys_Milliseconds();
 	
 	common->Frame();
 	

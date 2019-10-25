@@ -3050,7 +3050,28 @@ void idCommonLocal::InitGame( void ) {
 	// exec the startup scripts
 	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "exec editor.cfg\n" );
 	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "exec default.cfg\n" );
-
+	
+	// default bindings for libretro
+	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "unbindall\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"ENTER\" \"_attack\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"ESCAPE\" \"togglemenu\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"TAB\" \"_impulse19\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"BACKSPACE\" \"_moveUp\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"LEFTARROW\" \"_impulse14\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"RIGHTARROW\" \"_impulse15\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"CTRL\" \"_impulse13\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"ALT\" \"_strafe\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"MOUSE1\" \"_moveUp\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"MOUSE2\" \"_zoom\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"AUX1\" \"savegame quick\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"AUX2\" \"loadgame quick\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"AUX3\" \"_speed\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"AUX4\" \"_impulse11\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"AUX7\" \"_moveLeft\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"AUX8\" \"_moveRight\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"AUX9\" \"_forward\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"AUX10\" \"_back\"\n" );
+	
 	// skip the config file if "safe" is on the command line
 	if ( !SafeMode() ) {
 		cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "exec " CONFIG_FILE "\n" );
