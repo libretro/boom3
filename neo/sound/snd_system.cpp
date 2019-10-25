@@ -547,6 +547,7 @@ bool idSoundSystemLocal::InitHW() {
 		//if ( snd_audio_hw->GetNumberOfSpeakers() == 0 ) {
 		//	return false;
 		//}
+		numSpeakers = 2;
 	}
 	
 	// put the real number in there

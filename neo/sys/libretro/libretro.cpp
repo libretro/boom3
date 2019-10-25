@@ -671,33 +671,24 @@ void Sys_SetMouse() {
 	
 }
 
-float flt_buffer[BUFFER_SIZE];
-int16_t mixed_buffer[BUFFER_SIZE];
+float flt_buffer[2][BUFFER_SIZE];
+int16_t mixed_buffer[2][BUFFER_SIZE];
+uint64_t sampletime = 0;
+int idx = 0;
 
 static void audio_callback(void)
 {
 	unsigned read_first, read_second;
-	float samples_per_frame = (2 * SAMPLE_RATE) / framerate;
+	float samples_per_frame = SAMPLE_RATE / framerate;
+	SIMDProcessor->Memset(flt_buffer[idx], 0, sizeof(float) * BUFFER_SIZE);
+	SIMDProcessor->Memset(mixed_buffer[idx], 0, sizeof(int16_t) * BUFFER_SIZE);
 	Sys_EnterCriticalSection();
-	soundSystem->AsyncMix(audio_buffer_ptr, flt_buffer );
+	soundSystem->AsyncMix(sampletime, flt_buffer[idx] );
 	Sys_LeaveCriticalSection();
-	SIMDProcessor->MixedSoundToSamples(mixed_buffer, flt_buffer, samples_per_frame);
-	
-	unsigned read_end = audio_buffer_ptr + samples_per_frame;
-
-	if (read_end > BUFFER_SIZE)
-		read_end = BUFFER_SIZE;
-
-	read_first  = read_end - audio_buffer_ptr;
-	read_second = samples_per_frame - read_first;
-	
-	
-	audio_batch_cb(mixed_buffer + audio_buffer_ptr, read_first / 2);
-	audio_buffer_ptr += read_first;
-	if (read_second >= 1) {
-		audio_batch_cb(mixed_buffer, read_second / 2);
-		audio_buffer_ptr = read_second;
-	}
+	SIMDProcessor->MixedSoundToSamples(mixed_buffer[idx], flt_buffer[idx], samples_per_frame * 2);
+	audio_batch_cb(mixed_buffer[idx], samples_per_frame);
+	sampletime += samples_per_frame;
+	idx = (idx + 1) % 2;
 }
 
 bool retro_load_game(const struct retro_game_info *info)
