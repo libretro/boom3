@@ -212,6 +212,34 @@ private:
 	int				CloseOGG( void );
 };
 
+/*
+===================================================================================
+idAudioHardware
+===================================================================================
+*/
+
+class idAudioHardware {
+public:
+	static idAudioHardware *Alloc();
+
+    virtual					~idAudioHardware();
+
+    virtual bool			Initialize( ) = 0;
+
+	virtual bool			Lock( void **pDSLockedBuffer, ulong *dwDSLockedBufferSize ) = 0;
+	virtual bool			Unlock( void *pDSLockedBuffer, dword dwDSLockedBufferSize ) = 0;
+	virtual bool			GetCurrentPosition( ulong *pdwCurrentWriteCursor ) = 0;
+	
+	// try to write as many sound samples to the device as possible without blocking and prepare for a possible new mixing call
+	// returns wether there is *some* space for writing available
+	virtual bool			Flush( void ) = 0;
+
+	virtual void			Write( bool flushing ) = 0;
+
+	virtual int				GetNumberOfSpeakers( void )= 0;
+	virtual int				GetMixBufferSize( void ) = 0;
+	virtual short*			GetMixBuffer( void ) = 0;
+};
 
 /*
 ===================================================================================
@@ -690,7 +718,8 @@ public:
 
 	ALuint					AllocOpenALSource( idSoundChannel *chan, bool looping, bool stereo );
 	void					FreeOpenALSource( ALuint handle );
-
+	
+	idAudioHardware *		snd_audio_hw;
 	idSoundCache *			soundCache;
 
 	idSoundWorldLocal *		currentSoundWorld;	// the one to mix each async tic
@@ -743,6 +772,7 @@ public:
 	idEFXFile				EFXDatabase;
 	bool					efxloaded;
 							// latches
+	static bool				useOpenAL;
 	static bool				useEFXReverb;
 							// mark available during initialization, or through an explicit test
 	static int				EFXAvailable;
@@ -773,6 +803,7 @@ public:
 	static idCVar			s_force22kHz;
 	static idCVar			s_clipVolumes;
 	static idCVar			s_realTimeDecoding;
+	static idCVar			s_useOpenAL;
 	static idCVar			s_useEAXReverb;
 	static idCVar			s_decompressionLimit;
 

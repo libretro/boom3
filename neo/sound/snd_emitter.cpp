@@ -224,6 +224,7 @@ idSoundChannel::ALStop
 ===================
 */
 void idSoundChannel::ALStop( void ) {
+	if (!idSoundSystemLocal::useOpenAL ) return;
 	if ( alIsSource( openalSource ) ) {
 		alSourceStop( openalSource );
 		alSourcei( openalSource, AL_BUFFER, 0 );
@@ -451,7 +452,7 @@ void idSoundEmitterLocal::CheckForCompletion( int current44kHzTime ) {
 			if ( !( chan->parms.soundShaderFlags & SSF_LOOPING ) ) {
 				ALint state = AL_PLAYING;
 
-				if ( alIsSource( chan->openalSource ) ) {
+				if ( idSoundSystemLocal::useOpenAL && alIsSource( chan->openalSource ) ) {
 					alGetSourcei( chan->openalSource, AL_SOURCE_STATE, &state );
 				}
 				idSlowChannel slow = GetSlowChannel( chan );

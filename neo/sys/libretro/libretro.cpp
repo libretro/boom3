@@ -47,6 +47,7 @@ extern "C"{
 #include "framework/FileSystem.h"
 #include "sys/libretro/retro_public.h"
 #include "sys/sys_local.h"
+#include "sound/snd_local.h"
 
 #include "libretro_core_options.h"
 
@@ -66,13 +67,13 @@ extern "C"{
 #define RARCH_GL_COLOR_ATTACHMENT0 GL_COLOR_ATTACHMENT0
 #endif
 
-#define SAMPLE_RATE   	48000
+#define SAMPLE_RATE   	44100
 #define BUFFER_SIZE 	32768
 
 #define RETRO_DEVICE_MODERN  RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_ANALOG, 2)
 #define RETRO_DEVICE_JOYPAD_ALT  RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_JOYPAD, 1)
 
-static unsigned audio_buffer_ptr;
+static unsigned audio_buffer_ptr = 0;
 static int16_t audio_buffer[BUFFER_SIZE];
 
 bool first_boot = true;
@@ -80,12 +81,15 @@ int invert_y_axis = 1;
 
 bool initial_resolution_set = false;
 
+int frametime = 0;
 int framerate = 60;
 int scr_width = 1920, scr_height = 1080;
 
 char g_rom_dir[1024], g_pak_path[1024], g_save_dir[1024];
 
 char *BUILD_DATADIR;
+
+volatile bool flushed = false;
 
 static struct retro_hw_render_callback hw_render;
 
@@ -667,10 +671,18 @@ void Sys_SetMouse() {
 	
 }
 
+float flt_buffer[BUFFER_SIZE];
+int16_t mixed_buffer[BUFFER_SIZE];
+
 static void audio_callback(void)
 {
 	unsigned read_first, read_second;
 	float samples_per_frame = (2 * SAMPLE_RATE) / framerate;
+	Sys_EnterCriticalSection();
+	soundSystem->AsyncMix(audio_buffer_ptr, flt_buffer );
+	Sys_LeaveCriticalSection();
+	SIMDProcessor->MixedSoundToSamples(mixed_buffer, flt_buffer, samples_per_frame);
+	
 	unsigned read_end = audio_buffer_ptr + samples_per_frame;
 
 	if (read_end > BUFFER_SIZE)
@@ -678,11 +690,12 @@ static void audio_callback(void)
 
 	read_first  = read_end - audio_buffer_ptr;
 	read_second = samples_per_frame - read_first;
-
-	audio_batch_cb(audio_buffer + audio_buffer_ptr, read_first / 2);
+	
+	
+	audio_batch_cb(mixed_buffer + audio_buffer_ptr, read_first / 2);
 	audio_buffer_ptr += read_first;
 	if (read_second >= 1) {
-		audio_batch_cb(audio_buffer, read_second / 2);
+		audio_batch_cb(mixed_buffer, read_second / 2);
 		audio_buffer_ptr = read_second;
 	}
 }
@@ -800,7 +813,9 @@ void retro_run(void)
 	bool updated = false;
 	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, &updated) && updated)
 		update_variables(false);
-
+	
+	frametime = Sys_Milliseconds();
+	
 	common->Frame();
 	
 	audio_process();
@@ -1010,4 +1025,44 @@ void retro_set_environment(retro_environment_t cb)
 
    libretro_set_core_options(environ_cb);
    cb(RETRO_ENVIRONMENT_SET_CONTROLLER_INFO, (void*)ports);
+}
+
+#include "sound.h"
+
+idAudioHardware *idAudioHardware::Alloc() {
+	return new idAudioHardwareOSS;
+}
+
+idAudioHardware::~idAudioHardware() {
+}
+
+idAudioHardwareOSS::~idAudioHardwareOSS() { 
+	Release();
+}
+
+int16_t *shared_audio_buffer[2];
+int audio_idx = 0;
+
+bool idAudioHardwareOSS::Initialize( ) { 
+	return true;
+}
+
+bool idAudioHardwareOSS::Flush( void ) {
+	return false;
+}
+
+int idAudioHardwareOSS::GetMixBufferSize() { 
+	return 0;
+}
+
+short* idAudioHardwareOSS::GetMixBuffer() {
+	return (short *)m_buffer;
+}
+
+void idAudioHardwareOSS::Write( bool flushing ) {
+}
+
+void idAudioHardwareOSS::Release( bool bSilent ) {
+	m_buffer = NULL;
+	m_buffer_size = 0;
 }

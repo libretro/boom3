@@ -470,7 +470,8 @@ void idSoundWorldLocal::MixLoop( int current44kHz, int numSpeakers, float *final
 
 	// if noclip flying outside the world, leave silence
 	if ( listenerArea == -1 ) {
-		alListenerf( AL_GAIN, 0.0f );
+		if ( idSoundSystemLocal::useOpenAL )
+			alListenerf( AL_GAIN, 0.0f );
 		return;
 	}
 
@@ -562,8 +563,7 @@ void idSoundWorldLocal::MixLoop( int current44kHz, int numSpeakers, float *final
 		}
 	}
 
-	// TODO port to OpenAL
-	if ( false && enviroSuitActive ) {
+	if ( !idSoundSystemLocal::useOpenAL && enviroSuitActive ) {
 		soundSystemLocal.DoEnviroSuit( finalMixBuffer, MIXBUFFER_SAMPLES, numSpeakers );
 	}
 }
@@ -1758,7 +1758,7 @@ void idSoundWorldLocal::AddChannelContribution( idSoundEmitterLocal *sound, idSo
 	//
 	// allocate and initialize hardware source
 	//
-	if ( sound->removeStatus < REMOVE_STATUS_SAMPLEFINISHED ) {
+	if ( idSoundSystemLocal::useOpenAL && sound->removeStatus < REMOVE_STATUS_SAMPLEFINISHED ) {
 		if ( !alIsSource( chan->openalSource ) ) {
 			chan->openalSource = soundSystemLocal.AllocOpenALSource( chan, !chan->leadinSample->hardwareBuffer || !chan->soundShader->entries[0]->hardwareBuffer || looping, chan->leadinSample->objectInfo.nChannels == 2 );
 		}

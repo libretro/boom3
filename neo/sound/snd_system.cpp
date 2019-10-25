@@ -69,6 +69,8 @@ idCVar idSoundSystemLocal::s_reverbFeedback( "s_reverbFeedback", "0.333", CVAR_S
 idCVar idSoundSystemLocal::s_enviroSuitVolumeScale( "s_enviroSuitVolumeScale", "0.9", CVAR_SOUND | CVAR_FLOAT, "" );
 idCVar idSoundSystemLocal::s_skipHelltimeFX( "s_skipHelltimeFX", "0", CVAR_SOUND | CVAR_BOOL, "" );
 
+idCVar idSoundSystemLocal::s_useOpenAL( "s_useOpenAL", "0", CVAR_SOUND | CVAR_BOOL | CVAR_ARCHIVE, "use OpenAL" );
+
 #if !defined(ID_DEDICATED)
 idCVar idSoundSystemLocal::s_useEAXReverb( "s_useEAXReverb", "1", CVAR_SOUND | CVAR_BOOL | CVAR_ARCHIVE, "use EFX reverb" );
 idCVar idSoundSystemLocal::s_decompressionLimit( "s_decompressionLimit", "6", CVAR_SOUND | CVAR_INTEGER | CVAR_ARCHIVE, "specifies maximum uncompressed sample length in seconds" );
@@ -77,6 +79,7 @@ idCVar idSoundSystemLocal::s_useEAXReverb( "s_useEAXReverb", "0", CVAR_SOUND | C
 idCVar idSoundSystemLocal::s_decompressionLimit( "s_decompressionLimit", "6", CVAR_SOUND | CVAR_INTEGER | CVAR_ROM, "specifies maximum uncompressed sample length in seconds" );
 #endif
 
+bool idSoundSystemLocal::useOpenAL = false;
 bool idSoundSystemLocal::useEFXReverb = false;
 int idSoundSystemLocal::EFXAvailable = -1;
 
@@ -285,7 +288,7 @@ initialize the sound system
 ===============
 */
 void idSoundSystemLocal::Init() {
-	common->Printf( "----- Initializing OpenAL -----\n" );
+	common->Printf( "----- Initializing Sound System -----\n" );
 
 	isInitialized = false;
 	muted = false;
@@ -317,124 +320,130 @@ void idSoundSystemLocal::Init() {
 		idSampleDecoder::Init();
 		soundCache = new idSoundCache();
 	}
+	
+	common->StartupVariable( "s_useOpenAL", false );
+	
+	if ( idSoundSystemLocal::s_useOpenAL.GetBool() ) {
+	
+		// set up openal device and context
+		common->Printf( "Setup OpenAL device and context\n" );
 
-	// set up openal device and context
-	common->Printf( "Setup OpenAL device and context\n" );
+		const char *device = s_device.GetString();
+		if (strlen(device) < 1)
+			device = NULL;
+		else if (!idStr::Icmp(device, "default"))
+			device = NULL;
 
-	const char *device = s_device.GetString();
-	if (strlen(device) < 1)
-		device = NULL;
-	else if (!idStr::Icmp(device, "default"))
-		device = NULL;
+		if (alcIsExtensionPresent(NULL, "ALC_ENUMERATE_ALL_EXT")) {
+			const char *devs = alcGetString(NULL, ALC_ALL_DEVICES_SPECIFIER);
+			bool found = false;
 
-	if (alcIsExtensionPresent(NULL, "ALC_ENUMERATE_ALL_EXT")) {
-		const char *devs = alcGetString(NULL, ALC_ALL_DEVICES_SPECIFIER);
-		bool found = false;
+			while (devs && *devs) {
+				common->Printf("OpenAL: found device '%s'", devs);
 
-		while (devs && *devs) {
-			common->Printf("OpenAL: found device '%s'", devs);
+				if (device && !idStr::Icmp(devs, device)) {
+					common->Printf(" (ACTIVE)\n");
+					found = true;
+				} else {
+					common->Printf("\n");
+				}
 
-			if (device && !idStr::Icmp(devs, device)) {
-				common->Printf(" (ACTIVE)\n");
-				found = true;
-			} else {
-				common->Printf("\n");
+				devs += strlen(devs) + 1;
 			}
 
-			devs += strlen(devs) + 1;
+			if (device && !found) {
+				common->Printf("OpenAL: device %s not found, using default\n", device);
+				device = NULL;
+			}
 		}
 
-		if (device && !found) {
-			common->Printf("OpenAL: device %s not found, using default\n", device);
-			device = NULL;
+		openalDevice = alcOpenDevice( device );
+		if (!openalDevice && device) {
+			common->Printf("OpenAL: failed to open device '%s' (0x%x), using default\n", device, alGetError());
+			openalDevice = alcOpenDevice( NULL );
 		}
-	}
 
-	openalDevice = alcOpenDevice( device );
-	if (!openalDevice && device) {
-		common->Printf("OpenAL: failed to open device '%s' (0x%x), using default\n", device, alGetError());
-		openalDevice = alcOpenDevice( NULL );
-	}
+		openalContext = alcCreateContext( openalDevice, NULL );
+		alcMakeContextCurrent( openalContext );
 
-	openalContext = alcCreateContext( openalDevice, NULL );
-	alcMakeContextCurrent( openalContext );
+		// log openal info
+		common->Printf( "OpenAL vendor: %s\n", alGetString(AL_VENDOR));
+		common->Printf( "OpenAL renderer: %s\n", alGetString(AL_RENDERER));
+		common->Printf( "OpenAL version: %s\n", alGetString(AL_VERSION));
 
-	// log openal info
-	common->Printf( "OpenAL vendor: %s\n", alGetString(AL_VENDOR));
-	common->Printf( "OpenAL renderer: %s\n", alGetString(AL_RENDERER));
-	common->Printf( "OpenAL version: %s\n", alGetString(AL_VERSION));
+		// try to obtain EFX extensions
+		if (alcIsExtensionPresent(openalDevice, "ALC_EXT_EFX")) {
+			common->Printf( "OpenAL: found EFX extension\n" );
+			EFXAvailable = 1;
 
-	// try to obtain EFX extensions
-	if (alcIsExtensionPresent(openalDevice, "ALC_EXT_EFX")) {
-		common->Printf( "OpenAL: found EFX extension\n" );
-		EFXAvailable = 1;
-
-		alGenEffects = (LPALGENEFFECTS)alGetProcAddress("alGenEffects");
-		alDeleteEffects = (LPALDELETEEFFECTS)alGetProcAddress("alDeleteEffects");
-		alIsEffect = (LPALISEFFECT)alGetProcAddress("alIsEffect");
-		alEffecti = (LPALEFFECTI)alGetProcAddress("alEffecti");
-		alEffectf = (LPALEFFECTF)alGetProcAddress("alEffectf");
-		alEffectfv = (LPALEFFECTFV)alGetProcAddress("alEffectfv");
-		alGenFilters = (LPALGENFILTERS)alGetProcAddress("alGenFilters");
-		alDeleteFilters = (LPALDELETEFILTERS)alGetProcAddress("alDeleteFilters");
-		alIsFilter = (LPALISFILTER)alGetProcAddress("alIsFilter");
-		alFilteri = (LPALFILTERI)alGetProcAddress("alFilteri");
-		alFilterf = (LPALFILTERF)alGetProcAddress("alFilterf");
-		alGenAuxiliaryEffectSlots = (LPALGENAUXILIARYEFFECTSLOTS)alGetProcAddress("alGenAuxiliaryEffectSlots");
-		alDeleteAuxiliaryEffectSlots = (LPALDELETEAUXILIARYEFFECTSLOTS)alGetProcAddress("alDeleteAuxiliaryEffectSlots");
-		alIsAuxiliaryEffectSlot = (LPALISAUXILIARYEFFECTSLOT)alGetProcAddress("alIsAuxiliaryEffectSlot");;
-		alAuxiliaryEffectSloti = (LPALAUXILIARYEFFECTSLOTI)alGetProcAddress("alAuxiliaryEffectSloti");
-	} else {
-		common->Printf( "OpenAL: EFX extension not found\n" );
-		EFXAvailable = 0;
-		idSoundSystemLocal::s_useEAXReverb.SetBool( false );
-
-		alGenEffects = NULL;
-		alDeleteEffects = NULL;
-		alIsEffect = NULL;
-		alEffecti = NULL;
-		alEffectf = NULL;
-		alEffectfv = NULL;
-		alGenFilters = NULL;
-		alDeleteFilters = NULL;
-		alIsFilter = NULL;
-		alFilteri = NULL;
-		alFilterf = NULL;
-		alGenAuxiliaryEffectSlots = NULL;
-		alDeleteAuxiliaryEffectSlots = NULL;
-		alIsAuxiliaryEffectSlot = NULL;
-		alAuxiliaryEffectSloti = NULL;
-	}
-
-	ALuint handle;
-	openalSourceCount = 0;
-
-	while ( openalSourceCount < 256 ) {
-		alGetError();
-		alGenSources( 1, &handle );
-		if ( alGetError() != AL_NO_ERROR ) {
-			break;
+			alGenEffects = (LPALGENEFFECTS)alGetProcAddress("alGenEffects");
+			alDeleteEffects = (LPALDELETEEFFECTS)alGetProcAddress("alDeleteEffects");
+			alIsEffect = (LPALISEFFECT)alGetProcAddress("alIsEffect");
+			alEffecti = (LPALEFFECTI)alGetProcAddress("alEffecti");
+			alEffectf = (LPALEFFECTF)alGetProcAddress("alEffectf");
+			alEffectfv = (LPALEFFECTFV)alGetProcAddress("alEffectfv");
+			alGenFilters = (LPALGENFILTERS)alGetProcAddress("alGenFilters");
+			alDeleteFilters = (LPALDELETEFILTERS)alGetProcAddress("alDeleteFilters");
+			alIsFilter = (LPALISFILTER)alGetProcAddress("alIsFilter");
+			alFilteri = (LPALFILTERI)alGetProcAddress("alFilteri");
+			alFilterf = (LPALFILTERF)alGetProcAddress("alFilterf");
+			alGenAuxiliaryEffectSlots = (LPALGENAUXILIARYEFFECTSLOTS)alGetProcAddress("alGenAuxiliaryEffectSlots");
+			alDeleteAuxiliaryEffectSlots = (LPALDELETEAUXILIARYEFFECTSLOTS)alGetProcAddress("alDeleteAuxiliaryEffectSlots");
+			alIsAuxiliaryEffectSlot = (LPALISAUXILIARYEFFECTSLOT)alGetProcAddress("alIsAuxiliaryEffectSlot");;
+			alAuxiliaryEffectSloti = (LPALAUXILIARYEFFECTSLOTI)alGetProcAddress("alAuxiliaryEffectSloti");
 		} else {
-			// store in source array
-			openalSources[openalSourceCount].handle = handle;
-			openalSources[openalSourceCount].startTime = 0;
-			openalSources[openalSourceCount].chan = NULL;
-			openalSources[openalSourceCount].inUse = false;
-			openalSources[openalSourceCount].looping = false;
+			common->Printf( "OpenAL: EFX extension not found\n" );
+			EFXAvailable = 0;
+			idSoundSystemLocal::s_useEAXReverb.SetBool( false );
 
-			// initialise sources
-			alSourcef( handle, AL_ROLLOFF_FACTOR, 0.0f );
-
-			// found one source
-			openalSourceCount++;
+			alGenEffects = NULL;
+			alDeleteEffects = NULL;
+			alIsEffect = NULL;
+			alEffecti = NULL;
+			alEffectf = NULL;
+			alEffectfv = NULL;
+			alGenFilters = NULL;
+			alDeleteFilters = NULL;
+			alIsFilter = NULL;
+			alFilteri = NULL;
+			alFilterf = NULL;
+			alGenAuxiliaryEffectSlots = NULL;
+			alDeleteAuxiliaryEffectSlots = NULL;
+			alIsAuxiliaryEffectSlot = NULL;
+			alAuxiliaryEffectSloti = NULL;
 		}
+
+		ALuint handle;
+		openalSourceCount = 0;
+
+		while ( openalSourceCount < 256 ) {
+			alGetError();
+			alGenSources( 1, &handle );
+			if ( alGetError() != AL_NO_ERROR ) {
+				break;
+			} else {
+				// store in source array
+				openalSources[openalSourceCount].handle = handle;
+				openalSources[openalSourceCount].startTime = 0;
+				openalSources[openalSourceCount].chan = NULL;
+				openalSources[openalSourceCount].inUse = false;
+				openalSources[openalSourceCount].looping = false;
+
+				// initialise sources
+				alSourcef( handle, AL_ROLLOFF_FACTOR, 0.0f );
+
+				// found one source
+				openalSourceCount++;
+			}
+		}
+
+		common->Printf( "OpenAL: found %d hardware voices\n", openalSourceCount );
+
+		// adjust source count to allow for at least eight stereo sounds to play
+		openalSourceCount -= 8;
 	}
 
-	common->Printf( "OpenAL: found %d hardware voices\n", openalSourceCount );
-
-	// adjust source count to allow for at least eight stereo sounds to play
-	openalSourceCount -= 8;
-
+	useOpenAL = idSoundSystemLocal::s_useOpenAL.GetBool();
 	useEFXReverb = idSoundSystemLocal::s_useEAXReverb.GetBool();
 	efxloaded = false;
 
@@ -455,26 +464,29 @@ void idSoundSystemLocal::Shutdown() {
 
 	// EFX or not, the list needs to be cleared
 	EFXDatabase.Clear();
+	
+	if ( useOpenAL ) {
 
-	efxloaded = false;
+		efxloaded = false;
 
-	// adjust source count back up to allow for freeing of all resources
-	openalSourceCount += 8;
+		// adjust source count back up to allow for freeing of all resources
+		openalSourceCount += 8;
 
-	for ( ALsizei i = 0; i < openalSourceCount; i++ ) {
-		// stop source
-		alSourceStop( openalSources[i].handle );
-		alSourcei( openalSources[i].handle, AL_BUFFER, 0 );
+		for ( ALsizei i = 0; i < openalSourceCount; i++ ) {
+			// stop source
+			alSourceStop( openalSources[i].handle );
+			alSourcei( openalSources[i].handle, AL_BUFFER, 0 );
 
-		// delete source
-		alDeleteSources( 1, &openalSources[i].handle );
+			// delete source
+			alDeleteSources( 1, &openalSources[i].handle );
 
-		// clear entry in source array
-		openalSources[i].handle = 0;
-		openalSources[i].startTime = 0;
-		openalSources[i].chan = NULL;
-		openalSources[i].inUse = false;
-		openalSources[i].looping = false;
+			// clear entry in source array
+			openalSources[i].handle = 0;
+			openalSources[i].startTime = 0;
+			openalSources[i].chan = NULL;
+			openalSources[i].inUse = false;
+			openalSources[i].looping = false;
+		}
 	}
 
 	// destroy all the sounds (hardware buffers as well)
@@ -482,13 +494,15 @@ void idSoundSystemLocal::Shutdown() {
 	soundCache = NULL;
 
 	// destroy openal device and context
-	alcMakeContextCurrent( NULL );
+	if ( useOpenAL ) {
+		alcMakeContextCurrent( NULL );
 
-	alcDestroyContext( openalContext );
-	openalContext = NULL;
+		alcDestroyContext( openalContext );
+		openalContext = NULL;
 
-	alcCloseDevice( openalDevice );
-	openalDevice = NULL;
+		alcCloseDevice( openalDevice );
+		openalDevice = NULL;
+	}
 
 	idSampleDecoder::Shutdown();
 }
@@ -510,7 +524,31 @@ bool idSoundSystemLocal::InitHW() {
 	if ( s_noSound.GetBool() ) {
 		return false;
 	}
+	
+	delete snd_audio_hw;
+	snd_audio_hw = idAudioHardware::Alloc();
 
+	if ( snd_audio_hw == NULL ) {
+		return false;
+	}
+	
+	if ( !useOpenAL ) {
+		printf("Initializing non OpenAL sound system...\n");
+		
+		if ( !snd_audio_hw->Initialize() ) {
+			printf("Cannot initialize non OpenAL device...\n");
+			delete snd_audio_hw;
+			snd_audio_hw = NULL;
+			return false;
+		}
+		
+		printf("Non OpenAL sound system initialized...\n");
+
+		//if ( snd_audio_hw->GetNumberOfSpeakers() == 0 ) {
+		//	return false;
+		//}
+	}
+	
 	// put the real number in there
 	s_numberOfSpeakers.SetInteger(numSpeakers);
 
@@ -534,6 +572,9 @@ bool idSoundSystemLocal::ShutdownHW() {
 	Sys_Sleep( 100 );		// sleep long enough to make sure any async sound talking to hardware has returned
 
 	common->Printf( "Shutting down sound hardware\n" );
+	
+	delete snd_audio_hw;
+	snd_audio_hw = NULL;
 
 	isInitialized = false;
 
@@ -597,13 +638,23 @@ int idSoundSystemLocal::AsyncUpdate( int inTime ) {
 	if ( !isInitialized || shutdown ) {
 		return 0;
 	}
-
+	
 	ulong dwCurrentWritePos;
 	dword dwCurrentBlock;
 
 	// here we do it in samples ( overflows in 27 hours or so )
-	dwCurrentWritePos = idMath::Ftol( (float)Sys_Milliseconds() * 44.1f ) % ( MIXBUFFER_SAMPLES * ROOM_SLICES_IN_BUFFER );
-	dwCurrentBlock = dwCurrentWritePos / MIXBUFFER_SAMPLES;
+	if ( useOpenAL ) {
+		dwCurrentWritePos = idMath::Ftol( (float)Sys_Milliseconds() * 44.1f ) % ( MIXBUFFER_SAMPLES * ROOM_SLICES_IN_BUFFER );
+		dwCurrentBlock = dwCurrentWritePos / MIXBUFFER_SAMPLES;
+	} else {
+		// and here in bytes
+		// get the current byte position in the buffer where the sound hardware is currently reading
+		if ( !snd_audio_hw->GetCurrentPosition( &dwCurrentWritePos ) ) {
+			return 0;
+		}
+		// mixBufferSize is in bytes
+		dwCurrentBlock = dwCurrentWritePos / snd_audio_hw->GetMixBufferSize();
+	}
 
 	if ( nextWriteBlock == 0xffffffff ) {
 		nextWriteBlock = dwCurrentBlock;
@@ -612,7 +663,18 @@ int idSoundSystemLocal::AsyncUpdate( int inTime ) {
 	if ( dwCurrentBlock != nextWriteBlock ) {
 		return 0;
 	}
-
+	
+	// lock the buffer so we can actually write to it
+	short *fBlock = NULL;
+	ulong fBlockLen = 0;
+	if ( !useOpenAL ) {
+		snd_audio_hw->Lock( (void **)&fBlock, &fBlockLen );
+		if ( !fBlock ) {
+			return 0;
+		}
+	}
+	
+	int j;
 	soundStats.runs++;
 	soundStats.activeSounds = 0;
 
@@ -645,16 +707,37 @@ int idSoundSystemLocal::AsyncUpdate( int inTime ) {
 		soundStats.missedWindow++;
 	}
 
-	// enable audio hardware caching
-	alcSuspendContext( openalContext );
+	if ( useOpenAL ) {
+		// enable audio hardware caching
+		alcSuspendContext( openalContext );
+	} else {
+		// clear the buffer for all the mixing output
+		SIMDProcessor->Memset( finalMixBuffer, 0, MIXBUFFER_SAMPLES * sizeof(float) * numSpeakers );
+	}
 
 	// let the active sound world mix all the channels in unless muted or avi demo recording
 	if ( !muted && currentSoundWorld && !currentSoundWorld->fpa[0] ) {
 		currentSoundWorld->MixLoop( newSoundTime, numSpeakers, finalMixBuffer );
 	}
+	
+	if ( useOpenAL ) {
+		// disable audio hardware caching (this updates ALL settings since last alcSuspendContext)
+		alcProcessContext( openalContext );
+	} else {
+		short *dest = fBlock + nextWriteSamples * numSpeakers;
 
-	// disable audio hardware caching (this updates ALL settings since last alcSuspendContext)
-	alcProcessContext( openalContext );
+		SIMDProcessor->MixedSoundToSamples( dest, finalMixBuffer, MIXBUFFER_SAMPLES * numSpeakers );
+
+		// allow swapping the left / right speaker channels for people with miswired systems
+		if ( numSpeakers == 2 && s_reverse.GetBool() ) {
+			for( j = 0; j < MIXBUFFER_SAMPLES; j++ ) {
+				short temp = dest[j*2];
+				dest[j*2] = dest[j*2+1];
+				dest[j*2+1] = temp;
+			}
+		}
+		snd_audio_hw->Unlock( fBlock, fBlockLen );
+	}
 
 	CurrentSoundTime = newSoundTime;
 
@@ -672,11 +755,14 @@ called by the sound thread when com_asyncSound is 3 ( Linux )
 ===================
 */
 int idSoundSystemLocal::AsyncUpdateWrite( int inTime ) {
-
 	if ( !isInitialized || shutdown ) {
 		return 0;
 	}
 
+	if ( !useOpenAL ) {
+		snd_audio_hw->Flush();
+	}
+	
 	unsigned int dwCurrentBlock = (unsigned int)( inTime * 44.1f / MIXBUFFER_SAMPLES );
 
 	if ( nextWriteBlock == 0xffffffff ) {
@@ -689,21 +775,44 @@ int idSoundSystemLocal::AsyncUpdateWrite( int inTime ) {
 
 	if ( nextWriteBlock != dwCurrentBlock ) {
 		Sys_Printf( "missed %d sound updates\n", dwCurrentBlock - nextWriteBlock );
+		nextWriteBlock = dwCurrentBlock;
 	}
 
 	int sampleTime = dwCurrentBlock * MIXBUFFER_SAMPLES;
 	int numSpeakers = s_numberOfSpeakers.GetInteger();
 
-	// enable audio hardware caching
-	alcSuspendContext( openalContext );
+	if ( useOpenAL ) {
+		// enable audio hardware caching
+		alcSuspendContext( openalContext );
+	} else {
+		// clear the buffer for all the mixing output
+		SIMDProcessor->Memset( finalMixBuffer, 0, MIXBUFFER_SAMPLES * sizeof(float) * numSpeakers );
+	}
 
 	// let the active sound world mix all the channels in unless muted or avi demo recording
 	if ( !muted && currentSoundWorld && !currentSoundWorld->fpa[0] ) {
 		currentSoundWorld->MixLoop( sampleTime, numSpeakers, finalMixBuffer );
 	}
+	
+	if ( useOpenAL ) {
+		// disable audio hardware caching (this updates ALL settings since last alcSuspendContext)
+		alcProcessContext( openalContext );
+	} else {
+		short *dest = snd_audio_hw->GetMixBuffer();
 
-	// disable audio hardware caching (this updates ALL settings since last alcSuspendContext)
-	alcProcessContext( openalContext );
+		SIMDProcessor->MixedSoundToSamples( dest, finalMixBuffer, MIXBUFFER_SAMPLES * numSpeakers );
+
+		// allow swapping the left / right speaker channels for people with miswired systems
+		if ( numSpeakers == 2 && s_reverse.GetBool() ) {
+			int j;
+			for( j = 0; j < MIXBUFFER_SAMPLES; j++ ) {
+				short temp = dest[j*2];
+				dest[j*2] = dest[j*2+1];
+				dest[j*2+1] = temp;
+			}
+		}
+		snd_audio_hw->Write( false );
+	}
 
 	// only move to the next block if the write was successful
 	nextWriteBlock = dwCurrentBlock + 1;
@@ -1248,8 +1357,7 @@ void idSoundSystemLocal::DoEnviroSuit( float* samples, int numSamples, int numSp
 	float out[10000], *out_p = out + 2;
 	float in[10000], *in_p = in + 2;
 
-	// TODO port to OpenAL
-	assert( false );
+	assert( !idSoundSystemLocal::useOpenAL );
 
 	if ( !fxList.Num() ) {
 		for ( int i = 0; i < 6; i++ ) {
@@ -1325,9 +1433,5 @@ idSoundSystemLocal::IsEFXAvailable
 ===============
 */
 int idSoundSystemLocal::IsEFXAvailable( void ) {
-#if defined(ID_DEDICATED)
 	return -1;
-#else
-	return EFXAvailable;
-#endif
 }
