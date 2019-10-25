@@ -40,7 +40,11 @@ else ifneq ($(findstring MINGW,$(shell uname -a)),)
 endif
 
 CORE_DIR    += .
+ifeq ($(D3XP),ON)
+TARGET_NAME := dhewm3_xp
+else
 TARGET_NAME := dhewm3
+endif
 LIBM		    = -lm
 
 ifeq ($(ARCHFLAGS),)
@@ -192,7 +196,7 @@ CFLAGS   += -Wall -D__LIBRETRO__ $(fpic) -DCORE=ON -DSDL2=ON -DBASE=ON -DUSE_FIL
 CXXFLAGS += -Wall -D__LIBRETRO__ $(fpic) -fpermissive -std=gnu++11
 
 ifeq ($(D3XP),ON)
-	CFLAGS	+=	-I$(TOPDIR)/d3xp
+	CFLAGS	+=	-I$(TOPDIR)/d3xp -D_D3XP
 else
 	CFLAGS	+=	-I$(TOPDIR)/game
 endif
