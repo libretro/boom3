@@ -2396,8 +2396,6 @@ idGameLocal::RunFrame
 gameReturn_t idGameLocal::RunFrame( const usercmd_t *clientCmds ) {
 	idEntity *	ent;
 	int			num;
-	float		ms;
-	idTimer		timer_think, timer_events, timer_singlethink;
 	gameReturn_t ret;
 	idPlayer	*player;
 	const renderView_t *view;
@@ -2481,9 +2479,6 @@ gameReturn_t idGameLocal::RunFrame( const usercmd_t *clientCmds ) {
 		// sort the active entity list
 		SortActiveEntityList();
 
-		timer_think.Clear();
-		timer_think.Start();
-
 		// let entities think
 		if ( g_timeentities.GetFloat() ) {
 			num = 0;
@@ -2492,14 +2487,7 @@ gameReturn_t idGameLocal::RunFrame( const usercmd_t *clientCmds ) {
 					ent->GetPhysics()->UpdateTime( time );
 					continue;
 				}
-				timer_singlethink.Clear();
-				timer_singlethink.Start();
 				ent->Think();
-				timer_singlethink.Stop();
-				ms = timer_singlethink.Milliseconds();
-				if ( ms >= g_timeentities.GetFloat() ) {
-					Printf( "%d: entity '%s': %f ms\n", time, ent->name.c_str(), ms );
-				}
 				num++;
 			}
 		} else {
@@ -2546,10 +2534,6 @@ gameReturn_t idGameLocal::RunFrame( const usercmd_t *clientCmds ) {
 			numEntitiesToDeactivate = 0;
 		}
 
-		timer_think.Stop();
-		timer_events.Clear();
-		timer_events.Start();
-
 		// service any pending events
 		idEvent::ServiceEvents();
 
@@ -2560,21 +2544,12 @@ gameReturn_t idGameLocal::RunFrame( const usercmd_t *clientCmds ) {
 		slow.Get( time, previousTime, msec, framenum, realClientTime );
 #endif
 
-		timer_events.Stop();
-
 		// free the player pvs
 		FreePlayerPVS();
 
 		// do multiplayer related stuff
 		if ( isMultiplayer ) {
 			mpGame.Run();
-		}
-
-		// display how long it took to calculate the current game frame
-		if ( g_frametime.GetBool() ) {
-			Printf( "game %d: all:%u th:%u ev:%u %d ents \n",
-				time, timer_think.Milliseconds() + timer_events.Milliseconds(),
-				timer_think.Milliseconds(), timer_events.Milliseconds(), num );
 		}
 
 		// build the return value
