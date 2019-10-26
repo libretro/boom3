@@ -2502,15 +2502,6 @@ void idCommonLocal::SingleAsyncTic( void ) {
 		usercmdGen->UsercmdInterrupt();
 	}
 	
-	switch ( com_asyncSound.GetInteger() ) {
-		case 1:
-			soundSystem->AsyncUpdate( stat->milliseconds );
-			break;
-		case 3:
-			soundSystem->AsyncUpdateWrite( stat->milliseconds );
-			break;
-	}
-
 	// we update com_ticNumber after all the background tasks
 	// have completed their work for this tic
 	com_ticNumber++;

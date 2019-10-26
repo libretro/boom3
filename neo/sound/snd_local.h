@@ -677,10 +677,6 @@ public:
 	virtual bool			ShutdownHW( void );
 	virtual bool			InitHW( void );
 
-	// async loop, called at 60Hz
-	virtual int				AsyncUpdate( int time );
-	// async loop, when the sound driver uses a write strategy
-	virtual int				AsyncUpdateWrite( int time );
 	// direct mixing called from the sound driver thread for OSes that support it
 	virtual int				AsyncMix( int soundTime, float *mixBuffer );
 

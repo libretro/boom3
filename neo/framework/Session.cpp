@@ -2522,10 +2522,6 @@ idSessionLocal::Frame
 */
 void idSessionLocal::Frame() {
 
-	if ( com_asyncSound.GetInteger() == 0 ) {
-		soundSystem->AsyncUpdate( Sys_Milliseconds() );
-	}
-
 	// Editors that completely take over the game
 	if ( com_editorActive && ( com_editors & ( EDITOR_RADIANT | EDITOR_GUI ) ) ) {
 		return;

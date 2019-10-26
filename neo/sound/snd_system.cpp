@@ -605,17 +605,16 @@ int idSoundSystemLocal::GetCurrent44kHzTime( void ) const {
 /*
 ===================
 idSoundSystemLocal::AsyncMix
-Mac OSX version. The system uses it's own thread and an IOProc callback
 ===================
 */
-int idSoundSystemLocal::AsyncMix( int soundTime, float *mixBuffer ) {
-	int	inTime, numSpeakers;
+int idSoundSystemLocal::AsyncMix( int soundTime, float *mixBuffer )
+{
+	int	numSpeakers;
 
 	if ( !isInitialized || shutdown ) {
 		return 0;
 	}
 
-	inTime = Sys_Milliseconds();
 	numSpeakers = s_numberOfSpeakers.GetInteger();
 
 	// let the active sound world mix all the channels in unless muted or avi demo recording
@@ -625,201 +624,7 @@ int idSoundSystemLocal::AsyncMix( int soundTime, float *mixBuffer ) {
 
 	CurrentSoundTime = soundTime;
 
-	return Sys_Milliseconds() - inTime;
-}
-
-/*
-===================
-idSoundSystemLocal::AsyncUpdate
-called from async sound thread when com_asyncSound == 1 ( Windows )
-===================
-*/
-int idSoundSystemLocal::AsyncUpdate( int inTime ) {
-
-	if ( !isInitialized || shutdown ) {
-		return 0;
-	}
-	
-	ulong dwCurrentWritePos;
-	dword dwCurrentBlock;
-
-	// here we do it in samples ( overflows in 27 hours or so )
-	if ( useOpenAL ) {
-		dwCurrentWritePos = idMath::Ftol( (float)Sys_Milliseconds() * 44.1f ) % ( MIXBUFFER_SAMPLES * ROOM_SLICES_IN_BUFFER );
-		dwCurrentBlock = dwCurrentWritePos / MIXBUFFER_SAMPLES;
-	} else {
-		// and here in bytes
-		// get the current byte position in the buffer where the sound hardware is currently reading
-		if ( !snd_audio_hw->GetCurrentPosition( &dwCurrentWritePos ) ) {
-			return 0;
-		}
-		// mixBufferSize is in bytes
-		dwCurrentBlock = dwCurrentWritePos / snd_audio_hw->GetMixBufferSize();
-	}
-
-	if ( nextWriteBlock == 0xffffffff ) {
-		nextWriteBlock = dwCurrentBlock;
-	}
-
-	if ( dwCurrentBlock != nextWriteBlock ) {
-		return 0;
-	}
-	
-	// lock the buffer so we can actually write to it
-	short *fBlock = NULL;
-	ulong fBlockLen = 0;
-	if ( !useOpenAL ) {
-		snd_audio_hw->Lock( (void **)&fBlock, &fBlockLen );
-		if ( !fBlock ) {
-			return 0;
-		}
-	}
-	
-	int j;
-	soundStats.runs++;
-	soundStats.activeSounds = 0;
-
-	int	numSpeakers = s_numberOfSpeakers.GetInteger();
-
-	nextWriteBlock++;
-	nextWriteBlock %= ROOM_SLICES_IN_BUFFER;
-
-	int newPosition = nextWriteBlock * MIXBUFFER_SAMPLES;
-
-	if ( newPosition < olddwCurrentWritePos ) {
-		buffers++;					// buffer wrapped
-	}
-
-	// nextWriteSample is in multi-channel samples inside the buffer
-	int	nextWriteSamples = nextWriteBlock * MIXBUFFER_SAMPLES;
-
-	olddwCurrentWritePos = newPosition;
-
-	// newSoundTime is in multi-channel samples since the sound system was started
-	int newSoundTime = ( buffers * MIXBUFFER_SAMPLES * ROOM_SLICES_IN_BUFFER ) + nextWriteSamples;
-
-	// check for impending overflow
-	// FIXME: we don't handle sound wrap-around correctly yet
-	if ( newSoundTime > 0x6fffffff ) {
-		buffers = 0;
-	}
-
-	if ( (newSoundTime - CurrentSoundTime) > (int)MIXBUFFER_SAMPLES ) {
-		soundStats.missedWindow++;
-	}
-
-	if ( useOpenAL ) {
-		// enable audio hardware caching
-		alcSuspendContext( openalContext );
-	} else {
-		// clear the buffer for all the mixing output
-		SIMDProcessor->Memset( finalMixBuffer, 0, MIXBUFFER_SAMPLES * sizeof(float) * numSpeakers );
-	}
-
-	// let the active sound world mix all the channels in unless muted or avi demo recording
-	if ( !muted && currentSoundWorld && !currentSoundWorld->fpa[0] ) {
-		currentSoundWorld->MixLoop( newSoundTime, numSpeakers, finalMixBuffer );
-	}
-	
-	if ( useOpenAL ) {
-		// disable audio hardware caching (this updates ALL settings since last alcSuspendContext)
-		alcProcessContext( openalContext );
-	} else {
-		short *dest = fBlock + nextWriteSamples * numSpeakers;
-
-		SIMDProcessor->MixedSoundToSamples( dest, finalMixBuffer, MIXBUFFER_SAMPLES * numSpeakers );
-
-		// allow swapping the left / right speaker channels for people with miswired systems
-		if ( numSpeakers == 2 && s_reverse.GetBool() ) {
-			for( j = 0; j < MIXBUFFER_SAMPLES; j++ ) {
-				short temp = dest[j*2];
-				dest[j*2] = dest[j*2+1];
-				dest[j*2+1] = temp;
-			}
-		}
-		snd_audio_hw->Unlock( fBlock, fBlockLen );
-	}
-
-	CurrentSoundTime = newSoundTime;
-
-	soundStats.timeinprocess = Sys_Milliseconds() - inTime;
-
-	return soundStats.timeinprocess;
-}
-
-/*
-===================
-idSoundSystemLocal::AsyncUpdateWrite
-sound output using a write API. all the scheduling based on time
-we mix MIXBUFFER_SAMPLES at a time, but we feed the audio device with smaller chunks (and more often)
-called by the sound thread when com_asyncSound is 3 ( Linux )
-===================
-*/
-int idSoundSystemLocal::AsyncUpdateWrite( int inTime ) {
-	if ( !isInitialized || shutdown ) {
-		return 0;
-	}
-
-	if ( !useOpenAL ) {
-		snd_audio_hw->Flush();
-	}
-	
-	unsigned int dwCurrentBlock = (unsigned int)( inTime * 44.1f / MIXBUFFER_SAMPLES );
-
-	if ( nextWriteBlock == 0xffffffff ) {
-		nextWriteBlock = dwCurrentBlock;
-	}
-
-	if ( dwCurrentBlock < nextWriteBlock ) {
-		return 0;
-	}
-
-	if ( nextWriteBlock != dwCurrentBlock ) {
-		Sys_Printf( "missed %d sound updates\n", dwCurrentBlock - nextWriteBlock );
-		nextWriteBlock = dwCurrentBlock;
-	}
-
-	int sampleTime = dwCurrentBlock * MIXBUFFER_SAMPLES;
-	int numSpeakers = s_numberOfSpeakers.GetInteger();
-
-	if ( useOpenAL ) {
-		// enable audio hardware caching
-		alcSuspendContext( openalContext );
-	} else {
-		// clear the buffer for all the mixing output
-		SIMDProcessor->Memset( finalMixBuffer, 0, MIXBUFFER_SAMPLES * sizeof(float) * numSpeakers );
-	}
-
-	// let the active sound world mix all the channels in unless muted or avi demo recording
-	if ( !muted && currentSoundWorld && !currentSoundWorld->fpa[0] ) {
-		currentSoundWorld->MixLoop( sampleTime, numSpeakers, finalMixBuffer );
-	}
-	
-	if ( useOpenAL ) {
-		// disable audio hardware caching (this updates ALL settings since last alcSuspendContext)
-		alcProcessContext( openalContext );
-	} else {
-		short *dest = snd_audio_hw->GetMixBuffer();
-
-		SIMDProcessor->MixedSoundToSamples( dest, finalMixBuffer, MIXBUFFER_SAMPLES * numSpeakers );
-
-		// allow swapping the left / right speaker channels for people with miswired systems
-		if ( numSpeakers == 2 && s_reverse.GetBool() ) {
-			int j;
-			for( j = 0; j < MIXBUFFER_SAMPLES; j++ ) {
-				short temp = dest[j*2];
-				dest[j*2] = dest[j*2+1];
-				dest[j*2+1] = temp;
-			}
-		}
-		snd_audio_hw->Write( false );
-	}
-
-	// only move to the next block if the write was successful
-	nextWriteBlock = dwCurrentBlock + 1;
-	CurrentSoundTime = sampleTime;
-
-	return Sys_Milliseconds() - inTime;
+   return 0;
 }
 
 /*

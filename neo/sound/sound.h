@@ -299,12 +299,6 @@ public:
 	virtual bool			InitHW( void ) = 0;
 	virtual bool			ShutdownHW( void ) = 0;
 
-	// asyn loop, called at 60Hz
-	virtual int				AsyncUpdate( int time ) = 0;
-
-	// async loop, when the sound driver uses a write strategy
-	virtual int				AsyncUpdateWrite( int time ) = 0;
-
 	// it is a good idea to mute everything when starting a new level,
 	// because sounds may be started before a valid listener origin
 	// is specified
