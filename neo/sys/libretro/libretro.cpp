@@ -73,9 +73,6 @@ extern "C"{
 #define RETRO_DEVICE_MODERN  RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_ANALOG, 2)
 #define RETRO_DEVICE_JOYPAD_ALT  RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_JOYPAD, 1)
 
-static unsigned audio_buffer_ptr = 0;
-static int16_t audio_buffer[BUFFER_SIZE];
-
 bool first_boot = true;
 int invert_y_axis = 1;
 
@@ -370,7 +367,7 @@ returns in megabytes
 ================
 */
 int Sys_GetSystemRam( void ) {
-	return 512 * 1024 * 1024;
+	return 1024;
 }
 
 /*
@@ -1043,9 +1040,6 @@ idAudioHardware::~idAudioHardware() {
 idAudioHardwareOSS::~idAudioHardwareOSS() { 
 	Release();
 }
-
-int16_t *shared_audio_buffer[2];
-int audio_idx = 0;
 
 bool idAudioHardwareOSS::Initialize( ) { 
 	return true;
