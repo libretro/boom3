@@ -547,6 +547,7 @@ void Sys_SetKeys(){
 				Key_Event(K_ENTER, 1);
 			else if (!(ret & (1 << RETRO_DEVICE_ID_JOYPAD_R)) && (old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_R)))
 				Key_Event(K_ENTER, 0);
+#if 0
 			if ((ret & (1 << RETRO_DEVICE_ID_JOYPAD_L2)) && !(old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_L2)))
 				Key_Event(K_AUX1, 1);
 			else if (!(ret & (1 << RETRO_DEVICE_ID_JOYPAD_L2)) && (old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_L2)))
@@ -555,6 +556,8 @@ void Sys_SetKeys(){
 				Key_Event(K_AUX2, 1);
 			else if (!(ret & (1 << RETRO_DEVICE_ID_JOYPAD_R2)) && (old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_R2)))
 				Key_Event(K_AUX2, 0);
+#endif
+
 			if ((ret & (1 << RETRO_DEVICE_ID_JOYPAD_L3)) && !(old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_L3)))
 				Key_Event(K_AUX3, 1);
 			else if (!(ret & (1 << RETRO_DEVICE_ID_JOYPAD_L3)) && (old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_L3)))
