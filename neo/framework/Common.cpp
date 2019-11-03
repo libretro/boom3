@@ -3047,15 +3047,15 @@ void idCommonLocal::InitGame( void ) {
 	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"ENTER\" \"_attack\"\n" );
 	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"ESCAPE\" \"togglemenu\"\n" );
 	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"TAB\" \"_impulse19\"\n" );
-	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"BACKSPACE\" \"_moveUp\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"BACKSPACE\" \"_moveDown\"\n" );
 	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"LEFTARROW\" \"_impulse14\"\n" );
 	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"RIGHTARROW\" \"_impulse15\"\n" );
 	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"CTRL\" \"_impulse13\"\n" );
 	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"ALT\" \"_strafe\"\n" );
 	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"MOUSE1\" \"_moveUp\"\n" );
 	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"MOUSE2\" \"_zoom\"\n" );
-	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"AUX1\" \"savegame quick\"\n" );
-	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"AUX2\" \"loadgame quick\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"AUX1\" \"_impulse16\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"AUX2\" \"_impulse7\"\n" );
 	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"AUX3\" \"_speed\"\n" );
 	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"AUX4\" \"_impulse11\"\n" );
 	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"AUX7\" \"_moveLeft\"\n" );
