@@ -3054,8 +3054,8 @@ void idCommonLocal::InitGame( void ) {
 	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"ALT\" \"_strafe\"\n" );
 	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"MOUSE1\" \"_moveUp\"\n" );
 	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"MOUSE2\" \"_zoom\"\n" );
-	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"AUX1\" \"_impulse16\"\n" );
-	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"AUX2\" \"_impulse7\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"AUX1\" \"_impulse11\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"AUX2\" \"_impulse5\"\n" );
 	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"AUX3\" \"_speed\"\n" );
 	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"AUX4\" \"_impulse11\"\n" );
 	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"AUX7\" \"_moveLeft\"\n" );
