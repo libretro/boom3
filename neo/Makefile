@@ -119,20 +119,20 @@ else ifeq ($(platform), libnx)
     EXT=a
     TARGET := $(TARGET_NAME)_libretro_$(platform).$(EXT)
     DEFINES := -DSWITCH=1 -D__SWITCH__=1 -DHAVE_LIBNX=1
-    CFLAGS	:=	 $(DEFINES) -fPIE -I$(LIBNX)/include/ -I$(PORTLIBS)/include/ -ffunction-sections -fdata-sections -ftls-model=local-exec
+    CFLAGS	:=	 $(DEFINES) -g -fPIE -I$(LIBNX)/include/ -I$(PORTLIBS)/include/ -ffunction-sections -fdata-sections -ftls-model=local-exec
     CFLAGS += $(INCDIRS) -I$(CORE_DIR)/zlib -I$(CORE_DIR)/libogg/include -I$(CORE_DIR)/libvorbis/include \
-		-I$(CORE_DIR)/jpeg-8c
+		-I$(CORE_DIR)/jpeg-8c -fvisibility=hidden
     CFLAGS	+= -march=armv8-a -mtune=cortex-a57 -mtp=soft -mcpu=cortex-a57+crc+fp+simd
     CXXFLAGS := $(ASFLAGS) $(CFLAGS) -std=gnu++11
     STATIC_LINKING = 1
-    HAVE_OPENGL = 1
-    HAVE_THREADS = 1
 else
    CC = gcc
    TARGET := $(TARGET_NAME)_libretro.dll
    SHARED := -shared -static-libgcc -static-libstdc++ -s -Wl,--version-script=$(CORE_DIR)/link.T -Wl,--no-undefined
-   LDFLAGS += -lwsock32 -lWS2_32
+   LDFLAGS += -lwsock32 -lWS2_32 -lopengl32
 endif
+
+HAVE_OPENGL = 1
 
 LDFLAGS += $(LIBM)
 

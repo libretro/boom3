@@ -521,7 +521,7 @@ bool idSoundSystemLocal::InitHW() {
 		return false;
 	}
 	
-	//delete snd_audio_hw;
+	delete snd_audio_hw;
 	snd_audio_hw = idAudioHardware::Alloc();
 
 	if ( snd_audio_hw == NULL ) {
