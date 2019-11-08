@@ -406,7 +406,8 @@ SRC_LIBRETRO := \
 	$(LIBRETRO_COMM_DIR)/net/net_compat.c \
 	$(LIBRETRO_COMM_DIR)/net/net_socket.c \
 	$(LIBRETRO_COMM_DIR)/glsym/rglgen.c \
-	$(LIBRETRO_COMM_DIR)/glsym/glsym_gl.c
+	$(LIBRETRO_COMM_DIR)/glsym/glsym_gl.c \
+	$(LIBRETRO_COMM_DIR)/glsm/glsm.c
 
 SOURCES_DIR = \
 	$(CORE_DIR)/jpeg-8c \

@@ -118,16 +118,15 @@ else ifeq ($(platform), libnx)
     include $(DEVKITPRO)/libnx/switch_rules
     EXT=a
     TARGET := $(TARGET_NAME)_libretro_$(platform).$(EXT)
-    DEFINES := -DSWITCH=1 -U__linux__ -U__linux -DRARCH_INTERNAL
-    CFLAGS	:=	 $(DEFINES) -g -O3 \
-                 -fPIE -I$(LIBNX)/include/ -ffunction-sections -fdata-sections -ftls-model=local-exec -Wl,--allow-multiple-definition
-    CFLAGS += $(INCDIRS) -I$(PORTLIBS)/include/ -I$(CORE_DIR)/zlib -I$(CORE_DIR)/libogg/include -I$(CORE_DIR)/libvorbis/include \
+    DEFINES := -DSWITCH=1 -D__SWITCH__=1 -DHAVE_LIBNX=1
+    CFLAGS	:=	 $(DEFINES) -fPIE -I$(LIBNX)/include/ -I$(PORTLIBS)/include/ -ffunction-sections -fdata-sections -ftls-model=local-exec
+    CFLAGS += $(INCDIRS) -I$(CORE_DIR)/zlib -I$(CORE_DIR)/libogg/include -I$(CORE_DIR)/libvorbis/include \
 		-I$(CORE_DIR)/jpeg-8c
-    CFLAGS	+=	-D__SWITCH__ -DHAVE_LIBNX -march=armv8-a -mtune=cortex-a57 -mtp=soft
+    CFLAGS	+= -march=armv8-a -mtune=cortex-a57 -mtp=soft -mcpu=cortex-a57+crc+fp+simd
     CXXFLAGS := $(ASFLAGS) $(CFLAGS) -std=gnu++11
-    CFLAGS += 
     STATIC_LINKING = 1
     HAVE_OPENGL = 1
+    HAVE_THREADS = 1
 else
    CC = gcc
    TARGET := $(TARGET_NAME)_libretro.dll

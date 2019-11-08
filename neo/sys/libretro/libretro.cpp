@@ -53,19 +53,7 @@ extern "C"{
 
 #include <locale.h>
 
-#if defined(HAVE_PSGL)
-#define RARCH_GL_FRAMEBUFFER GL_FRAMEBUFFER_OES
-#define RARCH_GL_FRAMEBUFFER_COMPLETE GL_FRAMEBUFFER_COMPLETE_OES
-#define RARCH_GL_COLOR_ATTACHMENT0 GL_COLOR_ATTACHMENT0_EXT
-#elif defined(OSX_PPC)
-#define RARCH_GL_FRAMEBUFFER GL_FRAMEBUFFER_EXT
-#define RARCH_GL_FRAMEBUFFER_COMPLETE GL_FRAMEBUFFER_COMPLETE_EXT
-#define RARCH_GL_COLOR_ATTACHMENT0 GL_COLOR_ATTACHMENT0_EXT
-#else
-#define RARCH_GL_FRAMEBUFFER GL_FRAMEBUFFER
-#define RARCH_GL_FRAMEBUFFER_COMPLETE GL_FRAMEBUFFER_COMPLETE
-#define RARCH_GL_COLOR_ATTACHMENT0 GL_COLOR_ATTACHMENT0
-#endif
+#include <glsm/glsm.h>
 
 #define SAMPLE_RATE   	44100
 #define BUFFER_SIZE 	32768
@@ -87,7 +75,7 @@ char *BUILD_DATADIR;
 
 volatile bool flushed = false;
 
-static struct retro_hw_render_callback hw_render;
+extern struct retro_hw_render_callback hw_render;
 
 static retro_log_printf_t log_cb;
 static retro_video_refresh_t video_cb;
@@ -321,17 +309,15 @@ static void extract_directory(char *buf, const char *path, size_t size)
     }
 }
 
-static bool context_needs_reinit = true;
-
 static void context_reset() {
-	if (context_needs_reinit)
-		rglgen_resolve_symbols(hw_render.get_proc_address);
-	context_needs_reinit = false;
+	glsm_ctl(GLSM_CTL_STATE_CONTEXT_RESET, NULL);
+	
+	if (!glsm_ctl(GLSM_CTL_STATE_SETUP, NULL))
+		return;
 }
 
 static void context_destroy() 
 {
-	context_needs_reinit = true;
 }
 
 bool Sys_GetPath(sysPath_t type, idStr &path) {
@@ -703,6 +689,41 @@ static void audio_callback(void)
 	idx = (idx + 1) % 2;
 }
 
+static bool context_framebuffer_lock(void *data)
+{
+    return false;
+}
+
+bool initialize_opengl(void)
+{
+   glsm_ctx_params_t params = {0};
+
+   params.context_type     = RETRO_HW_CONTEXT_OPENGL;
+   params.context_reset    = context_reset;
+   params.context_destroy  = context_destroy;
+   params.environ_cb       = environ_cb;
+   hw_render.bottom_left_origin = true;
+   hw_render.depth = true;
+   hw_render.stencil = true;
+   params.framebuffer_lock = context_framebuffer_lock;
+
+   if (!glsm_ctl(GLSM_CTL_STATE_CONTEXT_INIT, &params))
+   {
+      log_cb(RETRO_LOG_ERROR, "Could not setup glsm.\n");
+      return false;
+   }
+
+   return true;
+}
+
+void destroy_opengl(void)
+{
+   if (!glsm_ctl(GLSM_CTL_STATE_CONTEXT_DESTROY, NULL))
+   {
+      log_cb(RETRO_LOG_ERROR, "Could not destroy glsm context.\n");
+   }
+}
+
 bool retro_load_game(const struct retro_game_info *info)
 {
 	enum retro_pixel_format fmt = RETRO_PIXEL_FORMAT_XRGB8888;
@@ -720,7 +741,7 @@ bool retro_load_game(const struct retro_game_info *info)
 	hw_render.depth = true;
 	hw_render.stencil = true;
 
-	if (!environ_cb(RETRO_ENVIRONMENT_SET_HW_RENDER, &hw_render))
+	if (!initialize_opengl())
 	{
 		if (log_cb)
 			log_cb(RETRO_LOG_ERROR, "dhewm3: libretro frontend doesn't have OpenGL support.\n");

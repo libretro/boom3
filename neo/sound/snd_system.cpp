@@ -508,6 +508,7 @@ idSoundSystemLocal::InitHW
 ===============
 */
 bool idSoundSystemLocal::InitHW() {
+	common->Printf("Initializing sound system\n");
 	int numSpeakers = s_numberOfSpeakers.GetInteger();
 
 	if (numSpeakers != 2 && numSpeakers != 6) {
@@ -520,7 +521,7 @@ bool idSoundSystemLocal::InitHW() {
 		return false;
 	}
 	
-	delete snd_audio_hw;
+	//delete snd_audio_hw;
 	snd_audio_hw = idAudioHardware::Alloc();
 
 	if ( snd_audio_hw == NULL ) {
