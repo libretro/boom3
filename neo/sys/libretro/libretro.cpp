@@ -90,7 +90,7 @@ static bool libretro_supports_bitmasks = false;
 static void audio_callback(void);
 
 #define MAX_PADS 1
-static unsigned doom_devices[1];
+static unsigned doom_devices[MAX_PADS];
 
 // System analog stick range is -0x8000 to 0x8000
 #define ANALOG_RANGE 0x8000
@@ -702,9 +702,7 @@ bool initialize_opengl(void)
    params.context_reset    = context_reset;
    params.context_destroy  = context_destroy;
    params.environ_cb       = environ_cb;
-   hw_render.bottom_left_origin = true;
-   hw_render.depth = true;
-   hw_render.stencil = true;
+   params.stencil          = true;
    params.framebuffer_lock = context_framebuffer_lock;
 
    if (!glsm_ctl(GLSM_CTL_STATE_CONTEXT_INIT, &params))
