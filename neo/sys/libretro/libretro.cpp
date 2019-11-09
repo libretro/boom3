@@ -65,6 +65,7 @@ bool first_boot = true;
 int invert_y_axis = 1;
 
 bool initial_resolution_set = false;
+static bool libretro_shared_context = false;
 
 int framerate = 60;
 int scr_width = 1920, scr_height = 1080;
@@ -309,14 +310,19 @@ static void extract_directory(char *buf, const char *path, size_t size)
     }
 }
 
-static void context_reset() {
+static void context_reset(void)
+{
 	glsm_ctl(GLSM_CTL_STATE_CONTEXT_RESET, NULL);
+
+   if (libretro_shared_context)
+      return;
 	
 	if (!glsm_ctl(GLSM_CTL_STATE_SETUP, NULL))
 		return;
+
 }
 
-static void context_destroy() 
+static void context_destroy(void)
 {
 }
 
@@ -694,7 +700,7 @@ static bool context_framebuffer_lock(void *data)
     return false;
 }
 
-bool initialize_opengl(void)
+static bool initialize_opengl(void)
 {
    glsm_ctx_params_t params = {0};
 
@@ -711,6 +717,11 @@ bool initialize_opengl(void)
       return false;
    }
 
+	if (environ_cb(RETRO_ENVIRONMENT_SET_HW_SHARED_CONTEXT, NULL))
+      libretro_shared_context = true;
+   else
+      libretro_shared_context = false;
+
    return true;
 }
 
@@ -720,6 +731,8 @@ void destroy_opengl(void)
    {
       log_cb(RETRO_LOG_ERROR, "Could not destroy glsm context.\n");
    }
+
+   libretro_shared_context = false;
 }
 
 bool retro_load_game(const struct retro_game_info *info)
@@ -825,7 +838,8 @@ GLExtension_t GLimp_ExtensionPointer(const char *name) {
 
 void retro_run(void)
 {
-	glsm_ctl(GLSM_CTL_STATE_BIND, NULL);
+   if (!libretro_shared_context)
+      glsm_ctl(GLSM_CTL_STATE_BIND, NULL);
 	
 	if (first_boot) {
 		network_init();
@@ -839,7 +853,9 @@ void retro_run(void)
 		update_variables(false);
 	
 	common->Frame();
-	glsm_ctl(GLSM_CTL_STATE_UNBIND, NULL);
+
+   if (!libretro_shared_context)
+      glsm_ctl(GLSM_CTL_STATE_UNBIND, NULL);
 	
 	audio_process();
 	audio_callback();
@@ -851,9 +867,11 @@ GLimp_SwapBuffers
 ===================
 */
 void GLimp_SwapBuffers() {
-	glsm_ctl(GLSM_CTL_STATE_UNBIND, NULL);
+   if (!libretro_shared_context)
+      glsm_ctl(GLSM_CTL_STATE_UNBIND, NULL);
 	video_cb(RETRO_HW_FRAME_BUFFER_VALID, scr_width, scr_height, 0);
-	glsm_ctl(GLSM_CTL_STATE_BIND, NULL);
+   if (!libretro_shared_context)
+      glsm_ctl(GLSM_CTL_STATE_BIND, NULL);
 	glBindFramebuffer(RARCH_GL_FRAMEBUFFER, hw_render.get_current_framebuffer());
 }
 
