@@ -195,10 +195,7 @@ If you have questions concerning this license or the applicable additional terms
 #define id_attribute(x)
 #endif
 
-#if !defined(_MSC_VER)
-	// MSVC does not provide this C99 header
-	#include <inttypes.h>
-#endif
+#include <stdint.h>
 #if defined(__MINGW32__)
 	#include <malloc.h>
 #endif

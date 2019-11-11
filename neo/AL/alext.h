@@ -22,18 +22,7 @@
 #define AL_ALEXT_H
 
 #include <stddef.h>
-/* Define int64_t and uint64_t types */
-#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L
-#include <inttypes.h>
-#elif defined(_WIN32) && defined(__GNUC__)
 #include <stdint.h>
-#elif defined(_WIN32)
-typedef __int64 int64_t;
-typedef unsigned __int64 uint64_t;
-#else
-/* Fallback if nothing above works */
-#include <inttypes.h>
-#endif
 
 #include "alc.h"
 #include "al.h"
