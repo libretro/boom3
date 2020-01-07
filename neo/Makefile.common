@@ -3,7 +3,11 @@ LIBRETRO_COMM_DIR  = $(CORE_DIR)/sys/libretro-common
 endif
 INCLUDES   :=  \
 	$(LIBRETRO_COMM_DIR)/include \
-	$(CORE_DIR)/libvorbis/lib
+	$(CORE_DIR)/libogg/include \
+	$(CORE_DIR)/libvorbis/include \
+	$(CORE_DIR)/libvorbis/lib \
+	$(CORE_DIR)/jpeg-8c \
+	$(CORE_DIR)/libvorbis/include
 
 INCFLAGS   := $(foreach dir,$(INCLUDES), -I$(dir))
 
