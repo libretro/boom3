@@ -755,7 +755,7 @@ bool retro_load_game(const struct retro_game_info *info)
 	if (!initialize_opengl())
 	{
 		if (log_cb)
-			log_cb(RETRO_LOG_ERROR, "dhewm3: libretro frontend doesn't have OpenGL support.\n");
+			log_cb(RETRO_LOG_ERROR, "boom3: libretro frontend doesn't have OpenGL support.\n");
 		return false;
 	}
 	
@@ -1032,7 +1032,7 @@ void retro_set_controller_port_device(unsigned port, unsigned device)
 void retro_get_system_info(struct retro_system_info *info)
 {
    memset(info, 0, sizeof(*info));
-   info->library_name     = "dhewm3";
+   info->library_name     = "boom3";
    info->library_version  = "v1.5.0" ;
    info->need_fullpath    = true;
    info->valid_extensions = "pk4";
