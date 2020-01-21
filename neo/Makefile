@@ -41,9 +41,9 @@ endif
 
 CORE_DIR    += .
 ifeq ($(D3XP),ON)
-TARGET_NAME := dhewm3_xp
+TARGET_NAME := boom3_xp
 else
-TARGET_NAME := dhewm3
+TARGET_NAME := boom3
 endif
 LIBM		    = -lm
 
