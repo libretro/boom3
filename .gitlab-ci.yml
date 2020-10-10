@@ -1,0 +1,44 @@
+.core-defs:
+  variables:
+    CORENAME: boom3
+
+include:
+  - template: Jobs/Code-Quality.gitlab-ci.yml
+  - project: 'libretro-infrastructure/ci-templates'
+    file: '/libnx-static.yml'
+  - project: 'libretro-infrastructure/ci-templates'
+    file: '/linux-x64.yml'
+  - project: 'libretro-infrastructure/ci-templates'
+    file: '/windows-x64-mingw.yml'
+
+stages:
+  - build-prepare
+  - build-shared
+  - build-static
+  - test
+
+#Desktop
+libretro-build-linux-x64:
+  extends:
+    - .core-defs
+    - .libretro-linux-x64-make-default
+  variables:
+    MAKEFILE_PATH: neo
+    MAKEFILE: Makefile
+
+libretro-build-windows-x64:
+  extends:
+    - .core-defs
+    - .libretro-windows-x64-mingw-make-default
+  variables:
+    MAKEFILE_PATH: neo
+    MAKEFILE: Makefile
+    
+# Static
+libretro-build-libnx-aarch64:
+  extends:
+    - .core-defs
+    - .libretro-libnx-static-retroarch-master
+  variables:
+    MAKEFILE_PATH: neo
+    MAKEFILE: Makefile
