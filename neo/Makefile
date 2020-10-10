@@ -130,11 +130,11 @@ else ifeq ($(platform), libnx)
     CXXFLAGS := $(ASFLAGS) $(CFLAGS) -std=gnu++11
     STATIC_LINKING = 1
 else
-   CC = gcc
+   CC ?= gcc
    TARGET := $(TARGET_NAME)_libretro.dll
    SHARED := -shared -static-libgcc -static-libstdc++ -s -Wl,--version-script=$(CORE_DIR)/link.T -Wl,--no-undefined
 	GL_LIB := -lopengl32
-   LDFLAGS += -lwsock32 -lWS2_32
+   LDFLAGS += -lwsock32 -lws2_32
 endif
 
 HAVE_OPENGL = 1
@@ -216,17 +216,14 @@ $(TARGET): $(OBJECTS)
 ifeq ($(STATIC_LINKING), 1)
 	$(AR) rcs $@ $(OBJECTS)
 else
-	@$(if $(Q), $(shell echo echo LD $@),)
-	$(Q)$(CXX) $(fpic) $(SHARED) -o $@ $(OBJECTS) $(LDFLAGS) $(GL_LIB) $(LIBS)
+	$(CXX) $(fpic) $(SHARED) -o $@ $(OBJECTS) $(LDFLAGS) $(GL_LIB) $(LIBS)
 endif
 
 %.o: %.cpp
-	@$(if $(Q), $(shell echo echo CC $<),)
-	$(Q)$(CXX) $(CFLAGS) $(CXXFLAGS) $(fpic) -c -o $@ $<
+	$(CXX) $(CFLAGS) $(CXXFLAGS) $(fpic) -c -o $@ $<
 
 %.o: %.c
-	@$(if $(Q), $(shell echo echo CC $<),)
-	$(Q)$(CC) $(CFLAGS) -std=gnu11 $(fpic) -c -o $@ $<
+	$(CC) $(CFLAGS) -std=gnu11 $(fpic) -c -o $@ $<
 
 clean:
 	rm -f $(OBJECTS) $(TARGET)
