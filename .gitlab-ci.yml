@@ -1,44 +1,69 @@
+  
+# DESCRIPTION: GitLab CI/CD for libRetro (NOT FOR GitLab-proper)
+
+##############################################################################
+################################# BOILERPLATE ################################
+##############################################################################
+
+# Core definitions
 .core-defs:
   variables:
     CORENAME: boom3
+    MAKEFILE_PATH: neo
+    MAKEFILE: Makefile
 
+# Inclusion templates, required for the build to work
 include:
-  - template: Jobs/Code-Quality.gitlab-ci.yml
-  - project: 'libretro-infrastructure/ci-templates'
-    file: '/libnx-static.yml'
-  - project: 'libretro-infrastructure/ci-templates'
-    file: '/linux-x64.yml'
+  ################################## DESKTOPS ################################
+  # Windows 64-bit
   - project: 'libretro-infrastructure/ci-templates'
     file: '/windows-x64-mingw.yml'
+    
+  # Linux 64-bit
+  - project: 'libretro-infrastructure/ci-templates'
+    file: '/linux-x64.yml'
+    
+ # MacOS 64-bit
+  - project: 'libretro-infrastructure/ci-templates'
+    file: '/osx-x64.yml'
+    
+ ################################## CONSOLES ################################
+ # Nintendo Switch
+  - project: 'libretro-infrastructure/ci-templates'
+    file: '/libnx-static.yml'
 
+# Stages for building
 stages:
   - build-prepare
   - build-shared
   - build-static
-  - test
 
-#Desktop
-libretro-build-linux-x64:
-  extends:
-    - .core-defs
-    - .libretro-linux-x64-make-default
-  variables:
-    MAKEFILE_PATH: neo
-    MAKEFILE: Makefile
-
+##############################################################################
+#################################### STAGES ##################################
+##############################################################################
+#
+################################### DESKTOPS #################################
+# Windows 64-bit
 libretro-build-windows-x64:
   extends:
-    - .core-defs
     - .libretro-windows-x64-mingw-make-default
-  variables:
-    MAKEFILE_PATH: neo
-    MAKEFILE: Makefile
+    - .core-defs
+
+# Linux 64-bit
+libretro-build-linux-x64:
+  extends:
+    - .libretro-linux-x64-make-default
+    - .core-defs
+
+# MacOS 64-bit
+libretro-build-osx-x64:
+  extends:
+    - .libretro-osx-x64-make-default
+    - .core-defs
     
-# Static
+################################### CONSOLES #################################
+# Nintendo Switch
 libretro-build-libnx-aarch64:
   extends:
-    - .core-defs
     - .libretro-libnx-static-retroarch-master
-  variables:
-    MAKEFILE_PATH: neo
-    MAKEFILE: Makefile
+    - .core-defs
