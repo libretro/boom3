@@ -56,10 +56,10 @@ libretro-build-windows-x64:
     - .libretro-windows-x64-mingw-make-default
     - .core-defs
 
-libretro-build-windows-x64-xp:
-  extends:
-    - .libretro-windows-x64-mingw-make-default
-    - .core-defs-xp
+#libretro-build-windows-x64-xp:
+  #extends:
+    #- .libretro-windows-x64-mingw-make-default
+    #- .core-defs-xp
 
 # Windows 32-bit
 libretro-build-windows-i686:
