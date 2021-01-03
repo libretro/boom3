@@ -11,6 +11,13 @@
     CORENAME: boom3
     MAKEFILE_PATH: neo
     MAKEFILE: Makefile
+    
+.core-defs-xp:
+  variables:
+    CORENAME: boom3_xp
+    MAKEFILE_PATH: neo
+    MAKEFILE: Makefile
+    D3XP: ON
 
 # Inclusion templates, required for the build to work
 include:
@@ -48,12 +55,22 @@ libretro-build-windows-x64:
   extends:
     - .libretro-windows-x64-mingw-make-default
     - .core-defs
-    
+
+libretro-build-windows-x64-xp:
+  extends:
+    - .libretro-windows-x64-mingw-make-default
+    - .core-defs-xp
+
 # Windows 32-bit
 libretro-build-windows-i686:
   extends:
     - .libretro-windows-i686-mingw-make-default
     - .core-defs
+
+libretro-build-windows-i686-xp:
+  extends:
+    - .libretro-windows-i686-mingw-make-default
+    - .core-defs-xp
 
 # Linux 64-bit
 libretro-build-linux-x64:
@@ -61,9 +78,19 @@ libretro-build-linux-x64:
     - .libretro-linux-x64-make-default
     - .core-defs
     
+libretro-build-linux-x64-xp:
+  extends:
+    - .libretro-linux-x64-make-default
+    - .core-defs-xp
+    
 ################################### CONSOLES #################################
 # Nintendo Switch
 libretro-build-libnx-aarch64:
   extends:
     - .libretro-libnx-static-retroarch-master
     - .core-defs
+
+libretro-build-libnx-aarch64-xp:
+  extends:
+    - .libretro-libnx-static-retroarch-master
+    - .core-defs-xp
