@@ -40,7 +40,7 @@ else ifneq ($(findstring MINGW,$(shell uname -a)),)
 endif
 
 CORE_DIR    += .
-ifeq ($(D3XP),ON)
+ifeq ($(D3XP), 1)
 TARGET_NAME := boom3_xp
 else
 TARGET_NAME := boom3
@@ -201,7 +201,7 @@ CFLAGS   += -Wall -D__LIBRETRO__ $(fpic) -DCORE=ON -DSDL2=ON -DBASE=ON -DUSE_FIL
 			-Wno-sign-compare -Wno-switch -Wno-format-security -I$(TOPDIR) -I$(TOPDIR)/sys/libretro/config
 CXXFLAGS += -Wall -D__LIBRETRO__ $(fpic) -fpermissive -std=gnu++11
 
-ifeq ($(D3XP),ON)
+ifeq ($(D3XP), 1)
 	CFLAGS	+=	-I$(TOPDIR)/d3xp -D_D3XP
 else
 	CFLAGS	+=	-I$(TOPDIR)/game
