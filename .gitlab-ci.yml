@@ -17,7 +17,7 @@
     CORENAME: boom3_xp
     MAKEFILE_PATH: neo
     MAKEFILE: Makefile
-    D3XP:ON
+    D3XP: 1
 
 # Inclusion templates, required for the build to work
 include:
