@@ -67,10 +67,10 @@ libretro-build-windows-i686:
     - .libretro-windows-i686-mingw-make-default
     - .core-defs
 
-libretro-build-windows-i686-xp:
-  extends:
-    - .libretro-windows-i686-mingw-make-default
-    - .core-defs-xp
+#libretro-build-windows-i686-xp:
+ # extends:
+  #  - .libretro-windows-i686-mingw-make-default
+   # - .core-defs-xp
 
 # Linux 64-bit
 libretro-build-linux-x64:
