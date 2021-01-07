@@ -33,7 +33,11 @@ include:
   # Linux 64-bit
   - project: 'libretro-infrastructure/ci-templates'
     file: '/linux-x64.yml'
-    
+
+  # Linux 32-bit
+  - project: 'libretro-infrastructure/ci-templates'
+    file: '/linux-i686.yml'
+
  ################################## CONSOLES ################################
  # Nintendo Switch
   - project: 'libretro-infrastructure/ci-templates'
@@ -82,7 +86,13 @@ libretro-build-linux-x64:
  # extends:
  #   - .libretro-linux-x64-make-default
 #    - .core-defs-xp
-    
+
+# Linux 32-bit
+libretro-build-linux-i686:
+  extends:
+    - .libretro-linux-i686-make-default
+    - .core-defs
+
 ################################### CONSOLES #################################
 # Nintendo Switch
 libretro-build-libnx-aarch64:
