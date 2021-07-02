@@ -60,10 +60,10 @@ libretro-build-windows-x64:
     - .libretro-windows-x64-mingw-make-default
     - .core-defs
 
-#libretro-build-windows-x64-xp:
-  #extends:
-    #- .libretro-windows-x64-mingw-make-default
-    #- .core-defs-xp
+libretro-build-windows-x64-xp:
+  extends:
+    - .libretro-windows-x64-mingw-make-default
+    - .core-defs-xp
 
 # Windows 32-bit
 libretro-build-windows-i686:
@@ -71,10 +71,10 @@ libretro-build-windows-i686:
     - .libretro-windows-i686-mingw-make-default
     - .core-defs
 
-#libretro-build-windows-i686-xp:
- # extends:
-  #  - .libretro-windows-i686-mingw-make-default
-   # - .core-defs-xp
+libretro-build-windows-i686-xp:
+  extends:
+    - .libretro-windows-i686-mingw-make-default
+    - .core-defs-xp
 
 # Linux 64-bit
 libretro-build-linux-x64:
@@ -82,10 +82,10 @@ libretro-build-linux-x64:
     - .libretro-linux-x64-make-default
     - .core-defs
     
-#libretro-build-linux-x64-xp:
- # extends:
- #   - .libretro-linux-x64-make-default
-#    - .core-defs-xp
+libretro-build-linux-x64-xp:
+  extends:
+    - .libretro-linux-x64-make-default
+    - .core-defs-xp
 
 # Linux 32-bit
 libretro-build-linux-i686:
@@ -100,7 +100,7 @@ libretro-build-libnx-aarch64:
     - .libretro-libnx-static-retroarch-master
     - .core-defs
 
-#libretro-build-libnx-aarch64-xp:
-  #extends:
-  #  - .libretro-libnx-static-retroarch-master
-  #  - .core-defs-xp
+libretro-build-libnx-aarch64-xp:
+  extends:
+    - .libretro-libnx-static-retroarch-master
+    - .core-defs-xp
