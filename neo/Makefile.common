@@ -420,7 +420,7 @@ SOURCES_DIR = \
 	
 DIRS_C  := $(foreach dir,$(SOURCES_DIR), $(wildcard $(dir)/*.c))
 
-ifeq ($(D3XP),ON)
+ifeq ($(D3XP),1)
 	SRC_GAME	:=	$(SRC_GAME_D3XP)
 else
 	SRC_GAME	:=	$(SRC_GAME_BASE)
