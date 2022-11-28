@@ -193,13 +193,13 @@ struct retro_core_options_v2 options_ar = {
 #define OPTION_VAL_480X272_AST NULL
 #define OPTION_VAL_640X368_AST NULL
 #define OPTION_VAL_720X408_AST NULL
-#define OPTION_VAL_960X544_AST NULL
+#define OPTION_VAL_960X544_AST "960x544 (por defeutu)"
 #define OPTION_VAL_1280X720_AST NULL
 #define OPTION_VAL_1920X1080_AST NULL
 #define OPTION_VAL_2560X1440_AST NULL
 #define OPTION_VAL_3840X2160_AST NULL
-#define DOOM_INVERT_Y_AXIS_LABEL_AST NULL
-#define DOOM_INVERT_Y_AXIS_INFO_0_AST NULL
+#define DOOM_INVERT_Y_AXIS_LABEL_AST "Invertir la exa Y"
+#define DOOM_INVERT_Y_AXIS_INFO_0_AST "Invierte la exa Y de la palanca analóxica derecha."
 #define DOOM_FPS_LABEL_AST "Amosar los FPS"
 #define DOOM_FPS_INFO_0_AST NULL
 
@@ -297,7 +297,7 @@ struct retro_core_options_v2 options_ast = {
 
 #define DOOM_FRAMERATE_LABEL_CA NULL
 #define DOOM_FRAMERATE_INFO_0_CA NULL
-#define OPTION_VAL_AUTO_CA NULL
+#define OPTION_VAL_AUTO_CA "Automàtic"
 #define OPTION_VAL_50_CA NULL
 #define OPTION_VAL_60_CA NULL
 #define OPTION_VAL_72_CA NULL
@@ -318,14 +318,14 @@ struct retro_core_options_v2 options_ast = {
 #define OPTION_VAL_360_CA NULL
 #define DOOM_RESOLUTION_LABEL_CA NULL
 #define DOOM_RESOLUTION_INFO_0_CA NULL
-#define OPTION_VAL_480X272_CA NULL
-#define OPTION_VAL_640X368_CA NULL
-#define OPTION_VAL_720X408_CA NULL
+#define OPTION_VAL_480X272_CA "480×272"
+#define OPTION_VAL_640X368_CA "640×368"
+#define OPTION_VAL_720X408_CA "720×408"
 #define OPTION_VAL_960X544_CA NULL
-#define OPTION_VAL_1280X720_CA NULL
-#define OPTION_VAL_1920X1080_CA NULL
-#define OPTION_VAL_2560X1440_CA NULL
-#define OPTION_VAL_3840X2160_CA NULL
+#define OPTION_VAL_1280X720_CA "1280×720"
+#define OPTION_VAL_1920X1080_CA "1920×1080"
+#define OPTION_VAL_2560X1440_CA "2560×1440"
+#define OPTION_VAL_3840X2160_CA "3840×2160"
 #define DOOM_INVERT_Y_AXIS_LABEL_CA NULL
 #define DOOM_INVERT_Y_AXIS_INFO_0_CA NULL
 #define DOOM_FPS_LABEL_CA NULL
@@ -551,8 +551,8 @@ struct retro_core_options_v2 options_chs = {
 
 /* RETRO_LANGUAGE_CHT */
 
-#define DOOM_FRAMERATE_LABEL_CHT NULL
-#define DOOM_FRAMERATE_INFO_0_CHT NULL
+#define DOOM_FRAMERATE_LABEL_CHT "影格率 (需要重新啟動)"
+#define DOOM_FRAMERATE_INFO_0_CHT "設定影格速率。"
 #define OPTION_VAL_AUTO_CHT "自動"
 #define OPTION_VAL_50_CHT NULL
 #define OPTION_VAL_60_CHT NULL
@@ -572,20 +572,20 @@ struct retro_core_options_v2 options_chs = {
 #define OPTION_VAL_244_CHT NULL
 #define OPTION_VAL_300_CHT NULL
 #define OPTION_VAL_360_CHT NULL
-#define DOOM_RESOLUTION_LABEL_CHT NULL
-#define DOOM_RESOLUTION_INFO_0_CHT NULL
+#define DOOM_RESOLUTION_LABEL_CHT "內部解析度 (需要重新啟動)"
+#define DOOM_RESOLUTION_INFO_0_CHT "設定解析度比例。"
 #define OPTION_VAL_480X272_CHT NULL
 #define OPTION_VAL_640X368_CHT NULL
 #define OPTION_VAL_720X408_CHT NULL
-#define OPTION_VAL_960X544_CHT NULL
+#define OPTION_VAL_960X544_CHT "960x544 (預設)"
 #define OPTION_VAL_1280X720_CHT NULL
 #define OPTION_VAL_1920X1080_CHT NULL
 #define OPTION_VAL_2560X1440_CHT NULL
 #define OPTION_VAL_3840X2160_CHT NULL
-#define DOOM_INVERT_Y_AXIS_LABEL_CHT NULL
-#define DOOM_INVERT_Y_AXIS_INFO_0_CHT NULL
-#define DOOM_FPS_LABEL_CHT NULL
-#define DOOM_FPS_INFO_0_CHT NULL
+#define DOOM_INVERT_Y_AXIS_LABEL_CHT "垂直反轉"
+#define DOOM_INVERT_Y_AXIS_INFO_0_CHT "變更右類比搖桿垂直方向。"
+#define DOOM_FPS_LABEL_CHT "顯示FPS"
+#define DOOM_FPS_INFO_0_CHT "在螢幕上顯示幀率"
 
 struct retro_core_option_v2_category option_cats_cht[] = {
    { NULL, NULL, NULL },
@@ -679,9 +679,9 @@ struct retro_core_options_v2 options_cht = {
 
 /* RETRO_LANGUAGE_CS */
 
-#define DOOM_FRAMERATE_LABEL_CS NULL
-#define DOOM_FRAMERATE_INFO_0_CS NULL
-#define OPTION_VAL_AUTO_CS NULL
+#define DOOM_FRAMERATE_LABEL_CS "Rychlost Snímků (Vyžadovaný Restart)"
+#define DOOM_FRAMERATE_INFO_0_CS "Zvolte požadovanou snímkovou frekvenci."
+#define OPTION_VAL_AUTO_CS "Automatická"
 #define OPTION_VAL_50_CS NULL
 #define OPTION_VAL_60_CS NULL
 #define OPTION_VAL_72_CS NULL
@@ -700,20 +700,20 @@ struct retro_core_options_v2 options_cht = {
 #define OPTION_VAL_244_CS NULL
 #define OPTION_VAL_300_CS NULL
 #define OPTION_VAL_360_CS NULL
-#define DOOM_RESOLUTION_LABEL_CS NULL
-#define DOOM_RESOLUTION_INFO_0_CS NULL
+#define DOOM_RESOLUTION_LABEL_CS "Internal resolution (Vyžaduje restart)"
+#define DOOM_RESOLUTION_INFO_0_CS "Vyberte rozlišení pro vykreslování."
 #define OPTION_VAL_480X272_CS NULL
 #define OPTION_VAL_640X368_CS NULL
 #define OPTION_VAL_720X408_CS NULL
-#define OPTION_VAL_960X544_CS NULL
+#define OPTION_VAL_960X544_CS "960x544 (Výchozí)"
 #define OPTION_VAL_1280X720_CS NULL
 #define OPTION_VAL_1920X1080_CS NULL
 #define OPTION_VAL_2560X1440_CS NULL
 #define OPTION_VAL_3840X2160_CS NULL
-#define DOOM_INVERT_Y_AXIS_LABEL_CS NULL
-#define DOOM_INVERT_Y_AXIS_INFO_0_CS NULL
-#define DOOM_FPS_LABEL_CS NULL
-#define DOOM_FPS_INFO_0_CS NULL
+#define DOOM_INVERT_Y_AXIS_LABEL_CS "Invertovat Osu Y"
+#define DOOM_INVERT_Y_AXIS_INFO_0_CS "Invertujte osu Y pravé analogové páčky."
+#define DOOM_FPS_LABEL_CS "Ukázat FPS"
+#define DOOM_FPS_INFO_0_CS "Zobrazení snímkové frekvence na obrazovce."
 
 struct retro_core_option_v2_category option_cats_cs[] = {
    { NULL, NULL, NULL },
@@ -1064,7 +1064,7 @@ struct retro_core_options_v2 options_da = {
 /* RETRO_LANGUAGE_DE */
 
 #define DOOM_FRAMERATE_LABEL_DE "Bildfrequenz (Neustart erforderlich)"
-#define DOOM_FRAMERATE_INFO_0_DE NULL
+#define DOOM_FRAMERATE_INFO_0_DE "Die gewünschte Bildrate wählen."
 #define OPTION_VAL_AUTO_DE "Automatisch"
 #define OPTION_VAL_50_DE "50 fps"
 #define OPTION_VAL_60_DE "60 fps"
@@ -1085,11 +1085,11 @@ struct retro_core_options_v2 options_da = {
 #define OPTION_VAL_300_DE "300 fps"
 #define OPTION_VAL_360_DE "360 fps"
 #define DOOM_RESOLUTION_LABEL_DE "Interne Auflösung (Neustart erforderlich)"
-#define DOOM_RESOLUTION_INFO_0_DE NULL
+#define DOOM_RESOLUTION_INFO_0_DE "Auflösung wählen, mit der gerendert werden soll."
 #define OPTION_VAL_480X272_DE "480 x 272"
 #define OPTION_VAL_640X368_DE "640 x 368"
 #define OPTION_VAL_720X408_DE "720 x 408"
-#define OPTION_VAL_960X544_DE NULL
+#define OPTION_VAL_960X544_DE "960 × 544 (Standard)"
 #define OPTION_VAL_1280X720_DE "1280 x 720"
 #define OPTION_VAL_1920X1080_DE "1920 x 1080"
 #define OPTION_VAL_2560X1440_DE "2560 x 1440"
@@ -1097,7 +1097,7 @@ struct retro_core_options_v2 options_da = {
 #define DOOM_INVERT_Y_AXIS_LABEL_DE "Y-Achse invertieren"
 #define DOOM_INVERT_Y_AXIS_INFO_0_DE "Die Y-Achse des rechten analogen Sticks invertieren."
 #define DOOM_FPS_LABEL_DE "FPS anzeigen"
-#define DOOM_FPS_INFO_0_DE NULL
+#define DOOM_FPS_INFO_0_DE "Bildrate auf dem Bildschirm anzeigen."
 
 struct retro_core_option_v2_category option_cats_de[] = {
    { NULL, NULL, NULL },
@@ -1315,6 +1315,134 @@ struct retro_core_option_v2_definition option_defs_el[] = {
 struct retro_core_options_v2 options_el = {
    option_cats_el,
    option_defs_el
+};
+
+/* RETRO_LANGUAGE_EN */
+
+#define DOOM_FRAMERATE_LABEL_EN "Frame-rate (Restart Required)"
+#define DOOM_FRAMERATE_INFO_0_EN "Choose the desired frame-rate."
+#define OPTION_VAL_AUTO_EN NULL
+#define OPTION_VAL_50_EN NULL
+#define OPTION_VAL_60_EN NULL
+#define OPTION_VAL_72_EN NULL
+#define OPTION_VAL_75_EN NULL
+#define OPTION_VAL_90_EN NULL
+#define OPTION_VAL_100_EN NULL
+#define OPTION_VAL_119_EN NULL
+#define OPTION_VAL_120_EN NULL
+#define OPTION_VAL_144_EN NULL
+#define OPTION_VAL_155_EN NULL
+#define OPTION_VAL_160_EN NULL
+#define OPTION_VAL_165_EN NULL
+#define OPTION_VAL_180_EN NULL
+#define OPTION_VAL_200_EN NULL
+#define OPTION_VAL_240_EN NULL
+#define OPTION_VAL_244_EN NULL
+#define OPTION_VAL_300_EN NULL
+#define OPTION_VAL_360_EN NULL
+#define DOOM_RESOLUTION_LABEL_EN NULL
+#define DOOM_RESOLUTION_INFO_0_EN NULL
+#define OPTION_VAL_480X272_EN NULL
+#define OPTION_VAL_640X368_EN NULL
+#define OPTION_VAL_720X408_EN NULL
+#define OPTION_VAL_960X544_EN NULL
+#define OPTION_VAL_1280X720_EN NULL
+#define OPTION_VAL_1920X1080_EN NULL
+#define OPTION_VAL_2560X1440_EN NULL
+#define OPTION_VAL_3840X2160_EN NULL
+#define DOOM_INVERT_Y_AXIS_LABEL_EN NULL
+#define DOOM_INVERT_Y_AXIS_INFO_0_EN "Invert the right analogue stick's Y axis."
+#define DOOM_FPS_LABEL_EN NULL
+#define DOOM_FPS_INFO_0_EN NULL
+
+struct retro_core_option_v2_category option_cats_en[] = {
+   { NULL, NULL, NULL },
+};
+struct retro_core_option_v2_definition option_defs_en[] = {
+	{
+      "doom_framerate",
+      DOOM_FRAMERATE_LABEL_EN,
+      NULL,
+      DOOM_FRAMERATE_INFO_0_EN,
+      NULL,
+      NULL,
+      {
+         { "auto",            OPTION_VAL_AUTO_EN},
+         { "50",              OPTION_VAL_50_EN},
+         { "60",              OPTION_VAL_60_EN},
+         { "72",              OPTION_VAL_72_EN},
+         { "75",              OPTION_VAL_75_EN},
+         { "90",              OPTION_VAL_90_EN},
+         { "100",              OPTION_VAL_100_EN},
+         { "119",              OPTION_VAL_119_EN},
+         { "120",              OPTION_VAL_120_EN},
+         { "144",              OPTION_VAL_144_EN},
+         { "155",              OPTION_VAL_155_EN},
+         { "160",              OPTION_VAL_160_EN},
+         { "165",              OPTION_VAL_165_EN},
+         { "180",              OPTION_VAL_180_EN},
+         { "200",              OPTION_VAL_200_EN},
+         { "240",              OPTION_VAL_240_EN},
+         { "244",              OPTION_VAL_244_EN},
+         { "300",              OPTION_VAL_300_EN},
+         { "360",              OPTION_VAL_360_EN},
+         { NULL, NULL },
+      },
+      "auto"
+   },
+   {
+      "doom_resolution",
+      DOOM_RESOLUTION_LABEL_EN,
+      NULL,
+      DOOM_RESOLUTION_INFO_0_EN,
+      NULL,
+      NULL,
+      {
+         { "480x272",   OPTION_VAL_480X272_EN },
+         { "640x368",   OPTION_VAL_640X368_EN },
+         { "720x408",   OPTION_VAL_720X408_EN },
+         { "960x544",   OPTION_VAL_960X544_EN },
+		 { "1280x720",   OPTION_VAL_1280X720_EN },
+		 { "1920x1080",   OPTION_VAL_1920X1080_EN },
+		 { "2560x1440",   OPTION_VAL_2560X1440_EN },
+		 { "3840x2160",   OPTION_VAL_3840X2160_EN },
+         { NULL, NULL },
+      },
+      "960x544"
+   },
+   {
+      "doom_invert_y_axis",
+      DOOM_INVERT_Y_AXIS_LABEL_EN,
+      NULL,
+      DOOM_INVERT_Y_AXIS_INFO_0_EN,
+      NULL,
+      NULL,
+      {
+         { "enabled",   "Enabled" },
+         { "disabled",  "Disabled" },
+         { NULL, NULL },
+      },
+      "enabled"
+   },
+   {
+      "doom_fps",
+      DOOM_FPS_LABEL_EN,
+      NULL,
+      DOOM_FPS_INFO_0_EN,
+      NULL,
+      NULL,
+      {
+         { "disabled",  "Disabled" },
+         { "enabled",   "Enabled" },
+         { NULL, NULL },
+      },
+      "disabled"
+   },
+   { NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL },
+};
+struct retro_core_options_v2 options_en = {
+   option_cats_en,
+   option_defs_en
 };
 
 /* RETRO_LANGUAGE_EO */
@@ -1577,7 +1705,7 @@ struct retro_core_options_v2 options_es = {
 
 #define DOOM_FRAMERATE_LABEL_FA NULL
 #define DOOM_FRAMERATE_INFO_0_FA NULL
-#define OPTION_VAL_AUTO_FA NULL
+#define OPTION_VAL_AUTO_FA "خودکار"
 #define OPTION_VAL_50_FA NULL
 #define OPTION_VAL_60_FA NULL
 #define OPTION_VAL_72_FA NULL
@@ -1704,7 +1832,7 @@ struct retro_core_options_v2 options_fa = {
 /* RETRO_LANGUAGE_FI */
 
 #define DOOM_FRAMERATE_LABEL_FI "Kuvataajuus (Uudelleenkäynnistys vaaditaan)"
-#define DOOM_FRAMERATE_INFO_0_FI NULL
+#define DOOM_FRAMERATE_INFO_0_FI "Valitse haluttu kuvataajuus."
 #define OPTION_VAL_AUTO_FI "Automaattinen"
 #define OPTION_VAL_50_FI "50 fps"
 #define OPTION_VAL_60_FI "60 fps"
@@ -1725,11 +1853,11 @@ struct retro_core_options_v2 options_fa = {
 #define OPTION_VAL_300_FI "300 fps"
 #define OPTION_VAL_360_FI "360 fps"
 #define DOOM_RESOLUTION_LABEL_FI "Sisäinen resoluutio (Uudelleenkäynnistys vaaditaan)"
-#define DOOM_RESOLUTION_INFO_0_FI NULL
+#define DOOM_RESOLUTION_INFO_0_FI "Valitse haluttu resoluutio."
 #define OPTION_VAL_480X272_FI "480 x 272"
 #define OPTION_VAL_640X368_FI "640 x 368"
 #define OPTION_VAL_720X408_FI "720 x 408"
-#define OPTION_VAL_960X544_FI NULL
+#define OPTION_VAL_960X544_FI "960 x 544 (Oletus)"
 #define OPTION_VAL_1280X720_FI "1280 x 720"
 #define OPTION_VAL_1920X1080_FI "1920 x 1080"
 #define OPTION_VAL_2560X1440_FI "2560 x 1440"
@@ -1737,7 +1865,7 @@ struct retro_core_options_v2 options_fa = {
 #define DOOM_INVERT_Y_AXIS_LABEL_FI "Käännä Y-akseli"
 #define DOOM_INVERT_Y_AXIS_INFO_0_FI "Käännä oikean analogisen sauvan Y-akseli."
 #define DOOM_FPS_LABEL_FI "Näytä kuvataajuus"
-#define DOOM_FPS_INFO_0_FI NULL
+#define DOOM_FPS_INFO_0_FI "Näytä kuvataajuus näytöllä."
 
 struct retro_core_option_v2_category option_cats_fi[] = {
    { NULL, NULL, NULL },
@@ -2213,43 +2341,171 @@ struct retro_core_options_v2 options_he = {
    option_defs_he
 };
 
+/* RETRO_LANGUAGE_HR */
+
+#define DOOM_FRAMERATE_LABEL_HR NULL
+#define DOOM_FRAMERATE_INFO_0_HR NULL
+#define OPTION_VAL_AUTO_HR NULL
+#define OPTION_VAL_50_HR NULL
+#define OPTION_VAL_60_HR NULL
+#define OPTION_VAL_72_HR NULL
+#define OPTION_VAL_75_HR NULL
+#define OPTION_VAL_90_HR NULL
+#define OPTION_VAL_100_HR NULL
+#define OPTION_VAL_119_HR NULL
+#define OPTION_VAL_120_HR NULL
+#define OPTION_VAL_144_HR NULL
+#define OPTION_VAL_155_HR NULL
+#define OPTION_VAL_160_HR NULL
+#define OPTION_VAL_165_HR NULL
+#define OPTION_VAL_180_HR NULL
+#define OPTION_VAL_200_HR NULL
+#define OPTION_VAL_240_HR NULL
+#define OPTION_VAL_244_HR NULL
+#define OPTION_VAL_300_HR NULL
+#define OPTION_VAL_360_HR NULL
+#define DOOM_RESOLUTION_LABEL_HR NULL
+#define DOOM_RESOLUTION_INFO_0_HR NULL
+#define OPTION_VAL_480X272_HR NULL
+#define OPTION_VAL_640X368_HR NULL
+#define OPTION_VAL_720X408_HR NULL
+#define OPTION_VAL_960X544_HR NULL
+#define OPTION_VAL_1280X720_HR NULL
+#define OPTION_VAL_1920X1080_HR NULL
+#define OPTION_VAL_2560X1440_HR NULL
+#define OPTION_VAL_3840X2160_HR NULL
+#define DOOM_INVERT_Y_AXIS_LABEL_HR NULL
+#define DOOM_INVERT_Y_AXIS_INFO_0_HR NULL
+#define DOOM_FPS_LABEL_HR NULL
+#define DOOM_FPS_INFO_0_HR NULL
+
+struct retro_core_option_v2_category option_cats_hr[] = {
+   { NULL, NULL, NULL },
+};
+struct retro_core_option_v2_definition option_defs_hr[] = {
+	{
+      "doom_framerate",
+      DOOM_FRAMERATE_LABEL_HR,
+      NULL,
+      DOOM_FRAMERATE_INFO_0_HR,
+      NULL,
+      NULL,
+      {
+         { "auto",            OPTION_VAL_AUTO_HR},
+         { "50",              OPTION_VAL_50_HR},
+         { "60",              OPTION_VAL_60_HR},
+         { "72",              OPTION_VAL_72_HR},
+         { "75",              OPTION_VAL_75_HR},
+         { "90",              OPTION_VAL_90_HR},
+         { "100",              OPTION_VAL_100_HR},
+         { "119",              OPTION_VAL_119_HR},
+         { "120",              OPTION_VAL_120_HR},
+         { "144",              OPTION_VAL_144_HR},
+         { "155",              OPTION_VAL_155_HR},
+         { "160",              OPTION_VAL_160_HR},
+         { "165",              OPTION_VAL_165_HR},
+         { "180",              OPTION_VAL_180_HR},
+         { "200",              OPTION_VAL_200_HR},
+         { "240",              OPTION_VAL_240_HR},
+         { "244",              OPTION_VAL_244_HR},
+         { "300",              OPTION_VAL_300_HR},
+         { "360",              OPTION_VAL_360_HR},
+         { NULL, NULL },
+      },
+      "auto"
+   },
+   {
+      "doom_resolution",
+      DOOM_RESOLUTION_LABEL_HR,
+      NULL,
+      DOOM_RESOLUTION_INFO_0_HR,
+      NULL,
+      NULL,
+      {
+         { "480x272",   OPTION_VAL_480X272_HR },
+         { "640x368",   OPTION_VAL_640X368_HR },
+         { "720x408",   OPTION_VAL_720X408_HR },
+         { "960x544",   OPTION_VAL_960X544_HR },
+		 { "1280x720",   OPTION_VAL_1280X720_HR },
+		 { "1920x1080",   OPTION_VAL_1920X1080_HR },
+		 { "2560x1440",   OPTION_VAL_2560X1440_HR },
+		 { "3840x2160",   OPTION_VAL_3840X2160_HR },
+         { NULL, NULL },
+      },
+      "960x544"
+   },
+   {
+      "doom_invert_y_axis",
+      DOOM_INVERT_Y_AXIS_LABEL_HR,
+      NULL,
+      DOOM_INVERT_Y_AXIS_INFO_0_HR,
+      NULL,
+      NULL,
+      {
+         { "enabled",   "Enabled" },
+         { "disabled",  "Disabled" },
+         { NULL, NULL },
+      },
+      "enabled"
+   },
+   {
+      "doom_fps",
+      DOOM_FPS_LABEL_HR,
+      NULL,
+      DOOM_FPS_INFO_0_HR,
+      NULL,
+      NULL,
+      {
+         { "disabled",  "Disabled" },
+         { "enabled",   "Enabled" },
+         { NULL, NULL },
+      },
+      "disabled"
+   },
+   { NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL },
+};
+struct retro_core_options_v2 options_hr = {
+   option_cats_hr,
+   option_defs_hr
+};
+
 /* RETRO_LANGUAGE_HU */
 
-#define DOOM_FRAMERATE_LABEL_HU NULL
-#define DOOM_FRAMERATE_INFO_0_HU NULL
-#define OPTION_VAL_AUTO_HU NULL
-#define OPTION_VAL_50_HU NULL
-#define OPTION_VAL_60_HU NULL
-#define OPTION_VAL_72_HU NULL
-#define OPTION_VAL_75_HU NULL
-#define OPTION_VAL_90_HU NULL
-#define OPTION_VAL_100_HU NULL
-#define OPTION_VAL_119_HU NULL
-#define OPTION_VAL_120_HU NULL
-#define OPTION_VAL_144_HU NULL
-#define OPTION_VAL_155_HU NULL
-#define OPTION_VAL_160_HU NULL
-#define OPTION_VAL_165_HU NULL
-#define OPTION_VAL_180_HU NULL
-#define OPTION_VAL_200_HU NULL
-#define OPTION_VAL_240_HU NULL
-#define OPTION_VAL_244_HU NULL
-#define OPTION_VAL_300_HU NULL
-#define OPTION_VAL_360_HU NULL
-#define DOOM_RESOLUTION_LABEL_HU NULL
-#define DOOM_RESOLUTION_INFO_0_HU NULL
+#define DOOM_FRAMERATE_LABEL_HU "Képkockák száma másodpercenként (újraindítás szükséges)"
+#define DOOM_FRAMERATE_INFO_0_HU "Az FPS kívánt értéke."
+#define OPTION_VAL_AUTO_HU "Automatikus"
+#define OPTION_VAL_50_HU "50 fps"
+#define OPTION_VAL_60_HU "60 fps"
+#define OPTION_VAL_72_HU "72 fps"
+#define OPTION_VAL_75_HU "75 fps"
+#define OPTION_VAL_90_HU "90 fps"
+#define OPTION_VAL_100_HU "100 fps"
+#define OPTION_VAL_119_HU "119 fps"
+#define OPTION_VAL_120_HU "120 fps"
+#define OPTION_VAL_144_HU "144 fps"
+#define OPTION_VAL_155_HU "155 fps"
+#define OPTION_VAL_160_HU "160 fps"
+#define OPTION_VAL_165_HU "165 fps"
+#define OPTION_VAL_180_HU "180 fps"
+#define OPTION_VAL_200_HU "200 fps"
+#define OPTION_VAL_240_HU "240 fps"
+#define OPTION_VAL_244_HU "244 fps"
+#define OPTION_VAL_300_HU "300 fps"
+#define OPTION_VAL_360_HU "360 fps"
+#define DOOM_RESOLUTION_LABEL_HU "Belső felbontás (újraindítás szükséges)"
+#define DOOM_RESOLUTION_INFO_0_HU "Az előállított kép felbontása."
 #define OPTION_VAL_480X272_HU NULL
 #define OPTION_VAL_640X368_HU NULL
 #define OPTION_VAL_720X408_HU NULL
-#define OPTION_VAL_960X544_HU NULL
+#define OPTION_VAL_960X544_HU "960x544 (Alapértelmezett)"
 #define OPTION_VAL_1280X720_HU NULL
 #define OPTION_VAL_1920X1080_HU NULL
 #define OPTION_VAL_2560X1440_HU NULL
 #define OPTION_VAL_3840X2160_HU NULL
-#define DOOM_INVERT_Y_AXIS_LABEL_HU NULL
-#define DOOM_INVERT_Y_AXIS_INFO_0_HU NULL
-#define DOOM_FPS_LABEL_HU NULL
-#define DOOM_FPS_INFO_0_HU NULL
+#define DOOM_INVERT_Y_AXIS_LABEL_HU "Fordított Y-tengely"
+#define DOOM_INVERT_Y_AXIS_INFO_0_HU "A jobb analóg kar függőleges tengelyének megfordítása."
+#define DOOM_FPS_LABEL_HU "FPS megjelenítése"
+#define DOOM_FPS_INFO_0_HU "Az FPS érték megjelenítése a képernyőn."
 
 struct retro_core_option_v2_category option_cats_hu[] = {
    { NULL, NULL, NULL },
@@ -2345,7 +2601,7 @@ struct retro_core_options_v2 options_hu = {
 
 #define DOOM_FRAMERATE_LABEL_ID NULL
 #define DOOM_FRAMERATE_INFO_0_ID NULL
-#define OPTION_VAL_AUTO_ID NULL
+#define OPTION_VAL_AUTO_ID "Otomatis"
 #define OPTION_VAL_50_ID NULL
 #define OPTION_VAL_60_ID NULL
 #define OPTION_VAL_72_ID NULL
@@ -3625,7 +3881,7 @@ struct retro_core_options_v2 options_pt_br = {
 
 #define DOOM_FRAMERATE_LABEL_PT_PT NULL
 #define DOOM_FRAMERATE_INFO_0_PT_PT NULL
-#define OPTION_VAL_AUTO_PT_PT NULL
+#define OPTION_VAL_AUTO_PT_PT "Automático"
 #define OPTION_VAL_50_PT_PT NULL
 #define OPTION_VAL_60_PT_PT NULL
 #define OPTION_VAL_72_PT_PT NULL
@@ -4647,41 +4903,41 @@ struct retro_core_options_v2 options_tr = {
 
 /* RETRO_LANGUAGE_UK */
 
-#define DOOM_FRAMERATE_LABEL_UK NULL
-#define DOOM_FRAMERATE_INFO_0_UK NULL
+#define DOOM_FRAMERATE_LABEL_UK "Частота кадрів (потрібен перезапуск)"
+#define DOOM_FRAMERATE_INFO_0_UK "Виберіть бажану частоту кадрів."
 #define OPTION_VAL_AUTO_UK "Авто"
-#define OPTION_VAL_50_UK NULL
-#define OPTION_VAL_60_UK NULL
-#define OPTION_VAL_72_UK NULL
-#define OPTION_VAL_75_UK NULL
-#define OPTION_VAL_90_UK NULL
-#define OPTION_VAL_100_UK NULL
-#define OPTION_VAL_119_UK NULL
-#define OPTION_VAL_120_UK NULL
-#define OPTION_VAL_144_UK NULL
-#define OPTION_VAL_155_UK NULL
-#define OPTION_VAL_160_UK NULL
-#define OPTION_VAL_165_UK NULL
-#define OPTION_VAL_180_UK NULL
-#define OPTION_VAL_200_UK NULL
-#define OPTION_VAL_240_UK NULL
-#define OPTION_VAL_244_UK NULL
-#define OPTION_VAL_300_UK NULL
-#define OPTION_VAL_360_UK NULL
-#define DOOM_RESOLUTION_LABEL_UK NULL
-#define DOOM_RESOLUTION_INFO_0_UK NULL
-#define OPTION_VAL_480X272_UK NULL
-#define OPTION_VAL_640X368_UK NULL
-#define OPTION_VAL_720X408_UK NULL
-#define OPTION_VAL_960X544_UK NULL
+#define OPTION_VAL_50_UK "50 кадрів"
+#define OPTION_VAL_60_UK "60 кадрів"
+#define OPTION_VAL_72_UK "72 кадри"
+#define OPTION_VAL_75_UK "75 кадрів"
+#define OPTION_VAL_90_UK "90 кадрів"
+#define OPTION_VAL_100_UK "100 кадрів"
+#define OPTION_VAL_119_UK "119 кадрів"
+#define OPTION_VAL_120_UK "120 кадрів"
+#define OPTION_VAL_144_UK "144 кадри"
+#define OPTION_VAL_155_UK "155 кадрів"
+#define OPTION_VAL_160_UK "160 кадрів"
+#define OPTION_VAL_165_UK "165 кадрів"
+#define OPTION_VAL_180_UK "180 кадрів"
+#define OPTION_VAL_200_UK "200 кадрів"
+#define OPTION_VAL_240_UK "240 кадрів"
+#define OPTION_VAL_244_UK "244 кадри"
+#define OPTION_VAL_300_UK "300 кадрів"
+#define OPTION_VAL_360_UK "360 кадрів"
+#define DOOM_RESOLUTION_LABEL_UK "Внутрішня роздільна здатність (потрібний перезапуск)"
+#define DOOM_RESOLUTION_INFO_0_UK "Виберіть роздільну здатність для візуалізації."
+#define OPTION_VAL_480X272_UK "480х272"
+#define OPTION_VAL_640X368_UK "640х368"
+#define OPTION_VAL_720X408_UK "720х408"
+#define OPTION_VAL_960X544_UK "960x544 (за замовчуванням)"
 #define OPTION_VAL_1280X720_UK NULL
 #define OPTION_VAL_1920X1080_UK NULL
-#define OPTION_VAL_2560X1440_UK NULL
-#define OPTION_VAL_3840X2160_UK NULL
-#define DOOM_INVERT_Y_AXIS_LABEL_UK NULL
-#define DOOM_INVERT_Y_AXIS_INFO_0_UK NULL
-#define DOOM_FPS_LABEL_UK NULL
-#define DOOM_FPS_INFO_0_UK NULL
+#define OPTION_VAL_2560X1440_UK "2560х1440"
+#define OPTION_VAL_3840X2160_UK "3840х2160"
+#define DOOM_INVERT_Y_AXIS_LABEL_UK "Інвертувати вісь Y"
+#define DOOM_INVERT_Y_AXIS_INFO_0_UK "Інвертувати Y-вісь правого аналога."
+#define DOOM_FPS_LABEL_UK "Показувати частоту кадрів"
+#define DOOM_FPS_INFO_0_UK "Показувати частоту кадрів на екрані."
 
 struct retro_core_option_v2_category option_cats_uk[] = {
    { NULL, NULL, NULL },
@@ -4777,7 +5033,7 @@ struct retro_core_options_v2 options_uk = {
 
 #define DOOM_FRAMERATE_LABEL_VAL NULL
 #define DOOM_FRAMERATE_INFO_0_VAL "Escull els fotogrames per segon desitjats."
-#define OPTION_VAL_AUTO_VAL NULL
+#define OPTION_VAL_AUTO_VAL "Selecció automàtica"
 #define OPTION_VAL_50_VAL NULL
 #define OPTION_VAL_60_VAL NULL
 #define OPTION_VAL_72_VAL NULL
@@ -4798,14 +5054,14 @@ struct retro_core_options_v2 options_uk = {
 #define OPTION_VAL_360_VAL NULL
 #define DOOM_RESOLUTION_LABEL_VAL NULL
 #define DOOM_RESOLUTION_INFO_0_VAL "Escull la resolució que vols renderitzar."
-#define OPTION_VAL_480X272_VAL NULL
-#define OPTION_VAL_640X368_VAL NULL
-#define OPTION_VAL_720X408_VAL NULL
+#define OPTION_VAL_480X272_VAL "480×272"
+#define OPTION_VAL_640X368_VAL "640×368"
+#define OPTION_VAL_720X408_VAL "720×408"
 #define OPTION_VAL_960X544_VAL "960x544 (predeterminada)"
-#define OPTION_VAL_1280X720_VAL NULL
-#define OPTION_VAL_1920X1080_VAL NULL
-#define OPTION_VAL_2560X1440_VAL NULL
-#define OPTION_VAL_3840X2160_VAL NULL
+#define OPTION_VAL_1280X720_VAL "1280×720"
+#define OPTION_VAL_1920X1080_VAL "1920×1080"
+#define OPTION_VAL_2560X1440_VAL "2560×1440"
+#define OPTION_VAL_3840X2160_VAL "3840×2160"
 #define DOOM_INVERT_Y_AXIS_LABEL_VAL NULL
 #define DOOM_INVERT_Y_AXIS_INFO_0_VAL NULL
 #define DOOM_FPS_LABEL_VAL NULL
