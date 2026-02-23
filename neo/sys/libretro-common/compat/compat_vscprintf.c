@@ -1,4 +1,4 @@
-/* Copyright  (C) 2010-2017 The RetroArch team
+/* Copyright  (C) 2010-2020 The RetroArch team
  *
  * ---------------------------------------------------------------------------------------
  * The following license statement only applies to this file (compat_snprintf.c).
@@ -34,11 +34,11 @@
 
 int c89_vscprintf_retro__(const char *format, va_list pargs)
 {
-   int retval;
+   int _len;
    va_list argcopy;
    va_copy(argcopy, pargs);
-   retval = vsnprintf(NULL, 0, format, argcopy);
+   _len = vsnprintf(NULL, 0, format, argcopy);
    va_end(argcopy);
-   return retval;
+   return _len;
 }
 #endif

@@ -1,4 +1,4 @@
-/* Copyright  (C) 2010-2018 The RetroArch team
+/* Copyright  (C) 2010-2020 The RetroArch team
  *
  * ---------------------------------------------------------------------------------------
  * The following license statement only applies to this file (rwav.h).
@@ -62,7 +62,7 @@ typedef struct rwav_iterator rwav_iterator_t;
 /**
  * Initializes the iterator to fill the out structure with data parsed from buf.
  */
-void rwav_init(rwav_iterator_t* iter, rwav_t* out, const void* buf, size_t size);
+void rwav_init(rwav_iterator_t *iter, rwav_t *out, const void* buf, size_t len);
 
 /**
  * Parses a piece of the data. Continue calling as long as it returns RWAV_ITERATE_MORE.
@@ -75,7 +75,7 @@ enum rwav_state rwav_iterate(rwav_iterator_t *iter);
 /**
  * Loads the entire data in one go.
  */
-enum rwav_state rwav_load(rwav_t* out, const void* buf, size_t size);
+enum rwav_state rwav_load(rwav_t *out, const void *buf, size_t len);
 
 /**
  * Frees parsed wave data.

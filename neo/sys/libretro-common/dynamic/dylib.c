@@ -1,4 +1,4 @@
-/* Copyright  (C) 2010-2018 The RetroArch team
+/* Copyright  (C) 2010-2020 The RetroArch team
  *
  * ---------------------------------------------------------------------------------------
  * The following license statement only applies to this file (dylib.c).
@@ -24,6 +24,13 @@
 #include <stdio.h>
 #include <dynamic/dylib.h>
 #include <encodings/utf.h>
+#include <string/stdstring.h>
+#include <retro_miscellaneous.h>
+#include <file/file_path.h>
+
+#if defined(ORBIS)
+#include <orbis/libkernel.h>
+#endif
 
 #ifdef NEED_DYNAMIC
 
@@ -31,7 +38,9 @@
 #include <compat/posix_string.h>
 #include <windows.h>
 #else
+#if !defined(ORBIS)
 #include <dlfcn.h>
+#endif
 #endif
 
 /* Assume W-functions do not work below Win2K and Xbox platforms */
@@ -44,21 +53,19 @@
 #endif
 
 #ifdef _WIN32
-static char last_dyn_error[512];
+static char last_dyn_err[512];
 
-static void set_dl_error(void)
+static void set_dl_err(void)
 {
    DWORD err = GetLastError();
-
-   if (FormatMessage(FORMAT_MESSAGE_IGNORE_INSERTS |
-            FORMAT_MESSAGE_FROM_SYSTEM,
-            NULL,
-            err,
+   if (FormatMessage(
+              FORMAT_MESSAGE_IGNORE_INSERTS
+            | FORMAT_MESSAGE_FROM_SYSTEM,
+            NULL, err,
             MAKELANGID(LANG_ENGLISH, SUBLANG_DEFAULT),
-            last_dyn_error,
-            sizeof(last_dyn_error) - 1,
+            last_dyn_err, sizeof(last_dyn_err) - 1,
             NULL) == 0)
-      snprintf(last_dyn_error, sizeof(last_dyn_error) - 1,
+      snprintf(last_dyn_err, sizeof(last_dyn_err) - 1,
             "unknown error %lu", err);
 }
 #endif
@@ -69,7 +76,7 @@ static void set_dl_error(void)
  *
  * Platform independent dylib loading.
  *
- * Returns: library handle on success, otherwise NULL.
+ * @return Library handle on success, otherwise NULL.
  **/
 dylib_t dylib_load(const char *path)
 {
@@ -78,35 +85,34 @@ dylib_t dylib_load(const char *path)
    int prevmode = SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX);
 #endif
 #ifdef __WINRT__
+   dylib_t lib;
    /* On UWP, you can only load DLLs inside your install directory, using a special function that takes a relative path */
+   char relative_path_abbrev[PATH_MAX_LENGTH];
+   char *relative_path = relative_path_abbrev;
+   wchar_t *path_wide  = NULL;
+
+   relative_path_abbrev[0] = '\0';
 
    if (!path_is_absolute(path))
-      RARCH_WARN("Relative path in dylib_load! This is likely an attempt to load a system library that will fail\n");
+      RARCH_WARN("Relative path in dylib_load! This is likely an attempt to load a system library that will fail.\n");
 
-   char *relative_path_abbrev = (char*)malloc(PATH_MAX_LENGTH * sizeof(char));
-   fill_pathname_abbreviate_special(relative_path_abbrev, path, PATH_MAX_LENGTH * sizeof(char));
+   fill_pathname_abbreviate_special(relative_path_abbrev, path, sizeof(relative_path_abbrev));
 
-   char *relative_path = relative_path_abbrev;
-   if (relative_path[0] != ':' || !path_char_is_slash(relative_path[1]))
-   {
-      /* Path to dylib_load is not inside app install directory.
-       * Loading will probably fail. */
-   }
+   /* Path to dylib_load is not inside app install directory.
+    * Loading will probably fail. */
+   if (relative_path[0] != ':' || !PATH_CHAR_IS_SLASH(relative_path[1])) { }
    else
       relative_path += 2;
 
-
-   wchar_t *pathW = utf8_to_utf16_string_alloc(relative_path);
-   dylib_t lib = LoadPackagedLibrary(pathW, 0);
-   free(pathW);
-
-   free(relative_path_abbrev);
+   path_wide = utf8_to_utf16_string_alloc(relative_path);
+   lib       = LoadPackagedLibrary(path_wide, 0);
+   free(path_wide);
 #elif defined(LEGACY_WIN32)
-   dylib_t lib  = LoadLibrary(path);
+   dylib_t lib        = LoadLibrary(path);
 #else
-   wchar_t *pathW = utf8_to_utf16_string_alloc(path);
-   dylib_t lib  = LoadLibraryW(pathW);
-   free(pathW);
+   wchar_t *path_wide = utf8_to_utf16_string_alloc(path);
+   dylib_t lib        = LoadLibraryW(path_wide);
+   free(path_wide);
 #endif
 
 #ifndef __WINRT__
@@ -115,10 +121,29 @@ dylib_t dylib_load(const char *path)
 
    if (!lib)
    {
-      set_dl_error();
+      set_dl_err();
       return NULL;
    }
-   last_dyn_error[0] = 0;
+   last_dyn_err[0] = 0;
+#elif defined(ORBIS)
+   int res;
+   dylib_t lib = (dylib_t)sceKernelLoadStartModule(path, 0, NULL, 0, NULL, &res);
+#elif defined(IOS) || defined(OSX)
+    dylib_t lib;
+    static const char fw_suffix[] = ".framework";
+    if (string_ends_with(path, fw_suffix))
+    {
+        char fw_path[PATH_MAX_LENGTH];
+        const char *fw_name = path_basename(path);
+        size_t _len         = strlcpy(fw_path, path, sizeof(fw_path));
+        _len += strlcpy(fw_path + _len, "/", sizeof(fw_path) - _len);
+        /* Assume every framework binary is named for the framework. Not always
+         * a great assumption but correct enough for our uses. */
+        strlcpy(fw_path + _len, fw_name, strlen(fw_name) - STRLEN_CONST(fw_suffix) + 1);
+        lib = dlopen(fw_path, RTLD_LAZY | RTLD_LOCAL);
+    }
+    else
+        lib = dlopen(path, RTLD_LAZY | RTLD_LOCAL);
 #else
    dylib_t lib = dlopen(path, RTLD_LAZY | RTLD_LOCAL);
 #endif
@@ -128,8 +153,8 @@ dylib_t dylib_load(const char *path)
 char *dylib_error(void)
 {
 #ifdef _WIN32
-   if (last_dyn_error[0])
-      return last_dyn_error;
+   if (last_dyn_err[0])
+      return last_dyn_err;
    return NULL;
 #else
    return (char*)dlerror();
@@ -142,26 +167,33 @@ function_t dylib_proc(dylib_t lib, const char *proc)
 
 #ifdef _WIN32
    HMODULE mod = (HMODULE)lib;
-#ifndef __WINRT__
-   if (!mod)
-      mod = GetModuleHandle(NULL);
-#else
-   /* GetModuleHandle is not available on UWP */
    if (!mod)
    {
+#ifdef __WINRT__
+      /* GetModuleHandle is not available on UWP */
       /* It's not possible to lookup symbols in current executable
        * on UWP. */
       DebugBreak();
       return NULL;
-   }
+#else
+      mod = GetModuleHandle(NULL);
 #endif
-   sym = (function_t)GetProcAddress(mod, proc);
-   if (!sym)
+   }
+   if (!(sym = (function_t)GetProcAddress(mod, proc)))
    {
-      set_dl_error();
+      set_dl_err();
       return NULL;
    }
-   last_dyn_error[0] = 0;
+   last_dyn_err[0] = 0;
+#elif defined(ORBIS)
+   void *ptr_sym = NULL;
+   sym = NULL;
+
+   if (lib)
+   {
+     sceKernelDlsym((SceKernelModule)lib, proc, &ptr_sym);
+     memcpy(&sym, &ptr_sym, sizeof(void*));
+   }
 #else
    void *ptr_sym = NULL;
 
@@ -195,8 +227,11 @@ void dylib_close(dylib_t lib)
 {
 #ifdef _WIN32
    if (!FreeLibrary((HMODULE)lib))
-      set_dl_error();
-   last_dyn_error[0] = 0;
+      set_dl_err();
+   last_dyn_err[0] = 0;
+#elif defined(ORBIS)
+   int res;
+   sceKernelStopUnloadModule((SceKernelModule)lib, 0, NULL, 0, NULL, &res);
 #else
 #ifndef NO_DLCLOSE
    dlclose(lib);

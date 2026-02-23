@@ -1,4 +1,4 @@
-/* Copyright  (C) 2010-2018 The RetroArch team
+/* Copyright  (C) 2010-2020 The RetroArch team
  *
  * ---------------------------------------------------------------------------------------
  * The following license statement only applies to this file (image.h).
@@ -42,9 +42,9 @@ enum image_process_code
 
 struct texture_image
 {
+   uint32_t *pixels;
    unsigned width;
    unsigned height;
-   uint32_t *pixels;
    bool supports_rgba;
 };
 
@@ -68,7 +68,7 @@ bool image_texture_color_convert(unsigned r_shift,
       struct texture_image *out_img);
 
 bool image_texture_load_buffer(struct texture_image *img,
-   enum image_type_enum type, void *buffer, size_t buffer_len);
+   enum image_type_enum type, void *s, size_t len);
 
 bool image_texture_load(struct texture_image *img, const char *path);
 void image_texture_free(struct texture_image *img);
@@ -90,8 +90,10 @@ void image_transfer_set_buffer_ptr(
 int image_transfer_process(
       void *data,
       enum image_type_enum type,
-      uint32_t **buf, size_t size,
-      unsigned *width, unsigned *height);
+      uint32_t **buf,
+      size_t len,
+      unsigned *width,
+      unsigned *height);
 
 bool image_transfer_iterate(void *data, enum image_type_enum type);
 
