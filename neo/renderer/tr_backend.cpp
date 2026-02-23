@@ -35,6 +35,10 @@ static idCVar r_fillWindowAlphaChan( "r_fillWindowAlphaChan", "-1", CVAR_SYSTEM 
 frameData_t		*frameData;
 backEndState_t	backEnd;
 
+#ifdef HAVE_OPENGLES
+#include "renderer/gles_compat.h"
+#endif
+
 /*
 ======================
 RB_SetDefaultGLState
@@ -81,6 +85,10 @@ void RB_SetDefaultGLState( void ) {
 		qglScissor( 0, 0, glConfig.vidWidth, glConfig.vidHeight );
 	}
 
+#ifdef HAVE_OPENGLES
+	backEnd.glState.currentTexture = -1;  // Force texture unit to be reset
+#endif
+
 	for ( i = glConfig.maxTextureUnits - 1 ; i >= 0 ; i-- ) {
 		GL_SelectTexture( i );
 
@@ -123,8 +131,12 @@ void GL_SelectTexture( int unit ) {
 		return;
 	}
 
+#ifdef HAVE_OPENGLES
+	qglActiveTexture( GL_TEXTURE0 + unit );
+#else
 	qglActiveTextureARB( GL_TEXTURE0_ARB + unit );
 	qglClientActiveTextureARB( GL_TEXTURE0_ARB + unit );
+#endif
 
 	backEnd.glState.currenttmu = unit;
 }
@@ -345,6 +357,7 @@ void GL_State( int stateBits ) {
 	//
 	// fill/line mode
 	//
+#ifndef HAVE_OPENGLES
 	if ( diff & GLS_POLYMODE_LINE ) {
 		if ( stateBits & GLS_POLYMODE_LINE ) {
 			qglPolygonMode( GL_FRONT_AND_BACK, GL_LINE );
@@ -378,6 +391,7 @@ void GL_State( int stateBits ) {
 			break;
 		}
 	}
+#endif
 
 	backEnd.glState.glStateBits = stateBits;
 }
@@ -438,9 +452,9 @@ static void	RB_SetBuffer( const void *data ) {
 	cmd = (const setBufferCommand_t *)data;
 
 	backEnd.frameCount = cmd->frameCount;
-
+#ifndef HAVE_OPENGLES
 	qglDrawBuffer( cmd->buffer );
-
+#endif
 	// clear screen for debugging
 	// automatically enable this with several other debug tools
 	// that might leave unrendered portions of the screen

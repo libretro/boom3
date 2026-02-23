@@ -99,7 +99,7 @@ bool R_CreateLightingCache( const idRenderEntityLocal *ent, const idRenderLightL
 #if 1
 
 	SIMDProcessor->CreateTextureSpaceLightVectors( &cache[0].localLightVector, localLightOrigin,
-												tri->ambientSurface->verts, tri->ambientSurface->numVerts, tri->indexes, tri->numIndexes );
+												tri->ambientSurface->verts, tri->ambientSurface->numVerts, (const int*)tri->indexes, tri->numIndexes );
 
 #else
 
@@ -325,7 +325,7 @@ static void R_SpecularTexGen( drawSurf_t *surf, const idVec3 &globalLightOrigin,
 #if 1
 
 	SIMDProcessor->CreateSpecularTextureCoords( texCoords, localLightOrigin, localViewOrigin,
-											tri->verts, tri->numVerts, tri->indexes, tri->numIndexes );
+											tri->verts, tri->numVerts, (const int*)tri->indexes, tri->numIndexes );
 
 #else
 

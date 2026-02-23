@@ -123,6 +123,9 @@ typedef struct drawSurf_s {
 	struct vertCache_s		*dynamicTexCoords;	// float * in vertex cache memory
 	// specular directions for non vertex program cards, skybox texcoords, etc
 	float					particle_radius;	// The radius of individual quads for soft particles #3878
+#ifdef HAVE_OPENGLES
+	float  wobbleTransform[16];
+#endif
 } drawSurf_t;
 
 
@@ -456,7 +459,11 @@ typedef struct {
 	// these are loaded into the vertex program
 	idVec4				localLightOrigin;
 	idVec4				localViewOrigin;
+#ifdef HAVE_OPENGLES
+	idMat4				lightProjection;
+#else
 	idVec4				lightProjection[4];	// in local coordinates, possibly with a texture matrix baked in
+#endif
 	idVec4				bumpMatrix[2];
 	idVec4				diffuseMatrix[2];
 	idVec4				specularMatrix[2];
@@ -610,6 +617,10 @@ typedef struct {
 	int			faceCulling;
 	int			glStateBits;
 	bool		forceGlState;		// the next GL_State will ignore glStateBits and set everything
+#ifdef HAVE_OPENGLES
+	int     	currentTexture;
+	struct shaderProgram_s	*currentProgram;
+#endif
 } glstate_t;
 
 
@@ -674,7 +685,10 @@ const int MAX_GUI_SURFACES	= 1024;		// default size of the drawSurfs list for gu
 
 typedef enum {
 	BE_ARB2,
-	BE_BAD
+	BE_BAD,
+#ifdef HAVE_OPENGLES
+    BE_GLSL,
+#endif
 } backEndName_t;
 
 typedef struct {
@@ -849,6 +863,11 @@ extern idCVar r_gammaInShader;			// set gamma+brightness in shader instead of mo
 extern idCVar r_renderer;				// arb2, etc
 
 extern idCVar r_checkBounds;			// compare all surface bounds with precalculated ones
+
+#ifdef HAVE_OPENGLES
+extern idCVar r_usePhong;
+extern idCVar r_specularExponent;
+#endif
 
 extern idCVar r_useLightPortalFlow;		// 1 = do a more precise area reference determination
 extern idCVar r_useShadowSurfaceScissor;// 1 = scissor shadows by the scissor rect of the interaction surfaces
@@ -1283,6 +1302,11 @@ void RB_DetermineLightScale( void );
 void RB_STD_LightScale( void );
 void RB_BeginDrawingView (void);
 
+#ifdef HAVE_OPENGLES
+void RB_SubmittInteraction( drawInteraction_t *din, void (*DrawInteraction)(const drawInteraction_t *) );
+void RB_SetDrawInteraction( const shaderStage_t *surfaceStage, const float *surfaceRegs, idImage **image, idVec4 matrix[2], float color[4] );
+#endif
+
 /*
 ============================================================
 
@@ -1300,7 +1324,11 @@ void RB_FinishStageTexture( const textureStage_t *texture, const drawSurf_t *sur
 void RB_StencilShadowPass( const drawSurf_t *drawSurfs );
 void RB_STD_DrawView( void );
 void RB_STD_FogAllLights( void );
+#ifdef HAVE_OPENGLES
+void RB_BakeTextureMatrixIntoTexgen( idMat4 & lightProject, const float* textureMatrix);
+#else
 void RB_BakeTextureMatrixIntoTexgen( idPlane lightProject[3], const float textureMatrix[16] );
+#endif
 
 /*
 ============================================================
@@ -1399,6 +1427,73 @@ typedef enum {
 	PP_PARTICLE_COLCHAN_MASK = 24,
 } programParameter_t;
 
+#ifdef HAVE_OPENGLES
+
+/*
+============================================================
+
+DRAW_GLSL
+ NB: Specific to GLSL shader stuff
+
+============================================================
+*/
+
+typedef struct shaderProgram_s {
+	GLuint		program;
+
+	GLuint		vertexShader;
+	GLuint		fragmentShader;
+
+	GLint		glColor;
+	GLint		alphaTest;
+	GLint		specularExponent;
+
+	GLint		modelViewProjectionMatrix;
+  GLint		modelViewMatrix;
+	GLint		textureMatrix;
+	GLint		localLightOrigin;
+	GLint		localViewOrigin;
+
+  GLint		lightProjection;
+
+	GLint		bumpMatrixS;
+	GLint		bumpMatrixT;
+	GLint		diffuseMatrixS;
+	GLint		diffuseMatrixT;
+	GLint		specularMatrixS;
+	GLint		specularMatrixT;
+
+	GLint		colorModulate;
+	GLint		colorAdd;
+	GLint		diffuseColor;
+	GLint		specularColor;
+	GLint		fogColor;
+
+  GLint		fogMatrix;
+
+	GLint		clipPlane;
+
+	/* gl_... */
+	GLint		attr_TexCoord;
+	GLint		attr_Tangent;
+	GLint		attr_Bitangent;
+	GLint		attr_Normal;
+	GLint		attr_Vertex;
+	GLint		attr_Color;
+
+	GLint		u_fragmentMap[MAX_FRAGMENT_IMAGES];
+  GLint		u_fragmentCubeMap[MAX_FRAGMENT_IMAGES];
+} shaderProgram_t;
+
+void R_ReloadGLSLPrograms_f(const idCmdArgs &args);
+
+void RB_GLSL_PrepareShaders(void);
+void RB_GLSL_FillDepthBuffer(drawSurf_t **drawSurfs, int numDrawSurfs);
+void RB_GLSL_DrawInteractions(void);
+int  RB_GLSL_DrawShaderPasses(drawSurf_t **drawSurfs, int numDrawSurfs);
+void RB_GLSL_FogAllLights(void);
+
+#endif
 
 /*
 ============================================================

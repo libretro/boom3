@@ -50,6 +50,10 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "stb_image_write.h"
 
+#ifdef HAVE_OPENGLES
+#include "renderer/gles_compat.h"
+#endif
+
 // functions that are not called every frame
 
 glconfig_t	glConfig;
@@ -67,6 +71,11 @@ idCVar r_customWidth( "r_customWidth", "720", CVAR_RENDERER | CVAR_ARCHIVE | CVA
 idCVar r_customHeight( "r_customHeight", "486", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "custom screen height. set r_mode to -1 to activate" );
 idCVar r_singleTriangle( "r_singleTriangle", "0", CVAR_RENDERER | CVAR_BOOL, "only draw a single triangle per primitive" );
 idCVar r_checkBounds( "r_checkBounds", "0", CVAR_RENDERER | CVAR_BOOL, "compare all surface bounds with precalculated ones" );
+
+#ifdef HAVE_OPENGLES
+idCVar r_usePhong("r_usePhong", "1", CVAR_RENDERER | CVAR_BOOL, "use phong instead of blinn-phong shader for interactions" );
+idCVar r_specularExponent("r_specularExponent", "3", CVAR_RENDERER | CVAR_FLOAT, "specular exponent, to be used in GLSL shaders" );
+#endif
 
 idCVar r_useConstantMaterials( "r_useConstantMaterials", "1", CVAR_RENDERER | CVAR_BOOL, "use pre-calculated material registers if possible" );
 idCVar r_useSilRemap( "r_useSilRemap", "1", CVAR_RENDERER | CVAR_BOOL, "consider verts with the same XYZ, but different ST the same for shadows" );
@@ -254,6 +263,8 @@ idCVar r_useSoftParticles( "r_useSoftParticles", "1", CVAR_RENDERER | CVAR_ARCHI
 
 idCVar r_glDebugContext( "r_glDebugContext", "0", CVAR_RENDERER | CVAR_BOOL, "Enable OpenGL Debug context - requires vid_restart, needs SDL2" );
 
+#ifndef HAVE_OPENGLES
+
 // define qgl functions
 #define QGLPROC(name, rettype, args) rettype (APIENTRYP q##name) args;
 #include "renderer/qgl_proc.h"
@@ -307,6 +318,8 @@ PFNGLSTENCILOPSEPARATEPROC qglStencilOpSeparate;
 #ifndef __LIBRETRO__
 PFNGLDEBUGMESSAGECALLBACKARBPROC        qglDebugMessageCallbackARB;
 #endif
+
+#endif // !HAVE_OPENGLES
 
 // eez: This is a slight hack for letting us select the desired screenshot format in other functions
 //  This is a hack to avoid adding another function parameter to idRenderSystem::TakeScreenshot(),
@@ -370,7 +383,7 @@ DebugCallback( GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei l
 	common->Warning( "GLDBG %s %s %s: %s\n", sourceStr, typeStr, severityStr, message );
 
 }
-#endif
+#endif // !__LIBRETRO__
 
 /*
 =================
@@ -396,6 +409,45 @@ R_CheckPortableExtensions
 static void R_CheckPortableExtensions( void ) {
 	glConfig.glVersion = atof( glConfig.version_string );
 
+#ifdef HAVE_OPENGLES
+    glConfig.multitextureAvailable        = true;
+    glConfig.textureLODBiasAvailable      = false;
+    glConfig.cubeMapAvailable             = true;
+    glConfig.sharedTexturePaletteAvailable= false;
+    glConfig.ARBFragmentProgramAvailable  = false;
+    glConfig.ARBVertexBufferObjectAvailable = true;
+    glConfig.twoSidedStencilAvailable     = false;
+    glConfig.depthBoundsTestAvailable     = false;
+    qglGetIntegerv( GL_MAX_TEXTURE_IMAGE_UNITS, (GLint*)&glConfig.maxTextureImageUnits );
+    qglGetIntegerv( GL_MAX_TEXTURE_SIZE,        (GLint*)&glConfig.maxTextureSize );
+    glConfig.maxTextureUnits  = glConfig.maxTextureImageUnits;
+    glConfig.maxTextureCoords = glConfig.maxTextureImageUnits;
+
+	if ( R_CheckExtension("GL_OES_compressed_ETC1_RGB8_texture") ) {
+		//glConfig.textureCompressionAvailable = true;
+		common->Printf("   ETC1 texture compression supported\n");
+	}
+
+#ifdef HAVE_OPENGLES3
+    glConfig.textureNonPowerOfTwoAvailable = true;
+    glConfig.textureCompressionAvailable = false; // ETC2 is supported in GLES3, but we don't use it for now
+#else
+    glConfig.textureNonPowerOfTwoAvailable = false;
+    glConfig.textureCompressionAvailable = false;
+#endif
+	glConfig.bptcTextureCompressionAvailable = false;
+
+    tr.stencilIncr = GL_INCR_WRAP;
+    tr.stencilDecr = GL_DECR_WRAP;
+
+	glConfig.anisotropicAvailable = R_CheckExtension( "GL_EXT_texture_filter_anisotropic" );
+	if ( glConfig.anisotropicAvailable ) {
+		qglGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &glConfig.maxTextureAnisotropy);
+		common->Printf("   maxTextureAnisotropy: %f\n", glConfig.maxTextureAnisotropy);
+	} else {
+		glConfig.maxTextureAnisotropy = 1;
+	}
+#else
 	// GL_ARB_multitexture
 	glConfig.multitextureAvailable = R_CheckExtension( "GL_ARB_multitexture" );
 	if ( glConfig.multitextureAvailable ) {
@@ -595,6 +647,7 @@ static void R_CheckPortableExtensions( void ) {
 			common->Printf( "X..GL_ARB_debug_output not found\n" );
 		}
 	}
+#endif // !HAVE_OPENGLES
 }
 
 
@@ -825,6 +878,7 @@ void R_InitOpenGL( void ) {
 		r_multiSamples.SetInteger( 0 );
 	}
 
+#ifndef HAVE_OPENGLES
 // load qgl function pointers
 #define QGLPROC(name, rettype, args) \
 	q##name = (rettype(APIENTRYP)args)GLimp_ExtensionPointer(#name); \
@@ -832,6 +886,7 @@ void R_InitOpenGL( void ) {
 		common->FatalError("Unable to initialize OpenGL (%s)", #name);
 
 #include "renderer/qgl_proc.h"
+#endif
 
 	// input and sound systems need to be tied to the new window
 	Sys_InitInput();
@@ -861,12 +916,17 @@ void R_InitOpenGL( void ) {
 	// recheck all the extensions (FIXME: this might be dangerous)
 	R_CheckPortableExtensions();
 
+#ifndef HAVE_OPENGLES
 	// parse our vertex and fragment programs, possibly disably support for
 	// one of the paths if there was an error
 	R_ARB2_Init();
 
 	cmdSystem->AddCommand( "reloadARBprograms", R_ReloadARBPrograms_f, CMD_FL_RENDERER, "reloads ARB programs" );
 	R_ReloadARBPrograms_f( idCmdArgs() );
+#else
+    cmdSystem->AddCommand( "reloadGLSLprograms", R_ReloadGLSLPrograms_f, CMD_FL_RENDERER, "reloads GLSL programs" );
+    R_ReloadGLSLPrograms_f( idCmdArgs() );
+#endif
 
 	// allocate the vertex array range or vertex objects
 	vertexCache.Init();
@@ -1373,13 +1433,19 @@ void R_ReadTiledPixels( int width, int height, byte *buffer, renderView_t *ref =
 			} else {
 				// DG: It's probably better to restore the glReadBuffer mode after reading the pixels..
 				//     (at least with XWayland on GNOME changing resolutions is wonky when not doing this)
+#ifdef HAVE_OPENGLES
+				qglReadPixels(0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, temp);
+#else
 				GLint oldReadBuf = GL_BACK;
+
+				qglReadPixels(0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, temp);
 				qglGetIntegerv( GL_READ_BUFFER, &oldReadBuf );
 				qglReadBuffer( GL_FRONT );
 
 				qglReadPixels( 0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, temp );
 
 				qglReadBuffer( oldReadBuf );
+#endif
 			}
 
 			int	row = ( w * 3 + 3 ) & ~3;		// OpenGL pads to dword boundaries
@@ -1648,6 +1714,11 @@ Save out a screenshot showing the stencil buffer expanded by 16x range
 ===============
 */
 void R_StencilShot( void ) {
+#ifdef HAVE_OPENGLES
+    // glReadPixels with GL_STENCIL_INDEX is not valid in core GLES2.
+    common->Printf( "R_StencilShot: not supported on GLES2\n" );
+    return;
+#endif
 	byte		*buffer;
 	int			i, c;
 
@@ -2427,7 +2498,9 @@ void idRenderSystemLocal::Shutdown( void ) {
 
 	R_ShutdownTriSurfData();
 
+#ifndef HAVE_OPENGLES
 	RB_ShutdownDebugTools();
+#endif
 
 	delete guiModel;
 	delete demoGuiModel;

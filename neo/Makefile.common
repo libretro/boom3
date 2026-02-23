@@ -59,7 +59,6 @@ SRC_RENDERER	:=\
 	$(CORE_DIR)/renderer/RenderWorld_load.cpp \
 	$(CORE_DIR)/renderer/RenderWorld_portals.cpp \
 	$(CORE_DIR)/renderer/VertexCache.cpp \
-	$(CORE_DIR)/renderer/draw_arb2.cpp \
 	$(CORE_DIR)/renderer/draw_common.cpp \
 	$(CORE_DIR)/renderer/tr_backend.cpp \
 	$(CORE_DIR)/renderer/tr_deform.cpp \
@@ -71,13 +70,12 @@ SRC_RENDERER	:=\
 	$(CORE_DIR)/renderer/tr_orderIndexes.cpp \
 	$(CORE_DIR)/renderer/tr_polytope.cpp \
 	$(CORE_DIR)/renderer/tr_render.cpp \
-	$(CORE_DIR)/renderer/tr_rendertools.cpp \
 	$(CORE_DIR)/renderer/tr_shadowbounds.cpp \
 	$(CORE_DIR)/renderer/tr_stencilshadow.cpp \
 	$(CORE_DIR)/renderer/tr_subview.cpp \
 	$(CORE_DIR)/renderer/tr_trace.cpp \
 	$(CORE_DIR)/renderer/tr_trisurf.cpp \
-	$(CORE_DIR)/renderer/tr_turboshadow.cpp
+	$(CORE_DIR)/renderer/tr_turboshadow.cpp \
 
 SRC_FRAMEWORK	:=\
 	$(CORE_DIR)/framework/CVarSystem.cpp \
@@ -120,21 +118,23 @@ SRC_CM	:=\
 	$(CORE_DIR)/cm/CollisionModel_trace.cpp \
 	$(CORE_DIR)/cm/CollisionModel_translate.cpp
 
-SRC_DMAP	:=\
-	$(CORE_DIR)/tools/compilers/dmap/dmap.cpp \
-	$(CORE_DIR)/tools/compilers/dmap/facebsp.cpp \
-	$(CORE_DIR)/tools/compilers/dmap/gldraw.cpp \
-	$(CORE_DIR)/tools/compilers/dmap/glfile.cpp \
-	$(CORE_DIR)/tools/compilers/dmap/leakfile.cpp \
-	$(CORE_DIR)/tools/compilers/dmap/map.cpp \
-	$(CORE_DIR)/tools/compilers/dmap/optimize.cpp \
-	$(CORE_DIR)/tools/compilers/dmap/output.cpp \
-	$(CORE_DIR)/tools/compilers/dmap/portals.cpp \
-	$(CORE_DIR)/tools/compilers/dmap/shadowopt3.cpp \
-	$(CORE_DIR)/tools/compilers/dmap/tritjunction.cpp \
-	$(CORE_DIR)/tools/compilers/dmap/tritools.cpp \
-	$(CORE_DIR)/tools/compilers/dmap/ubrush.cpp \
-	$(CORE_DIR)/tools/compilers/dmap/usurface.cpp
+ifneq ($(GLES),1)
+	SRC_DMAP	:=\
+		$(CORE_DIR)/tools/compilers/dmap/dmap.cpp \
+		$(CORE_DIR)/tools/compilers/dmap/facebsp.cpp \
+		$(CORE_DIR)/tools/compilers/dmap/gldraw.cpp \
+		$(CORE_DIR)/tools/compilers/dmap/glfile.cpp \
+		$(CORE_DIR)/tools/compilers/dmap/leakfile.cpp \
+		$(CORE_DIR)/tools/compilers/dmap/map.cpp \
+		$(CORE_DIR)/tools/compilers/dmap/optimize.cpp \
+		$(CORE_DIR)/tools/compilers/dmap/output.cpp \
+		$(CORE_DIR)/tools/compilers/dmap/portals.cpp \
+		$(CORE_DIR)/tools/compilers/dmap/shadowopt3.cpp \
+		$(CORE_DIR)/tools/compilers/dmap/tritjunction.cpp \
+		$(CORE_DIR)/tools/compilers/dmap/tritools.cpp \
+		$(CORE_DIR)/tools/compilers/dmap/ubrush.cpp \
+		$(CORE_DIR)/tools/compilers/dmap/usurface.cpp
+endif
 
 SRC_AAS	:=\
 	$(CORE_DIR)/tools/compilers/aas/AASBuild.cpp \
@@ -157,8 +157,10 @@ SRC_ROQ	:=\
 	$(CORE_DIR)/tools/compilers/roqvq/roq.cpp \
 	$(CORE_DIR)/tools/compilers/roqvq/roqParam.cpp
 
+ifneq ($(GLES),1)
 SRC_RENDERBUMP	:= \
 	$(CORE_DIR)/tools/compilers/renderbump/renderbump.cpp
+endif
 
 SRC_SOUND	:=\
 	$(CORE_DIR)/sound/snd_cache.cpp \
@@ -423,8 +425,39 @@ SRC_LIBRETRO := \
 	$(LIBRETRO_COMM_DIR)/net/net_compat.c \
 	$(LIBRETRO_COMM_DIR)/net/net_socket.c \
 	$(LIBRETRO_COMM_DIR)/glsym/rglgen.c \
-	$(LIBRETRO_COMM_DIR)/glsym/glsym_gl.c \
 	$(LIBRETRO_COMM_DIR)/glsm/glsm.c
+
+ifeq ($(GLES),1)
+	SRC_RENDERER += \
+		$(CORE_DIR)/renderer/glsl/cubeMapShaderFP.o \
+		$(CORE_DIR)/renderer/glsl/diffuseMapShaderVP.o \
+		$(CORE_DIR)/renderer/glsl/diffuseCubeShaderVP.o \
+		$(CORE_DIR)/renderer/glsl/diffuseMapShaderFP.o \
+		$(CORE_DIR)/renderer/glsl/fogShaderFP.o \
+		$(CORE_DIR)/renderer/glsl/fogShaderVP.o \
+		$(CORE_DIR)/renderer/glsl/blendLightShaderVP.o \
+		$(CORE_DIR)/renderer/glsl/interactionPhongShaderFP.o \
+		$(CORE_DIR)/renderer/glsl/interactionPhongShaderVP.o \
+		$(CORE_DIR)/renderer/glsl/interactionShaderFP.o \
+		$(CORE_DIR)/renderer/glsl/interactionShaderVP.o \
+		$(CORE_DIR)/renderer/glsl/reflectionCubeShaderVP.o \
+		$(CORE_DIR)/renderer/glsl/skyboxCubeShaderVP.o \
+		$(CORE_DIR)/renderer/glsl/stencilShadowShaderFP.o \
+		$(CORE_DIR)/renderer/glsl/stencilShadowShaderVP.o \
+		$(CORE_DIR)/renderer/glsl/zfillClipShaderFP.o \
+		$(CORE_DIR)/renderer/glsl/zfillClipShaderVP.o \
+		$(CORE_DIR)/renderer/glsl/zfillShaderFP.o \
+		$(CORE_DIR)/renderer/glsl/zfillShaderVP.o \
+		$(CORE_DIR)/renderer/draw_gles2.cpp
+	SRC_LIBRETRO += \
+		$(LIBRETRO_COMM_DIR)/glsym/glsym_es2.c
+else
+	SRC_RENDERER += \
+		$(CORE_DIR)/renderer/tr_rendertools.cpp \
+		$(CORE_DIR)/renderer/draw_arb2.cpp
+	SRC_LIBRETRO += \
+		$(LIBRETRO_COMM_DIR)/glsym/glsym_gl.c
+endif
 
 SOURCES_DIR = \
 	$(CORE_DIR)/jpeg-8c \

@@ -143,27 +143,74 @@ else
    LDFLAGS += -lwsock32 -lws2_32
 endif
 
+# 1. If CROSS_COMPILE is set, derive COMPILE_ARCH from it
+ifneq ($(strip $(CROSS_COMPILE)),)
+    # Extract architecture from toolchain prefix
+    COMPILE_ARCH := $(firstword $(subst -, ,$(CROSS_COMPILE)))
+endif
+
+# 2. If COMPILE_ARCH is still empty, detect from uname -m
+ifeq ($(strip $(COMPILE_ARCH)),)
+    COMPILE_ARCH := $(shell uname -m | sed -e 's/i.86/x86/' -e 's/amd64/x86_64/' -e 's/x64/x86_64/' -e 's/powerpc$$/ppc/' -e 's/powerpc64/ppc64/' -e 's/aarch64/arm64/')
+endif
+
+# Pointer size: check for known 32-bit architectures, assume 64-bit
+D3_SIZEOFPTR := 8
+
+# ARM 32‑bit
+ifneq (,$(findstring arm,$(COMPILE_ARCH)))
+    D3_SIZEOFPTR := 4
+endif
+
+# x86 32‑bit
+ifneq (,$(findstring i386,$(COMPILE_ARCH)))
+    D3_SIZEOFPTR := 4
+endif
+ifneq (,$(findstring i486,$(COMPILE_ARCH)))
+    D3_SIZEOFPTR := 4
+endif
+ifneq (,$(findstring i586,$(COMPILE_ARCH)))
+    D3_SIZEOFPTR := 4
+endif
+ifneq (,$(findstring i686,$(COMPILE_ARCH)))
+    D3_SIZEOFPTR := 4
+endif
+
+# PPC 32‑bit
+ifneq (,$(findstring ppc,$(COMPILE_ARCH)))
+    ifeq ($(findstring 64,$(COMPILE_ARCH)),)
+        D3_SIZEOFPTR := 4
+    endif
+endif
+
 # Normalize COMPILE_ARCH to match CMake's cpu normalization
 ifeq ($(COMPILE_ARCH),powerpc)
     D3_ARCH := ppc
+    D3_IS_BIG_ENDIAN := 1
 else ifeq ($(COMPILE_ARCH),powerpc64)
     D3_ARCH := ppc64
+    D3_IS_BIG_ENDIAN := 1
 else ifeq ($(COMPILE_ARCH),aarch64)
-    D3_ARCH := arm64
-else ifeq ($(COMPILE_ARCH),amd64)
+    D3_ARCH := aarch64
+    D3_IS_BIG_ENDIAN := 0
+else ifeq ($(COMPILE_ARCH),x86_64)
     D3_ARCH := x86_64
-else ifeq ($(COMPILE_ARCH),x64)
-    D3_ARCH := x86_64
-else ifneq (,$(shell echo $(COMPILE_ARCH) | grep -E '^i.86$$'))
+    D3_IS_BIG_ENDIAN := 0
+else ifeq ($(COMPILE_ARCH),x86)
     D3_ARCH := x86
-else ifneq (,$(shell echo $(COMPILE_ARCH) | grep -iE '^arm'))
-    ifeq ($(D3_SIZEOFPTR),8)
-        D3_ARCH := arm64
-    else
-        D3_ARCH := arm
-    endif
+    D3_IS_BIG_ENDIAN := 0
+else ifneq (,$(findstring arm,$(COMPILE_ARCH)))
+    D3_ARCH := arm
+    D3_IS_BIG_ENDIAN := 0
+else ifneq (,$(findstring mips,$(COMPILE_ARCH)))
+    D3_ARCH := mips
+    D3_IS_BIG_ENDIAN := 0
+else ifneq (,$(findstring sparc,$(COMPILE_ARCH)))
+    D3_ARCH := sparc
+    D3_IS_BIG_ENDIAN := 1
 else
     D3_ARCH := $(COMPILE_ARCH)
+    D3_IS_BIG_ENDIAN := 0
 endif
 
 # Equivalent of CMake's D3_OSTYPE and D3_SIZEOFPTR
@@ -177,27 +224,18 @@ else
     D3_OSTYPE := linux
 endif
 
-# Pointer size: check for known 32-bit architectures, otherwise assume 64-bit
-ifneq (,$(filter $(COMPILE_ARCH), x86 arm ppc))
-    D3_SIZEOFPTR := 4
-else
-    D3_SIZEOFPTR := 8
-endif
-
 CFLAGS += -DD3_OSTYPE=\"$(D3_OSTYPE)\" -DD3_SIZEOFPTR=$(D3_SIZEOFPTR) -DD3_ARCH=\"$(D3_ARCH)\"
-
-# Detect endianness by compiling and running a small probe
-ENDIAN_PROBE := $(shell printf 'int main(){int x=1;return *(char*)&x;}' | $(CC) -x c - -o /tmp/endian_probe 2>/dev/null && /tmp/endian_probe; echo $$?)
-
-ifeq ($(ENDIAN_PROBE),0)
-    D3_IS_BIG_ENDIAN := 1
-    $(info Detected Big Endian architecture, setting -DD3_IS_BIG_ENDIAN=1)
-else
-    D3_IS_BIG_ENDIAN := 0
-    $(info Detected Little Endian architecture, setting -DD3_IS_BIG_ENDIAN=0)
-endif
-
 CFLAGS += -DD3_IS_BIG_ENDIAN=$(D3_IS_BIG_ENDIAN)
+
+# webOS
+ifneq (,$(or $(findstring webos,$(CROSS_COMPILE)),$(findstring starfish,$(CROSS_COMPILE))))
+   GLES = 1
+   # CORE is for OpenGL or GLES 3.x
+   CORE =
+   GL_LIB := -lGLESv2
+   CFLAGS += -DHAVE_OPENGLES -DHAVE_OPENGLES2
+   CXXFLAGS += -DHAVE_OPENGLES -DHAVE_OPENGLES2
+endif
 
 HAVE_OPENGL = 1
 
@@ -220,7 +258,6 @@ OBJECTS := $(SOURCES_C:.c=.o) $(SOURCES_CXX:.cpp=.o)
 OBJECTS := $(filter-out %.c %.cpp,$(OBJECTS))
 
 COMPILE_PLATFORM=$(shell uname | sed -e 's/_.*//' | tr '[:upper:]' '[:lower:]' | sed -e 's/\//_/g')
-COMPILE_ARCH := $(shell uname -m | sed -e 's/i.86/x86/' -e 's/amd64/x86_64/' -e 's/x64/x86_64/' -e 's/powerpc$$/ppc/' -e 's/powerpc64/ppc64/' -e 's/aarch64/arm64/')
 
 ifeq ($(COMPILE_PLATFORM),cygwin)
   PLATFORM=mingw32

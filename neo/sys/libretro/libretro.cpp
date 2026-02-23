@@ -26,15 +26,17 @@ If you have questions concerning this license or the applicable additional terms
 ===========================================================================
 */
 
-extern "C"{
+extern "C" {
 #include "../libretro-common/include/libretro.h"
 #include "../libretro-common/include/retro_dirent.h"
 #include "../libretro-common/include/features/features_cpu.h"
 #include "../libretro-common/include/file/file_path.h"
-#include "../libretro-common/include/glsym/glsym.h"
 #include "../libretro-common/include/net/net_compat.h"
 #include "../libretro-common/include/net/net_socket.h"
-};
+}
+
+#include "../libretro-common/include/glsym/glsym.h"
+#include "../libretro-common/include/glsm/glsm.h"
 
 #include <errno.h>
 #include <unistd.h>
@@ -222,6 +224,23 @@ gp_layout_t classic_alt = {
       { 0 },
    },
 };
+
+static retro_hw_context_type get_hw_context_type(void)
+{
+#ifdef HAVE_OPENGLES
+#if defined(HAVE_OPENGLES_3_2)
+   return RETRO_HW_CONTEXT_OPENGLES_VERSION;   // major=3, minor=2
+#elif defined(HAVE_OPENGLES_3_1)
+   return RETRO_HW_CONTEXT_OPENGLES_VERSION;   // major=3, minor=1
+#elif defined(HAVE_OPENGLES3)
+   return RETRO_HW_CONTEXT_OPENGLES3;
+#else
+   return RETRO_HW_CONTEXT_OPENGLES2;
+#endif
+#else
+   return RETRO_HW_CONTEXT_OPENGL;
+#endif
+}
 
 static void update_variables(bool startup)
 {
@@ -725,7 +744,7 @@ static bool initialize_opengl(void)
 {
    glsm_ctx_params_t params = {0};
 
-   params.context_type     = RETRO_HW_CONTEXT_OPENGL;
+   params.context_type 	   = get_hw_context_type();
    params.context_reset    = context_reset;
    params.context_destroy  = context_destroy;
    params.environ_cb       = environ_cb;
@@ -766,12 +785,23 @@ bool retro_load_game(const struct retro_game_info *info)
 		return false;
 	}
 
-	hw_render.context_type    = RETRO_HW_CONTEXT_OPENGL;
+	hw_render.context_type    = get_hw_context_type();
 	hw_render.context_reset   = context_reset;
 	hw_render.context_destroy = context_destroy;
 	hw_render.bottom_left_origin = true;
 	hw_render.depth = true;
 	hw_render.stencil = true;
+
+#if defined(HAVE_OPENGLES_3_2)
+   hw_render.version_major = 3;
+   hw_render.version_minor = 2;
+#elif defined(HAVE_OPENGLES_3_1)
+   hw_render.version_major = 3;
+   hw_render.version_minor = 1;
+#elif defined(HAVE_OPENGLES3)
+   hw_render.version_major = 3;
+   hw_render.version_minor = 0;
+#endif
 
 	if (!initialize_opengl())
 	{

@@ -464,7 +464,7 @@ silInfo_t idRenderModelMD3::BuildSilInfo( md3Surface_t *surf ) {
 	tri.numVerts = numVerts;
 	tri.numIndexes = numIndexes;
 	if ( sizeof(triIndexes[0]) == sizeof(tri.indexes[0]) ) {
-		tri.indexes = triIndexes;
+		tri.indexes = (glIndex_t*)triIndexes;
 	} else {
 		R_AllocStaticTriSurfIndexes( &tri, numIndexes );
 		// don't memcpy, so we can change the index type from int to short without changing the interface

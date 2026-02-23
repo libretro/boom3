@@ -30,6 +30,10 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "renderer/tr_local.h"
 
+#ifdef HAVE_OPENGLES
+#include "renderer/gles_compat.h"
+#endif
+
 //#define TEST_TRACE
 
 /*
@@ -342,6 +346,8 @@ void RB_DrawExpandedTriangles( const srfTriangles_t *tri, const float radius, co
 	}
 }
 
+#ifndef HAVE_OPENGLES
+
 /*
 ================
 RB_ShowTrace
@@ -424,3 +430,5 @@ void RB_ShowTrace( drawSurf_t **drawSurfs, int numDrawSurfs ) {
 		}
 	}
 }
+
+#endif // !HAVE_OPENGLES

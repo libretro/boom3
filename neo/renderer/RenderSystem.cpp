@@ -38,6 +38,10 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "renderer/tr_local.h"
 
+#ifdef HAVE_OPENGLES
+#include "renderer/gles_compat.h"
+#endif
+
 idRenderSystemLocal	tr;
 idRenderSystem	*renderSystem = &tr;
 
@@ -249,9 +253,10 @@ static void R_CheckCvars( void ) {
 
 	if ( r_gammaInShader.IsModified() ) {
 		r_gammaInShader.ClearModified();
+#ifndef HAVE_OPENGLES
 		// reload shaders so they either add or remove the code for setting gamma/brightness in shader
 		R_ReloadARBPrograms_f( idCmdArgs() );
-
+#endif
 		if ( r_gammaInShader.GetBool() ) {
 			common->Printf( "Will apply r_gamma and r_brightness in shaders\n" );
 			GLimp_ResetGamma(); // reset hardware gamma
@@ -529,12 +534,15 @@ void idRenderSystemLocal::SetBackEndRenderer() {
 
 	backEndRenderer = BE_BAD;
 
+#ifdef HAVE_OPENGLES
+    backEndRenderer = BE_GLSL;
+#else
 	if ( idStr::Icmp( r_renderer.GetString(), "arb2" ) == 0 ) {
 		if ( glConfig.allowARB2Path ) {
 			backEndRenderer = BE_ARB2;
 		}
 	}
-
+#endif
 	// fallback
 	if ( backEndRenderer == BE_BAD ) {
 		// choose the best
@@ -552,6 +560,13 @@ void idRenderSystemLocal::SetBackEndRenderer() {
 		backEndRendererHasVertexPrograms = true;
 		backEndRendererMaxLight = 999;
 		break;
+#ifdef HAVE_OPENGLES
+    case BE_GLSL:
+        common->Printf( "using GLSL renderSystem\n" );
+        backEndRendererHasVertexPrograms = true;
+        backEndRendererMaxLight = 999;
+        break;
+#endif
 	default:
 		common->FatalError( "SetbackEndRenderer: bad back end" );
 	}
@@ -934,7 +949,9 @@ void idRenderSystemLocal::CaptureRenderToFile( const char *fileName, bool fixAlp
 	guiModel->Clear();
 	R_IssueRenderCommands();
 
+#ifndef HAVE_OPENGLES
 	qglReadBuffer( GL_BACK );
+#endif
 
 	// include extra space for OpenGL padding to word boundaries
 	int	c = ( rc->width + 3 ) * rc->height;

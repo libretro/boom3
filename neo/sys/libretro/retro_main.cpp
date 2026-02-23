@@ -41,7 +41,10 @@ If you have questions concerning this license or the applicable additional terms
 #include "sys/sys_local.h"
 
 #include "sys/libretro/retro_public.h"
+
+extern "C" {
 #include "../libretro-common/include/file/file_path.h"
+}
 
 #define					COMMAND_HISTORY 64
 

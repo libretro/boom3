@@ -36,6 +36,10 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "renderer/Material.h"
 
+#ifdef HAVE_OPENGLES
+#include "renderer/gles_compat.h"
+#endif
+
 /*
 
 Any errors during parsing just set MF_DEFAULTED and return, rather than throwing

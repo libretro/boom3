@@ -42,10 +42,12 @@ If you have questions concerning this license or the applicable additional terms
 	#endif
 #endif
 
+#ifndef HAVE_OPENGLES
 #ifdef D3_SDL3
   #include <SDL3/SDL_opengl.h>
 #else // SDL1.2 or SDL2
   #include <SDL_opengl.h>
+#endif
 #endif
 
 #if defined( ID_DEDICATED ) && defined( _WIN32 )
@@ -53,6 +55,10 @@ If you have questions concerning this license or the applicable additional terms
 	#ifdef WINGDIAPI
 		#pragma pop_macro("WINGDIAPI")
 	#endif
+#endif
+
+#ifdef __LIBRETRO__
+#include "../sys/libretro-common/include/glsym/glsym.h"
 #endif
 
 typedef void (*GLExtension_t)(void);
@@ -66,6 +72,8 @@ GLExtension_t GLimp_ExtensionPointer( const char *name );
 #ifdef __cplusplus
 	}
 #endif
+
+#ifndef HAVE_OPENGLES
 
 // declare qgl functions
 #define QGLPROC(name, rettype, args) extern rettype (APIENTRYP q##name) args;
@@ -136,9 +144,11 @@ extern PFNGLPROGRAMLOCALPARAMETER4FVARBPROC	qglProgramLocalParameter4fvARB;
 extern PFNGLDEPTHBOUNDSEXTPROC              qglDepthBoundsEXT;
 
 // GL_ARB_debug_output
-#ifndef __LIBRETRO__ // TODO
+#ifndef __LIBRETRO__
 extern PFNGLDEBUGMESSAGECALLBACKARBPROC    qglDebugMessageCallbackARB;
 #endif
+
+#endif // !HAVE_OPENGLES
 
 #if defined( _WIN32 ) && defined(ID_ALLOW_TOOLS)
 

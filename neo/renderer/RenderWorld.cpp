@@ -156,10 +156,12 @@ idRenderWorldLocal::~idRenderWorldLocal() {
 	// free all the entityDefs, lightDefs, portals, etc
 	FreeWorld();
 
+#ifndef HAVE_OPENGLES
 	// free up the debug lines, polys, and text
 	RB_ClearDebugPolygons( 0 );
 	RB_ClearDebugLines( 0 );
 	RB_ClearDebugText( 0 );
+#endif
 }
 
 /*
@@ -1752,8 +1754,10 @@ idRenderWorldLocal::DebugClearLines
 ====================
 */
 void idRenderWorldLocal::DebugClearLines( int time ) {
+#ifndef HAVE_OPENGLES
 	RB_ClearDebugLines( time );
 	RB_ClearDebugText( time );
+#endif
 }
 
 /*
@@ -1762,7 +1766,9 @@ idRenderWorldLocal::DebugLine
 ====================
 */
 void idRenderWorldLocal::DebugLine( const idVec4 &color, const idVec3 &start, const idVec3 &end, const int lifetime, const bool depthTest ) {
+#ifndef HAVE_OPENGLES
 	RB_AddDebugLine( color, start, end, lifetime, depthTest );
+#endif
 }
 
 /*
@@ -2036,7 +2042,9 @@ idRenderWorldLocal::DebugClearPolygons
 ====================
 */
 void idRenderWorldLocal::DebugClearPolygons( int time ) {
+#ifndef HAVE_OPENGLES
 	RB_ClearDebugPolygons( time );
+#endif
 }
 
 /*
@@ -2045,7 +2053,9 @@ idRenderWorldLocal::DebugPolygon
 ====================
 */
 void idRenderWorldLocal::DebugPolygon( const idVec4 &color, const idWinding &winding, const int lifeTime, const bool depthTest ) {
+#ifndef HAVE_OPENGLES
 	RB_AddDebugPolygon( color, winding, lifeTime, depthTest );
+#endif
 }
 
 /*
@@ -2091,7 +2101,11 @@ idRenderWorldLocal::DrawTextLength
 ================
 */
 float idRenderWorldLocal::DrawTextLength( const char *text, float scale, int len ) {
+#ifndef HAVE_OPENGLES
 	return RB_DrawTextLength( text, scale, len );
+#else
+	return 0.0f;
+#endif
 }
 
 /*
@@ -2103,7 +2117,9 @@ idRenderWorldLocal::DrawText
 ================
 */
 void idRenderWorldLocal::DrawText( const char *text, const idVec3 &origin, float scale, const idVec4 &color, const idMat3 &viewAxis, const int align, const int lifetime, const bool depthTest ) {
+#ifndef HAVE_OPENGLES
 	RB_AddDebugText( text, origin, scale, color, viewAxis, align, lifetime, depthTest );
+#endif
 }
 
 /*

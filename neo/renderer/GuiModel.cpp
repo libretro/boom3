@@ -132,7 +132,11 @@ void idGuiModel::ReadFromDemo( idDemoFile *demo ) {
 	demo->ReadInt( i );
 	indexes.SetNum( i, false );
 	for ( j = 0; j < i; j++ ) {
-		demo->ReadInt(indexes[j] );
+#if GL_INDEX_TYPE == GL_UNSIGNED_SHORT
+		demo->ReadShort( indexes[j] );
+#else
+		demo->ReadInt( indexes[j] );
+#endif
 	}
 
 	i = surfaces.Num();

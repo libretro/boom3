@@ -32,6 +32,10 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "renderer/tr_local.h"
 
+#ifdef HAVE_OPENGLES
+#include "renderer/gles_compat.h"
+#endif
+
 /*
 
   back end scene + lights rendering functions
@@ -91,6 +95,17 @@ void RB_DrawElementsWithCounters( const srfTriangles_t *tri ) {
 		}
 	}
 
+#ifdef HAVE_OPENGLES
+    if ( tri->indexCache ) {
+        qglDrawElements( GL_TRIANGLES, tri->numIndexes, GL_INDEX_TYPE,
+                         (int *)vertexCache.Position( tri->indexCache ) );
+        backEnd.pc.c_vboIndexes += tri->numIndexes;
+    } else {
+        qglBindBuffer( GL_ELEMENT_ARRAY_BUFFER, 0 );
+        qglDrawElements( GL_TRIANGLES, tri->numIndexes, GL_INDEX_TYPE,
+                         tri->indexes );
+    }
+#else
 	if ( tri->indexCache && r_useIndexBuffers.GetBool() ) {
 		qglDrawElements( GL_TRIANGLES,
 						r_singleTriangle.GetBool() ? 3 : tri->numIndexes,
@@ -106,6 +121,7 @@ void RB_DrawElementsWithCounters( const srfTriangles_t *tri ) {
 						GL_INDEX_TYPE,
 						tri->indexes );
 	}
+#endif
 }
 
 /*
@@ -120,6 +136,19 @@ void RB_DrawShadowElementsWithCounters( const srfTriangles_t *tri, int numIndexe
 	backEnd.pc.c_shadowIndexes += numIndexes;
 	backEnd.pc.c_shadowVertexes += tri->numVerts;
 
+#ifdef HAVE_OPENGLES
+    if ( tri->indexCache ) {
+        qglDrawElements( GL_TRIANGLES, numIndexes, GL_INDEX_TYPE,
+                         (int *)vertexCache.Position( tri->indexCache ) );
+        backEnd.pc.c_vboIndexes += numIndexes;
+    } else {
+        static bool bOnce = true;
+        if ( bOnce ) {
+            common->Warning( "Attempting to draw without index caching. This is a bug.\n" );
+            bOnce = false;
+        }
+    }
+#else
 	if ( tri->indexCache && r_useIndexBuffers.GetBool() ) {
 		qglDrawElements( GL_TRIANGLES,
 						r_singleTriangle.GetBool() ? 3 : numIndexes,
@@ -135,6 +164,7 @@ void RB_DrawShadowElementsWithCounters( const srfTriangles_t *tri, int numIndexe
 						GL_INDEX_TYPE,
 						tri->indexes );
 	}
+#endif
 }
 
 
@@ -557,10 +587,12 @@ void RB_BeginDrawingView (void) {
 
 	const viewDef_t* viewDef = backEnd.viewDef;
 
+#ifndef HAVE_OPENGLES
 	// set the modelview matrix for the viewer
 	qglMatrixMode(GL_PROJECTION);
 	qglLoadMatrixf( viewDef->projectionMatrix );
 	qglMatrixMode(GL_MODELVIEW);
+#endif
 
 	// set the window clipping
 	qglViewport( tr.viewportOffset[0] + viewDef->viewport.x1,
@@ -690,6 +722,7 @@ This can be used by different draw_* backends to decompose a complex light / sur
 interaction into primitive interactions
 =============
 */
+#ifndef HAVE_OPENGLES
 void RB_CreateSingleDrawInteractions( const drawSurf_t *surf, void (*DrawInteraction)(const drawInteraction_t *) ) {
 	const idMaterial	*surfaceShader = surf->material;
 	const float			*surfaceRegs = surf->shaderRegisters;
@@ -859,6 +892,19 @@ void RB_CreateSingleDrawInteractions( const drawSurf_t *surf, void (*DrawInterac
 		RB_LeaveDepthHack();
 	}
 }
+#endif
+
+/*
+==================
+RB_SetDrawInteractions
+==================
+*/
+#ifdef HAVE_OPENGLES
+void RB_SetDrawInteraction( const shaderStage_t *surfaceStage, const float *surfaceRegs,
+                           idImage **image, idVec4 matrix[2], float color[4] ) {
+  R_SetDrawInteraction( surfaceStage, surfaceRegs, image, matrix, color );
+}
+#endif
 
 /*
 =============
@@ -870,6 +916,7 @@ void RB_DrawView( const void *data ) {
 
 	cmd = (const drawSurfsCommand_t *)data;
 
+#ifndef HAVE_OPENGLES
 	// with r_lockSurfaces enabled, we set the locked render view
 	// for the primary viewDef for all the "what should be drawn" calculations.
 	// now it must be reverted to the real render view so the scene gets rendered
@@ -894,6 +941,7 @@ void RB_DrawView( const void *data ) {
 				vModel->modelViewMatrix );
 		}
 	}
+#endif
 
 	backEnd.viewDef = cmd->viewDef;
 
@@ -906,11 +954,13 @@ void RB_DrawView( const void *data ) {
 		return;
 	}
 
+#ifndef HAVE_OPENGLES
 	// skip render bypasses everything that has models, assuming
 	// them to be 3D views, but leaves 2D rendering visible
 	if ( r_skipRender.GetBool() && backEnd.viewDef->viewEntitys ) {
 		return;
 	}
+#endif
 
 	// skip render context sets the gl context to NULL,
 	// which should factor out the API cost, under the assumption
@@ -921,14 +971,18 @@ void RB_DrawView( const void *data ) {
 
 	backEnd.pc.c_surfaces += backEnd.viewDef->numDrawSurfs;
 
+#ifndef HAVE_OPENGLES
 	RB_ShowOverdraw();
+#endif
 
 	// render the scene, jumping to the hardware specific interaction renderers
 	RB_STD_DrawView();
 
+#ifndef HAVE_OPENGLES
 	// restore the context for 2D drawing if we were stubbing it out
 	if ( r_skipRenderContext.GetBool() && backEnd.viewDef->viewEntitys ) {
 		GLimp_ActivateContext();
 		RB_SetDefaultGLState();
 	}
+#endif
 }

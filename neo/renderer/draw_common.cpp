@@ -34,12 +34,20 @@ If you have questions concerning this license or the applicable additional terms
 extern idCVar r_useCarmacksReverse;
 extern idCVar r_useStencilOpSeparate;
 
+#ifdef HAVE_OPENGLES
+#include "renderer/gles_compat.h"
+#endif
+
 /*
 =====================
 RB_BakeTextureMatrixIntoTexgen
 =====================
 */
+#ifdef HAVE_OPENGLES
+void RB_BakeTextureMatrixIntoTexgen( idMat4 & lightProject, const float *textureMatrix ) {
+#else
 void RB_BakeTextureMatrixIntoTexgen( idPlane lightProject[3], const float *textureMatrix ) {
+#endif
 	float	genMatrix[16];
 	float	final[16];
 
@@ -75,6 +83,8 @@ void RB_BakeTextureMatrixIntoTexgen( idPlane lightProject[3], const float *textu
 	lightProject[1][2] = final[9];
 	lightProject[1][3] = final[13];
 }
+
+#ifndef HAVE_OPENGLES
 
 /*
 ================
@@ -1950,6 +1960,8 @@ void RB_STD_LightScale( void ) {
 
 //=========================================================================================
 
+#endif
+
 /*
 =============
 RB_STD_DrawView
@@ -1968,37 +1980,68 @@ void	RB_STD_DrawView( void ) {
 	// clear the z buffer, set the projection matrix, etc
 	RB_BeginDrawingView();
 
+#ifdef HAVE_OPENGLES
+	// Setup GLSL shader state
+	RB_GLSL_PrepareShaders();
+#endif
+
 	// decide how much overbrighting we are going to do
 	RB_DetermineLightScale();
 
 	// fill the depth buffer and clear color buffer to black except on
 	// subviews
+#ifndef HAVE_OPENGLES
 	RB_STD_FillDepthBuffer( drawSurfs, numDrawSurfs );
+#else
+	RB_GLSL_FillDepthBuffer( drawSurfs, numDrawSurfs );
+#endif
 
 	// main light renderer
 	switch( tr.backEndRenderer ) {
+#ifndef HAVE_OPENGLES
 	case BE_ARB2:
 		RB_ARB2_DrawInteractions();
 		break;
+#endif
+#ifdef HAVE_OPENGLES
+	case BE_GLSL:
+		RB_GLSL_DrawInteractions();
+		break;
+#endif
 	}
 
+#ifndef HAVE_OPENGLES
 	// disable stencil shadow test
 	qglStencilFunc( GL_ALWAYS, 128, 255 );
 
 	// uplight the entire screen to crutch up not having better blending range
 	RB_STD_LightScale();
+#endif
 
 	// now draw any non-light dependent shading passes
+#ifndef HAVE_OPENGLES
 	int	processed = RB_STD_DrawShaderPasses( drawSurfs, numDrawSurfs );
+#else
+	const int processed = RB_GLSL_DrawShaderPasses(drawSurfs, numDrawSurfs);
+#endif
 
+#ifndef HAVE_OPENGLES
 	// fob and blend lights
 	RB_STD_FogAllLights();
+#else
+	RB_GLSL_FogAllLights();
+#endif
 
 	// now draw any post-processing effects using _currentRender
 	if ( processed < numDrawSurfs ) {
+#ifndef HAVE_OPENGLES
 		RB_STD_DrawShaderPasses( drawSurfs+processed, numDrawSurfs-processed );
+#else
+		RB_GLSL_DrawShaderPasses(drawSurfs + processed, numDrawSurfs - processed);
+#endif
 	}
 
+#ifndef HAVE_OPENGLES
 	RB_RenderDebugTools( drawSurfs, numDrawSurfs );
-
+#endif
 }
