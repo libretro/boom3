@@ -1,5 +1,11 @@
 STATIC_LINKING := 0
 AR             := ar
+CORE           := -DCORE=ON
+SDL_VER        := 2
+IMGGUI         := 1
+OPENAL         := 1
+DEBUG          := 0
+RELWITHDEBINFO := 0
 
 ifneq ($(V),1)
    Q := @
@@ -137,24 +143,84 @@ else
    LDFLAGS += -lwsock32 -lws2_32
 endif
 
+# Normalize COMPILE_ARCH to match CMake's cpu normalization
+ifeq ($(COMPILE_ARCH),powerpc)
+    D3_ARCH := ppc
+else ifeq ($(COMPILE_ARCH),powerpc64)
+    D3_ARCH := ppc64
+else ifeq ($(COMPILE_ARCH),aarch64)
+    D3_ARCH := arm64
+else ifeq ($(COMPILE_ARCH),amd64)
+    D3_ARCH := x86_64
+else ifeq ($(COMPILE_ARCH),x64)
+    D3_ARCH := x86_64
+else ifneq (,$(shell echo $(COMPILE_ARCH) | grep -E '^i.86$$'))
+    D3_ARCH := x86
+else ifneq (,$(shell echo $(COMPILE_ARCH) | grep -iE '^arm'))
+    ifeq ($(D3_SIZEOFPTR),8)
+        D3_ARCH := arm64
+    else
+        D3_ARCH := arm
+    endif
+else
+    D3_ARCH := $(COMPILE_ARCH)
+endif
+
+# Equivalent of CMake's D3_OSTYPE and D3_SIZEOFPTR
+ifeq ($(platform), osx)
+    D3_OSTYPE := macosx
+else ifeq ($(platform), win)
+    D3_OSTYPE := windows
+else ifneq (,$(findstring ios,$(platform)))
+    D3_OSTYPE := ios
+else
+    D3_OSTYPE := linux
+endif
+
+# Pointer size: check for known 32-bit architectures, otherwise assume 64-bit
+ifneq (,$(filter $(COMPILE_ARCH), x86 arm ppc))
+    D3_SIZEOFPTR := 4
+else
+    D3_SIZEOFPTR := 8
+endif
+
+CFLAGS += -DD3_OSTYPE=\"$(D3_OSTYPE)\" -DD3_SIZEOFPTR=$(D3_SIZEOFPTR) -DD3_ARCH=\"$(D3_ARCH)\"
+
+# Detect endianness by compiling and running a small probe
+ENDIAN_PROBE := $(shell printf 'int main(){int x=1;return *(char*)&x;}' | $(CC) -x c - -o /tmp/endian_probe 2>/dev/null && /tmp/endian_probe; echo $$?)
+
+ifeq ($(ENDIAN_PROBE),0)
+    D3_IS_BIG_ENDIAN := 1
+    $(info Detected Big Endian architecture, setting -DD3_IS_BIG_ENDIAN=1)
+else
+    D3_IS_BIG_ENDIAN := 0
+    $(info Detected Little Endian architecture, setting -DD3_IS_BIG_ENDIAN=0)
+endif
+
+CFLAGS += -DD3_IS_BIG_ENDIAN=$(D3_IS_BIG_ENDIAN)
+
 HAVE_OPENGL = 1
 
 LDFLAGS += $(LIBM)
 
-ifeq ($(DEBUG), 1)
-   CFLAGS += -O0 -g -DDEBUG
-   CXXFLAGS += -O0 -g -DDEBUG
+ifeq ($(DEBUG),1)
+  CFLAGS += -O0 -g -DDEBUG
+  CXXFLAGS += -O0 -g -DDEBUG
+else ifeq ($(RELWITHDEBINFO),1)
+  CFLAGS  += -O2 -g -fno-omit-frame-pointer
+  CXXFLAGS += -O2 -g -fno-omit-frame-pointer
 else
-   CFLAGS += -O3
-   CXXFLAGS += -O3
+  CFLAGS += -O3
+  CXXFLAGS += -O3
 endif
 
 include Makefile.common
 
 OBJECTS := $(SOURCES_C:.c=.o) $(SOURCES_CXX:.cpp=.o)
+OBJECTS := $(filter-out %.c %.cpp,$(OBJECTS))
 
 COMPILE_PLATFORM=$(shell uname | sed -e 's/_.*//' | tr '[:upper:]' '[:lower:]' | sed -e 's/\//_/g')
-COMPILE_ARCH=$(shell uname -m | sed -e 's/i.86/x86/' | sed -e 's/^arm.*/arm/')
+COMPILE_ARCH := $(shell uname -m | sed -e 's/i.86/x86/' -e 's/amd64/x86_64/' -e 's/x64/x86_64/' -e 's/powerpc$$/ppc/' -e 's/powerpc64/ppc64/' -e 's/aarch64/arm64/')
 
 ifeq ($(COMPILE_PLATFORM),cygwin)
   PLATFORM=mingw32
@@ -196,8 +262,19 @@ endif
 
 TOPDIR ?= $(CURDIR)
 
+ifeq ($(SDL_VER),2)
+    SDL2 := -DSDL2=ON -DHAVE_SDL
+else ifeq ($(SDL_VER),3)
+    SDL2 := -DD3_SDL3 -DHAVE_SDL
+endif
+
+ifeq ($(IMGGUI),0)
+    CFLAGS   += -DIMGUI_DISABLE
+    CXXFLAGS += -DIMGUI_DISABLE
+endif
+
 CFLAGS   += -Wall -D__LIBRETRO__ $(fpic) -DCORE=ON -DSDL2=ON -DBASE=ON -DUSE_FILE32API -ffast-math \
-			-fno-unsafe-math-optimizations -fno-strict-aliasing -fvisibility=hidden -fomit-frame-pointer \
+			-fno-unsafe-math-optimizations -fno-strict-aliasing -fomit-frame-pointer \
 			-Wno-sign-compare -Wno-switch -Wno-format-security -I$(TOPDIR) -I$(TOPDIR)/sys/libretro/config
 CXXFLAGS += -Wall -D__LIBRETRO__ $(fpic) -fpermissive -std=gnu++11
 
@@ -217,13 +294,13 @@ $(TARGET): $(OBJECTS)
 ifeq ($(STATIC_LINKING), 1)
 	$(AR) rcs $@ $(OBJECTS)
 else
-	$(CXX) $(fpic) $(SHARED) -o $@ $(OBJECTS) $(LDFLAGS) $(GL_LIB) $(LIBS)
+	$(CXX) $(fpic) $(SHARED) -o $@ $(OBJECTS) $(LDFLAGS) $(GL_LIB) $(LIBS) $(SDL_LIBS) $(OPENAL_LIBS)
 endif
 
-%.o: %.cpp
+%.o: $(CORE_DIR)/%.cpp
 	$(CXX) $(CFLAGS) $(CXXFLAGS) $(fpic) -c -o $@ $<
 
-%.o: %.c
+%.o: $(CORE_DIR)/%.c
 	$(CC) $(CFLAGS) -std=gnu11 $(fpic) -c -o $@ $<
 
 clean:

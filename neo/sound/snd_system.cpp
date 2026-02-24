@@ -332,6 +332,16 @@ bool CheckOpenALDeviceAndRecoverIfNeeded()
 	return true;
 }
 
+#ifdef __LIBRETRO__
+typedef ALCdevice* (ALC_APIENTRY*LPALCLOOPBACKOPENDEVICESOFT)(const ALCchar*);
+static LPALCLOOPBACKOPENDEVICESOFT d3_alcLoopbackOpenDeviceSOFT = NULL;
+
+static void LoadLoopbackFunctions() {
+    d3_alcLoopbackOpenDeviceSOFT = (LPALCLOOPBACKOPENDEVICESOFT)
+        alcGetProcAddress(NULL, "alcLoopbackOpenDeviceSOFT");
+}
+#endif
+
 /*
 ===============
 idSoundSystemLocal::Init
@@ -340,6 +350,25 @@ initialize the sound system
 ===============
 */
 void idSoundSystemLocal::Init() {
+#ifdef __LIBRETRO__
+    LoadLoopbackFunctions();
+    if (d3_alcLoopbackOpenDeviceSOFT) {
+        openalDevice = d3_alcLoopbackOpenDeviceSOFT(NULL);
+    }
+    if (openalDevice) {
+        ALCint attrs[] = {
+            ALC_FORMAT_CHANNELS_SOFT, ALC_STEREO_SOFT,
+            ALC_FORMAT_TYPE_SOFT,     ALC_SHORT_SOFT,
+            ALC_FREQUENCY,            44100,
+            0
+        };
+        openalContext = alcCreateContext(openalDevice, attrs);
+        alcMakeContextCurrent(openalContext);
+    } else {
+        common->Printf("[sound] WARNING: alcLoopbackOpenDeviceSOFT not available!\n");
+    }
+#endif
+
 	common->Printf( "----- Initializing OpenAL -----\n" );
 
 	isInitialized = false;
@@ -373,6 +402,7 @@ void idSoundSystemLocal::Init() {
 	resetRetryCount = 0;
 	lastCheckTime = 0;
 
+#ifndef __LIBRETRO__
 	// DG: no point in initializing OpenAL if sound is disabled with s_noSound
 	if ( s_noSound.GetBool() ) {
 		common->Printf( "Sound disabled with s_noSound 1 !\n" );
@@ -456,6 +486,7 @@ void idSoundSystemLocal::Init() {
 			}
 		}
 	}
+#endif // !__LIBRETRO__
 
 	// DG: only do these things if opening device and creating context succeeded and sound is enabled
 	//     (if sound is disabled with s_noSound, openalContext is NULL)
@@ -906,7 +937,9 @@ int idSoundSystemLocal::AsyncUpdateWrite( int inTime ) {
 	int numSpeakers = s_numberOfSpeakers.GetInteger();
 
 	// enable audio hardware caching
+#ifndef __LIBRETRO__
 	alcSuspendContext( openalContext );
+#endif
 
 	// let the active sound world mix all the channels in unless muted or avi demo recording
 	if ( !muted && currentSoundWorld && !currentSoundWorld->fpa[0] ) {
@@ -914,7 +947,9 @@ int idSoundSystemLocal::AsyncUpdateWrite( int inTime ) {
 	}
 
 	// disable audio hardware caching (this updates ALL settings since last alcSuspendContext)
+#ifndef __LIBRETRO__
 	alcProcessContext( openalContext );
+#endif
 
 	CurrentSoundTime = sampleTime;
 

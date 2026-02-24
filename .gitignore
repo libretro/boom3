@@ -5,6 +5,8 @@
 .cproject
 .project
 .settings/
+*.o
+boom3_libretro.so
 
 /dhewm*
 /*-releases/

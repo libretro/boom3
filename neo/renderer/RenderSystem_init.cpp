@@ -304,7 +304,9 @@ PFNGLDEPTHBOUNDSEXTPROC                 qglDepthBoundsEXT;
 PFNGLSTENCILOPSEPARATEPROC qglStencilOpSeparate;
 
 // GL_ARB_debug_output
+#ifndef __LIBRETRO__
 PFNGLDEBUGMESSAGECALLBACKARBPROC        qglDebugMessageCallbackARB;
+#endif
 
 // eez: This is a slight hack for letting us select the desired screenshot format in other functions
 //  This is a hack to avoid adding another function parameter to idRenderSystem::TakeScreenshot(),
@@ -322,6 +324,7 @@ enum {
 /*
  * Callback function for debug output.
  */
+#ifndef __LIBRETRO__
 static void APIENTRY
 DebugCallback( GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length,
               const GLchar *message, const void *userParam )
@@ -367,6 +370,7 @@ DebugCallback( GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei l
 	common->Warning( "GLDBG %s %s %s: %s\n", sourceStr, typeStr, severityStr, message );
 
 }
+#endif
 
 /*
 =================
@@ -561,6 +565,7 @@ static void R_CheckPortableExtensions( void ) {
 	// GL_ARB_debug_output
 	glConfig.glDebugOutputAvailable = false;
 	if ( glConfig.haveDebugContext ) {
+#ifndef __LIBRETRO__
 		if ( strstr( glConfig.extensions_string, "GL_ARB_debug_output" ) ) {
 			glConfig.glDebugOutputAvailable = true;
 			qglDebugMessageCallbackARB = (PFNGLDEBUGMESSAGECALLBACKARBPROC)GLimp_ExtensionPointer( "glDebugMessageCallbackARB" );
@@ -578,6 +583,7 @@ static void R_CheckPortableExtensions( void ) {
 				common->Warning( "r_glDebugContext is set, but can't be used because GL_ARB_debug_output is not supported" );
 			}
 		}
+#endif
 	} else {
 		if ( strstr( glConfig.extensions_string, "GL_ARB_debug_output" ) ) {
 			if ( r_glDebugContext.GetBool() ) {

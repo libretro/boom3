@@ -3018,6 +3018,7 @@ void idCommonLocal::Init( int argc, char **argv ) {
 #endif
 #endif
 
+#ifndef __LIBRETRO__
 #if SDL_VERSION_ATLEAST(3, 0, 0)
 	if ( ! SDL_Init(SDL_INIT_VIDEO | SDL_INIT_JOYSTICK | SDL_INIT_GAMEPAD) )
 	{
@@ -3038,6 +3039,7 @@ void idCommonLocal::Init( int argc, char **argv ) {
 			Sys_Error("Error while initializing SDL: %s", SDL_GetError());
 		}
 	}
+#endif // !__LIBRETRO__
 
 	Sys_InitThreads();
 
@@ -3175,8 +3177,11 @@ void idCommonLocal::Init( int argc, char **argv ) {
 		Sys_Error( "Error during initialization" );
 	}
 
+	// This should not be required, but without it we get no sound despite sound mode being 0
+//#ifndef __LIBRETRO__
 	runAsyncThread = true;
 	Sys_CreateThread( AsyncThread, this, asyncThread, "AsyncThread" );
+//#endif
 }
 
 
@@ -3290,6 +3295,29 @@ void idCommonLocal::InitGame( void ) {
 	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "exec editor.cfg\n" );
 	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "exec default.cfg\n" );
 
+#ifdef __LIBRETRO__
+	// default bindings for libretro
+	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "unbindall\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"ENTER\" \"_attack\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"ESCAPE\" \"togglemenu\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"TAB\" \"_impulse19\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"BACKSPACE\" \"_moveDown\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"LEFTARROW\" \"_impulse14\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"RIGHTARROW\" \"_impulse15\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"CTRL\" \"_impulse13\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"ALT\" \"_strafe\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"MOUSE1\" \"_moveUp\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"MOUSE2\" \"_zoom\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"AUX1\" \"_impulse11\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"AUX2\" \"_impulse5\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"AUX3\" \"_speed\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"AUX4\" \"_impulse11\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"AUX7\" \"_moveLeft\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"AUX8\" \"_moveRight\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"AUX9\" \"_forward\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"AUX10\" \"_back\"\n" );
+#endif
+
 	// skip the config file if "safe" is on the command line
 	if ( !SafeMode() ) {
 		cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "exec " CONFIG_FILE "\n" );
@@ -3304,6 +3332,36 @@ void idCommonLocal::InitGame( void ) {
 
 	// re-override anything from the config files with command line args
 	StartupVariable( NULL, false );
+
+#ifdef __LIBRETRO__
+	// Applied AFTER DoomConfig.cfg so it doesn't get overwritten
+	cmdSystem->BufferCommandText( CMD_EXEC_NOW, "m_strafe 0\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_NOW, "in_mouse 1\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_NOW, "bind \"MOUSE1\"     \"_attack\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_NOW, "bind \"MOUSE2\"     \"_zoom\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_NOW, "bind \"MOUSE3\"     \"_impulse19\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_NOW, "bind \"MOUSE4\"     \"_impulse15\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_NOW, "bind \"MOUSE5\"     \"_impulse14\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_NOW, "bind \"w\"          \"_forward\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_NOW, "bind \"s\"          \"_back\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_NOW, "bind \"a\"          \"_moveLeft\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_NOW, "bind \"d\"          \"_moveRight\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_NOW, "bind \"SPACE\"      \"_moveUp\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_NOW, "bind \"c\"          \"_moveDown\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_NOW, "bind \"SHIFT\"      \"_speed\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_NOW, "bind \"e\"          \"_impulse19\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_NOW, "bind \"r\"          \"_impulse13\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_NOW, "bind \"f\"          \"_impulse12\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_NOW, "bind \"q\"          \"_impulse14\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_NOW, "bind \"`\"          \"toggleConsole\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_NOW, "bind \"1\"          \"_impulse1\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_NOW, "bind \"2\"          \"_impulse2\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_NOW, "bind \"3\"          \"_impulse3\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_NOW, "bind \"4\"          \"_impulse4\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_NOW, "bind \"5\"          \"_impulse5\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_NOW, "bind \"6\"          \"_impulse6\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_NOW, "bind \"7\"          \"_impulse7\"\n" );
+#endif
 
 	// if any archived cvars are modified after this, we will trigger a writing of the config file
 	cvarSystem->ClearModifiedFlags( CVAR_ARCHIVE );

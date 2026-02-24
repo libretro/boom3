@@ -110,8 +110,8 @@ static inline byte JoyToKey(int button) {
         /* KEY_B      */ K_BACKSPACE,
         /* KEY_X      */ K_ALT,
         /* KEY_Y      */ K_CTRL,
-        /* KEY_LSTICK */ K_JOY31,
-        /* KEY_RSTICK */ K_JOY32,
+        /* KEY_LSTICK */ K_JOY_BTN_LSTICK,
+        /* KEY_RSTICK */ K_JOY_BTN_RSTICK,
         /* KEY_L      */ K_SHIFT,
         /* KEY_R      */ K_DEL,
         /* KEY_ZL     */ K_MOUSE2,
@@ -317,9 +317,9 @@ void Sys_GrabMouseCursor(bool grabIt) {
 	int flags;
 
 	if (grabIt)
-		flags = GRAB_ENABLE | GRAB_HIDECURSOR | GRAB_SETSTATE;
+		flags = GRAB_GRABMOUSE | GRAB_HIDECURSOR | GRAB_ENABLETEXTINPUT;
 	else
-		flags = GRAB_SETSTATE;
+		flags = GRAB_ENABLETEXTINPUT;
 
 	GLimp_GrabInput(flags);
 }
@@ -336,18 +336,22 @@ struct simulated2 {
 	int y;
 };
 
-simulated skeys[32];
-simulated2 smouse[32];
+#define SKEYS_LENGTH 32
+
+simulated skeys[SKEYS_LENGTH];
+simulated2 smouse[SKEYS_LENGTH];
 uint8_t snum = 0;
 uint8_t snum2 = 0;
 
 void Key_Event(int key, int val) {
+	if (snum >= SKEYS_LENGTH) return;
 	skeys[snum].key = key;
 	skeys[snum].val = val;
 	snum++;
 }
 
 void Mouse_Event(int x, int y) {
+	if (snum >= SKEYS_LENGTH) return;
 	smouse[snum2].x = x;
 	smouse[snum2].y = y;
 	snum2++;

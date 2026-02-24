@@ -45,6 +45,8 @@ extern "C"{
 #include "sys/platform.h"
 #include "framework/Licensee.h"
 #include "framework/FileSystem.h"
+#include "framework/KeyInput.h"
+#include "renderer/tr_local.h"
 #include "sys/libretro/retro_public.h"
 #include "sys/sys_local.h"
 #include "sound/snd_local.h"
@@ -55,6 +57,12 @@ extern "C"{
 
 #include <glsm/glsm.h>
 
+#include <AL/alc.h>
+#include <AL/alext.h>
+
+static LPALCRENDERSAMPLESSOFT d3_alcRenderSamplesSOFT = NULL;
+
+#define RETRO_AUDIO_BUFFER_SIZE 2048
 #define SAMPLE_RATE   	44100
 #define BUFFER_SIZE 	32768
 
@@ -86,6 +94,7 @@ retro_environment_t environ_cb;
 static retro_input_poll_t poll_cb;
 static retro_input_state_t input_cb;
 static struct retro_rumble_interface rumble;
+retro_perf_get_time_usec_t perf_get_time_usec = NULL;
 static bool libretro_supports_bitmasks = false;
 
 static void audio_callback(void);
@@ -108,6 +117,15 @@ typedef struct {
       char *com;
    } bind[GP_MAXBINDS];
 } gp_layout_t;
+
+static bool kb_mouse_btn[5] = { false, false, false, false, false };
+static const int kb_mouse_keys[5] = {
+    K_MOUSE1, K_MOUSE2, K_MOUSE3, K_MOUSE4, K_MOUSE5
+};
+
+static float mouse_sensitivity = 3.0f;
+
+extern idCVar com_asyncSound;
 
 gp_layout_t modern = {
    {
@@ -450,7 +468,7 @@ static void audio_process(void)
 #define LANALOG_RIGHT 0x02
 #define LANALOG_UP    0x04
 #define LANALOG_DOWN  0x08
-#include "framework/KeyInput.h"
+
 extern void Key_Event(int button, int val);
 extern void Mouse_Event(int x, int y);
 uint32_t oldanalogs;
@@ -675,24 +693,27 @@ void Sys_SetMouse() {
 	
 }
 
-float flt_buffer[2][BUFFER_SIZE];
 int16_t mixed_buffer[2][BUFFER_SIZE];
 uint64_t sampletime = 0;
 int idx = 0;
 
 static void audio_callback(void)
 {
-	unsigned read_first, read_second;
-	float samples_per_frame = SAMPLE_RATE / framerate;
-	SIMDProcessor->Memset(flt_buffer[idx], 0, sizeof(float) * BUFFER_SIZE);
-	SIMDProcessor->Memset(mixed_buffer[idx], 0, sizeof(int16_t) * BUFFER_SIZE);
-	Sys_EnterCriticalSection();
-	soundSystem->AsyncMix(sampletime, flt_buffer[idx] );
-	Sys_LeaveCriticalSection();
-	SIMDProcessor->MixedSoundToSamples(mixed_buffer[idx], flt_buffer[idx], samples_per_frame * 2);
-	audio_batch_cb(mixed_buffer[idx], samples_per_frame);
-	sampletime += samples_per_frame;
-	idx = (idx + 1) % 2;
+    ALsizei samples = (ALsizei)(SAMPLE_RATE / framerate);
+
+    if (!d3_alcRenderSamplesSOFT && soundSystemLocal.openalDevice) {
+        d3_alcRenderSamplesSOFT = (LPALCRENDERSAMPLESSOFT)
+            alcGetProcAddress(soundSystemLocal.openalDevice, "alcRenderSamplesSOFT");
+    }
+
+    if (soundSystemLocal.isInitialized && d3_alcRenderSamplesSOFT && soundSystemLocal.openalDevice) {
+        d3_alcRenderSamplesSOFT(soundSystemLocal.openalDevice, mixed_buffer[idx], samples);
+        audio_batch_cb(mixed_buffer[idx], samples);
+    } else {
+        int16_t silence[RETRO_AUDIO_BUFFER_SIZE * 2] = {};
+        audio_batch_cb(silence, samples);
+    }
+    idx = (idx + 1) % 2;
 }
 
 static bool context_framebuffer_lock(void *data)
@@ -822,11 +843,10 @@ bool retro_load_game(const struct retro_game_info *info)
 
 	extract_directory(g_rom_dir, g_rom_dir, sizeof(g_rom_dir));
 	BUILD_DATADIR = g_rom_dir;
-	
+
 	return true;
 }
 
-#include "renderer/tr_local.h"
 /*
 ===================
 GLimp_ExtensionPointer
@@ -843,6 +863,7 @@ void retro_run(void)
 	
 	if (first_boot) {
 		network_init();
+		//com_asyncSound.SetInteger(0);
 		common->Init( fake_argc, fake_argv );
 		first_boot = false;
 		update_variables(false);
@@ -873,6 +894,12 @@ void GLimp_SwapBuffers() {
    if (!libretro_shared_context)
       glsm_ctl(GLSM_CTL_STATE_BIND, NULL);
 	glBindFramebuffer(RARCH_GL_FRAMEBUFFER, hw_render.get_current_framebuffer());
+}
+
+void GLimp_UpdateWindowSize()
+{
+    glConfig.vidWidth = scr_width;
+    glConfig.vidHeight = scr_height;
 }
 
 void retro_cheat_reset(void)
@@ -924,6 +951,8 @@ void retro_set_video_refresh(retro_video_refresh_t cb)
 
 void retro_unload_game(void)
 {
+	if (common)
+        common->Shutdown();
 }
 
 unsigned retro_get_region(void)
@@ -1070,41 +1099,8 @@ void retro_set_environment(retro_environment_t cb)
    libretro_set_core_options(environ_cb,
          &libretro_supports_option_categories);
    cb(RETRO_ENVIRONMENT_SET_CONTROLLER_INFO, (void*)ports);
-}
 
-#include "sound.h"
-
-idAudioHardware *idAudioHardware::Alloc() {
-	return new idAudioHardwareOSS;
-}
-
-idAudioHardware::~idAudioHardware() {
-}
-
-idAudioHardwareOSS::~idAudioHardwareOSS() { 
-	Release();
-}
-
-bool idAudioHardwareOSS::Initialize( ) { 
-	return true;
-}
-
-bool idAudioHardwareOSS::Flush( void ) {
-	return false;
-}
-
-int idAudioHardwareOSS::GetMixBufferSize() { 
-	return 0;
-}
-
-short* idAudioHardwareOSS::GetMixBuffer() {
-	return (short *)m_buffer;
-}
-
-void idAudioHardwareOSS::Write( bool flushing ) {
-}
-
-void idAudioHardwareOSS::Release( bool bSilent ) {
-	m_buffer = NULL;
-	m_buffer_size = 0;
+   struct retro_perf_callback perf;
+   if (environ_cb(RETRO_ENVIRONMENT_GET_PERF_INTERFACE, &perf))
+      perf_get_time_usec = perf.get_time_usec;
 }

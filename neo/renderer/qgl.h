@@ -118,6 +118,10 @@ extern	PFNGLGETCOMPRESSEDTEXIMAGEARBPROC	qglGetCompressedTexImageARB;
   #define GL_COMPRESSED_RGBA_BPTC_UNORM_ARB 0x8E8C
 #endif
 
+#ifndef GL_COMPRESSED_RGBA_BPTC_UNORM
+  #define GL_COMPRESSED_RGBA_BPTC_UNORM GL_COMPRESSED_RGBA_BPTC_UNORM_ARB
+#endif
+
 // ARB_vertex_program / ARB_fragment_program
 extern PFNGLVERTEXATTRIBPOINTERARBPROC		qglVertexAttribPointerARB;
 extern PFNGLENABLEVERTEXATTRIBARRAYARBPROC	qglEnableVertexAttribArrayARB;
@@ -132,7 +136,9 @@ extern PFNGLPROGRAMLOCALPARAMETER4FVARBPROC	qglProgramLocalParameter4fvARB;
 extern PFNGLDEPTHBOUNDSEXTPROC              qglDepthBoundsEXT;
 
 // GL_ARB_debug_output
+#ifndef __LIBRETRO__ // TODO
 extern PFNGLDEBUGMESSAGECALLBACKARBPROC    qglDebugMessageCallbackARB;
+#endif
 
 #if defined( _WIN32 ) && defined(ID_ALLOW_TOOLS)
 
