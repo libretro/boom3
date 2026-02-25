@@ -229,7 +229,7 @@ static int MapKey (int key)
 
 LRESULT CALLBACK rvGEViewer::WndProc ( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam )
 {
-	rvGEViewer* viewer = (rvGEViewer*) GetWindowLong ( hwnd, GWL_USERDATA );
+	rvGEViewer* viewer = (rvGEViewer*) GetWindowLongPtr ( hwnd, GWLP_USERDATA );
 
 	switch ( msg )
 	{
@@ -365,7 +365,7 @@ LRESULT CALLBACK rvGEViewer::WndProc ( HWND hwnd, UINT msg, WPARAM wParam, LPARA
 		case WM_CREATE:
 		{
 			CREATESTRUCT* cs = (CREATESTRUCT*) lParam;
-			SetWindowLong ( hwnd, GWL_USERDATA, (LONG)cs->lpCreateParams );
+			SetWindowLongPtr( hwnd, GWLP_USERDATA, (LONG_PTR)cs->lpCreateParams );
 
 			viewer = (rvGEViewer*)cs->lpCreateParams;
 			viewer->mWnd = hwnd;
@@ -453,7 +453,7 @@ bool rvGEViewer::SetupPixelFormat ( void )
 	HDC	 hDC    = GetDC ( mWnd );
 	bool result = true;
 
-	int pixelFormat = ChoosePixelFormat(hDC, &win32.pfd);
+	int pixelFormat = Win_ChoosePixelFormat(hDC);
 	if (pixelFormat > 0)
 	{
 		if (SetPixelFormat(hDC, pixelFormat, &win32.pfd) == NULL)

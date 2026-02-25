@@ -35,6 +35,33 @@ If you have questions concerning this license or the applicable additional terms
 #include <unistd.h>
 #endif
 
+#ifdef D3_SDL3
+  #include <SDL3/SDL_endian.h>
+  // some defines for backwards-compat with SDL2
+  #define SDL_SwapBE16(X)  SDL_Swap16BE(X)
+  #define SDL_SwapLE16(X)  SDL_Swap16LE(X)
+  #define SDL_SwapBE32(X)  SDL_Swap32BE(X)
+  #define SDL_SwapLE32(X)  SDL_Swap32LE(X)
+#else // SDL1.2 or SDL2
+  #include <SDL_endian.h>
+#endif
+
+#ifndef D3_IS_BIG_ENDIAN
+  #error "D3_IS_BIG_ENDIAN should be defined by the build system (CMake)!"
+#endif
+
+#if SDL_BYTEORDER == SDL_BIG_ENDIAN
+  #if D3_IS_BIG_ENDIAN != 1
+    #error "CMake (which sets D3_IS_BIG_ENDIAN) and SDL disagree about the endianess! CMake says little, SDL says big"
+  #endif
+#elif SDL_BYTEORDER == SDL_LIL_ENDIAN
+  #if D3_IS_BIG_ENDIAN != 0
+    #error "CMake (which sets D3_IS_BIG_ENDIAN) and SDL disagree about the endianess! CMake says big, SDL says little"
+  #endif
+#else
+  #error "According to SDL, endianess is neither Big nor Little - dhewm3 doesn't support other byteorders!"
+#endif
+
 #include "sys/platform.h"
 #include "idlib/math/Vector.h"
 #include "idlib/math/Polynomial.h"
@@ -43,8 +70,6 @@ If you have questions concerning this license or the applicable additional terms
 #include "framework/Common.h"
 
 #include "idlib/Lib.h"
-
-#include <retro_endianness.h>
 
 /*
 ===============================================================================
@@ -278,7 +303,7 @@ ID_INLINE static float FloatSwap( float f ) {
 	} id_attribute((may_alias)) dat;
 
 	dat.f = f;
-	dat.u = SWAP32(dat.u);
+	dat.u = SDL_Swap32(dat.u);
 
 	return dat.f;
 }
@@ -298,7 +323,7 @@ RESULTS
    Reverses the byte order in each of elcount elements.
 ===================================================================== */
 ID_INLINE static void RevBytesSwap( void *bp, int elsize, int elcount ) {
-	register unsigned char *p, *q;
+	unsigned char *p, *q;
 
 	p = ( unsigned char * ) bp;
 
@@ -431,19 +456,19 @@ bool Swap_IsBigEndian( void ) {
 }
 
 short	BigShort( short l ) {
-	return swap_if_little16(l);
+	return SDL_SwapBE16(l);
 }
 
 short	LittleShort( short l ) {
-	return swap_if_big16(l);
+	return SDL_SwapLE16(l);
 }
 
 int		BigInt( int l ) {
-	return swap_if_little32(l);
+	return SDL_SwapBE32(l);
 }
 
 int		LittleInt( int l ) {
-	return swap_if_big32(l);
+	return SDL_SwapLE32(l);
 }
 
 float	BigFloat( float l ) {

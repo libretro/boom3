@@ -160,7 +160,8 @@ void ToggleListView::OnSize(UINT nType, int cx, int cy) {
 * Returns the size of each item in the toggle list.
 */
 void ToggleListView::MeasureItem(LPMEASUREITEMSTRUCT lpMeasureItemStruct) {
-	lpMeasureItemStruct->itemHeight = TOGGLELIST_ITEMHEIGHT;
+	float scaling_factor = Win_GetWindowScalingFactor(GetSafeHwnd());
+	lpMeasureItemStruct->itemHeight = TOGGLELIST_ITEMHEIGHT * scaling_factor;
 }
 
 /**
