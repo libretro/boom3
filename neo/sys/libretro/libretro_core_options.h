@@ -102,6 +102,30 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "enabled"
    },
    {
+      "doom_mouse_sensitivity",
+      "Mouse Sensitivity (Keyboard + Mouse mode)",
+      NULL,
+      "Adjust mouse look sensitivity when using the Keyboard + Mouse "
+      "input device. Higher values = faster camera movement. "
+      "Has no effect in gamepad modes.",
+      NULL,
+      NULL,
+      {
+         { "0.5",  "0.5 (Very Slow)" },
+         { "1.0",  "1.0 (Slow)"      },
+         { "1.5",  "1.5"             },
+         { "2.0",  "2.0"             },
+         { "2.5",  "2.5"             },
+         { "3.0",  "3.0 (Default)"   },
+         { "4.0",  "4.0"             },
+         { "5.0",  "5.0 (Fast)"      },
+         { "6.0",  "6.0"             },
+         { "8.0",  "8.0 (Very Fast)" },
+         { NULL, NULL },
+      },
+      "3.0"
+   },
+   {
       "doom_fps",
       "Show FPS",
       NULL,

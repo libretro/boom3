@@ -111,6 +111,15 @@ static int analog_deadzone = (int)(0.15f * ANALOG_RANGE);
 
 #define GP_MAXBINDS 32
 
+#define LANALOG_LEFT  0x01
+#define LANALOG_RIGHT 0x02
+#define LANALOG_UP    0x04
+#define LANALOG_DOWN  0x08
+
+extern void Key_Event(int button, int val);
+extern void Mouse_Event(int x, int y);
+uint32_t oldanalogs;
+int16_t old_ret;
 
 typedef struct {
    struct retro_input_descriptor desc[GP_MAXBINDS];
@@ -312,17 +321,12 @@ static void update_variables(bool startup)
 		}
 		
 	}
-}
 
-static void keyboard_cb(bool down, unsigned keycode, uint32_t character, uint16_t mod)
-{
-	// character-only events are discarded
-	if (keycode != RETROK_UNKNOWN) {
-		if (down)
-			printf("Pressed %u\n", keycode);
-		else
-			printf("Unpressed %u\n", keycode);
-	}
+	var.key = "doom_mouse_sensitivity";
+	var.value = NULL;
+
+	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+		mouse_sensitivity = (float)atof(var.value);
 }
 
 gp_layout_t *gp_layoutp = NULL;
@@ -483,15 +487,6 @@ static void audio_process(void)
 {
 }
 
-#define LANALOG_LEFT  0x01
-#define LANALOG_RIGHT 0x02
-#define LANALOG_UP    0x04
-#define LANALOG_DOWN  0x08
-
-extern void Key_Event(int button, int val);
-extern void Mouse_Event(int x, int y);
-uint32_t oldanalogs;
-int16_t old_ret;
 void Sys_SetKeys(){
 	int port;
 	uint32_t virt_buttons = 0x00;
@@ -577,9 +572,9 @@ void Sys_SetKeys(){
 			else if (!(ret & (1 << RETRO_DEVICE_ID_JOYPAD_R)) && (old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_R)))
 				Key_Event(K_ENTER, 0);
 			if ((ret & (1 << RETRO_DEVICE_ID_JOYPAD_L2)) && !(old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_L2)))
-				Key_Event(K_AUX1, 1);
+				Key_Event(K_SPACE, 1);
 			else if (!(ret & (1 << RETRO_DEVICE_ID_JOYPAD_L2)) && (old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_L2)))
-				Key_Event(K_AUX1, 0);
+				Key_Event(K_SPACE, 0);
 			if ((ret & (1 << RETRO_DEVICE_ID_JOYPAD_R2)) && !(old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_R2)))
 				Key_Event(K_AUX2, 1);
 			else if (!(ret & (1 << RETRO_DEVICE_ID_JOYPAD_R2)) && (old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_R2)))
@@ -628,6 +623,80 @@ void Sys_SetKeys(){
 			old_ret = ret;
 		}
 		break;
+		case RETRO_DEVICE_KEYBOARD:
+		{
+			// Poll keyboard state directly - much more reliable than the callback
+			static const struct { unsigned retrok; int doom_key; } kb_map[] = {
+				{ RETROK_w,         'w'         },
+				{ RETROK_s,         's'         },
+				{ RETROK_a,         'a'         },
+				{ RETROK_d,         'd'         },
+				{ RETROK_e,         'e'         },
+				{ RETROK_r,         'r'         },
+				{ RETROK_f,         'f'         },
+				{ RETROK_q,         'q'         },
+				{ RETROK_c,         'c'         },
+				{ RETROK_1,         '1'         },
+				{ RETROK_2,         '2'         },
+				{ RETROK_3,         '3'         },
+				{ RETROK_4,         '4'         },
+				{ RETROK_5,         '5'         },
+				{ RETROK_6,         '6'         },
+				{ RETROK_7,         '7'         },
+				{ RETROK_SPACE,     K_SPACE     },
+				{ RETROK_LSHIFT,    K_SHIFT     },
+				{ RETROK_RSHIFT,    K_SHIFT     },
+				{ RETROK_LCTRL,     K_CTRL      },
+				{ RETROK_RCTRL,     K_CTRL      },
+				{ RETROK_LALT,      K_ALT       },
+				{ RETROK_RALT,      K_ALT       },
+				{ RETROK_ESCAPE,    K_ESCAPE    },
+				{ RETROK_RETURN,    K_ENTER     },
+				{ RETROK_BACKSPACE, K_BACKSPACE },
+				{ RETROK_TAB,       K_TAB       },
+				{ RETROK_UP,        K_UPARROW   },
+				{ RETROK_DOWN,      K_DOWNARROW },
+				{ RETROK_LEFT,      K_LEFTARROW },
+				{ RETROK_RIGHT,     K_RIGHTARROW},
+				{ RETROK_F1,        K_F1        },
+				{ RETROK_F2,        K_F2        },
+				{ RETROK_F3,        K_F3        },
+				{ RETROK_F4,        K_F4        },
+				{ RETROK_F5,        K_F5        },
+				{ RETROK_BACKQUOTE, '`'         },
+			};
+			static const int kb_map_size = sizeof(kb_map) / sizeof(kb_map[0]);
+			static bool kb_prev[sizeof(kb_map) / sizeof(kb_map[0])] = {};
+
+			for (int i = 0; i < kb_map_size; i++)
+			{
+				bool now = !!input_cb(port, RETRO_DEVICE_KEYBOARD, 0, kb_map[i].retrok);
+				if (now != kb_prev[i])
+				{
+					Key_Event(kb_map[i].doom_key, now ? 1 : 0);
+					kb_prev[i] = now;
+				}
+			}
+
+			// Mouse buttons
+			static const struct { unsigned retro_id; int doom_key; } mouse_buttons[] = {
+				{ RETRO_DEVICE_ID_MOUSE_LEFT,      K_MOUSE1 },
+				{ RETRO_DEVICE_ID_MOUSE_RIGHT,     K_MOUSE2 },
+				{ RETRO_DEVICE_ID_MOUSE_MIDDLE,    K_MOUSE3 },
+				{ RETRO_DEVICE_ID_MOUSE_WHEELUP,   K_MOUSE4 },
+				{ RETRO_DEVICE_ID_MOUSE_WHEELDOWN, K_MOUSE5 },
+			};
+			for (int i = 0; i < 5; i++)
+			{
+				bool now = !!input_cb(port, RETRO_DEVICE_MOUSE, 0, mouse_buttons[i].retro_id);
+				if (now != kb_mouse_btn[i])
+				{
+					Key_Event(mouse_buttons[i].doom_key, now ? 1 : 0);
+					kb_mouse_btn[i] = now;
+				}
+			}
+			break;
+		}
 		/*
 		case RETRO_DEVICE_KEYBOARD:
 			if (input_cb(port, RETRO_DEVICE_MOUSE, 0, RETRO_DEVICE_ID_MOUSE_LEFT))
@@ -688,6 +757,24 @@ void Sys_SetMouse() {
 	int rsx, rsy;
 	int slowdown = 1024 * (framerate / 60.0f);
 	
+	if (doom_devices[0] == RETRO_DEVICE_KEYBOARD)
+	{
+		/* Raw mouse delta – already in screen pixels, no deadzone needed */
+		int dx = input_cb(0, RETRO_DEVICE_MOUSE, 0,
+						  RETRO_DEVICE_ID_MOUSE_X);
+		int dy = invert_y_axis * input_cb(0, RETRO_DEVICE_MOUSE, 0,
+										  RETRO_DEVICE_ID_MOUSE_Y);
+
+		/* Scale: mouse_sensitivity == 1.0 → 1:1 pixel movement */
+		dx = (int)(dx * mouse_sensitivity);
+		dy = (int)(dy * mouse_sensitivity);
+
+		if (dx || dy)
+			Mouse_Event(dx, dy);
+
+		return;
+	}
+
 	// Right stick Look
 	rsx = input_cb(0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT,
 		RETRO_DEVICE_ID_ANALOG_X);
@@ -819,7 +906,7 @@ bool retro_load_game(const struct retro_game_info *info)
 #endif
 	bool use_external_savedir = false;
 	const char *base_save_dir = NULL;
-	struct retro_keyboard_callback cb = { keyboard_cb };
+//	struct retro_keyboard_callback cb = { keyboard_cb };
 
 	if (!info)
 		return false;
@@ -1120,7 +1207,7 @@ void retro_set_environment(retro_environment_t cb)
    };
 
    static const struct retro_controller_info ports[] = {
-      { port_1, 3 },
+      { port_1, 4 },
       { 0 },
    };
 

@@ -3300,24 +3300,16 @@ void idCommonLocal::InitGame( void ) {
 #ifdef __LIBRETRO__
 	// default bindings for libretro
 	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "unbindall\n" );
-	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"ENTER\" \"_attack\"\n" );
-	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"ESCAPE\" \"togglemenu\"\n" );
-	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"TAB\" \"_impulse19\"\n" );
-	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"BACKSPACE\" \"_moveDown\"\n" );
-	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"LEFTARROW\" \"_impulse14\"\n" );
-	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"RIGHTARROW\" \"_impulse15\"\n" );
-	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"CTRL\" \"_impulse13\"\n" );
-	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"ALT\" \"_strafe\"\n" );
-	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"MOUSE1\" \"_moveUp\"\n" );
-	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"MOUSE2\" \"_zoom\"\n" );
-	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"AUX1\" \"_impulse11\"\n" );
-	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"AUX2\" \"_impulse5\"\n" );
-	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"AUX3\" \"_speed\"\n" );
-	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"AUX4\" \"_impulse11\"\n" );
-	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"AUX7\" \"_moveLeft\"\n" );
-	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"AUX8\" \"_moveRight\"\n" );
-	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"AUX9\" \"_forward\"\n" );
-	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"AUX10\" \"_back\"\n" );
+
+	// --- Joypad ---
+	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"AUX1\"       \"_impulse11\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"AUX2\"       \"_impulse5\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"AUX3\"       \"_speed\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"AUX4\"       \"_impulse11\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"AUX7\"       \"_moveLeft\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"AUX8\"       \"_moveRight\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"AUX9\"       \"_forward\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"AUX10\"      \"_back\"\n" );
 #endif
 
 	// skip the config file if "safe" is on the command line
@@ -3363,6 +3355,7 @@ void idCommonLocal::InitGame( void ) {
 	cmdSystem->BufferCommandText( CMD_EXEC_NOW, "bind \"5\"          \"_impulse5\"\n" );
 	cmdSystem->BufferCommandText( CMD_EXEC_NOW, "bind \"6\"          \"_impulse6\"\n" );
 	cmdSystem->BufferCommandText( CMD_EXEC_NOW, "bind \"7\"          \"_impulse7\"\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_NOW, "bind \"ESCAPE\" 	 \"_escape\"\n" );
 #endif
 
 	// if any archived cvars are modified after this, we will trigger a writing of the config file
