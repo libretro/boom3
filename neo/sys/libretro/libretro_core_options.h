@@ -88,6 +88,23 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "960x544"
    },
    {
+   "doom_machine_spec",
+   "Quality Preset (requires core restart)",
+   NULL,
+   "Select the engine quality preset.",
+   NULL,
+   NULL,
+   {
+      { "auto",  "Auto (Detect by RAM)" },
+      { "0",     "Low" },
+      { "1",     "Medium" },
+      { "2",     "High" },
+      { "3",     "Ultra" },
+      { NULL, NULL },
+   },
+   "auto"
+   },
+   {
       "doom_invert_y_axis",
       "Invert Y Axis",
       NULL,

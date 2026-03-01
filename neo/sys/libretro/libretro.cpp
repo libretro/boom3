@@ -329,6 +329,22 @@ static void update_variables(bool startup)
 
 	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
 		mouse_sensitivity = (float)atof(var.value);
+
+	/* Quality preset override */
+	var.key = "doom_machine_spec";
+	var.value = NULL;
+
+	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+	{
+		if (strcmp(var.value, "auto") != 0)
+		{
+			int preset = atoi(var.value); /* 0–3 */
+			if (preset < 0) preset = 0;
+			if (preset > 3) preset = 3;
+
+			cvarSystem->SetCVarInteger("com_machineSpec", preset);
+		}
+	}
 }
 
 gp_layout_t *gp_layoutp = NULL;

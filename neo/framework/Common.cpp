@@ -3282,10 +3282,17 @@ void idCommonLocal::InitGame( void ) {
 	}
 
 	idCmdArgs args;
+
+#ifdef __LIBRETRO__
+	if (com_machineSpec.GetInteger() == -1)
+		SetMachineSpec();
+	Com_ExecMachineSpec_f( args );
+#else
 	if ( sysDetect ) {
 		SetMachineSpec();
 		Com_ExecMachineSpec_f( args );
 	}
+#endif
 
 	// initialize the renderSystem data structures, but don't start OpenGL yet
 	renderSystem->Init();
