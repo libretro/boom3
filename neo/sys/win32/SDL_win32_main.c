@@ -157,7 +157,9 @@ static BOOL OutOfMemory(void)
    calling conventions may differ... */
 static void cleanup(void)
 {
+#ifdef HAVE_SDL
 	SDL_Quit();
+#endif
 }
 
 #if defined(_MSC_VER) && !defined(_WIN32_WCE)

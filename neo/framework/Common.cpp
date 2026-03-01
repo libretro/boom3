@@ -28,9 +28,11 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "sys/sys_sdl.h"
 
+#ifdef HAVE_SDL
 #if SDL_VERSION_ATLEAST(3, 0, 0)
   // DG: compat with SDL2
   #define SDL_setenv SDL_setenv_unsafe
+#endif
 #endif
 
 #include "sys/platform.h"
@@ -2466,6 +2468,7 @@ idCommonLocal::PrintLoadingMessage
 =================
 */
 void idCommonLocal::PrintLoadingMessage( const char *msg ) {
+#ifndef __LIBRETRO__
 	if ( !( msg && *msg ) ) {
 		return;
 	}
@@ -2474,6 +2477,7 @@ void idCommonLocal::PrintLoadingMessage( const char *msg ) {
 	int len = strlen( msg );
 	renderSystem->DrawSmallStringExt( ( 640 - len * SMALLCHAR_WIDTH ) / 2, 410, msg, idVec4( 0.0f, 0.81f, 0.94f, 1.0f ), true, declManager->FindMaterial( "textures/bigchars" ) );
 	renderSystem->EndFrame( NULL, NULL );
+#endif
 }
 
 /*
@@ -3045,6 +3049,7 @@ void idCommonLocal::Init( int argc, char **argv ) {
 
 	Sys_InitThreads();
 
+#ifdef HAVE_SDL
 #if SDL_VERSION_ATLEAST(2, 0, 0)
 	/* Force the window to minimize when focus is lost. This was the
 	 * default behavior until SDL 2.0.12 and changed with 2.0.14.
@@ -3063,6 +3068,7 @@ void idCommonLocal::Init( int argc, char **argv ) {
 		SDL_setenv("SDL_ENABLE_SCREEN_KEYBOARD", "0", 0);
 	}
   #endif
+#endif
 #endif
 
 	try {
@@ -3095,6 +3101,7 @@ void idCommonLocal::Init( int argc, char **argv ) {
 		idCVar::RegisterStaticVars();
 
 		// print engine version
+#ifdef HAVE_SDL
 #if SDL_VERSION_ATLEAST(3, 0, 0)
 		int sdlv = SDL_GetVersion();
 		int sdlvmaj = SDL_VERSIONNUM_MAJOR(sdlv);
@@ -3114,6 +3121,7 @@ void idCommonLocal::Init( int argc, char **argv ) {
 
 #if SDL_VERSION_ATLEAST(2, 0, 0)
 		Printf( "SDL video driver: %s\n", SDL_GetCurrentVideoDriver() );
+#endif
 #endif
 
 		// initialize key input/binding, done early so bind command exists
@@ -3244,7 +3252,9 @@ void idCommonLocal::Shutdown( void ) {
 
 	Sys_ShutdownThreads();
 
+#ifdef HAVE_SDL
 	SDL_Quit();
+#endif
 }
 
 /*

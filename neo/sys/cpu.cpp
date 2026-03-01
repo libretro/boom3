@@ -28,10 +28,12 @@ If you have questions concerning this license or the applicable additional terms
 
 #include <float.h>
 
+#ifdef HAVE_SDL
 #ifdef D3_SDL3
   #include <SDL3/SDL_cpuinfo.h>
 #else // SDL1.2 or SDL2
   #include <SDL_cpuinfo.h>
+#endif
 #endif
 
 // MSVC header intrin.h uses strcmp and errors out when not set
@@ -203,6 +205,7 @@ Sys_GetProcessorId
 int Sys_GetProcessorId( void ) {
 	int flags = CPUID_GENERIC;
 
+#ifdef HAVE_SDL
 	if (SDL_HasMMX())
 		flags |= CPUID_MMX;
 
@@ -218,14 +221,15 @@ int Sys_GetProcessorId( void ) {
 	if (SDL_HasSSE2())
 		flags |= CPUID_SSE2;
 
+	if (SDL_HasAltiVec())
+		flags |= CPUID_ALTIVEC;
+#endif
+
 #ifndef NO_CPUID
 	// there is no SDL_HasSSE3() in SDL 1.2
 	if (HasSSE3())
 		flags |= CPUID_SSE3;
 #endif
-
-	if (SDL_HasAltiVec())
-		flags |= CPUID_ALTIVEC;
 
 	return flags;
 }

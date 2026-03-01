@@ -43,10 +43,12 @@ If you have questions concerning this license or the applicable additional terms
 #endif
 
 #ifndef HAVE_OPENGLES
+#ifdef HAVE_SDL
 #ifdef D3_SDL3
   #include <SDL3/SDL_opengl.h>
 #else // SDL1.2 or SDL2
   #include <SDL_opengl.h>
+#endif
 #endif
 #endif
 

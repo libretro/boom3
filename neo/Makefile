@@ -1,8 +1,8 @@
 STATIC_LINKING := 0
 AR             := ar
 CORE           := -DCORE=ON
-SDL_VER        := 2
-IMGGUI         := 1
+SDL_VER        := 0
+IMGGUI         := 0
 OPENAL         := 1
 DEBUG          := 0
 RELWITHDEBINFO := 0

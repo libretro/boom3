@@ -382,7 +382,13 @@ typedef int (*xthread_t)( void * );
 
 typedef struct {
 	const char		*name;
-	SDL_Thread		*threadHandle;
+#ifdef HAVE_SDL
+	struct SDL_Thread	*threadHandle;
+#elif defined(_WIN32)
+	void			*threadHandle;  // HANDLE
+#else
+	unsigned long	threadHandle;   // pthread_t
+#endif
 #ifdef D3_SDL3
 	uint64_t		threadId;
 #else
