@@ -59,8 +59,10 @@ extern "C" {
 
 #include <glsm/glsm.h>
 
+#ifdef HAVE_OPENAL
 #include <AL/alc.h>
 #include <AL/alext.h>
+#endif
 
 static LPALCRENDERSAMPLESSOFT d3_alcRenderSamplesSOFT = NULL;
 
@@ -799,13 +801,20 @@ void Sys_SetMouse() {
 	
 }
 
-int16_t mixed_buffer[2][BUFFER_SIZE];
-uint64_t sampletime = 0;
+#define SOUND_BUFFER_SAMPLES (MIXBUFFER_SAMPLES * 4)
+#define MAX_CHANNELS 2
+static float snd_float_buf[SOUND_BUFFER_SAMPLES];
+static int snd_buf_write = 0;
+static int snd_buf_read  = 0;
+static uint64_t sampletime = 0;
 int idx = 0;
 
 static void audio_callback(void)
 {
-    ALsizei samples = (ALsizei)(SAMPLE_RATE / framerate);
+	if (first_boot) return;
+
+#ifdef HAVE_OPENAL
+	ALsizei samples = (ALsizei)(SAMPLE_RATE / framerate);
 
     if (!d3_alcRenderSamplesSOFT && soundSystemLocal.openalDevice) {
         d3_alcRenderSamplesSOFT = (LPALCRENDERSAMPLESSOFT)
@@ -819,7 +828,36 @@ static void audio_callback(void)
         int16_t silence[RETRO_AUDIO_BUFFER_SIZE * 2] = {};
         audio_batch_cb(silence, samples);
     }
-    idx = (idx + 1) % 2;
+
+	idx = (idx + 1) % 2;
+#else
+    int samples_per_frame = (int)(SAMPLE_RATE / framerate);
+    int total = samples_per_frame * MAX_CHANNELS;
+
+    // only mix when we need more data
+    int available = snd_buf_write - snd_buf_read;
+    while (available < total) {
+        float tmp[MIXBUFFER_SAMPLES * MAX_CHANNELS] = {};
+        Sys_EnterCriticalSection();
+        soundSystem->AsyncMix(sampletime, tmp);
+        Sys_LeaveCriticalSection();
+        sampletime += MIXBUFFER_SAMPLES;
+        for (int i = 0; i < MIXBUFFER_SAMPLES * MAX_CHANNELS; i++) {
+            snd_float_buf[snd_buf_write % SOUND_BUFFER_SAMPLES] = tmp[i];
+            snd_buf_write++;
+        }
+        available = snd_buf_write - snd_buf_read;
+    }
+
+    static int16_t out[4096 * MAX_CHANNELS];
+    static float tmp_out[4096 * MAX_CHANNELS];
+    for (int i = 0; i < total; i++) {
+        tmp_out[i] = snd_float_buf[snd_buf_read % SOUND_BUFFER_SAMPLES];
+        snd_buf_read++;
+    }
+    SIMDProcessor->MixedSoundToSamples(out, tmp_out, total);
+    audio_batch_cb(out, samples_per_frame);
+#endif
 }
 
 static bool context_framebuffer_lock(void *data)

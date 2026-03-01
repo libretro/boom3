@@ -1834,6 +1834,7 @@ void idSoundWorldLocal::AddChannelContribution( idSoundEmitterLocal *sound, idSo
 	//
 	// allocate and initialize hardware source
 	//
+#ifdef HAVE_OPENAL
 	if ( sound->removeStatus < REMOVE_STATUS_SAMPLEFINISHED ) {
 		if ( !alIsSource( chan->openalSource ) ) {
 			chan->openalSource = soundSystemLocal.AllocOpenALSource( chan, !chan->leadinSample->hardwareBuffer || !chan->soundShader->entries[0]->hardwareBuffer || looping, chan->leadinSample->objectInfo.nChannels == 2 );
@@ -1935,11 +1936,15 @@ void idSoundWorldLocal::AddChannelContribution( idSoundEmitterLocal *sound, idSo
 			}
 		}
 	}
+#endif // HAVE_OPENAL
 #if 1 // DG: I /think/ this was only relevant for the old sound backends?
 	// FIXME: completely remove else branch, but for testing leave it in under com_asyncSound 2
 	//        (which also does the old 92-100ms updates)
+#ifdef HAVE_OPENAL
 	else if( com_asyncSound.GetInteger() == 2 ) {
-
+#else
+	if ( true ) {
+#endif
 		if ( slowmoActive && !chan->disallowSlow ) {
 			idSlowChannel slow = sound->GetSlowChannel( chan );
 

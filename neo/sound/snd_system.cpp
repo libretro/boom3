@@ -70,6 +70,11 @@ idCVar idSoundSystemLocal::s_reverbFeedback( "s_reverbFeedback", "0.333", CVAR_S
 idCVar idSoundSystemLocal::s_enviroSuitVolumeScale( "s_enviroSuitVolumeScale", "0.9", CVAR_SOUND | CVAR_FLOAT, "" );
 idCVar idSoundSystemLocal::s_skipHelltimeFX( "s_skipHelltimeFX", "0", CVAR_SOUND | CVAR_BOOL, "" );
 
+idCVar idSoundSystemLocal::s_alReverbGain( "s_alReverbGain", "0.5", CVAR_SOUND | CVAR_FLOAT | CVAR_ARCHIVE, "reduce reverb strength (0.0 to 1.0)", 0.0f, 1.0f );
+idCVar idSoundSystemLocal::s_scaleDownAndClamp( "s_scaleDownAndClamp", "1", CVAR_SOUND | CVAR_BOOL | CVAR_ARCHIVE, "Clamp and reduce volume of all sounds to prevent clipping or temporary downscaling by OpenAL. When disabling this, you probably want to explicitly disable s_alOutputLimiter" );
+
+#ifdef HAVE_OPENAL
+
 #if !defined(ID_DEDICATED)
 idCVar idSoundSystemLocal::s_useEAXReverb( "s_useEAXReverb", "1", CVAR_SOUND | CVAR_BOOL | CVAR_ARCHIVE, "use EFX reverb" );
 idCVar idSoundSystemLocal::s_decompressionLimit( "s_decompressionLimit", "6", CVAR_SOUND | CVAR_INTEGER | CVAR_ARCHIVE, "specifies maximum uncompressed sample length in seconds" );
@@ -78,9 +83,6 @@ idCVar idSoundSystemLocal::s_useEAXReverb( "s_useEAXReverb", "0", CVAR_SOUND | C
 idCVar idSoundSystemLocal::s_decompressionLimit( "s_decompressionLimit", "6", CVAR_SOUND | CVAR_INTEGER | CVAR_ROM, "specifies maximum uncompressed sample length in seconds" );
 #endif
 
-idCVar idSoundSystemLocal::s_alReverbGain( "s_alReverbGain", "0.5", CVAR_SOUND | CVAR_FLOAT | CVAR_ARCHIVE, "reduce reverb strength (0.0 to 1.0)", 0.0f, 1.0f );
-
-idCVar idSoundSystemLocal::s_scaleDownAndClamp( "s_scaleDownAndClamp", "1", CVAR_SOUND | CVAR_BOOL | CVAR_ARCHIVE, "Clamp and reduce volume of all sounds to prevent clipping or temporary downscaling by OpenAL. When disabling this, you probably want to explicitly disable s_alOutputLimiter" );
 idCVar idSoundSystemLocal::s_alOutputLimiter( "s_alOutputLimiter", "-1", CVAR_SOUND | CVAR_INTEGER | CVAR_ARCHIVE, "Configure OpenAL's output-limiter. 0: Disable, 1: Enable, -1: Let OpenAL decide (default)" );
 idCVar idSoundSystemLocal::s_alHRTF( "s_alHRTF", "-1", CVAR_SOUND | CVAR_INTEGER | CVAR_ARCHIVE, "Enable HRTF for better surround sound with stereo *headphones*. 0: Disable, 1: Enable, -1: Let OpenAL decide (default)" );
 
@@ -93,9 +95,23 @@ bool idSoundSystemLocal::alEnumerateAllAvailable = false;
 bool idSoundSystemLocal::alIsDisconnectAvailable = false;
 bool idSoundSystemLocal::alOutputModeAvailable = false;
 
+#else // !HAVE_OPENAL
+
+idCVar idSoundSystemLocal::s_useOpenAL( "s_useOpenAL", "0", CVAR_SOUND | CVAR_BOOL | CVAR_ARCHIVE, "use OpenAL" );
+
+idCVar idSoundSystemLocal::s_useEAXReverb( "s_useEAXReverb", "0", CVAR_SOUND | CVAR_BOOL | CVAR_ROM, "EFX not available in this build" );
+idCVar idSoundSystemLocal::s_decompressionLimit( "s_decompressionLimit", "6", CVAR_SOUND | CVAR_INTEGER | CVAR_ROM, "specifies maximum uncompressed sample length in seconds" );
+
+bool idSoundSystemLocal::useOpenAL = false;
+bool idSoundSystemLocal::useEFXReverb = false;
+int idSoundSystemLocal::EFXAvailable = -1;
+
+#endif // HAVE_OPENAL
 
 idSoundSystemLocal	soundSystemLocal;
 idSoundSystem	*soundSystem  = &soundSystemLocal;
+
+#ifdef HAVE_OPENAL
 
 enum { D3_ALC_ATTRLIST_LEN = 6 }; // currently we set at most two setting-pairs + terminating 0, 0
 
@@ -126,6 +142,32 @@ static void SetAlcAttrList( ALCint attrList[D3_ALC_ATTRLIST_LEN] )
 	attrList[idx++] = 0;
 	attrList[idx++] = 0;
 }
+
+// DG: make this function callable from idSessionLocal::Frame() without having to
+// change the public idSoundSystem interface - that would break mod DLL compat,
+// and this is not relevant for gamecode.
+bool CheckOpenALDeviceAndRecoverIfNeeded()
+{
+	if(soundSystemLocal.isInitialized)
+		return soundSystemLocal.CheckDeviceAndRecoverIfNeeded();
+
+	return true;
+}
+
+#ifdef __LIBRETRO__
+typedef ALCdevice* (ALC_APIENTRY*LPALCLOOPBACKOPENDEVICESOFT)(const ALCchar*);
+static LPALCLOOPBACKOPENDEVICESOFT d3_alcLoopbackOpenDeviceSOFT = NULL;
+
+static void LoadLoopbackFunctions() {
+    d3_alcLoopbackOpenDeviceSOFT = (LPALCLOOPBACKOPENDEVICESOFT)
+        alcGetProcAddress(NULL, "alcLoopbackOpenDeviceSOFT");
+}
+
+#endif // __LIBRETRO__
+
+#else
+bool CheckOpenALDeviceAndRecoverIfNeeded() { return true; }
+#endif // HAVE_OPENAL
 
 /*
 ===============
@@ -321,27 +363,6 @@ void SoundSystemRestart_f( const idCmdArgs &args ) {
 	soundSystem->SetMute( false );
 }
 
-// DG: make this function callable from idSessionLocal::Frame() without having to
-// change the public idSoundSystem interface - that would break mod DLL compat,
-// and this is not relevant for gamecode.
-bool CheckOpenALDeviceAndRecoverIfNeeded()
-{
-	if(soundSystemLocal.isInitialized)
-		return soundSystemLocal.CheckDeviceAndRecoverIfNeeded();
-
-	return true;
-}
-
-#ifdef __LIBRETRO__
-typedef ALCdevice* (ALC_APIENTRY*LPALCLOOPBACKOPENDEVICESOFT)(const ALCchar*);
-static LPALCLOOPBACKOPENDEVICESOFT d3_alcLoopbackOpenDeviceSOFT = NULL;
-
-static void LoadLoopbackFunctions() {
-    d3_alcLoopbackOpenDeviceSOFT = (LPALCLOOPBACKOPENDEVICESOFT)
-        alcGetProcAddress(NULL, "alcLoopbackOpenDeviceSOFT");
-}
-#endif
-
 /*
 ===============
 idSoundSystemLocal::Init
@@ -350,26 +371,11 @@ initialize the sound system
 ===============
 */
 void idSoundSystemLocal::Init() {
-#ifdef __LIBRETRO__
-    LoadLoopbackFunctions();
-    if (d3_alcLoopbackOpenDeviceSOFT) {
-        openalDevice = d3_alcLoopbackOpenDeviceSOFT(NULL);
-    }
-    if (openalDevice) {
-        ALCint attrs[] = {
-            ALC_FORMAT_CHANNELS_SOFT, ALC_STEREO_SOFT,
-            ALC_FORMAT_TYPE_SOFT,     ALC_SHORT_SOFT,
-            ALC_FREQUENCY,            44100,
-            0
-        };
-        openalContext = alcCreateContext(openalDevice, attrs);
-        alcMakeContextCurrent(openalContext);
-    } else {
-        common->Printf("[sound] WARNING: alcLoopbackOpenDeviceSOFT not available!\n");
-    }
-#endif
-
+#ifdef HAVE_OPENAL
 	common->Printf( "----- Initializing OpenAL -----\n" );
+#else
+	common->Printf( "----- Initializing Sound System -----\n" );
+#endif
 
 	isInitialized = false;
 	muted = false;
@@ -397,18 +403,41 @@ void idSoundSystemLocal::Init() {
 
 	graph = NULL;
 
+#ifdef HAVE_OPENAL
+
 	// DG: added these for CheckDeviceAndRecoverIfNeeded()
 	alcResetDeviceSOFT = NULL;
 	resetRetryCount = 0;
 	lastCheckTime = 0;
 
-#ifndef __LIBRETRO__
+#ifdef __LIBRETRO__
+	LoadLoopbackFunctions();
+	if (d3_alcLoopbackOpenDeviceSOFT) {
+		openalDevice = d3_alcLoopbackOpenDeviceSOFT(NULL);
+	}
+	if (openalDevice) {
+		ALCint attrs[] = {
+			ALC_FORMAT_CHANNELS_SOFT, ALC_STEREO_SOFT,
+			ALC_FORMAT_TYPE_SOFT,     ALC_SHORT_SOFT,
+			ALC_FREQUENCY,            44100,
+			0
+		};
+		openalContext = alcCreateContext(openalDevice, attrs);
+		alcMakeContextCurrent(openalContext);
+	} else {
+		common->Printf("[sound] WARNING: alcLoopbackOpenDeviceSOFT not available!\n");
+	}
+#endif // __LIBRETRO__
+
 	// DG: no point in initializing OpenAL if sound is disabled with s_noSound
 	if ( s_noSound.GetBool() ) {
 		common->Printf( "Sound disabled with s_noSound 1 !\n" );
+#ifndef __LIBRETRO__
 		openalDevice = NULL;
 		openalContext = NULL;
+#endif
 	} else {
+#ifndef __LIBRETRO__
 		// set up openal device and context
 		common->Printf( "Setup OpenAL device and context\n" );
 
@@ -485,8 +514,8 @@ void idSoundSystemLocal::Init() {
 				openalDevice = NULL;
 			}
 		}
-	}
 #endif // !__LIBRETRO__
+	}
 
 	// DG: only do these things if opening device and creating context succeeded and sound is enabled
 	//     (if sound is disabled with s_noSound, openalContext is NULL)
@@ -580,6 +609,142 @@ void idSoundSystemLocal::Init() {
 
 	}
 
+#else // !HAVE_OPENAL
+
+	if ( !s_noSound.GetBool() ) {
+		idSampleDecoder::Init();
+		soundCache = new idSoundCache();
+	}
+
+	common->StartupVariable( "s_useOpenAL", false );
+
+	if ( idSoundSystemLocal::s_useOpenAL.GetBool() ) {
+
+		// set up openal device and context
+		common->Printf( "Setup OpenAL device and context\n" );
+
+		const char *device = s_device.GetString();
+		if (strlen(device) < 1)
+			device = NULL;
+		else if (!idStr::Icmp(device, "default"))
+			device = NULL;
+
+		if (alcIsExtensionPresent(NULL, "ALC_ENUMERATE_ALL_EXT")) {
+			const char *devs = alcGetString(NULL, ALC_ALL_DEVICES_SPECIFIER);
+			bool found = false;
+
+			while (devs && *devs) {
+				common->Printf("OpenAL: found device '%s'", devs);
+
+				if (device && !idStr::Icmp(devs, device)) {
+					common->Printf(" (ACTIVE)\n");
+					found = true;
+				} else {
+					common->Printf("\n");
+				}
+
+				devs += strlen(devs) + 1;
+			}
+
+			if (device && !found) {
+				common->Printf("OpenAL: device %s not found, using default\n", device);
+				device = NULL;
+			}
+		}
+
+		openalDevice = alcOpenDevice( device );
+		if (!openalDevice && device) {
+			common->Printf("OpenAL: failed to open device '%s' (0x%x), using default\n", device, alGetError());
+			openalDevice = alcOpenDevice( NULL );
+		}
+
+		openalContext = alcCreateContext( openalDevice, NULL );
+		alcMakeContextCurrent( openalContext );
+
+		// log openal info
+		common->Printf( "OpenAL vendor: %s\n", alGetString(AL_VENDOR));
+		common->Printf( "OpenAL renderer: %s\n", alGetString(AL_RENDERER));
+		common->Printf( "OpenAL version: %s\n", alGetString(AL_VERSION));
+
+		// try to obtain EFX extensions
+		if (alcIsExtensionPresent(openalDevice, "ALC_EXT_EFX")) {
+			common->Printf( "OpenAL: found EFX extension\n" );
+			EFXAvailable = 1;
+
+			alGenEffects = (LPALGENEFFECTS)alGetProcAddress("alGenEffects");
+			alDeleteEffects = (LPALDELETEEFFECTS)alGetProcAddress("alDeleteEffects");
+			alIsEffect = (LPALISEFFECT)alGetProcAddress("alIsEffect");
+			alEffecti = (LPALEFFECTI)alGetProcAddress("alEffecti");
+			alEffectf = (LPALEFFECTF)alGetProcAddress("alEffectf");
+			alEffectfv = (LPALEFFECTFV)alGetProcAddress("alEffectfv");
+			alGenFilters = (LPALGENFILTERS)alGetProcAddress("alGenFilters");
+			alDeleteFilters = (LPALDELETEFILTERS)alGetProcAddress("alDeleteFilters");
+			alIsFilter = (LPALISFILTER)alGetProcAddress("alIsFilter");
+			alFilteri = (LPALFILTERI)alGetProcAddress("alFilteri");
+			alFilterf = (LPALFILTERF)alGetProcAddress("alFilterf");
+			alGenAuxiliaryEffectSlots = (LPALGENAUXILIARYEFFECTSLOTS)alGetProcAddress("alGenAuxiliaryEffectSlots");
+			alDeleteAuxiliaryEffectSlots = (LPALDELETEAUXILIARYEFFECTSLOTS)alGetProcAddress("alDeleteAuxiliaryEffectSlots");
+			alIsAuxiliaryEffectSlot = (LPALISAUXILIARYEFFECTSLOT)alGetProcAddress("alIsAuxiliaryEffectSlot");;
+			alAuxiliaryEffectSloti = (LPALAUXILIARYEFFECTSLOTI)alGetProcAddress("alAuxiliaryEffectSloti");
+		} else {
+			common->Printf( "OpenAL: EFX extension not found\n" );
+			EFXAvailable = 0;
+			idSoundSystemLocal::s_useEAXReverb.SetBool( false );
+
+			alGenEffects = NULL;
+			alDeleteEffects = NULL;
+			alIsEffect = NULL;
+			alEffecti = NULL;
+			alEffectf = NULL;
+			alEffectfv = NULL;
+			alGenFilters = NULL;
+			alDeleteFilters = NULL;
+			alIsFilter = NULL;
+			alFilteri = NULL;
+			alFilterf = NULL;
+			alGenAuxiliaryEffectSlots = NULL;
+			alDeleteAuxiliaryEffectSlots = NULL;
+			alIsAuxiliaryEffectSlot = NULL;
+			alAuxiliaryEffectSloti = NULL;
+		}
+
+		ALuint handle;
+		openalSourceCount = 0;
+
+		while ( openalSourceCount < 256 ) {
+			alGetError();
+			alGenSources( 1, &handle );
+			if ( alGetError() != AL_NO_ERROR ) {
+				break;
+			} else {
+				// store in source array
+				openalSources[openalSourceCount].handle = handle;
+				openalSources[openalSourceCount].startTime = 0;
+				openalSources[openalSourceCount].chan = NULL;
+				openalSources[openalSourceCount].inUse = false;
+				openalSources[openalSourceCount].looping = false;
+
+				// initialise sources
+				alSourcef( handle, AL_ROLLOFF_FACTOR, 0.0f );
+
+				// found one source
+				openalSourceCount++;
+			}
+		}
+
+		common->Printf( "OpenAL: found %d hardware voices\n", openalSourceCount );
+
+		// adjust source count to allow for at least eight stereo sounds to play
+		openalSourceCount -= 8;
+	}
+
+	useOpenAL = idSoundSystemLocal::s_useOpenAL.GetBool();
+	// useEFXReverb = idSoundSystemLocal::s_useEAXReverb.GetBool();
+	useEFXReverb = false;
+	efxloaded = false;
+
+#endif // HAVE_OPENAL
+
 	cmdSystem->AddCommand( "listSounds", ListSounds_f, CMD_FL_SOUND, "lists all sounds" );
 	cmdSystem->AddCommand( "listSoundDecoders", ListSoundDecoders_f, CMD_FL_SOUND, "list active sound decoders" );
 	cmdSystem->AddCommand( "reloadSounds", SoundReloadSounds_f, CMD_FL_SOUND|CMD_FL_CHEAT, "reloads all sounds" );
@@ -597,6 +762,8 @@ void idSoundSystemLocal::Shutdown() {
 
 	// EFX or not, the list needs to be cleared
 	EFXDatabase.Clear();
+
+#ifdef HAVE_OPENAL
 
 	efxloaded = false;
 
@@ -619,9 +786,39 @@ void idSoundSystemLocal::Shutdown() {
 		openalSources[i].looping = false;
 	}
 
+#else // !HAVE_OPENAL
+
+	if ( useOpenAL ) {
+
+		efxloaded = false;
+
+		// adjust source count back up to allow for freeing of all resources
+		openalSourceCount += 8;
+
+		for ( ALsizei i = 0; i < openalSourceCount; i++ ) {
+			// stop source
+			alSourceStop( openalSources[i].handle );
+			alSourcei( openalSources[i].handle, AL_BUFFER, 0 );
+
+			// delete source
+			alDeleteSources( 1, &openalSources[i].handle );
+
+			// clear entry in source array
+			openalSources[i].handle = 0;
+			openalSources[i].startTime = 0;
+			openalSources[i].chan = NULL;
+			openalSources[i].inUse = false;
+			openalSources[i].looping = false;
+		}
+	}
+
+#endif // HAVE_OPENAL
+
 	// destroy all the sounds (hardware buffers as well)
 	delete soundCache;
 	soundCache = NULL;
+
+#ifdef HAVE_OPENAL
 
 	// destroy openal device and context
 	alcMakeContextCurrent( NULL );
@@ -632,6 +829,21 @@ void idSoundSystemLocal::Shutdown() {
 	alcCloseDevice( openalDevice );
 	openalDevice = NULL;
 
+#else // !HAVE_OPENAL
+
+	// destroy openal device and context
+	if ( useOpenAL ) {
+		alcMakeContextCurrent( NULL );
+
+		alcDestroyContext( openalContext );
+		openalContext = NULL;
+
+		alcCloseDevice( openalDevice );
+		openalDevice = NULL;
+	}
+
+#endif // HAVE_OPENAL
+
 	idSampleDecoder::Shutdown();
 }
 
@@ -641,19 +853,34 @@ idSoundSystemLocal::InitHW
 ===============
 */
 bool idSoundSystemLocal::InitHW() {
+#ifdef HAVE_OPENAL
 	int numSpeakers = s_numberOfSpeakers.GetInteger();
-
+#else
+	int numSpeakers = 2;
+#endif
 	if (numSpeakers != 2 && numSpeakers != 6) {
 		common->Warning("invalid value for s_numberOfSpeakers. Use either 2 or 6");
 		numSpeakers = 2;
 		s_numberOfSpeakers.SetInteger(numSpeakers);
 	}
 
+#ifdef HAVE_OPENAL
+
 	// DG: if OpenAL context couldn't be created (maybe there were no
 	//      audio devices), keep audio disabled.
 	if ( s_noSound.GetBool() || openalContext == NULL ) {
 		return false;
 	}
+
+#else // !HAVE_OPENAL
+
+	common->Printf("Initializing sound system\n");
+
+	if ( s_noSound.GetBool() ) {
+		return false;
+	}
+
+#endif // HAVE_OPENAL
 
 	// put the real number in there
 	s_numberOfSpeakers.SetInteger(numSpeakers);
@@ -688,6 +915,8 @@ bool idSoundSystemLocal::ShutdownHW() {
 
 	return true;
 }
+
+#ifdef HAVE_OPENAL
 
 /*
 ===============
@@ -783,6 +1012,8 @@ bool idSoundSystemLocal::CheckDeviceAndRecoverIfNeeded()
 	return resetRetryCount == 0; // if it's 0, state on last check was ok
 }
 
+#endif // HAVE_OPENAL
+
 /*
 ===============
 idSoundSystemLocal::GetCurrent44kHzTime
@@ -805,14 +1036,18 @@ Mac OSX version. The system uses it's own thread and an IOProc callback
 ===================
 */
 int idSoundSystemLocal::AsyncMix( int soundTime, float *mixBuffer ) {
-	int	inTime, numSpeakers;
+	int	numSpeakers;
 
 	if ( !isInitialized || shutdown ) {
 		return 0;
 	}
 
-	inTime = Sys_Milliseconds();
+#ifdef HAVE_OPENAL
+	int inTime = Sys_Milliseconds();
 	numSpeakers = s_numberOfSpeakers.GetInteger();
+#else
+	numSpeakers = 2;
+#endif
 
 	// let the active sound world mix all the channels in unless muted or avi demo recording
 	if ( !muted && currentSoundWorld && !currentSoundWorld->fpa[0] ) {
@@ -821,8 +1056,14 @@ int idSoundSystemLocal::AsyncMix( int soundTime, float *mixBuffer ) {
 
 	CurrentSoundTime = soundTime;
 
+#ifdef HAVE_OPENAL
 	return Sys_Milliseconds() - inTime;
+#else
+	return 0;
+#endif
 }
+
+#ifdef HAVE_OPENAL
 
 /*
 ===================
@@ -955,6 +1196,8 @@ int idSoundSystemLocal::AsyncUpdateWrite( int inTime ) {
 
 	return Sys_Milliseconds() - inTime;
 }
+
+#endif // HAVE_OPENAL
 
 /*
 ===================
@@ -1492,8 +1735,12 @@ void idSoundSystemLocal::DoEnviroSuit( float* samples, int numSamples, int numSp
 	float out[10000], *out_p = out + 2;
 	float in[10000], *in_p = in + 2;
 
+#ifdef HAVE_OPENAL
 	// TODO port to OpenAL
 	assert( false );
+#else
+	assert( !idSoundSystemLocal::useOpenAL );
+#endif
 
 	if ( !fxList.Num() ) {
 		for ( int i = 0; i < 6; i++ ) {
@@ -1569,9 +1816,13 @@ idSoundSystemLocal::IsEFXAvailable
 ===============
 */
 int idSoundSystemLocal::IsEFXAvailable( void ) {
+#ifdef HAVE_OPENAL
 #if defined(ID_DEDICATED)
 	return -1;
 #else
 	return EFXAvailable;
 #endif
+#else // !HAVE_OPENAL
+	return -1;
+#endif // HAVE_OPENAL
 }

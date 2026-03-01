@@ -246,8 +246,11 @@ SRC_IDLIB	:=\
 	$(CORE_DIR)/idlib/Timer.cpp \
 	$(CORE_DIR)/idlib/Heap.cpp
 
-SRC_OPENAL	:= \
-	$(CORE_DIR)/mojoAL/mojoal.c
+ifeq ($(OPENAL),1)
+	# SRC_OPENAL	:= $(CORE_DIR)/mojoAL/mojoal.c
+else
+	SRC_OPENAL	:= $(CORE_DIR)/sys/stub/openal_stub.cpp
+endif
 
 SRC_GLAD	:= \
 	$(CORE_DIR)/glad41/glad.c
@@ -486,7 +489,8 @@ SOURCES_CXX	:=\
 	$(SRC_UI) \
 	$(SRC_TOOLS) \
 	$(SRC_IDLIB) \
-	$(SRC_GAME)
+	$(SRC_GAME) \
+	$(SRC_OPENAL)
 
 SOURCES_C	:=\
 	$(CORE_DIR)/framework/minizip/ioapi.c \

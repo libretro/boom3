@@ -3,7 +3,7 @@ AR             := ar
 CORE           := -DCORE=ON
 SDL_VER        := 0
 IMGGUI         := 0
-OPENAL         := 1
+OPENAL         := 0
 DEBUG          := 0
 RELWITHDEBINFO := 0
 
@@ -310,7 +310,12 @@ ifeq ($(IMGGUI),0)
     CXXFLAGS += -DIMGUI_DISABLE
 endif
 
-CFLAGS   += -Wall -D__LIBRETRO__ $(fpic) -DCORE=ON -DSDL2=ON -DBASE=ON -DUSE_FILE32API -ffast-math \
+ifeq ($(OPENAL),1)
+    CFLAGS   += -DHAVE_OPENAL
+    CXXFLAGS += -DHAVE_OPENAL
+endif
+
+CFLAGS   += -Wall -D__LIBRETRO__ $(fpic) $(CORE) $(SDL2) -DBASE=ON -DUSE_FILE32API -ffast-math \
 			-fno-unsafe-math-optimizations -fno-strict-aliasing -fomit-frame-pointer \
 			-Wno-sign-compare -Wno-switch -Wno-format-security -I$(TOPDIR) -I$(TOPDIR)/sys/libretro/config
 CXXFLAGS += -Wall -D__LIBRETRO__ $(fpic) -fpermissive -std=gnu++11

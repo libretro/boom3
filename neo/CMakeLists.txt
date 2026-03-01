@@ -66,7 +66,7 @@ option(TRACY		"Build and integrate the Tracy profiler, requires HARDLINK_GAME" O
 option(HARDLINK_GAME "Compile gamecode into executable (no game DLLs)" OFF)
 
 # added in libretro core, needs this to compile standalone
-add_definitions(-DHAVE_SDL)
+add_compile_definitions(-DHAVE_SDL -DHAVE_OPENAL)
 
 if(NOT MSVC) # GCC/clang or compatible, hopefully
 	option(FORCE_COLORED_OUTPUT "Always produce ANSI-colored compiler warnings/errors (GCC/Clang only; esp. useful with ninja)." OFF)

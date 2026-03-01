@@ -868,6 +868,10 @@ public:
 	static idCVar			s_reverbFeedback;
 	static idCVar			s_enviroSuitVolumeScale;
 	static idCVar			s_skipHelltimeFX;
+#ifndef HAVE_OPENAL
+    static idCVar           s_useOpenAL;
+    static bool             useOpenAL;
+#endif
 };
 
 extern	idSoundSystemLocal	soundSystemLocal;
