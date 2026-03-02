@@ -161,18 +161,30 @@ gp_layout_t modern = {
       { 0 },
    },
    {
-      {"JOY_LEFT",  "+moveleft"},     {"JOY_RIGHT", "+moveright"},
-      {"JOY_DOWN",  "+back"},         {"JOY_UP",    "+forward"},
-      {"JOY_B",     "+movedown"},     {"JOY_A",     "+moveright"},
-      {"JOY_X",     "+moveup"},       {"JOY_Y",     "+moveleft"},
-      {"JOY_L",     "impulse 12"},    {"JOY_R",     "impulse 10"},
-      {"JOY_L2",    "+jump"},         {"JOY_R2",    "+attack"},
-      {"JOY_SELECT","+showscores"},   {"JOY_START", "togglemenu"},
-      { 0 },
+      {"JOY_DPAD_LEFT",     "_moveLeft"},
+      {"JOY_DPAD_RIGHT",    "_moveRight"},
+      {"JOY_DPAD_DOWN",     "_back"},
+      {"JOY_DPAD_UP",       "_forward"},
+
+      {"JOY_BTN_SOUTH",     "_moveDown"},   // B = Swim Down
+      {"JOY_BTN_EAST",      "_moveRight"},  // A = Strafe Right
+      {"JOY_BTN_WEST",      "_moveLeft"},   // X = Strafe Left
+      {"JOY_BTN_NORTH",     "_moveUp"},     // Y = Swim Up / Jump
+
+      {"JOY_BTN_LSHOULDER", "_impulse12"},  // Previous Weapon
+      {"JOY_BTN_RSHOULDER", "_impulse10"},  // Next Weapon
+
+      {"JOY_TRIGGER1",      "_moveUp"},     // L2 = Jump (same as Y)
+      {"JOY_TRIGGER2",      "_attack"},     // R2 = Fire
+
+      {"JOY_BTN_BACK",      "_showscores"},
+      {"JOY_BTN_START",     "_escape"},
+
+      {0},
    },
 };
-gp_layout_t classic = {
 
+gp_layout_t classic = {
    {
       { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT,  "D-Pad Left" },
       { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_UP,    "D-Pad Up" },
@@ -184,8 +196,8 @@ gp_layout_t classic = {
       { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_Y,     "Fire" },
       { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L,     "Strafe Left" },
       { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R,     "Strafe Right" },
-      { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L2,    "Look Up" },
-      { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R2,    "Look Down" },
+//      { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L2,    "Look Up" },
+//      { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R2,    "Look Down" },
       { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L3,    "Move Down" },
       { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R3,    "Swim Up" },
       { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_SELECT,"Toggle Run Mode" },
@@ -193,17 +205,26 @@ gp_layout_t classic = {
       { 0 },
    },
    {
-      {"JOY_LEFT",  "+left"},         {"JOY_RIGHT", "+right"},
-      {"JOY_DOWN",  "+back"},         {"JOY_UP",    "+forward"},
-      {"JOY_B",     "+jump"} ,        {"JOY_A",     "impulse 10"},
-      {"JOY_X",     "+klook"},        {"JOY_Y",     "+attack"},
-      {"JOY_L",     "+moveleft"},     {"JOY_R",     "+moveright"},
-      {"JOY_L2",    "+lookup"},       {"JOY_R2",    "+lookdown"},
-      {"JOY_L3",    "+movedown"},     {"JOY_R3",    "+moveup"},
-      {"JOY_SELECT","+togglewalk"},   {"JOY_START", "togglemenu"},
+      { "JOY_DPAD_LEFT",     "_moveLeft"   },
+      { "JOY_DPAD_RIGHT",    "_moveRight"  },
+      { "JOY_DPAD_DOWN",     "_back"       },
+      { "JOY_DPAD_UP",       "_forward"    },
+      { "JOY_BTN_SOUTH",     "_moveUp"     },  // B = Jump
+      { "JOY_BTN_EAST",      "_impulse10"  },  // A = Next Weapon
+      { "JOY_BTN_WEST",      "_klook"      },  // X = Freelook
+      { "JOY_BTN_NORTH",     "_attack"     },  // Y = Fire
+      { "JOY_BTN_LSHOULDER", "_moveLeft"   },  // L = Strafe Left
+      { "JOY_BTN_RSHOULDER", "_moveRight"  },  // R = Strafe Right
+//      { "JOY_TRIGGER1",      "_lookUp"     },  // L2
+//      { "JOY_TRIGGER2",      "_lookDown"   },  // R2
+      { "JOY_BTN_LSTICK",    "_moveDown"   },  // L3
+      { "JOY_BTN_RSTICK",    "_impulse19"  },  // R3 = Use
+      { "JOY_BTN_BACK",      "_speed"      },  // Select = Run
+      { "JOY_BTN_START",     "_escape"  },
       { 0 },
    },
 };
+
 gp_layout_t classic_alt = {
 
    {
@@ -226,14 +247,22 @@ gp_layout_t classic_alt = {
       { 0 },
    },
    {
-      {"JOY_LEFT",  "+moveleft"},     {"JOY_RIGHT", "+moveright"},
-      {"JOY_DOWN",  "+back"},         {"JOY_UP",    "+forward"},
-      {"JOY_B",     "+lookdown"},     {"JOY_A",     "+right"},
-      {"JOY_X",     "+lookup"},       {"JOY_Y",     "+left"},
-      {"JOY_L",     "+jump"},         {"JOY_R",     "+attack"},
-      {"JOY_L2",    "+speed"},          {"JOY_R2",    "impulse 10"},
-      {"JOY_L3",    "+movedown"},     {"JOY_R3",    "impulse 12"},
-      {"JOY_SELECT","+togglewalk"},   {"JOY_START", "togglemenu"},
+      { "JOY_DPAD_LEFT",     "_moveLeft"   },
+      { "JOY_DPAD_RIGHT",    "_moveRight"  },
+      { "JOY_DPAD_DOWN",     "_back"       },
+      { "JOY_DPAD_UP",       "_forward"    },
+      { "JOY_BTN_SOUTH",     "_lookDown"   },  // B
+      { "JOY_BTN_EAST",      "_right"      },  // A = Turn Right
+      { "JOY_BTN_WEST",      "_lookUp"     },  // X
+      { "JOY_BTN_NORTH",     "_left"       },  // Y = Turn Left
+      { "JOY_BTN_LSHOULDER", "_moveUp"     },  // L = Jump
+      { "JOY_BTN_RSHOULDER", "_attack"     },  // R = Fire
+      { "JOY_TRIGGER1",      "_speed"      },  // L2 = Run
+      { "JOY_TRIGGER2",      "_impulse10"  },  // R2 = Next Weapon
+      { "JOY_BTN_LSTICK",    "_moveDown"   },  // L3
+      { "JOY_BTN_RSTICK",    "_impulse12"  },  // R3 = Prev Weapon
+      { "JOY_BTN_BACK",      "_speed"      },  // Select = Toggle Run
+      { "JOY_BTN_START",     "_escape"  },
       { 0 },
    },
 };
@@ -561,71 +590,118 @@ void Sys_SetKeys(){
 				}
 			}
 
+			// D-Pad
 			if ((ret & (1 << RETRO_DEVICE_ID_JOYPAD_UP)) && !(old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_UP)))
-				Key_Event(K_UPARROW, 1);
+				Key_Event(K_JOY_DPAD_UP, 1);
 			else if (!(ret & (1 << RETRO_DEVICE_ID_JOYPAD_UP)) && (old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_UP)))
-				Key_Event(K_UPARROW, 0);
+				Key_Event(K_JOY_DPAD_UP, 0);
+
 			if ((ret & (1 << RETRO_DEVICE_ID_JOYPAD_DOWN)) && !(old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_DOWN)))
-				Key_Event(K_DOWNARROW, 1);
+				Key_Event(K_JOY_DPAD_DOWN, 1);
 			else if (!(ret & (1 << RETRO_DEVICE_ID_JOYPAD_DOWN)) && (old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_DOWN)))
-				Key_Event(K_DOWNARROW, 0);
+				Key_Event(K_JOY_DPAD_DOWN, 0);
+
 			if ((ret & (1 << RETRO_DEVICE_ID_JOYPAD_LEFT)) && !(old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_LEFT)))
-				Key_Event(K_LEFTARROW, 1);
+				Key_Event(K_JOY_DPAD_LEFT, 1);
 			else if (!(ret & (1 << RETRO_DEVICE_ID_JOYPAD_LEFT)) && (old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_LEFT)))
-				Key_Event(K_LEFTARROW, 0);
+				Key_Event(K_JOY_DPAD_LEFT, 0);
+
 			if ((ret & (1 << RETRO_DEVICE_ID_JOYPAD_RIGHT)) && !(old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_RIGHT)))
-				Key_Event(K_RIGHTARROW, 1);
+				Key_Event(K_JOY_DPAD_RIGHT, 1);
 			else if (!(ret & (1 << RETRO_DEVICE_ID_JOYPAD_RIGHT)) && (old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_RIGHT)))
-				Key_Event(K_RIGHTARROW, 0);
-			if ((ret & (1 << RETRO_DEVICE_ID_JOYPAD_START)) && !(old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_START)))
-				Key_Event(K_ESCAPE, 1);
-			else if (!(ret & (1 << RETRO_DEVICE_ID_JOYPAD_START)) && (old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_START)))
-				Key_Event(K_ESCAPE, 0);
-			if ((ret & (1 << RETRO_DEVICE_ID_JOYPAD_SELECT)) && !(old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_SELECT)))
-				Key_Event(K_TAB, 1);
-			else if (!(ret & (1 << RETRO_DEVICE_ID_JOYPAD_SELECT)) && (old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_SELECT)))
-				Key_Event(K_TAB, 0);
-			if ((ret & (1 << RETRO_DEVICE_ID_JOYPAD_Y)) && !(old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_Y)))
-				Key_Event(K_CTRL, 1);
-			else if (!(ret & (1 << RETRO_DEVICE_ID_JOYPAD_Y)) && (old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_Y)))
-				Key_Event(K_CTRL, 0);
-			if ((ret & (1 << RETRO_DEVICE_ID_JOYPAD_X)) && !(old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_X)))
-				Key_Event(K_ALT, 1);
-			else if (!(ret & (1 << RETRO_DEVICE_ID_JOYPAD_X)) && (old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_X)))
-				Key_Event(K_ALT, 0);
+				Key_Event(K_JOY_DPAD_RIGHT, 0);
+
+			// Face buttons - A and B need to be reversed for menu actions
 			if ((ret & (1 << RETRO_DEVICE_ID_JOYPAD_B)) && !(old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_B)))
-				Key_Event(K_MOUSE1, 1);
+				Key_Event(K_JOY_BTN_SOUTH, 1);
 			else if (!(ret & (1 << RETRO_DEVICE_ID_JOYPAD_B)) && (old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_B)))
-				Key_Event(K_MOUSE1, 0);
+				Key_Event(K_JOY_BTN_SOUTH, 0);
+
 			if ((ret & (1 << RETRO_DEVICE_ID_JOYPAD_A)) && !(old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_A)))
-				Key_Event(K_BACKSPACE, 1);
+				Key_Event(K_JOY_BTN_EAST, 1);
 			else if (!(ret & (1 << RETRO_DEVICE_ID_JOYPAD_A)) && (old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_A)))
-				Key_Event(K_BACKSPACE, 0);
+				Key_Event(K_JOY_BTN_EAST, 0);
+
+			if ((ret & (1 << RETRO_DEVICE_ID_JOYPAD_X)) && !(old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_X)))
+				Key_Event(K_JOY_BTN_WEST, 1);
+			else if (!(ret & (1 << RETRO_DEVICE_ID_JOYPAD_X)) && (old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_X)))
+				Key_Event(K_JOY_BTN_WEST, 0);
+
+			if ((ret & (1 << RETRO_DEVICE_ID_JOYPAD_Y)) && !(old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_Y)))
+				Key_Event(K_JOY_BTN_NORTH, 1);
+			else if (!(ret & (1 << RETRO_DEVICE_ID_JOYPAD_Y)) && (old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_Y)))
+				Key_Event(K_JOY_BTN_NORTH, 0);
+
+			// Shoulders
 			if ((ret & (1 << RETRO_DEVICE_ID_JOYPAD_L)) && !(old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_L)))
-				Key_Event(K_MOUSE2, 1);
+				Key_Event(K_JOY_BTN_LSHOULDER, 1);
 			else if (!(ret & (1 << RETRO_DEVICE_ID_JOYPAD_L)) && (old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_L)))
-				Key_Event(K_MOUSE2, 0);
+				Key_Event(K_JOY_BTN_LSHOULDER, 0);
+
 			if ((ret & (1 << RETRO_DEVICE_ID_JOYPAD_R)) && !(old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_R)))
-				Key_Event(K_ENTER, 1);
+				Key_Event(K_JOY_BTN_RSHOULDER, 1);
 			else if (!(ret & (1 << RETRO_DEVICE_ID_JOYPAD_R)) && (old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_R)))
-				Key_Event(K_ENTER, 0);
+				Key_Event(K_JOY_BTN_RSHOULDER, 0);
+
+			// Triggers
 			if ((ret & (1 << RETRO_DEVICE_ID_JOYPAD_L2)) && !(old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_L2)))
-				Key_Event(K_SPACE, 1);
+			{
+				if (doom_devices[port] == RETRO_DEVICE_MODERN)
+					Key_Event(K_SPACE, 1);
+				else
+					Key_Event(K_JOY_TRIGGER1, 1);
+			}
 			else if (!(ret & (1 << RETRO_DEVICE_ID_JOYPAD_L2)) && (old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_L2)))
-				Key_Event(K_SPACE, 0);
+			{
+				if (doom_devices[port] == RETRO_DEVICE_MODERN)
+					Key_Event(K_SPACE, 0);
+				else
+					Key_Event(K_JOY_TRIGGER1, 0);
+			}
+
 			if ((ret & (1 << RETRO_DEVICE_ID_JOYPAD_R2)) && !(old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_R2)))
-				Key_Event(K_AUX2, 1);
+			{
+				if (doom_devices[port] == RETRO_DEVICE_MODERN)
+					Key_Event(K_MOUSE1, 1);
+				else
+					Key_Event(K_JOY_TRIGGER2, 1);
+			}
 			else if (!(ret & (1 << RETRO_DEVICE_ID_JOYPAD_R2)) && (old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_R2)))
-				Key_Event(K_AUX2, 0);
+			{
+				if (doom_devices[port] == RETRO_DEVICE_MODERN)
+					Key_Event(K_MOUSE1, 0);
+				else
+					Key_Event(K_JOY_TRIGGER2, 1);
+			}
+
+			// Stick buttons
 			if ((ret & (1 << RETRO_DEVICE_ID_JOYPAD_L3)) && !(old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_L3)))
-				Key_Event(K_AUX3, 1);
+				Key_Event(K_JOY_BTN_LSTICK, 1);
 			else if (!(ret & (1 << RETRO_DEVICE_ID_JOYPAD_L3)) && (old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_L3)))
-				Key_Event(K_AUX3, 0);
+				Key_Event(K_JOY_BTN_LSTICK, 0);
+
 			if ((ret & (1 << RETRO_DEVICE_ID_JOYPAD_R3)) && !(old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_R3)))
-				Key_Event(K_AUX4, 1);
+				Key_Event(K_JOY_BTN_RSTICK, 1);
 			else if (!(ret & (1 << RETRO_DEVICE_ID_JOYPAD_R3)) && (old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_R3)))
-				Key_Event(K_AUX4, 0);
-			
+				Key_Event(K_JOY_BTN_RSTICK, 0);
+
+			// Start/Select still mapped to ESC/TAB for menus/scores
+			if ((ret & (1 << RETRO_DEVICE_ID_JOYPAD_START)) && !(old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_START))) {
+				Key_Event(K_ESCAPE, 1);
+				//Key_Event(K_JOY_BTN_START, 1);
+			} else if (!(ret & (1 << RETRO_DEVICE_ID_JOYPAD_START)) && (old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_START))) {
+				Key_Event(K_ESCAPE, 0);
+				//Key_Event(K_JOY_BTN_START, 0);
+			}
+
+			if ((ret & (1 << RETRO_DEVICE_ID_JOYPAD_SELECT)) && !(old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_SELECT))) {
+				Key_Event(K_TAB, 1);
+				//Key_Event(K_JOY_BTN_BACK, 1);
+			} else if (!(ret & (1 << RETRO_DEVICE_ID_JOYPAD_SELECT)) && (old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_SELECT))) {
+				Key_Event(K_TAB, 0);
+				//Key_Event(K_JOY_BTN_BACK, 0);
+			}
+
 			int lsx, lsy;
 			lsx = input_cb(0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT,
                RETRO_DEVICE_ID_ANALOG_X);
@@ -1047,6 +1123,58 @@ GLExtension_t GLimp_ExtensionPointer(const char *name) {
 	return (GLExtension_t)hw_render.get_proc_address(name);
 }
 
+static const gp_layout_t *pending_layout = &classic;
+
+static void gp_layout_set_bind(const gp_layout_t *layout)
+{
+    // clear all joy keys
+    for (int k = K_FIRST_JOY; k <= K_LAST_JOY; k++) {
+        idKeyInput::SetBinding(k, "");
+    }
+    // set each binding directly
+    for (unsigned i = 0; layout->bind[i].key; ++i) {
+        int keynum = idKeyInput::StringToKeyNum(layout->bind[i].key);
+        if (keynum != -1)
+            idKeyInput::SetBinding(keynum, layout->bind[i].com);
+    }
+}
+
+void retro_set_controller_port_device(unsigned port, unsigned device)
+{
+   if (port == 0)
+   {
+      switch (device)
+      {
+         case RETRO_DEVICE_JOYPAD:
+            doom_devices[port] = RETRO_DEVICE_JOYPAD;
+            environ_cb(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, classic.desc);
+            pending_layout = &classic;
+            break;
+         case RETRO_DEVICE_JOYPAD_ALT:
+            doom_devices[port] = RETRO_DEVICE_JOYPAD;
+            environ_cb(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, classic_alt.desc);
+            pending_layout = &classic_alt;
+            break;
+         case RETRO_DEVICE_MODERN:
+            doom_devices[port] = RETRO_DEVICE_MODERN;
+            environ_cb(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, modern.desc);
+            pending_layout = &modern;
+            break;
+         case RETRO_DEVICE_KEYBOARD:
+            doom_devices[port] = RETRO_DEVICE_KEYBOARD;
+            break;
+         case RETRO_DEVICE_NONE:
+         default:
+            doom_devices[port] = RETRO_DEVICE_NONE;
+            if (log_cb)
+               log_cb(RETRO_LOG_ERROR, "[libretro]: Invalid device.\n");
+      }
+
+      if (!first_boot)
+            gp_layout_set_bind(pending_layout);
+   }
+}
+
 void retro_run(void)
 {
    if (!libretro_shared_context)
@@ -1058,6 +1186,7 @@ void retro_run(void)
 		common->Init( fake_argc, fake_argv );
 		first_boot = false;
 		update_variables(false);
+		gp_layout_set_bind(pending_layout);
 	}
 	
 	bool updated = false;
@@ -1200,51 +1329,6 @@ void retro_init(void)
 
    if (environ_cb(RETRO_ENVIRONMENT_GET_INPUT_BITMASKS, NULL))
       libretro_supports_bitmasks = true;
-}
-
-void gp_layout_set_bind(gp_layout_t gp_layout)
-{
-   char buf[100];
-   unsigned i;
-   for (i=0; gp_layout.bind[i].key; ++i)
-   {
-      snprintf(buf, sizeof(buf), "bind %s \"%s\"\n", gp_layout.bind[i].key,
-                                                   gp_layout.bind[i].com);
-      //Cbuf_AddText(buf);
-   }
-}
-
-void retro_set_controller_port_device(unsigned port, unsigned device)
-{
-   if (port == 0)
-   {
-      switch (device)
-      {
-         case RETRO_DEVICE_JOYPAD:
-            doom_devices[port] = RETRO_DEVICE_JOYPAD;
-            environ_cb(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, classic.desc);
-            gp_layout_set_bind(classic);
-            break;
-         case RETRO_DEVICE_JOYPAD_ALT:
-            doom_devices[port] = RETRO_DEVICE_JOYPAD;
-            environ_cb(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, classic_alt.desc);
-            gp_layout_set_bind(classic_alt);
-            break;
-         case RETRO_DEVICE_MODERN:
-            doom_devices[port] = RETRO_DEVICE_MODERN;
-            environ_cb(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, modern.desc);
-            gp_layout_set_bind(modern);
-            break;
-         case RETRO_DEVICE_KEYBOARD:
-            doom_devices[port] = RETRO_DEVICE_KEYBOARD;
-            break;
-         case RETRO_DEVICE_NONE:
-         default:
-            doom_devices[port] = RETRO_DEVICE_NONE;
-            if (log_cb)
-               log_cb(RETRO_LOG_ERROR, "[libretro]: Invalid device.\n");
-      }
-   }
 }
 
 void retro_get_system_info(struct retro_system_info *info)
