@@ -48,6 +48,7 @@ extern "C" {
 #include "framework/Licensee.h"
 #include "framework/FileSystem.h"
 #include "framework/KeyInput.h"
+#include "renderer/ModelManager.h"
 #include "renderer/tr_local.h"
 #include "sys/libretro/retro_public.h"
 #include "sys/sys_local.h"
@@ -100,6 +101,7 @@ static retro_input_state_t input_cb;
 static struct retro_rumble_interface rumble;
 retro_perf_get_time_usec_t perf_get_time_usec = NULL;
 static bool libretro_supports_bitmasks = false;
+static bool needs_gl_reinit = false;
 
 static void audio_callback(void);
 
@@ -297,6 +299,14 @@ static void update_variables(bool startup)
 		if (log_cb)
 			log_cb(RETRO_LOG_INFO, "Got size: %u x %u.\n", scr_width, scr_height);
 
+		if(pch)
+		{
+			glConfig.vidWidth  = scr_width;
+			glConfig.vidHeight = scr_height;
+			glConfig.winWidth  = scr_width;
+			glConfig.winHeight = scr_height;
+		}
+
 		initial_resolution_set = true;
 	}
    
@@ -371,6 +381,12 @@ static void extract_directory(char *buf, const char *path, size_t size)
 
 static void context_reset(void)
 {
+	if (!first_boot) {
+		// full screen / window toggle
+        GLimp_UpdateWindowSize();
+        R_ReinitOpenGL();
+    }
+
 	glsm_ctl(GLSM_CTL_STATE_CONTEXT_RESET, NULL);
 
    if (libretro_shared_context)
@@ -383,6 +399,10 @@ static void context_reset(void)
 
 static void context_destroy(void)
 {
+    if (!first_boot && glConfig.isInitialized) {
+        renderModelManager->FreeModelVertexCaches();
+        R_FreeDerivedData();
+    }
 }
 
 bool Sys_GetPath(sysPath_t type, idStr &path) {
@@ -1031,7 +1051,7 @@ void retro_run(void)
 {
    if (!libretro_shared_context)
       glsm_ctl(GLSM_CTL_STATE_BIND, NULL);
-	
+
 	if (first_boot) {
 		network_init();
 		//com_asyncSound.SetInteger(0);
@@ -1069,8 +1089,6 @@ void GLimp_SwapBuffers() {
 
 void GLimp_UpdateWindowSize()
 {
-    glConfig.vidWidth = scr_width;
-    glConfig.vidHeight = scr_height;
 }
 
 void retro_cheat_reset(void)

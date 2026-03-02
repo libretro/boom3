@@ -1012,6 +1012,11 @@ extern idCVar r_glDebugContext; // DG: use debug context to call logging callbac
 extern idCVar r_enableDepthCapture; // DG: disable capturing depth buffer, used for soft particles
 extern idCVar r_useSoftParticles;
 
+#ifdef __LIBRETRO__
+extern idCVar	r_customWidth;
+extern idCVar	r_customHeight;
+#endif
+
 /*
 ====================================================================
 
@@ -1073,6 +1078,10 @@ const int GLS_DEFAULT							= GLS_DEPTHFUNC_ALWAYS;
 
 void R_Init( void );
 void R_InitOpenGL( void );
+
+#ifdef __LIBRETRO__
+void R_ReinitOpenGL( void );
+#endif
 
 void R_DoneFreeType( void );
 

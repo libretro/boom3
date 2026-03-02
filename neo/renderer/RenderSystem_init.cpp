@@ -846,6 +846,12 @@ void R_InitOpenGL( void ) {
 
 	initSortedVidModes();
 
+#ifdef __LIBRETRO__
+	r_customWidth.SetInteger( glConfig.vidWidth );
+	r_customHeight.SetInteger( glConfig.vidHeight );
+	r_mode.SetInteger( -1 );
+#endif
+
 	//
 	// initialize OS specific portions of the renderSystem
 	//
@@ -872,6 +878,10 @@ void R_InitOpenGL( void ) {
 
 		// if we failed, set everything back to "safe mode"
 		// and try again
+#ifdef __LIBRETRO__
+		r_customWidth.SetInteger( 1920 );
+		r_customHeight.SetInteger( 1080 );
+#endif
 		r_mode.SetInteger( 3 );
 		r_fullscreen.SetInteger( 0 );
 		r_displayRefresh.SetInteger( 0 );
@@ -969,6 +979,46 @@ void R_InitOpenGL( void ) {
 	}
 #endif
 }
+
+#ifdef __LIBRETRO__
+void R_ReinitOpenGL( void ) {
+    glConfig.isInitialized = false;
+
+    Sys_InitInput();
+    soundSystem->InitHW();
+
+    glConfig.vendor_string = (const char *)qglGetString(GL_VENDOR);
+    glConfig.renderer_string = (const char *)qglGetString(GL_RENDERER);
+    glConfig.version_string = (const char *)qglGetString(GL_VERSION);
+    glConfig.extensions_string = (const char *)qglGetString(GL_EXTENSIONS);
+
+    GLint temp;
+    qglGetIntegerv( GL_MAX_TEXTURE_SIZE, &temp );
+    glConfig.maxTextureSize = temp;
+    if ( glConfig.maxTextureSize <= 0 )
+        glConfig.maxTextureSize = 256;
+
+    glConfig.isInitialized = true;
+
+    R_CheckPortableExtensions();
+#ifndef HAVE_OPENGLES
+    R_ARB2_Init();
+	R_ReloadARBPrograms_f( idCmdArgs() );
+#else
+	R_ReloadGLSLPrograms_f( idCmdArgs() );
+#endif
+
+	vertexCache.PurgeAll();
+	vertexCache.Shutdown();
+	vertexCache.Init();
+	renderModelManager->FreeModelVertexCaches();
+    r_renderer.SetModified();
+    tr.SetBackEndRenderer();
+    r_gammaInShader.ClearModified();
+    globalImages->PurgeAllImages();
+	globalImages->ReloadAllImages();
+}
+#endif
 
 /*
 ==================
