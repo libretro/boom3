@@ -338,10 +338,19 @@ struct simulated2 {
 
 #define SKEYS_LENGTH 32
 
+simulated schar_buf[SKEYS_LENGTH];
 simulated skeys[SKEYS_LENGTH];
 simulated2 smouse[SKEYS_LENGTH];
 uint8_t snum = 0;
 uint8_t snum2 = 0;
+uint8_t schar_num = 0;
+
+void Char_Event(int c) {
+    if (schar_num >= SKEYS_LENGTH) return;
+    schar_buf[schar_num].key = c;
+    schar_buf[schar_num].val = 0;
+    schar_num++;
+}
 
 void Key_Event(int key, int val) {
 	if (snum >= SKEYS_LENGTH) return;
@@ -393,6 +402,14 @@ sysEvent_t Sys_GetEvent() {
 		return res;
 	}
 	
+	// drain char events after key/mouse
+	if (schar_num > 0) {
+		schar_num--;
+		res.evType  = SE_CHAR;
+		res.evValue = schar_buf[schar_num].key;
+		return res;
+	}
+
 	return res_none;
 }
 

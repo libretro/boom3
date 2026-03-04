@@ -142,6 +142,8 @@ static float mouse_sensitivity = 3.0f;
 
 extern idCVar com_asyncSound;
 
+extern void Char_Event(int c);
+
 gp_layout_t modern = {
    {
       { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT,  "D-Pad Left" },
@@ -554,6 +556,20 @@ static void audio_process(void)
 {
 }
 
+static int ShiftChar(int c) {
+    if (c >= 'a' && c <= 'z') return c - 32;
+    switch (c) {
+        case '1': return '!'; case '2': return '@'; case '3': return '#';
+        case '4': return '$'; case '5': return '%'; case '6': return '^';
+        case '7': return '&'; case '8': return '*'; case '9': return '(';
+        case '0': return ')'; case '-': return '_'; case '=': return '+';
+        case '[': return '{'; case ']': return '}'; case '\\': return '|';
+        case ';': return ':'; case '\'': return '"'; case ',': return '<';
+        case '.': return '>'; case '/': return '?';
+        default: return c;
+    }
+}
+
 void Sys_SetKeys(){
 	int port;
 	uint32_t virt_buttons = 0x00;
@@ -737,180 +753,164 @@ void Sys_SetKeys(){
 			old_ret = ret;
 		}
 		break;
-		case RETRO_DEVICE_KEYBOARD:
-		{
-			// Poll keyboard state directly - much more reliable than the callback
-			static const struct { unsigned retrok; int doom_key; } kb_map[] = {
-				{ RETROK_w,         'w'         },
-				{ RETROK_s,         's'         },
-				{ RETROK_a,         'a'         },
-				{ RETROK_d,         'd'         },
-				{ RETROK_e,         'e'         },
-				{ RETROK_r,         'r'         },
-				{ RETROK_f,         'f'         },
-				{ RETROK_q,         'q'         },
-				{ RETROK_c,         'c'         },
-				{ RETROK_1,         '1'         },
-				{ RETROK_2,         '2'         },
-				{ RETROK_3,         '3'         },
-				{ RETROK_4,         '4'         },
-				{ RETROK_5,         '5'         },
-				{ RETROK_6,         '6'         },
-				{ RETROK_7,         '7'         },
-				{ RETROK_SPACE,     K_SPACE     },
-				{ RETROK_LSHIFT,    K_SHIFT     },
-				{ RETROK_RSHIFT,    K_SHIFT     },
-				{ RETROK_LCTRL,     K_CTRL      },
-				{ RETROK_RCTRL,     K_CTRL      },
-				{ RETROK_LALT,      K_ALT       },
-				{ RETROK_RALT,      K_ALT       },
-				{ RETROK_ESCAPE,    K_ESCAPE    },
-				{ RETROK_RETURN,    K_ENTER     },
-				{ RETROK_BACKSPACE, K_BACKSPACE },
-				{ RETROK_TAB,       K_TAB       },
-				{ RETROK_UP,        K_UPARROW   },
-				{ RETROK_DOWN,      K_DOWNARROW },
-				{ RETROK_LEFT,      K_LEFTARROW },
-				{ RETROK_RIGHT,     K_RIGHTARROW},
-				{ RETROK_F1,        K_F1        },
-				{ RETROK_F2,        K_F2        },
-				{ RETROK_F3,        K_F3        },
-				{ RETROK_F4,        K_F4        },
-				{ RETROK_F5,        K_F5        },
-				{ RETROK_BACKQUOTE, '`'         },
-			};
-			static const int kb_map_size = sizeof(kb_map) / sizeof(kb_map[0]);
-			static bool kb_prev[sizeof(kb_map) / sizeof(kb_map[0])] = {};
-
-			for (int i = 0; i < kb_map_size; i++)
-			{
-				bool now = !!input_cb(port, RETRO_DEVICE_KEYBOARD, 0, kb_map[i].retrok);
-				if (now != kb_prev[i])
-				{
-					Key_Event(kb_map[i].doom_key, now ? 1 : 0);
-					kb_prev[i] = now;
-				}
-			}
-
-			// Mouse buttons
-			static const struct { unsigned retro_id; int doom_key; } mouse_buttons[] = {
-				{ RETRO_DEVICE_ID_MOUSE_LEFT,      K_MOUSE1 },
-				{ RETRO_DEVICE_ID_MOUSE_RIGHT,     K_MOUSE2 },
-				{ RETRO_DEVICE_ID_MOUSE_MIDDLE,    K_MOUSE3 },
-				{ RETRO_DEVICE_ID_MOUSE_WHEELUP,   K_MOUSE4 },
-				{ RETRO_DEVICE_ID_MOUSE_WHEELDOWN, K_MOUSE5 },
-			};
-			for (int i = 0; i < 5; i++)
-			{
-				bool now = !!input_cb(port, RETRO_DEVICE_MOUSE, 0, mouse_buttons[i].retro_id);
-				if (now != kb_mouse_btn[i])
-				{
-					Key_Event(mouse_buttons[i].doom_key, now ? 1 : 0);
-					kb_mouse_btn[i] = now;
-				}
-			}
-			break;
-		}
-		/*
-		case RETRO_DEVICE_KEYBOARD:
-			if (input_cb(port, RETRO_DEVICE_MOUSE, 0, RETRO_DEVICE_ID_MOUSE_LEFT))
-				Sys_SetKeys(K_MOUSE1, 1);
-			else
-				Sys_SetKeys(K_MOUSE1, 0);
-			if (input_cb(port, RETRO_DEVICE_MOUSE, 0, RETRO_DEVICE_ID_MOUSE_RIGHT))
-				Sys_SetKeys(K_MOUSE2, 1);
-			else
-				Sys_SetKeys(K_MOUSE2, 0);
-			if (input_cb(port, RETRO_DEVICE_MOUSE, 0, RETRO_DEVICE_ID_MOUSE_MIDDLE))
-				Sys_SetKeys(K_MOUSE3, 1);
-			else
-				Sys_SetKeys(K_MOUSE3, 0);
-			if (input_cb(port, RETRO_DEVICE_MOUSE, 0, RETRO_DEVICE_ID_MOUSE_WHEELUP))
-				Sys_SetKeys(K_MOUSE4, 1);
-			else
-				Sys_SetKeys(K_MOUSE4, 0);
-			if (input_cb(port, RETRO_DEVICE_MOUSE, 0, RETRO_DEVICE_ID_MOUSE_WHEELDOWN))
-				Sys_SetKeys(K_MOUSE5, 1);
-			else
-				Sys_SetKeys(K_MOUSE5, 0);
-			if (input_cb(port, RETRO_DEVICE_MOUSE, 0, RETRO_DEVICE_ID_MOUSE_HORIZ_WHEELUP))
-				Sys_SetKeys(K_MOUSE6, 1);
-			else
-				Sys_SetKeys(K_MOUSE6, 0);
-			if (input_cb(port, RETRO_DEVICE_MOUSE, 0, RETRO_DEVICE_ID_MOUSE_HORIZ_WHEELDOWN))
-				Sys_SetKeys(K_MOUSE7, 1);
-			else
-				Sys_SetKeys(K_MOUSE7, 0);
-			if (quake_devices[0] == RETRO_DEVICE_KEYBOARD) {
-				if (input_cb(port, RETRO_DEVICE_KEYBOARD, 0, RETROK_UP))
-					Sys_SetKeys(K_UPARROW, 1);
-				else
-					Sys_SetKeys(K_UPARROW, 0);
-				if (input_cb(port, RETRO_DEVICE_KEYBOARD, 0, RETROK_DOWN))
-					Sys_SetKeys(K_DOWNARROW, 1);
-				else
-					Sys_SetKeys(K_DOWNARROW, 0);
-				if (input_cb(port, RETRO_DEVICE_KEYBOARD, 0, RETROK_LEFT))
-					Sys_SetKeys(K_LEFTARROW, 1);
-				else
-					Sys_SetKeys(K_LEFTARROW, 0);
-				if (input_cb(port, RETRO_DEVICE_KEYBOARD, 0, RETROK_RIGHT))
-					Sys_SetKeys(K_RIGHTARROW, 1);
-				else
-					Sys_SetKeys(K_RIGHTARROW, 0);
-			}
-			break;
-		*/
 		case RETRO_DEVICE_NONE:
 			break;
+		}
+
+		// Always poll keyboard regardless of device - needed for console access
+		static const struct { unsigned retrok; int doom_key; } kb_map[] = {
+			// existing game keys
+			{ RETROK_w,         'w'         },
+			{ RETROK_s,         's'         },
+			{ RETROK_a,         'a'         },
+			{ RETROK_d,         'd'         },
+			{ RETROK_e,         'e'         },
+			{ RETROK_r,         'r'         },
+			{ RETROK_f,         'f'         },
+			{ RETROK_q,         'q'         },
+			{ RETROK_c,         'c'         },
+			// other keys
+			{ RETROK_t,         't'         },
+			{ RETROK_y,         'y'         },
+			{ RETROK_u,         'u'         },
+			{ RETROK_i,         'i'         },
+			{ RETROK_o,         'o'         },
+			{ RETROK_p,         'p'         },
+			{ RETROK_g,         'g'         },
+			{ RETROK_h,         'h'         },
+			{ RETROK_j,         'j'         },
+			{ RETROK_k,         'k'         },
+			{ RETROK_l,         'l'         },
+			{ RETROK_z,         'z'         },
+			{ RETROK_x,         'x'         },
+			{ RETROK_v,         'v'         },
+			{ RETROK_b,         'b'         },
+			{ RETROK_n,         'n'         },
+			{ RETROK_m,         'm'         },
+			// numbers
+			{ RETROK_1,         '1'         },
+			{ RETROK_2,         '2'         },
+			{ RETROK_3,         '3'         },
+			{ RETROK_4,         '4'         },
+			{ RETROK_5,         '5'         },
+			{ RETROK_6,         '6'         },
+			{ RETROK_7,         '7'         },
+			{ RETROK_8,         '8'         },
+			{ RETROK_9,         '9'         },
+			{ RETROK_0,         '0'         },
+			// symbols
+			{ RETROK_SPACE,     K_SPACE     },
+			{ RETROK_MINUS,     '-'         },
+			{ RETROK_EQUALS,    '='         },
+			{ RETROK_LEFTBRACKET,  '['      },
+			{ RETROK_RIGHTBRACKET, ']'      },
+			{ RETROK_BACKSLASH, '\\'        },
+			{ RETROK_SEMICOLON, ';'         },
+			{ RETROK_QUOTE,     '\''        },
+			{ RETROK_COMMA,     ','         },
+			{ RETROK_PERIOD,    '.'         },
+			{ RETROK_SLASH,     '/'         },
+			// control keys
+			{ RETROK_LSHIFT,    K_SHIFT     },
+			{ RETROK_RSHIFT,    K_SHIFT     },
+			{ RETROK_LCTRL,     K_CTRL      },
+			{ RETROK_RCTRL,     K_CTRL      },
+			{ RETROK_LALT,      K_ALT       },
+			{ RETROK_RALT,      K_ALT       },
+			{ RETROK_ESCAPE,    K_ESCAPE    },
+			{ RETROK_RETURN,    K_ENTER     },
+			{ RETROK_BACKSPACE, K_BACKSPACE },
+			{ RETROK_TAB,       K_TAB       },
+			{ RETROK_UP,        K_UPARROW   },
+			{ RETROK_DOWN,      K_DOWNARROW },
+			{ RETROK_LEFT,      K_LEFTARROW },
+			{ RETROK_RIGHT,     K_RIGHTARROW},
+			{ RETROK_F1,        K_F1        },
+			{ RETROK_F2,        K_F2        },
+			{ RETROK_F3,        K_F3        },
+			{ RETROK_F4,        K_F4        },
+			{ RETROK_F5,        K_F5        },
+			{ RETROK_BACKQUOTE, '`'         },
+		};
+		static const int kb_map_size = sizeof(kb_map) / sizeof(kb_map[0]);
+		static bool kb_prev[sizeof(kb_map) / sizeof(kb_map[0])] = {};
+
+		for (int i = 0; i < kb_map_size; i++)
+		{
+			bool now = !!input_cb(port, RETRO_DEVICE_KEYBOARD, 0, kb_map[i].retrok);
+			if (now != kb_prev[i])
+			{
+				Key_Event(kb_map[i].doom_key, now ? 1 : 0);
+
+				static bool kb_shift = false;
+				if (kb_map[i].retrok == RETROK_LSHIFT || kb_map[i].retrok == RETROK_RSHIFT)
+					kb_shift = now;
+
+				if (now) {
+					int c = kb_map[i].doom_key;
+					if (c == K_BACKSPACE) {
+						Char_Event(8);
+					} else if (c != '`' && c >= 32 && c < 127) {
+						Char_Event(kb_shift ? ShiftChar(c) : c);
+					}
+				}
+				kb_prev[i] = now;
+			}
+		}
+
+		// Mouse buttons
+		static const struct { unsigned retro_id; int doom_key; } mouse_buttons[] = {
+			{ RETRO_DEVICE_ID_MOUSE_LEFT,      K_MOUSE1 },
+			{ RETRO_DEVICE_ID_MOUSE_RIGHT,     K_MOUSE2 },
+			{ RETRO_DEVICE_ID_MOUSE_MIDDLE,    K_MOUSE3 },
+			{ RETRO_DEVICE_ID_MOUSE_WHEELUP,   K_MOUSE4 },
+			{ RETRO_DEVICE_ID_MOUSE_WHEELDOWN, K_MOUSE5 },
+		};
+		for (int i = 0; i < 5; i++)
+		{
+			bool now = !!input_cb(port, RETRO_DEVICE_MOUSE, 0, mouse_buttons[i].retro_id);
+			if (now != kb_mouse_btn[i])
+			{
+				Key_Event(mouse_buttons[i].doom_key, now ? 1 : 0);
+				kb_mouse_btn[i] = now;
+			}
 		}
 	}
 }
 
 void Sys_SetMouse() {
-	int rsx, rsy;
-	int slowdown = 1024 * (framerate / 60.0f);
-	
-	if (doom_devices[0] == RETRO_DEVICE_KEYBOARD)
-	{
-		/* Raw mouse delta – already in screen pixels, no deadzone needed */
-		int dx = input_cb(0, RETRO_DEVICE_MOUSE, 0,
-						  RETRO_DEVICE_ID_MOUSE_X);
-		int dy = invert_y_axis * input_cb(0, RETRO_DEVICE_MOUSE, 0,
-										  RETRO_DEVICE_ID_MOUSE_Y);
+    int rsx, rsy;
+    int slowdown = 1024 * (framerate / 60.0f);
 
-		/* Scale: mouse_sensitivity == 1.0 → 1:1 pixel movement */
-		dx = (int)(dx * mouse_sensitivity);
-		dy = (int)(dy * mouse_sensitivity);
+    // Always read physical mouse delta regardless of device mode
+    {
+        int dx = input_cb(0, RETRO_DEVICE_MOUSE, 0, RETRO_DEVICE_ID_MOUSE_X);
+        int dy = invert_y_axis * input_cb(0, RETRO_DEVICE_MOUSE, 0, RETRO_DEVICE_ID_MOUSE_Y);
+        dx = (int)(dx * mouse_sensitivity);
+        dy = (int)(dy * mouse_sensitivity);
+        if (dx || dy)
+            Mouse_Event(dx, dy);
+    }
 
-		if (dx || dy)
-			Mouse_Event(dx, dy);
+    if (doom_devices[0] == RETRO_DEVICE_KEYBOARD)
+        return;
 
-		return;
-	}
+    // Right stick look for gamepad modes
+    rsx = input_cb(0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT,
+        RETRO_DEVICE_ID_ANALOG_X);
+    rsy = invert_y_axis * input_cb(0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT,
+        RETRO_DEVICE_ID_ANALOG_Y);
 
-	// Right stick Look
-	rsx = input_cb(0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT,
-		RETRO_DEVICE_ID_ANALOG_X);
-	rsy = invert_y_axis * input_cb(0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT,
-		RETRO_DEVICE_ID_ANALOG_Y);
-			   
-	if (rsx > analog_deadzone || rsx < -analog_deadzone) {
-		if (rsx > analog_deadzone)
-			rsx = rsx - analog_deadzone;
-		if (rsx < -analog_deadzone)
-			rsx = rsx + analog_deadzone;
-		
-	} else rsx = 0;
-	if (rsy > analog_deadzone || rsy < -analog_deadzone) {
-		if (rsy > analog_deadzone)
-			rsy = rsy - analog_deadzone;
-		if (rsy < -analog_deadzone)
-			rsy = rsy + analog_deadzone;
-	} else rsy = 0;
-	
-	Mouse_Event(rsx /slowdown, rsy /slowdown);
-	
+    if (rsx > analog_deadzone || rsx < -analog_deadzone) {
+        if (rsx > analog_deadzone) rsx = rsx - analog_deadzone;
+        if (rsx < -analog_deadzone) rsx = rsx + analog_deadzone;
+    } else rsx = 0;
+    if (rsy > analog_deadzone || rsy < -analog_deadzone) {
+        if (rsy > analog_deadzone) rsy = rsy - analog_deadzone;
+        if (rsy < -analog_deadzone) rsy = rsy + analog_deadzone;
+    } else rsy = 0;
+
+    Mouse_Event(rsx / slowdown, rsy / slowdown);
 }
 
 #define SOUND_BUFFER_SAMPLES (MIXBUFFER_SAMPLES * 4)
@@ -1160,9 +1160,6 @@ void retro_set_controller_port_device(unsigned port, unsigned device)
             environ_cb(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, modern.desc);
             pending_layout = &modern;
             break;
-         case RETRO_DEVICE_KEYBOARD:
-            doom_devices[port] = RETRO_DEVICE_KEYBOARD;
-            break;
          case RETRO_DEVICE_NONE:
          default:
             doom_devices[port] = RETRO_DEVICE_NONE;
@@ -1358,8 +1355,7 @@ void retro_set_environment(retro_environment_t cb)
    static const struct retro_controller_description port_1[] = {
       { "Gamepad Classic", RETRO_DEVICE_JOYPAD },
       { "Gamepad Classic Alt", RETRO_DEVICE_JOYPAD_ALT },
-      { "Gamepad Modern", RETRO_DEVICE_MODERN },
-      { "Keyboard + Mouse", RETRO_DEVICE_KEYBOARD },
+      { "Gamepad Modern", RETRO_DEVICE_MODERN }
    };
 
    static const struct retro_controller_info ports[] = {
