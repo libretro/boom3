@@ -687,7 +687,7 @@ void R_SetDrawInteraction( const shaderStage_t *surfaceStage, const float *surfa
 RB_SubmittInteraction
 =================
 */
-static void RB_SubmittInteraction( drawInteraction_t *din, void (*DrawInteraction)(const drawInteraction_t *) ) {
+void RB_SubmittInteraction( drawInteraction_t *din, void (*DrawInteraction)(const drawInteraction_t *) ) {
 	if ( !din->bumpImage ) {
 		return;
 	}

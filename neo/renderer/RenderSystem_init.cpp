@@ -44,7 +44,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "framework/Game.h"
 
 // Vista OpenGL wrapper check
-#ifdef _WIN32
+#if defined(_WIN32) && !defined(__LIBRETRO__)
 #include "sys/win32/win_local.h"
 #endif
 
@@ -957,7 +957,7 @@ void R_InitOpenGL( void ) {
 		R_SetColorMappings();
 	}
 
-#ifdef _WIN32
+#if defined(_WIN32) && !defined(__LIBRETRO__)
 	static bool glCheck = false;
 	if ( !glCheck && win32.osversion.dwMajorVersion == 6 ) {
 		glCheck = true;

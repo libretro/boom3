@@ -305,27 +305,33 @@ void Sys_SetClipboardData( const char *string ) {
 Sys_LockMemory
 ================
 */
+#ifndef _WIN32
 bool Sys_LockMemory( void *ptr, int bytes ) {
 	return true;
 }
+#endif
 
 /*
 ================
 Sys_UnlockMemory
 ================
 */
+#ifndef _WIN32
 bool Sys_UnlockMemory( void *ptr, int bytes ) {
 	return true;
 }
+#endif
 
 /*
 ================
 Sys_SetPhysicalWorkMemory
 ================
 */
+#ifndef _WIN32
 void Sys_SetPhysicalWorkMemory( int minBytes, int maxBytes ) {
 	common->DPrintf( "TODO: Sys_SetPhysicalWorkMemory\n" );
 }
+#endif
 
 /*
 ===========
@@ -333,10 +339,12 @@ Sys_GetDriveFreeSpace
 return in MegaBytes
 ===========
 */
+#ifndef _WIN32
 int Sys_GetDriveFreeSpace( const char *path ) {
 	common->DPrintf( "TODO: Sys_GetDriveFreeSpace\n" );
 	return 1000 * 1024;
 }
+#endif
 
 /*
 ===============

@@ -265,6 +265,10 @@ SRC_SYS	:=\
 	$(CORE_DIR)/sys/libretro/libretro.cpp \
 	$(CORE_DIR)/sys/libretro/stubs.cpp
 
+ifneq (,$(findstring win,$(platform)))
+   SRC_SYS += sys/win32/win_shared.cpp
+endif
+
 SRC_GAME_BASE	:=\
 	$(CORE_DIR)/game/AF.cpp \
 	$(CORE_DIR)/game/AFEntity.cpp \

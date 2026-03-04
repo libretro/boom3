@@ -38,6 +38,11 @@ include:
   - project: 'libretro-infrastructure/ci-templates'
     file: '/linux-i686.yml'
 
+ ################################## CELLULAR ################################
+ # Android
+  - project: 'libretro-infrastructure/ci-templates'
+    file: '/android-make.yml'
+
  ################################## CONSOLES ################################
  # Nintendo Switch
   - project: 'libretro-infrastructure/ci-templates'
@@ -91,6 +96,13 @@ libretro-build-linux-x64-xp:
 libretro-build-linux-i686:
   extends:
     - .libretro-linux-i686-make-default
+    - .core-defs
+
+################################### CELLULAR #################################
+# Android ARMv8a
+android-arm64-v8a:
+  extends:
+    - .libretro-android-make-arm64-v8a
     - .core-defs
 
 ################################### CONSOLES #################################

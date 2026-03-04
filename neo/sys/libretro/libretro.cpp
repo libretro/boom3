@@ -468,9 +468,31 @@ Sys_GetSystemRam
 returns in megabytes
 ================
 */
+#ifndef _WIN32
 int Sys_GetSystemRam( void ) {
+#ifdef __linux__
+	long	count, page_size;
+	int		mb;
+
+	count = sysconf( _SC_PHYS_PAGES );
+	if ( count == -1 ) {
+		common->Printf( "GetSystemRam: sysconf _SC_PHYS_PAGES failed\n" );
+		return 512;
+	}
+	page_size = sysconf( _SC_PAGE_SIZE );
+	if ( page_size == -1 ) {
+		common->Printf( "GetSystemRam: sysconf _SC_PAGE_SIZE failed\n" );
+		return 512;
+	}
+	mb= (int)( (double)count * (double)page_size / ( 1024 * 1024 ) );
+	// round to the nearest 16Mb
+	mb = ( mb + 8 ) & ~15;
+	return mb;
+#else
 	return 1024;
+#endif
 }
+#endif
 
 /*
 ==================
