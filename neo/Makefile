@@ -171,7 +171,6 @@ endif
 
 # 1. If CROSS_COMPILE is set, derive COMPILE_ARCH from it
 ifneq ($(strip $(CROSS_COMPILE)),)
-    # Extract architecture from toolchain prefix
     COMPILE_ARCH := $(firstword $(subst -, ,$(CROSS_COMPILE)))
 endif
 
@@ -182,44 +181,30 @@ ifneq (,$(findstring android,$(platform)))
 endif
 endif
 
-# 3. If COMPILE_ARCH is still empty, detect from uname -m
+# 3. If still empty, try CC -dumpmachine (catches i386 docker on x86_64 host)
 ifeq ($(strip $(COMPILE_ARCH)),)
-    COMPILE_ARCH := $(shell uname -m | sed -e 's/i.86/x86/' -e 's/amd64/x86_64/' -e 's/x64/x86_64/' -e 's/powerpc$$/ppc/' -e 's/powerpc64/ppc64/' -e 's/aarch64/arm64/')
+    COMPILE_ARCH := $(shell $(CC) -dumpmachine 2>/dev/null | cut -d- -f1)
 endif
 
-# Pointer size: check for known 32-bit architectures, assume 64-bit
+# 4. If still empty, fall back to uname -m
+ifeq ($(strip $(COMPILE_ARCH)),)
+    COMPILE_ARCH := $(shell uname -m | sed -e 's/amd64/x86_64/' -e 's/x64/x86_64/' -e 's/powerpc$$/ppc/' -e 's/powerpc64/ppc64/' -e 's/aarch64/arm64/')
+endif
+
+ifeq ($(platform),libnx)
+    COMPILE_ARCH := aarch64
+endif
+
+# Normalize i?86 to x86
+COMPILE_ARCH := $(shell echo $(COMPILE_ARCH) | sed 's/i[3456]86/x86/')
+
+# Default to 64-bit pointer size
 D3_SIZEOFPTR := 8
 
-# ARM 32‑bit
-ifneq (,$(findstring arm,$(COMPILE_ARCH)))
-    D3_SIZEOFPTR := 4
-endif
-
-# x86 32‑bit
-ifneq (,$(findstring i386,$(COMPILE_ARCH)))
-    D3_SIZEOFPTR := 4
-endif
-ifneq (,$(findstring i486,$(COMPILE_ARCH)))
-    D3_SIZEOFPTR := 4
-endif
-ifneq (,$(findstring i586,$(COMPILE_ARCH)))
-    D3_SIZEOFPTR := 4
-endif
-ifneq (,$(findstring i686,$(COMPILE_ARCH)))
-    D3_SIZEOFPTR := 4
-endif
-
-# PPC 32‑bit
-ifneq (,$(findstring ppc,$(COMPILE_ARCH)))
-    ifeq ($(findstring 64,$(COMPILE_ARCH)),)
-        D3_SIZEOFPTR := 4
-    endif
-endif
-
-# Normalize COMPILE_ARCH to match CMake's cpu normalization
 ifeq ($(COMPILE_ARCH),powerpc)
     D3_ARCH := ppc
     D3_IS_BIG_ENDIAN := 1
+    D3_SIZEOFPTR := 4
 else ifeq ($(COMPILE_ARCH),powerpc64)
     D3_ARCH := ppc64
     D3_IS_BIG_ENDIAN := 1
@@ -232,9 +217,11 @@ else ifeq ($(COMPILE_ARCH),x86_64)
 else ifeq ($(COMPILE_ARCH),x86)
     D3_ARCH := x86
     D3_IS_BIG_ENDIAN := 0
+    D3_SIZEOFPTR := 4
 else ifneq (,$(findstring arm,$(COMPILE_ARCH)))
     D3_ARCH := arm
     D3_IS_BIG_ENDIAN := 0
+    D3_SIZEOFPTR := 4
 else ifneq (,$(findstring mips,$(COMPILE_ARCH)))
     D3_ARCH := mips
     D3_IS_BIG_ENDIAN := 0

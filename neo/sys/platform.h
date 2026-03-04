@@ -187,7 +187,7 @@ If you have questions concerning this license or the applicable additional terms
 
 
 // Unix
-#ifdef __unix__
+#if defined(__unix__) || defined(__SWITCH__)
 
 #ifdef	__GNUC__
   // NOTE: Do *not* use __builtin_alloca_with_align(), unlike regular alloca it frees at end of block instead of end of function !
