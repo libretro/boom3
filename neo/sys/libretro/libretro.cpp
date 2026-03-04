@@ -48,6 +48,7 @@ extern "C" {
 #include "framework/Licensee.h"
 #include "framework/FileSystem.h"
 #include "framework/KeyInput.h"
+#include "framework/Session_local.h"
 #include "renderer/ModelManager.h"
 #include "renderer/tr_local.h"
 #include "sys/libretro/retro_public.h"
@@ -903,11 +904,12 @@ void Sys_SetKeys(){
 void Sys_SetMouse() {
     int rsx, rsy;
     int slowdown = 1024 * (framerate / 60.0f);
+    int effective_invert = (sessLocal.guiActive != NULL) ? 1 : invert_y_axis;
 
     // Always read physical mouse delta regardless of device mode
     {
         int dx = input_cb(0, RETRO_DEVICE_MOUSE, 0, RETRO_DEVICE_ID_MOUSE_X);
-        int dy = invert_y_axis * input_cb(0, RETRO_DEVICE_MOUSE, 0, RETRO_DEVICE_ID_MOUSE_Y);
+        int dy = effective_invert * input_cb(0, RETRO_DEVICE_MOUSE, 0, RETRO_DEVICE_ID_MOUSE_Y);
         dx = (int)(dx * mouse_sensitivity);
         dy = (int)(dy * mouse_sensitivity);
         if (dx || dy)
@@ -920,7 +922,7 @@ void Sys_SetMouse() {
     // Right stick look for gamepad modes
     rsx = input_cb(0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT,
         RETRO_DEVICE_ID_ANALOG_X);
-    rsy = invert_y_axis * input_cb(0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT,
+    rsy = effective_invert * input_cb(0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT,
         RETRO_DEVICE_ID_ANALOG_Y);
 
     if (rsx > analog_deadzone || rsx < -analog_deadzone) {
