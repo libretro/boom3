@@ -7,10 +7,6 @@ OPENAL         := 0
 DEBUG          := 0
 RELWITHDEBINFO := 0
 
-ifneq ($(V),1)
-   Q := @
-endif
-
 ifneq ($(SANITIZER),)
    CFLAGS   := -fsanitize=$(SANITIZER) $(CFLAGS)
    CXXFLAGS := -fsanitize=$(SANITIZER) $(CXXFLAGS)
@@ -30,21 +26,6 @@ else ifneq ($(findstring Darwin,$(shell uname -a)),)
 else ifneq ($(findstring win,$(shell uname -a)),)
    platform = win
 endif
-endif
-
-# system platform
-system_platform = unix
-ifeq ($(shell uname -a),)
-	EXE_EXT = .exe
-	system_platform = win
-else ifneq ($(findstring Darwin,$(shell uname -a)),)
-	system_platform = osx
-	arch = intel
-ifeq ($(shell uname -p),powerpc)
-	arch = ppc
-endif
-else ifneq ($(findstring MINGW,$(shell uname -a)),)
-	system_platform = win
 endif
 
 CORE_DIR    += .
@@ -296,8 +277,6 @@ ifneq (,$(or $(findstring webos,$(CROSS_COMPILE)),$(findstring starfish,$(CROSS_
    CXXFLAGS += -DHAVE_OPENGLES -DHAVE_OPENGLES2
 endif
 
-HAVE_OPENGL = 1
-
 LDFLAGS += $(LIBM)
 
 ifeq ($(DEBUG),1)
@@ -315,46 +294,6 @@ include Makefile.common
 
 OBJECTS := $(SOURCES_C:.c=.o) $(SOURCES_CXX:.cpp=.o)
 OBJECTS := $(filter-out %.c %.cpp,$(OBJECTS))
-
-COMPILE_PLATFORM=$(shell uname | sed -e 's/_.*//' | tr '[:upper:]' '[:lower:]' | sed -e 's/\//_/g')
-
-ifeq ($(COMPILE_PLATFORM),cygwin)
-  PLATFORM=mingw32
-endif
-
-ifndef PLATFORM
-PLATFORM=$(COMPILE_PLATFORM)
-endif
-export PLATFORM
-
-ifeq ($(PLATFORM),mingw32)
-  MINGW=1
-endif
-ifeq ($(PLATFORM),mingw64)
-  MINGW=1
-endif
-
-ifeq ($(COMPILE_ARCH),i86pc)
-  COMPILE_ARCH=x86
-endif
-
-ifeq ($(COMPILE_ARCH),amd64)
-  COMPILE_ARCH=x86_64
-endif
-ifeq ($(COMPILE_ARCH),x64)
-  COMPILE_ARCH=x86_64
-endif
-
-ifeq ($(COMPILE_ARCH),powerpc)
-  COMPILE_ARCH=ppc
-endif
-ifeq ($(COMPILE_ARCH),powerpc64)
-  COMPILE_ARCH=ppc64
-endif
-
-ifeq ($(COMPILE_ARCH),axp)
-  COMPILE_ARCH=alpha
-endif
 
 TOPDIR ?= $(CURDIR)
 
