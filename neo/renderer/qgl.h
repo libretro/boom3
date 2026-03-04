@@ -60,6 +60,14 @@ If you have questions concerning this license or the applicable additional terms
 #endif
 
 #ifdef __LIBRETRO__
+// On macOS desktop GL, use glad to provide all GL typedefs and enums
+// (including legacy/ARB ones missing from Apple's gl3.h).
+// Define gl3.h's include guard so glsym doesn't pull it in on top.
+#if defined(__APPLE__) && !defined(HAVE_OPENGLES)
+#include "../glad41/glad.h"
+#define __gl3_h_
+#define __gl3ext_h_
+#endif
 #include "../sys/libretro-common/include/glsym/glsym.h"
 #endif
 

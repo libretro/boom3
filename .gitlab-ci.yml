@@ -38,12 +38,28 @@ include:
   - project: 'libretro-infrastructure/ci-templates'
     file: '/linux-i686.yml'
 
- ################################## CELLULAR ################################
- # Android
+  # MacOS 64-bit
+  - project: 'libretro-infrastructure/ci-templates'
+    file: '/osx-x64.yml'
+
+  # MacOS ARM 64-bit
+  - project: 'libretro-infrastructure/ci-templates'
+    file: '/osx-arm64.yml'
+
+  ################################## CELLULAR ################################
+  # Android
   - project: 'libretro-infrastructure/ci-templates'
     file: '/android-make.yml'
 
- ################################## CONSOLES ################################
+  # iOS
+  - project: 'libretro-infrastructure/ci-templates'
+    file: '/ios-arm64.yml'
+
+  # tvOS (AppleTV)
+  - project: 'libretro-infrastructure/ci-templates'
+    file: '/tvos-arm64.yml'
+
+  ################################## CONSOLES ################################
  # Nintendo Switch
   - project: 'libretro-infrastructure/ci-templates'
     file: '/libnx-static.yml'
@@ -98,12 +114,56 @@ libretro-build-linux-i686:
     - .libretro-linux-i686-make-default
     - .core-defs
 
+# MacOS 64-bit
+libretro-build-osx-x64:
+  extends:
+    - .libretro-osx-x64-make-default
+    - .core-defs
+
+libretro-build-osx-x64-xp:
+  extends:
+    - .libretro-osx-x64-make-default
+    - .core-defs-xp
+
+# MacOS ARM 64-bit
+libretro-build-osx-arm64:
+  extends:
+    - .libretro-osx-arm64-make-default
+    - .core-defs
+
+libretro-build-osx-arm64-xp:
+  extends:
+    - .libretro-osx-arm64-make-default
+    - .core-defs-xp
+
 ################################### CELLULAR #################################
 # Android ARMv8a
 android-arm64-v8a:
   extends:
     - .libretro-android-make-arm64-v8a
     - .core-defs
+
+# iOS
+libretro-build-ios-arm64:
+  extends:
+    - .libretro-ios-arm64-make-default
+    - .core-defs
+
+libretro-build-ios-arm64-xp:
+  extends:
+    - .libretro-ios-arm64-make-default
+    - .core-defs-xp
+
+# tvOS
+libretro-build-tvos-arm64:
+  extends:
+    - .libretro-tvos-arm64-make-default
+    - .core-defs
+
+libretro-build-tvos-arm64-xp:
+  extends:
+    - .libretro-tvos-arm64-make-default
+    - .core-defs-xp
 
 ################################### CONSOLES #################################
 # Nintendo Switch

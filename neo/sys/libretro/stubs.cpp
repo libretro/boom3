@@ -1,5 +1,9 @@
 // Stubs for dhewm3-specific functionality not supported in the libretro core
 
+#ifdef __APPLE__
+#include <mach/mach_time.h>
+#endif
+
 #include "sys/platform.h"
 #include "framework/Common.h"
 #include "framework/KeyInput.h"

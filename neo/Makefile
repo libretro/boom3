@@ -58,15 +58,17 @@ LIBM		    = -lm
 ifeq ($(ARCHFLAGS),)
 ifeq ($(archs),ppc)
    ARCHFLAGS = -arch ppc -arch ppc64
+else ifeq ($(shell uname -m),arm64)
+   ARCHFLAGS = -arch arm64
 else
-   ARCHFLAGS = -arch i386 -arch x86_64
+   ARCHFLAGS = -arch x86_64
 endif
 endif
 
 ifeq ($(platform), osx)
 ifndef ($(NOUNIVERSAL))
    CXXFLAGS += $(ARCHFLAGS)
-   LFLAGS += $(ARCHFLAGS)
+   LDFLAGS += $(ARCHFLAGS)
 endif
 endif
 
@@ -88,29 +90,59 @@ else ifeq ($(platform), linux-portable)
    SHARED := -shared -Wl,--version-script=$(CORE_DIR)/link.T
 	LIBM :=
 	GL_LIB := -lGL
+else ifeq ($(platform), osx-arm64)
+   TARGET := $(TARGET_NAME)_libretro.dylib
+   fpic := -fPIC
+   SHARED := -dynamiclib
+   GL_LIB := -framework OpenGL
+   CC = cc -arch arm64
+   CXX = c++ -arch arm64
+   CFLAGS += -Wno-deprecated-declarations -Wno-macro-redefined
+   CXXFLAGS += -Wno-deprecated-declarations -Wno-macro-redefined
+else ifeq ($(platform), osx-x64)
+   TARGET := $(TARGET_NAME)_libretro.dylib
+   fpic := -fPIC
+   SHARED := -dynamiclib
+   GL_LIB := -framework OpenGL
+   CC = cc -arch x86_64
+   CXX = c++ -arch x86_64
+   CFLAGS += -Wno-deprecated-declarations -Wno-macro-redefined
+   CXXFLAGS += -Wno-deprecated-declarations -Wno-macro-redefined
 else ifneq (,$(findstring osx,$(platform)))
    TARGET := $(TARGET_NAME)_libretro.dylib
    fpic := -fPIC
    SHARED := -dynamiclib
    GL_LIB := -framework OpenGL
-else ifneq (,$(findstring ios,$(platform)))
+   CFLAGS += -Wno-deprecated-declarations -Wno-macro-redefined
+   CXXFLAGS += -Wno-deprecated-declarations -Wno-macro-redefined
+else ifeq ($(platform), ios-arm64)
    TARGET := $(TARGET_NAME)_libretro_ios.dylib
-	fpic := -fPIC
-	SHARED := -dynamiclib
-
-ifeq ($(IOSSDK),)
-   IOSSDK := $(shell xcodebuild -version -sdk iphoneos Path)
-endif
-
-	DEFINES := -DIOS
-	CC = cc -arch armv7 -isysroot $(IOSSDK)
-ifeq ($(platform),ios9)
-CC     += -miphoneos-version-min=8.0
-CXXFLAGS += -miphoneos-version-min=8.0
-else
-CC     += -miphoneos-version-min=5.0
-CXXFLAGS += -miphoneos-version-min=5.0
-endif
+   fpic := -fPIC
+   SHARED := -dynamiclib
+   GL_LIB := -framework OpenGLES
+   GLES = 1
+   CORE =
+   ifeq ($(IOSSDK),)
+      IOSSDK := $(shell xcodebuild -version -sdk iphoneos Path)
+   endif
+   CC = cc -arch arm64 -isysroot $(IOSSDK) -miphoneos-version-min=11.0
+   CXX = c++ -arch arm64 -isysroot $(IOSSDK) -miphoneos-version-min=11.0
+   CFLAGS += -DHAVE_OPENGLES -DHAVE_OPENGLES2 -DIOS -DGLES_SILENCE_DEPRECATION
+   CXXFLAGS += -DHAVE_OPENGLES -DHAVE_OPENGLES2 -DIOS -DGLES_SILENCE_DEPRECATION
+else ifeq ($(platform), tvos-arm64)
+   TARGET := $(TARGET_NAME)_libretro_tvos.dylib
+   fpic := -fPIC
+   SHARED := -dynamiclib
+   GL_LIB := -framework OpenGLES
+   GLES = 1
+   CORE =
+   ifeq ($(TVOSSDK),)
+      TVOSSDK := $(shell xcodebuild -version -sdk appletvos Path)
+   endif
+   CC = cc -arch arm64 -isysroot $(TVOSSDK) -mtvos-version-min=11.0
+   CXX = c++ -arch arm64 -isysroot $(TVOSSDK) -mtvos-version-min=11.0
+   CFLAGS += -DHAVE_OPENGLES -DHAVE_OPENGLES2 -DIOS -DGLES_SILENCE_DEPRECATION
+   CXXFLAGS += -DHAVE_OPENGLES -DHAVE_OPENGLES2 -DIOS -DGLES_SILENCE_DEPRECATION
 else ifneq (,$(findstring qnx,$(platform)))
 	TARGET := $(TARGET_NAME)_libretro_qnx.so
    fpic := -fPIC
@@ -169,8 +201,8 @@ else
    CXXFLAGS += -DAL_LIBTYPE_STATIC -DALC_LIBTYPE_STATIC
 endif
 
-# 1. If CROSS_COMPILE is set, derive COMPILE_ARCH from it
-ifneq ($(strip $(CROSS_COMPILE)),)
+# 1. If CROSS_COMPILE is a real prefix (contains a dash), derive COMPILE_ARCH from it
+ifneq ($(findstring -,$(CROSS_COMPILE)),)
     COMPILE_ARCH := $(firstword $(subst -, ,$(CROSS_COMPILE)))
 endif
 
@@ -211,6 +243,9 @@ else ifeq ($(COMPILE_ARCH),powerpc64)
 else ifeq ($(COMPILE_ARCH),aarch64)
     D3_ARCH := aarch64
     D3_IS_BIG_ENDIAN := 0
+else ifeq ($(COMPILE_ARCH),arm64)
+    D3_ARCH := aarch64
+    D3_IS_BIG_ENDIAN := 0
 else ifeq ($(COMPILE_ARCH),x86_64)
     D3_ARCH := x86_64
     D3_IS_BIG_ENDIAN := 0
@@ -234,12 +269,14 @@ else
 endif
 
 # Equivalent of CMake's D3_OSTYPE and D3_SIZEOFPTR
-ifeq ($(platform), osx)
+ifneq (,$(findstring osx,$(platform)))
     D3_OSTYPE := macosx
 else ifeq ($(platform), win)
     D3_OSTYPE := windows
 else ifneq (,$(findstring mingw,$(CXX)))
     D3_OSTYPE := windows
+else ifneq (,$(findstring tvos,$(platform)))
+    D3_OSTYPE := tvos
 else ifneq (,$(findstring ios,$(platform)))
     D3_OSTYPE := ios
 else

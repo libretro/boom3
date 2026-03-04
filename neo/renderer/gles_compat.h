@@ -11,6 +11,9 @@ GLES2 compatibility shim for boom3 / Doom 3.
 
 #ifdef HAVE_OPENGLES
 
+// GLES2 headers don't define GLdouble (no double-precision in GLES).
+typedef double GLdouble;
+
 // ---------------------------------------------------------------------------
 // qgl* → gl* function mapping
 // ---------------------------------------------------------------------------
@@ -226,6 +229,9 @@ static inline void qglTexImage3D(GLenum, GLint, GLint, GLsizei, GLsizei, GLsizei
 #endif
 #ifndef GL_COMPRESSED_RGBA_S3TC_DXT5_EXT
 #  define GL_COMPRESSED_RGBA_S3TC_DXT5_EXT 0x83F3
+#endif
+#ifndef GL_ETC1_RGB8_OES
+#  define GL_ETC1_RGB8_OES 0x8D64
 #endif
 
 // Cube map EXT suffix
