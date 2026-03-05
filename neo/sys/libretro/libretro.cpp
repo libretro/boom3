@@ -1229,6 +1229,7 @@ GLimp_SwapBuffers
 ===================
 */
 void GLimp_SwapBuffers() {
+   glFlush();
    if (!libretro_shared_context)
       glsm_ctl(GLSM_CTL_STATE_UNBIND, NULL);
 	video_cb(RETRO_HW_FRAME_BUFFER_VALID, scr_width, scr_height, 0);
