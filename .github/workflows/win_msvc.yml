@@ -71,7 +71,8 @@ jobs:
         cp Configuration.md publish/$PKGDIR/Configuration.txt
         # copy runtime libraries (SDL, OpenAL, cURL)
         cd ../dhewm3-libs-master/i686-w64-mingw32/bin/
-        cp OpenAL32.dll SDL2.dll libcurl-4.dll ../../../dhewm3/publish/$PKGDIR/
+        REPONAME=$(basename $GITHUB_REPOSITORY)
+        cp OpenAL32.dll SDL2.dll libcurl-4.dll ../../../$REPONAME/publish/$PKGDIR/
         cd -
     - name: Upload testbuild package
       uses: actions/upload-artifact@v4
@@ -143,7 +144,8 @@ jobs:
         cp Configuration.md publish/$PKGDIR/Configuration.txt
         # copy runtime libraries (SDL, OpenAL, cURL)
         cd ../dhewm3-libs-master/x86_64-w64-mingw32/bin/
-        cp OpenAL32.dll SDL2.dll libcurl-4.dll ../../../dhewm3/publish/$PKGDIR/
+        REPONAME=$(basename $GITHUB_REPOSITORY)
+        cp OpenAL32.dll SDL2.dll libcurl-4.dll ../../../$REPONAME/publish/$PKGDIR/
         cd -
     - name: Upload testbuild package
       uses: actions/upload-artifact@v4
