@@ -75,17 +75,66 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       NULL,
       NULL,
       {
-         { "480x272",   NULL },
-         { "640x368",   NULL },
-         { "720x408",   NULL },
-         { "960x544",   "960x544 (Default)" },
-		 { "1280x720",   NULL },
-		 { "1920x1080",   NULL },
-		 { "2560x1440",   NULL },
-		 { "3840x2160",   NULL },
+         { "320x240",     NULL },
+         { "400x300",     NULL },
+         { "512x384",     NULL },
+         { "640x480",     NULL },
+         { "800x600",     NULL },
+         { "1024x768",    NULL },
+         { "1152x864",    NULL },
+         { "1280x1024",   NULL },
+         { "1600x1200",   NULL },
+
+         /* DG added modes */
+         { "1280x720",    NULL },
+         { "1366x768",    NULL },
+         { "1440x900",    NULL },
+         { "1400x1050",   NULL },
+         { "1600x900",    NULL },
+         { "1680x1050",   NULL },
+         { "1920x1080",   "1920x1080 (Default)" },
+         { "1920x1200",   NULL },
+         { "2048x1152",   NULL },
+         { "2560x1600",   NULL },
+         { "3200x2400",   NULL },
+         { "3840x2160",   NULL },
+         { "4096x2304",   NULL },
+         { "2880x1800",   NULL },
+         { "2560x1440",   NULL },
+         { "1440x1080",   NULL },
+         { "1280x800",    NULL },
+
+         /* 21:9 */
+         { "2560x1080",   NULL },
+         { "3440x1440",   NULL },
+         { "3840x1600",   NULL },
+         { "5120x2160",   NULL },
+
+         /* 32:9 */
+         { "3840x1080",   NULL },
+         { "5120x1440",   NULL },
+         { "7680x2160",   NULL },
+
          { NULL, NULL },
       },
-      "960x544"
+      "1920x1080"
+   },
+   {
+   "doom_machine_spec",
+   "Quality Preset (requires core restart)",
+   NULL,
+   "Select the engine quality preset.",
+   NULL,
+   NULL,
+   {
+      { "auto",  "Auto (Detect by RAM)" },
+      { "0",     "Low" },
+      { "1",     "Medium" },
+      { "2",     "High" },
+      { "3",     "Ultra" },
+      { NULL, NULL },
+   },
+   "auto"
    },
    {
       "doom_invert_y_axis",
@@ -100,6 +149,30 @@ struct retro_core_option_v2_definition option_defs_us[] = {
          { NULL, NULL },
       },
       "enabled"
+   },
+   {
+      "doom_mouse_sensitivity",
+      "Mouse Sensitivity (Keyboard + Mouse mode)",
+      NULL,
+      "Adjust mouse look sensitivity when using the Keyboard + Mouse "
+      "input device. Higher values = faster camera movement. "
+      "Has no effect in gamepad modes.",
+      NULL,
+      NULL,
+      {
+         { "0.5",  "0.5 (Very Slow)" },
+         { "1.0",  "1.0 (Slow)"      },
+         { "1.5",  "1.5"             },
+         { "2.0",  "2.0"             },
+         { "2.5",  "2.5"             },
+         { "3.0",  "3.0 (Default)"   },
+         { "4.0",  "4.0"             },
+         { "5.0",  "5.0 (Fast)"      },
+         { "6.0",  "6.0"             },
+         { "8.0",  "8.0 (Very Fast)" },
+         { NULL, NULL },
+      },
+      "3.0"
    },
    {
       "doom_fps",

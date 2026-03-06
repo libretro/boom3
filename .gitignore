@@ -6,6 +6,13 @@
 .project
 .settings/
 *.o
+boom3_libretro.so
 
 /dhewm*
 /*-releases/
+/neo/.vs*
+/neo/out*
+/neo/build*
+/.vs*
+
+/neo/CMakeSettings.json

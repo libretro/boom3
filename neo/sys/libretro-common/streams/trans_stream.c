@@ -1,4 +1,4 @@
-/* Copyright  (C) 2010-2018 The RetroArch team
+/* Copyright  (C) 2010-2020 The RetroArch team
  *
  * ---------------------------------------------------------------------------------------
  * The following license statement only applies to this file (trans_stream.c).
@@ -28,40 +28,37 @@
  *                                for the new stream data to be saved
  * @in                          : input data
  * @in_size                     : input size
- * @out                         : output data
- * @out_size                    : output size
- * @error                       : (optional) output for error code
+ * @s                           : output data
+ * @len                         : output size
+ * @err                         : (optional) output for error code
  *
  * Perform a full transcoding from a source to a destination.
  */
 bool trans_stream_trans_full(
     struct trans_stream_backend *backend, void **data,
     const uint8_t *in, uint32_t in_size,
-    uint8_t *out, uint32_t out_size,
-    enum trans_stream_error *error)
+    uint8_t *s, uint32_t len,
+    enum trans_stream_error *err)
 {
    void *rdata;
    bool ret;
    uint32_t rd, wn;
 
    if (data && *data)
-   {
       rdata = *data;
-   }
    else
    {
-      rdata = backend->stream_new();
-      if (!rdata)
+      if (!(rdata = backend->stream_new()))
       {
-         if (error)
-            *error = TRANS_STREAM_ERROR_ALLOCATION_FAILURE;
+         if (err)
+            *err = TRANS_STREAM_ERROR_ALLOCATION_FAILURE;
          return false;
       }
    }
 
    backend->set_in(rdata, in, in_size);
-   backend->set_out(rdata, out, out_size);
-   ret = backend->trans(rdata, true, &rd, &wn, error);
+   backend->set_out(rdata, s, len);
+   ret = backend->trans(rdata, true, &rd, &wn, err);
 
    if (data)
       *data = rdata;

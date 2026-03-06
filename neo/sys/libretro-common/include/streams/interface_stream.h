@@ -1,4 +1,4 @@
-/* Copyright  (C) 2010-2018 The RetroArch team
+/* Copyright  (C) 2010-2020 The RetroArch team
  *
  * ---------------------------------------------------------------------------------------
  * The following license statement only applies to this file (interface_stream.h).
@@ -36,7 +36,8 @@ enum intfstream_type
 {
    INTFSTREAM_FILE = 0,
    INTFSTREAM_MEMORY,
-   INTFSTREAM_CHD
+   INTFSTREAM_CHD,
+   INTFSTREAM_RZIP
 };
 
 typedef struct intfstream_internal intfstream_internal_t, intfstream_t;
@@ -74,6 +75,9 @@ int64_t intfstream_read(intfstream_internal_t *intf,
 int64_t intfstream_write(intfstream_internal_t *intf,
       const void *s, uint64_t len);
 
+int intfstream_printf(intfstream_internal_t *intf,
+      const char* format, ...);
+
 int64_t intfstream_get_ptr(intfstream_internal_t *intf);
 
 char *intfstream_gets(intfstream_internal_t *intf,
@@ -84,9 +88,14 @@ int intfstream_getc(intfstream_internal_t *intf);
 int64_t intfstream_seek(intfstream_internal_t *intf,
       int64_t offset, int whence);
 
+int64_t intfstream_truncate(intfstream_internal_t *intf,
+      uint64_t len);
+
 void intfstream_rewind(intfstream_internal_t *intf);
 
 int64_t intfstream_tell(intfstream_internal_t *intf);
+
+int intfstream_eof(intfstream_internal_t *intf);
 
 void intfstream_putc(intfstream_internal_t *intf, int c);
 
@@ -96,17 +105,32 @@ int64_t intfstream_get_size(intfstream_internal_t *intf);
 
 int intfstream_flush(intfstream_internal_t *intf);
 
-intfstream_t* intfstream_open_file(const char *path,
+uint32_t intfstream_get_offset_to_start(intfstream_internal_t *intf);
+
+uint32_t intfstream_get_frame_size(intfstream_internal_t *intf);
+
+uint32_t intfstream_get_first_sector(intfstream_internal_t* intf);
+
+bool intfstream_is_compressed(intfstream_internal_t *intf);
+
+bool intfstream_get_crc(intfstream_internal_t *intf, uint32_t *crc);
+
+intfstream_t *intfstream_open_file(const char *path,
       unsigned mode, unsigned hints);
 
 intfstream_t *intfstream_open_memory(void *data,
       unsigned mode, unsigned hints, uint64_t size);
 
+/* Deprecated.  Has the same effect as `intfstream_open_memory` with
+   a mode including `RETRO_VFS_FILE_ACCESS_WRITE`. */
 intfstream_t *intfstream_open_writable_memory(void *data,
       unsigned mode, unsigned hints, uint64_t size);
 
 intfstream_t *intfstream_open_chd_track(const char *path,
       unsigned mode, unsigned hints, int32_t track);
+
+intfstream_t *intfstream_open_rzip_file(const char *path,
+      unsigned mode);
 
 RETRO_END_DECLS
 

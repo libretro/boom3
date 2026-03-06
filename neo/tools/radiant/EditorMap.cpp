@@ -52,14 +52,6 @@ void		AddRegionBrushes(void);
 void		RemoveRegionBrushes(void);
 
 /*
- =======================================================================================================================
- =======================================================================================================================
- */
-void DupLists() {
-	DWORD	dw = GetTickCount();
-}
-
-/*
  * Cross map selection saving this could mess this up if you have only part of a
  * complex entity selected...
  */
@@ -443,6 +435,11 @@ void Map_LoadFile(const char *filename) {
 
 	common->Printf( "Map_LoadFile: %s\n", fileStr.c_str() );
 
+	// DG: make sure that this is set to the default value.
+	//     it's changed when Entity_PostParse() is called with the worldspawn
+	//     and the worldspawn has "allow_nospecular" "1" set
+	tr.allowNoSpecular = false;
+
 	Map_Free();
 
 	g_qeglobals.d_parsed_brushes = 0;
@@ -818,6 +815,9 @@ void Map_New(void) {
 	world_entity->brushes.onext = world_entity->brushes.oprev = &world_entity->brushes;
 	SetKeyValue(world_entity, "classname", "worldspawn");
 	world_entity->eclass = Eclass_ForName("worldspawn", true);
+
+	// DG: make sure this is (re) set to the default value when creating a new map
+	tr.allowNoSpecular = false;
 
 	g_pParentWnd->GetCamera()->Camera().angles[YAW] = 0;
 	g_pParentWnd->GetCamera()->Camera().angles[PITCH] = 0;

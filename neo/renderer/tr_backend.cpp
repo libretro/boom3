@@ -26,11 +26,18 @@ If you have questions concerning this license or the applicable additional terms
 ===========================================================================
 */
 #include "sys/platform.h"
+#include "sys/sys_imgui.h"
 
 #include "renderer/tr_local.h"
 
+static idCVar r_fillWindowAlphaChan( "r_fillWindowAlphaChan", "-1", CVAR_SYSTEM | CVAR_NOCHEAT | CVAR_ARCHIVE, "Make sure alpha channel of windows default framebuffer is completely opaque at the end of each frame. Needed at least when using Wayland with older drivers.\n 1: do this, 0: don't do it, -1: let dhewm3 decide (default)" );
+
 frameData_t		*frameData;
 backEndState_t	backEnd;
+
+#ifdef HAVE_OPENGLES
+#include "renderer/gles_compat.h"
+#endif
 
 /*
 ======================
@@ -78,6 +85,10 @@ void RB_SetDefaultGLState( void ) {
 		qglScissor( 0, 0, glConfig.vidWidth, glConfig.vidHeight );
 	}
 
+#ifdef HAVE_OPENGLES
+	backEnd.glState.currentTexture = -1;  // Force texture unit to be reset
+#endif
+
 	for ( i = glConfig.maxTextureUnits - 1 ; i >= 0 ; i-- ) {
 		GL_SelectTexture( i );
 
@@ -120,8 +131,12 @@ void GL_SelectTexture( int unit ) {
 		return;
 	}
 
+#ifdef HAVE_OPENGLES
+	qglActiveTexture( GL_TEXTURE0 + unit );
+#else
 	qglActiveTextureARB( GL_TEXTURE0_ARB + unit );
 	qglClientActiveTextureARB( GL_TEXTURE0_ARB + unit );
+#endif
 
 	backEnd.glState.currenttmu = unit;
 }
@@ -342,6 +357,7 @@ void GL_State( int stateBits ) {
 	//
 	// fill/line mode
 	//
+#ifndef HAVE_OPENGLES
 	if ( diff & GLS_POLYMODE_LINE ) {
 		if ( stateBits & GLS_POLYMODE_LINE ) {
 			qglPolygonMode( GL_FRONT_AND_BACK, GL_LINE );
@@ -375,6 +391,7 @@ void GL_State( int stateBits ) {
 			break;
 		}
 	}
+#endif
 
 	backEnd.glState.glStateBits = stateBits;
 }
@@ -435,9 +452,9 @@ static void	RB_SetBuffer( const void *data ) {
 	cmd = (const setBufferCommand_t *)data;
 
 	backEnd.frameCount = cmd->frameCount;
-
+#ifndef HAVE_OPENGLES
 	qglDrawBuffer( cmd->buffer );
-
+#endif
 	// clear screen for debugging
 	// automatically enable this with several other debug tools
 	// that might leave unrendered portions of the screen
@@ -527,6 +544,74 @@ const void	RB_SwapBuffers( const void *data ) {
 	// texture swapping test
 	if ( r_showImages.GetInteger() != 0 ) {
 		RB_ShowImages();
+	}
+
+	D3::ImGuiHooks::EndFrame();
+
+	int fillAlpha = r_fillWindowAlphaChan.GetInteger();
+	if ( fillAlpha == 1 || (fillAlpha == -1 && glConfig.shouldFillWindowAlpha) )
+	{
+		// make sure the whole alpha chan of the (default) framebuffer is opaque.
+		// at least Wayland needs this, see also the big comment in GLimp_Init()
+
+		bool blendEnabled = qglIsEnabled( GL_BLEND );
+		if ( !blendEnabled )
+			qglEnable( GL_BLEND );
+
+		// TODO: GL_DEPTH_TEST ? (should be disabled, if it needs changing at all)
+
+		bool scissorEnabled = qglIsEnabled( GL_SCISSOR_TEST );
+		if( scissorEnabled )
+			qglDisable( GL_SCISSOR_TEST );
+
+		bool tex2Denabled = qglIsEnabled( GL_TEXTURE_2D );
+		if( tex2Denabled )
+			qglDisable( GL_TEXTURE_2D );
+
+		qglDisable( GL_VERTEX_PROGRAM_ARB );
+		qglDisable( GL_FRAGMENT_PROGRAM_ARB );
+
+		qglBlendEquation( GL_FUNC_ADD );
+
+		qglBlendFunc( GL_ONE, GL_ONE );
+
+		// setup transform matrices so we can easily/reliably draw a fullscreen quad
+		qglMatrixMode( GL_MODELVIEW );
+		qglPushMatrix();
+		qglLoadIdentity();
+
+		qglMatrixMode( GL_PROJECTION );
+		qglPushMatrix();
+		qglLoadIdentity();
+		qglOrtho( 0, 1, 0, 1, -1, 1 );
+
+		// draw screen-sized quad with color (0.0, 0.0, 0.0, 1.0)
+		const float x=0, y=0, w=1, h=1;
+		qglColor4f( 0.0f, 0.0f, 0.0f, 1.0f );
+		// debug values:
+		//const float x = 0.1, y = 0.1, w = 0.8, h = 0.8;
+		//qglColor4f( 0.0f, 0.0f, 0.5f, 1.0f );
+
+		qglBegin( GL_QUADS );
+			qglVertex2f( x,   y   ); // ( 0,0 );
+			qglVertex2f( x,   y+h ); // ( 0,1 );
+			qglVertex2f( x+w, y+h ); // ( 1,1 );
+			qglVertex2f( x+w, y   ); // ( 1,0 );
+		qglEnd();
+
+		// restore previous transform matrix states
+		qglPopMatrix(); // for projection
+		qglMatrixMode( GL_MODELVIEW );
+		qglPopMatrix(); // for modelview
+
+		// restore default or previous states
+		qglBlendEquation( GL_FUNC_ADD );
+		if ( !blendEnabled )
+			qglDisable( GL_BLEND );
+		if( tex2Denabled )
+			qglEnable( GL_TEXTURE_2D );
+		if( scissorEnabled )
+			qglEnable( GL_SCISSOR_TEST );
 	}
 
 	// force a gl sync if requested

@@ -132,7 +132,11 @@ void idGuiModel::ReadFromDemo( idDemoFile *demo ) {
 	demo->ReadInt( i );
 	indexes.SetNum( i, false );
 	for ( j = 0; j < i; j++ ) {
-		demo->ReadInt(indexes[j] );
+#if GL_INDEX_TYPE == GL_UNSIGNED_SHORT
+		demo->ReadShort( indexes[j] );
+#else
+		demo->ReadInt( indexes[j] );
+#endif
 	}
 
 	i = surfaces.Num();
@@ -209,8 +213,14 @@ EmitToCurrentView
 void idGuiModel::EmitToCurrentView( float modelMatrix[16], bool depthHack ) {
 	float	modelViewMatrix[16];
 
-	myGlMultMatrix( modelMatrix, tr.viewDef->worldSpace.modelViewMatrix,
-			modelViewMatrix );
+	const float* worldMVM = tr.viewDef->worldSpace.modelViewMatrix;
+	// DG: for r_lockSurfaces use the real world modelViewMatrix
+	//     so GUIs don't float around
+	if(r_lockSurfaces.GetBool() && tr.viewDef == tr.primaryView) {
+		worldMVM = tr.lockSurfacesRealViewDef.worldSpace.modelViewMatrix;
+	}
+
+	myGlMultMatrix( modelMatrix, worldMVM, modelViewMatrix );
 
 	for ( int i = 0 ; i < surfaces.Num() ; i++ ) {
 		EmitSurface( &surfaces[i], modelMatrix, modelViewMatrix, depthHack );

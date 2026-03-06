@@ -26,15 +26,17 @@ If you have questions concerning this license or the applicable additional terms
 ===========================================================================
 */
 
-extern "C"{
+extern "C" {
 #include "../libretro-common/include/libretro.h"
 #include "../libretro-common/include/retro_dirent.h"
 #include "../libretro-common/include/features/features_cpu.h"
 #include "../libretro-common/include/file/file_path.h"
-#include "../libretro-common/include/glsym/glsym.h"
 #include "../libretro-common/include/net/net_compat.h"
 #include "../libretro-common/include/net/net_socket.h"
-};
+}
+
+#include "../libretro-common/include/glsym/glsym.h"
+#include "../libretro-common/include/glsm/glsm.h"
 
 #include <errno.h>
 #include <unistd.h>
@@ -45,6 +47,10 @@ extern "C"{
 #include "sys/platform.h"
 #include "framework/Licensee.h"
 #include "framework/FileSystem.h"
+#include "framework/KeyInput.h"
+#include "framework/Session_local.h"
+#include "renderer/ModelManager.h"
+#include "renderer/tr_local.h"
 #include "sys/libretro/retro_public.h"
 #include "sys/sys_local.h"
 #include "sound/snd_local.h"
@@ -55,6 +61,14 @@ extern "C"{
 
 #include <glsm/glsm.h>
 
+#ifdef HAVE_OPENAL
+#include <AL/alc.h>
+#include <AL/alext.h>
+#endif
+
+static LPALCRENDERSAMPLESSOFT d3_alcRenderSamplesSOFT = NULL;
+
+#define RETRO_AUDIO_BUFFER_SIZE 2048
 #define SAMPLE_RATE   	44100
 #define BUFFER_SIZE 	32768
 
@@ -86,7 +100,9 @@ retro_environment_t environ_cb;
 static retro_input_poll_t poll_cb;
 static retro_input_state_t input_cb;
 static struct retro_rumble_interface rumble;
+retro_perf_get_time_usec_t perf_get_time_usec = NULL;
 static bool libretro_supports_bitmasks = false;
+static bool needs_gl_reinit = false;
 
 static void audio_callback(void);
 
@@ -100,6 +116,15 @@ static int analog_deadzone = (int)(0.15f * ANALOG_RANGE);
 
 #define GP_MAXBINDS 32
 
+#define LANALOG_LEFT  0x01
+#define LANALOG_RIGHT 0x02
+#define LANALOG_UP    0x04
+#define LANALOG_DOWN  0x08
+
+extern void Key_Event(int button, int val);
+extern void Mouse_Event(int x, int y);
+uint32_t oldanalogs;
+int16_t old_ret;
 
 typedef struct {
    struct retro_input_descriptor desc[GP_MAXBINDS];
@@ -108,6 +133,17 @@ typedef struct {
       char *com;
    } bind[GP_MAXBINDS];
 } gp_layout_t;
+
+static bool kb_mouse_btn[5] = { false, false, false, false, false };
+static const int kb_mouse_keys[5] = {
+    K_MOUSE1, K_MOUSE2, K_MOUSE3, K_MOUSE4, K_MOUSE5
+};
+
+static float mouse_sensitivity = 3.0f;
+
+extern idCVar com_asyncSound;
+
+extern void Char_Event(int c);
 
 gp_layout_t modern = {
    {
@@ -128,18 +164,30 @@ gp_layout_t modern = {
       { 0 },
    },
    {
-      {"JOY_LEFT",  "+moveleft"},     {"JOY_RIGHT", "+moveright"},
-      {"JOY_DOWN",  "+back"},         {"JOY_UP",    "+forward"},
-      {"JOY_B",     "+movedown"},     {"JOY_A",     "+moveright"},
-      {"JOY_X",     "+moveup"},       {"JOY_Y",     "+moveleft"},
-      {"JOY_L",     "impulse 12"},    {"JOY_R",     "impulse 10"},
-      {"JOY_L2",    "+jump"},         {"JOY_R2",    "+attack"},
-      {"JOY_SELECT","+showscores"},   {"JOY_START", "togglemenu"},
-      { 0 },
+      {"JOY_DPAD_LEFT",     "_moveLeft"},
+      {"JOY_DPAD_RIGHT",    "_moveRight"},
+      {"JOY_DPAD_DOWN",     "_back"},
+      {"JOY_DPAD_UP",       "_forward"},
+
+      {"JOY_BTN_SOUTH",     "_moveDown"},   // B = Swim Down
+      {"JOY_BTN_EAST",      "_moveRight"},  // A = Strafe Right
+      {"JOY_BTN_WEST",      "_moveLeft"},   // X = Strafe Left
+      {"JOY_BTN_NORTH",     "_moveUp"},     // Y = Swim Up / Jump
+
+      {"JOY_BTN_LSHOULDER", "_impulse12"},  // Previous Weapon
+      {"JOY_BTN_RSHOULDER", "_impulse10"},  // Next Weapon
+
+      {"JOY_TRIGGER1",      "_moveUp"},     // L2 = Jump (same as Y)
+      {"JOY_TRIGGER2",      "_attack"},     // R2 = Fire
+
+      {"JOY_BTN_BACK",      "_showscores"},
+      {"JOY_BTN_START",     "_escape"},
+
+      {0},
    },
 };
-gp_layout_t classic = {
 
+gp_layout_t classic = {
    {
       { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT,  "D-Pad Left" },
       { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_UP,    "D-Pad Up" },
@@ -151,8 +199,8 @@ gp_layout_t classic = {
       { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_Y,     "Fire" },
       { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L,     "Strafe Left" },
       { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R,     "Strafe Right" },
-      { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L2,    "Look Up" },
-      { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R2,    "Look Down" },
+//      { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L2,    "Look Up" },
+//      { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R2,    "Look Down" },
       { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L3,    "Move Down" },
       { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R3,    "Swim Up" },
       { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_SELECT,"Toggle Run Mode" },
@@ -160,17 +208,26 @@ gp_layout_t classic = {
       { 0 },
    },
    {
-      {"JOY_LEFT",  "+left"},         {"JOY_RIGHT", "+right"},
-      {"JOY_DOWN",  "+back"},         {"JOY_UP",    "+forward"},
-      {"JOY_B",     "+jump"} ,        {"JOY_A",     "impulse 10"},
-      {"JOY_X",     "+klook"},        {"JOY_Y",     "+attack"},
-      {"JOY_L",     "+moveleft"},     {"JOY_R",     "+moveright"},
-      {"JOY_L2",    "+lookup"},       {"JOY_R2",    "+lookdown"},
-      {"JOY_L3",    "+movedown"},     {"JOY_R3",    "+moveup"},
-      {"JOY_SELECT","+togglewalk"},   {"JOY_START", "togglemenu"},
+      { "JOY_DPAD_LEFT",     "_moveLeft"   },
+      { "JOY_DPAD_RIGHT",    "_moveRight"  },
+      { "JOY_DPAD_DOWN",     "_back"       },
+      { "JOY_DPAD_UP",       "_forward"    },
+      { "JOY_BTN_SOUTH",     "_moveUp"     },  // B = Jump
+      { "JOY_BTN_EAST",      "_impulse10"  },  // A = Next Weapon
+      { "JOY_BTN_WEST",      "_klook"      },  // X = Freelook
+      { "JOY_BTN_NORTH",     "_attack"     },  // Y = Fire
+      { "JOY_BTN_LSHOULDER", "_moveLeft"   },  // L = Strafe Left
+      { "JOY_BTN_RSHOULDER", "_moveRight"  },  // R = Strafe Right
+//      { "JOY_TRIGGER1",      "_lookUp"     },  // L2
+//      { "JOY_TRIGGER2",      "_lookDown"   },  // R2
+      { "JOY_BTN_LSTICK",    "_moveDown"   },  // L3
+      { "JOY_BTN_RSTICK",    "_impulse19"  },  // R3 = Use
+      { "JOY_BTN_BACK",      "_speed"      },  // Select = Run
+      { "JOY_BTN_START",     "_escape"  },
       { 0 },
    },
 };
+
 gp_layout_t classic_alt = {
 
    {
@@ -193,17 +250,42 @@ gp_layout_t classic_alt = {
       { 0 },
    },
    {
-      {"JOY_LEFT",  "+moveleft"},     {"JOY_RIGHT", "+moveright"},
-      {"JOY_DOWN",  "+back"},         {"JOY_UP",    "+forward"},
-      {"JOY_B",     "+lookdown"},     {"JOY_A",     "+right"},
-      {"JOY_X",     "+lookup"},       {"JOY_Y",     "+left"},
-      {"JOY_L",     "+jump"},         {"JOY_R",     "+attack"},
-      {"JOY_L2",    "+speed"},          {"JOY_R2",    "impulse 10"},
-      {"JOY_L3",    "+movedown"},     {"JOY_R3",    "impulse 12"},
-      {"JOY_SELECT","+togglewalk"},   {"JOY_START", "togglemenu"},
+      { "JOY_DPAD_LEFT",     "_moveLeft"   },
+      { "JOY_DPAD_RIGHT",    "_moveRight"  },
+      { "JOY_DPAD_DOWN",     "_back"       },
+      { "JOY_DPAD_UP",       "_forward"    },
+      { "JOY_BTN_SOUTH",     "_lookDown"   },  // B
+      { "JOY_BTN_EAST",      "_right"      },  // A = Turn Right
+      { "JOY_BTN_WEST",      "_lookUp"     },  // X
+      { "JOY_BTN_NORTH",     "_left"       },  // Y = Turn Left
+      { "JOY_BTN_LSHOULDER", "_moveUp"     },  // L = Jump
+      { "JOY_BTN_RSHOULDER", "_attack"     },  // R = Fire
+      { "JOY_TRIGGER1",      "_speed"      },  // L2 = Run
+      { "JOY_TRIGGER2",      "_impulse10"  },  // R2 = Next Weapon
+      { "JOY_BTN_LSTICK",    "_moveDown"   },  // L3
+      { "JOY_BTN_RSTICK",    "_impulse12"  },  // R3 = Prev Weapon
+      { "JOY_BTN_BACK",      "_speed"      },  // Select = Toggle Run
+      { "JOY_BTN_START",     "_escape"  },
       { 0 },
    },
 };
+
+static retro_hw_context_type get_hw_context_type(void)
+{
+#ifdef HAVE_OPENGLES
+#if defined(HAVE_OPENGLES_3_2)
+   return RETRO_HW_CONTEXT_OPENGLES_VERSION;   // major=3, minor=2
+#elif defined(HAVE_OPENGLES_3_1)
+   return RETRO_HW_CONTEXT_OPENGLES_VERSION;   // major=3, minor=1
+#elif defined(HAVE_OPENGLES3)
+   return RETRO_HW_CONTEXT_OPENGLES3;
+#else
+   return RETRO_HW_CONTEXT_OPENGLES2;
+#endif
+#else
+   return RETRO_HW_CONTEXT_OPENGL;
+#endif
+}
 
 static void update_variables(bool startup)
 {
@@ -249,6 +331,14 @@ static void update_variables(bool startup)
 		if (log_cb)
 			log_cb(RETRO_LOG_INFO, "Got size: %u x %u.\n", scr_width, scr_height);
 
+		if(pch)
+		{
+			glConfig.vidWidth  = scr_width;
+			glConfig.vidHeight = scr_height;
+			glConfig.winWidth  = scr_width;
+			glConfig.winHeight = scr_height;
+		}
+
 		initial_resolution_set = true;
 	}
    
@@ -275,16 +365,27 @@ static void update_variables(bool startup)
 		}
 		
 	}
-}
 
-static void keyboard_cb(bool down, unsigned keycode, uint32_t character, uint16_t mod)
-{
-	// character-only events are discarded
-	if (keycode != RETROK_UNKNOWN) {
-		if (down)
-			printf("Pressed %u\n", keycode);
-		else
-			printf("Unpressed %u\n", keycode);
+	var.key = "doom_mouse_sensitivity";
+	var.value = NULL;
+
+	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+		mouse_sensitivity = (float)atof(var.value);
+
+	/* Quality preset override */
+	var.key = "doom_machine_spec";
+	var.value = NULL;
+
+	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+	{
+		if (strcmp(var.value, "auto") != 0)
+		{
+			int preset = atoi(var.value); /* 0–3 */
+			if (preset < 0) preset = 0;
+			if (preset > 3) preset = 3;
+
+			cvarSystem->SetCVarInteger("com_machineSpec", preset);
+		}
 	}
 }
 
@@ -312,6 +413,12 @@ static void extract_directory(char *buf, const char *path, size_t size)
 
 static void context_reset(void)
 {
+	if (!first_boot) {
+		// full screen / window toggle
+        GLimp_UpdateWindowSize();
+        R_ReinitOpenGL();
+    }
+
 	glsm_ctl(GLSM_CTL_STATE_CONTEXT_RESET, NULL);
 
    if (libretro_shared_context)
@@ -324,6 +431,10 @@ static void context_reset(void)
 
 static void context_destroy(void)
 {
+    if (!first_boot && glConfig.isInitialized) {
+        renderModelManager->FreeModelVertexCaches();
+        R_FreeDerivedData();
+    }
 }
 
 bool Sys_GetPath(sysPath_t type, idStr &path) {
@@ -358,9 +469,31 @@ Sys_GetSystemRam
 returns in megabytes
 ================
 */
+#ifndef _WIN32
 int Sys_GetSystemRam( void ) {
+#ifdef __linux__
+	long	count, page_size;
+	int		mb;
+
+	count = sysconf( _SC_PHYS_PAGES );
+	if ( count == -1 ) {
+		common->Printf( "GetSystemRam: sysconf _SC_PHYS_PAGES failed\n" );
+		return 512;
+	}
+	page_size = sysconf( _SC_PAGE_SIZE );
+	if ( page_size == -1 ) {
+		common->Printf( "GetSystemRam: sysconf _SC_PAGE_SIZE failed\n" );
+		return 512;
+	}
+	mb= (int)( (double)count * (double)page_size / ( 1024 * 1024 ) );
+	// round to the nearest 16Mb
+	mb = ( mb + 8 ) & ~15;
+	return mb;
+#else
 	return 1024;
+#endif
 }
+#endif
 
 /*
 ==================
@@ -446,15 +579,20 @@ static void audio_process(void)
 {
 }
 
-#define LANALOG_LEFT  0x01
-#define LANALOG_RIGHT 0x02
-#define LANALOG_UP    0x04
-#define LANALOG_DOWN  0x08
-#include "framework/KeyInput.h"
-extern void Key_Event(int button, int val);
-extern void Mouse_Event(int x, int y);
-uint32_t oldanalogs;
-int16_t old_ret;
+static int ShiftChar(int c) {
+    if (c >= 'a' && c <= 'z') return c - 32;
+    switch (c) {
+        case '1': return '!'; case '2': return '@'; case '3': return '#';
+        case '4': return '$'; case '5': return '%'; case '6': return '^';
+        case '7': return '&'; case '8': return '*'; case '9': return '(';
+        case '0': return ')'; case '-': return '_'; case '=': return '+';
+        case '[': return '{'; case ']': return '}'; case '\\': return '|';
+        case ';': return ':'; case '\'': return '"'; case ',': return '<';
+        case '.': return '>'; case '/': return '?';
+        default: return c;
+    }
+}
+
 void Sys_SetKeys(){
 	int port;
 	uint32_t virt_buttons = 0x00;
@@ -491,71 +629,118 @@ void Sys_SetKeys(){
 				}
 			}
 
+			// D-Pad
 			if ((ret & (1 << RETRO_DEVICE_ID_JOYPAD_UP)) && !(old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_UP)))
-				Key_Event(K_UPARROW, 1);
+				Key_Event(K_JOY_DPAD_UP, 1);
 			else if (!(ret & (1 << RETRO_DEVICE_ID_JOYPAD_UP)) && (old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_UP)))
-				Key_Event(K_UPARROW, 0);
+				Key_Event(K_JOY_DPAD_UP, 0);
+
 			if ((ret & (1 << RETRO_DEVICE_ID_JOYPAD_DOWN)) && !(old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_DOWN)))
-				Key_Event(K_DOWNARROW, 1);
+				Key_Event(K_JOY_DPAD_DOWN, 1);
 			else if (!(ret & (1 << RETRO_DEVICE_ID_JOYPAD_DOWN)) && (old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_DOWN)))
-				Key_Event(K_DOWNARROW, 0);
+				Key_Event(K_JOY_DPAD_DOWN, 0);
+
 			if ((ret & (1 << RETRO_DEVICE_ID_JOYPAD_LEFT)) && !(old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_LEFT)))
-				Key_Event(K_LEFTARROW, 1);
+				Key_Event(K_JOY_DPAD_LEFT, 1);
 			else if (!(ret & (1 << RETRO_DEVICE_ID_JOYPAD_LEFT)) && (old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_LEFT)))
-				Key_Event(K_LEFTARROW, 0);
+				Key_Event(K_JOY_DPAD_LEFT, 0);
+
 			if ((ret & (1 << RETRO_DEVICE_ID_JOYPAD_RIGHT)) && !(old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_RIGHT)))
-				Key_Event(K_RIGHTARROW, 1);
+				Key_Event(K_JOY_DPAD_RIGHT, 1);
 			else if (!(ret & (1 << RETRO_DEVICE_ID_JOYPAD_RIGHT)) && (old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_RIGHT)))
-				Key_Event(K_RIGHTARROW, 0);
-			if ((ret & (1 << RETRO_DEVICE_ID_JOYPAD_START)) && !(old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_START)))
-				Key_Event(K_ESCAPE, 1);
-			else if (!(ret & (1 << RETRO_DEVICE_ID_JOYPAD_START)) && (old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_START)))
-				Key_Event(K_ESCAPE, 0);
-			if ((ret & (1 << RETRO_DEVICE_ID_JOYPAD_SELECT)) && !(old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_SELECT)))
-				Key_Event(K_TAB, 1);
-			else if (!(ret & (1 << RETRO_DEVICE_ID_JOYPAD_SELECT)) && (old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_SELECT)))
-				Key_Event(K_TAB, 0);
-			if ((ret & (1 << RETRO_DEVICE_ID_JOYPAD_Y)) && !(old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_Y)))
-				Key_Event(K_CTRL, 1);
-			else if (!(ret & (1 << RETRO_DEVICE_ID_JOYPAD_Y)) && (old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_Y)))
-				Key_Event(K_CTRL, 0);
-			if ((ret & (1 << RETRO_DEVICE_ID_JOYPAD_X)) && !(old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_X)))
-				Key_Event(K_ALT, 1);
-			else if (!(ret & (1 << RETRO_DEVICE_ID_JOYPAD_X)) && (old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_X)))
-				Key_Event(K_ALT, 0);
+				Key_Event(K_JOY_DPAD_RIGHT, 0);
+
+			// Face buttons - A and B need to be reversed for menu actions
 			if ((ret & (1 << RETRO_DEVICE_ID_JOYPAD_B)) && !(old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_B)))
-				Key_Event(K_MOUSE1, 1);
+				Key_Event(K_JOY_BTN_SOUTH, 1);
 			else if (!(ret & (1 << RETRO_DEVICE_ID_JOYPAD_B)) && (old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_B)))
-				Key_Event(K_MOUSE1, 0);
+				Key_Event(K_JOY_BTN_SOUTH, 0);
+
 			if ((ret & (1 << RETRO_DEVICE_ID_JOYPAD_A)) && !(old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_A)))
-				Key_Event(K_BACKSPACE, 1);
+				Key_Event(K_JOY_BTN_EAST, 1);
 			else if (!(ret & (1 << RETRO_DEVICE_ID_JOYPAD_A)) && (old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_A)))
-				Key_Event(K_BACKSPACE, 0);
+				Key_Event(K_JOY_BTN_EAST, 0);
+
+			if ((ret & (1 << RETRO_DEVICE_ID_JOYPAD_X)) && !(old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_X)))
+				Key_Event(K_JOY_BTN_WEST, 1);
+			else if (!(ret & (1 << RETRO_DEVICE_ID_JOYPAD_X)) && (old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_X)))
+				Key_Event(K_JOY_BTN_WEST, 0);
+
+			if ((ret & (1 << RETRO_DEVICE_ID_JOYPAD_Y)) && !(old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_Y)))
+				Key_Event(K_JOY_BTN_NORTH, 1);
+			else if (!(ret & (1 << RETRO_DEVICE_ID_JOYPAD_Y)) && (old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_Y)))
+				Key_Event(K_JOY_BTN_NORTH, 0);
+
+			// Shoulders
 			if ((ret & (1 << RETRO_DEVICE_ID_JOYPAD_L)) && !(old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_L)))
-				Key_Event(K_MOUSE2, 1);
+				Key_Event(K_JOY_BTN_LSHOULDER, 1);
 			else if (!(ret & (1 << RETRO_DEVICE_ID_JOYPAD_L)) && (old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_L)))
-				Key_Event(K_MOUSE2, 0);
+				Key_Event(K_JOY_BTN_LSHOULDER, 0);
+
 			if ((ret & (1 << RETRO_DEVICE_ID_JOYPAD_R)) && !(old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_R)))
-				Key_Event(K_ENTER, 1);
+				Key_Event(K_JOY_BTN_RSHOULDER, 1);
 			else if (!(ret & (1 << RETRO_DEVICE_ID_JOYPAD_R)) && (old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_R)))
-				Key_Event(K_ENTER, 0);
+				Key_Event(K_JOY_BTN_RSHOULDER, 0);
+
+			// Triggers
 			if ((ret & (1 << RETRO_DEVICE_ID_JOYPAD_L2)) && !(old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_L2)))
-				Key_Event(K_AUX1, 1);
+			{
+				if (doom_devices[port] == RETRO_DEVICE_MODERN)
+					Key_Event(K_SPACE, 1);
+				else
+					Key_Event(K_JOY_TRIGGER1, 1);
+			}
 			else if (!(ret & (1 << RETRO_DEVICE_ID_JOYPAD_L2)) && (old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_L2)))
-				Key_Event(K_AUX1, 0);
+			{
+				if (doom_devices[port] == RETRO_DEVICE_MODERN)
+					Key_Event(K_SPACE, 0);
+				else
+					Key_Event(K_JOY_TRIGGER1, 0);
+			}
+
 			if ((ret & (1 << RETRO_DEVICE_ID_JOYPAD_R2)) && !(old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_R2)))
-				Key_Event(K_AUX2, 1);
+			{
+				if (doom_devices[port] == RETRO_DEVICE_MODERN)
+					Key_Event(K_MOUSE1, 1);
+				else
+					Key_Event(K_JOY_TRIGGER2, 1);
+			}
 			else if (!(ret & (1 << RETRO_DEVICE_ID_JOYPAD_R2)) && (old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_R2)))
-				Key_Event(K_AUX2, 0);
+			{
+				if (doom_devices[port] == RETRO_DEVICE_MODERN)
+					Key_Event(K_MOUSE1, 0);
+				else
+					Key_Event(K_JOY_TRIGGER2, 1);
+			}
+
+			// Stick buttons
 			if ((ret & (1 << RETRO_DEVICE_ID_JOYPAD_L3)) && !(old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_L3)))
-				Key_Event(K_AUX3, 1);
+				Key_Event(K_JOY_BTN_LSTICK, 1);
 			else if (!(ret & (1 << RETRO_DEVICE_ID_JOYPAD_L3)) && (old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_L3)))
-				Key_Event(K_AUX3, 0);
+				Key_Event(K_JOY_BTN_LSTICK, 0);
+
 			if ((ret & (1 << RETRO_DEVICE_ID_JOYPAD_R3)) && !(old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_R3)))
-				Key_Event(K_AUX4, 1);
+				Key_Event(K_JOY_BTN_RSTICK, 1);
 			else if (!(ret & (1 << RETRO_DEVICE_ID_JOYPAD_R3)) && (old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_R3)))
-				Key_Event(K_AUX4, 0);
-			
+				Key_Event(K_JOY_BTN_RSTICK, 0);
+
+			// Start/Select still mapped to ESC/TAB for menus/scores
+			if ((ret & (1 << RETRO_DEVICE_ID_JOYPAD_START)) && !(old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_START))) {
+				Key_Event(K_ESCAPE, 1);
+				//Key_Event(K_JOY_BTN_START, 1);
+			} else if (!(ret & (1 << RETRO_DEVICE_ID_JOYPAD_START)) && (old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_START))) {
+				Key_Event(K_ESCAPE, 0);
+				//Key_Event(K_JOY_BTN_START, 0);
+			}
+
+			if ((ret & (1 << RETRO_DEVICE_ID_JOYPAD_SELECT)) && !(old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_SELECT))) {
+				Key_Event(K_TAB, 1);
+				//Key_Event(K_JOY_BTN_BACK, 1);
+			} else if (!(ret & (1 << RETRO_DEVICE_ID_JOYPAD_SELECT)) && (old_ret & (1 << RETRO_DEVICE_ID_JOYPAD_SELECT))) {
+				Key_Event(K_TAB, 0);
+				//Key_Event(K_JOY_BTN_BACK, 0);
+			}
+
 			int lsx, lsy;
 			lsx = input_cb(0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT,
                RETRO_DEVICE_ID_ANALOG_X);
@@ -591,108 +776,224 @@ void Sys_SetKeys(){
 			old_ret = ret;
 		}
 		break;
-		/*
-		case RETRO_DEVICE_KEYBOARD:
-			if (input_cb(port, RETRO_DEVICE_MOUSE, 0, RETRO_DEVICE_ID_MOUSE_LEFT))
-				Sys_SetKeys(K_MOUSE1, 1);
-			else
-				Sys_SetKeys(K_MOUSE1, 0);
-			if (input_cb(port, RETRO_DEVICE_MOUSE, 0, RETRO_DEVICE_ID_MOUSE_RIGHT))
-				Sys_SetKeys(K_MOUSE2, 1);
-			else
-				Sys_SetKeys(K_MOUSE2, 0);
-			if (input_cb(port, RETRO_DEVICE_MOUSE, 0, RETRO_DEVICE_ID_MOUSE_MIDDLE))
-				Sys_SetKeys(K_MOUSE3, 1);
-			else
-				Sys_SetKeys(K_MOUSE3, 0);
-			if (input_cb(port, RETRO_DEVICE_MOUSE, 0, RETRO_DEVICE_ID_MOUSE_WHEELUP))
-				Sys_SetKeys(K_MOUSE4, 1);
-			else
-				Sys_SetKeys(K_MOUSE4, 0);
-			if (input_cb(port, RETRO_DEVICE_MOUSE, 0, RETRO_DEVICE_ID_MOUSE_WHEELDOWN))
-				Sys_SetKeys(K_MOUSE5, 1);
-			else
-				Sys_SetKeys(K_MOUSE5, 0);
-			if (input_cb(port, RETRO_DEVICE_MOUSE, 0, RETRO_DEVICE_ID_MOUSE_HORIZ_WHEELUP))
-				Sys_SetKeys(K_MOUSE6, 1);
-			else
-				Sys_SetKeys(K_MOUSE6, 0);
-			if (input_cb(port, RETRO_DEVICE_MOUSE, 0, RETRO_DEVICE_ID_MOUSE_HORIZ_WHEELDOWN))
-				Sys_SetKeys(K_MOUSE7, 1);
-			else
-				Sys_SetKeys(K_MOUSE7, 0);
-			if (quake_devices[0] == RETRO_DEVICE_KEYBOARD) {
-				if (input_cb(port, RETRO_DEVICE_KEYBOARD, 0, RETROK_UP))
-					Sys_SetKeys(K_UPARROW, 1);
-				else
-					Sys_SetKeys(K_UPARROW, 0);
-				if (input_cb(port, RETRO_DEVICE_KEYBOARD, 0, RETROK_DOWN))
-					Sys_SetKeys(K_DOWNARROW, 1);
-				else
-					Sys_SetKeys(K_DOWNARROW, 0);
-				if (input_cb(port, RETRO_DEVICE_KEYBOARD, 0, RETROK_LEFT))
-					Sys_SetKeys(K_LEFTARROW, 1);
-				else
-					Sys_SetKeys(K_LEFTARROW, 0);
-				if (input_cb(port, RETRO_DEVICE_KEYBOARD, 0, RETROK_RIGHT))
-					Sys_SetKeys(K_RIGHTARROW, 1);
-				else
-					Sys_SetKeys(K_RIGHTARROW, 0);
-			}
-			break;
-		*/
 		case RETRO_DEVICE_NONE:
 			break;
+		}
+
+		// Always poll keyboard regardless of device - needed for console access
+		static const struct { unsigned retrok; int doom_key; } kb_map[] = {
+			// existing game keys
+			{ RETROK_w,         'w'         },
+			{ RETROK_s,         's'         },
+			{ RETROK_a,         'a'         },
+			{ RETROK_d,         'd'         },
+			{ RETROK_e,         'e'         },
+			{ RETROK_r,         'r'         },
+			{ RETROK_f,         'f'         },
+			{ RETROK_q,         'q'         },
+			{ RETROK_c,         'c'         },
+			// other keys
+			{ RETROK_t,         't'         },
+			{ RETROK_y,         'y'         },
+			{ RETROK_u,         'u'         },
+			{ RETROK_i,         'i'         },
+			{ RETROK_o,         'o'         },
+			{ RETROK_p,         'p'         },
+			{ RETROK_g,         'g'         },
+			{ RETROK_h,         'h'         },
+			{ RETROK_j,         'j'         },
+			{ RETROK_k,         'k'         },
+			{ RETROK_l,         'l'         },
+			{ RETROK_z,         'z'         },
+			{ RETROK_x,         'x'         },
+			{ RETROK_v,         'v'         },
+			{ RETROK_b,         'b'         },
+			{ RETROK_n,         'n'         },
+			{ RETROK_m,         'm'         },
+			// numbers
+			{ RETROK_1,         '1'         },
+			{ RETROK_2,         '2'         },
+			{ RETROK_3,         '3'         },
+			{ RETROK_4,         '4'         },
+			{ RETROK_5,         '5'         },
+			{ RETROK_6,         '6'         },
+			{ RETROK_7,         '7'         },
+			{ RETROK_8,         '8'         },
+			{ RETROK_9,         '9'         },
+			{ RETROK_0,         '0'         },
+			// symbols
+			{ RETROK_SPACE,     K_SPACE     },
+			{ RETROK_MINUS,     '-'         },
+			{ RETROK_EQUALS,    '='         },
+			{ RETROK_LEFTBRACKET,  '['      },
+			{ RETROK_RIGHTBRACKET, ']'      },
+			{ RETROK_BACKSLASH, '\\'        },
+			{ RETROK_SEMICOLON, ';'         },
+			{ RETROK_QUOTE,     '\''        },
+			{ RETROK_COMMA,     ','         },
+			{ RETROK_PERIOD,    '.'         },
+			{ RETROK_SLASH,     '/'         },
+			// control keys
+			{ RETROK_LSHIFT,    K_SHIFT     },
+			{ RETROK_RSHIFT,    K_SHIFT     },
+			{ RETROK_LCTRL,     K_CTRL      },
+			{ RETROK_RCTRL,     K_CTRL      },
+			{ RETROK_LALT,      K_ALT       },
+			{ RETROK_RALT,      K_ALT       },
+			{ RETROK_ESCAPE,    K_ESCAPE    },
+			{ RETROK_RETURN,    K_ENTER     },
+			{ RETROK_BACKSPACE, K_BACKSPACE },
+			{ RETROK_TAB,       K_TAB       },
+			{ RETROK_UP,        K_UPARROW   },
+			{ RETROK_DOWN,      K_DOWNARROW },
+			{ RETROK_LEFT,      K_LEFTARROW },
+			{ RETROK_RIGHT,     K_RIGHTARROW},
+			{ RETROK_F1,        K_F1        },
+			{ RETROK_F2,        K_F2        },
+			{ RETROK_F3,        K_F3        },
+			{ RETROK_F4,        K_F4        },
+			{ RETROK_F5,        K_F5        },
+			{ RETROK_BACKQUOTE, '`'         },
+		};
+		static const int kb_map_size = sizeof(kb_map) / sizeof(kb_map[0]);
+		static bool kb_prev[sizeof(kb_map) / sizeof(kb_map[0])] = {};
+
+		for (int i = 0; i < kb_map_size; i++)
+		{
+			bool now = !!input_cb(port, RETRO_DEVICE_KEYBOARD, 0, kb_map[i].retrok);
+			if (now != kb_prev[i])
+			{
+				Key_Event(kb_map[i].doom_key, now ? 1 : 0);
+
+				static bool kb_shift = false;
+				if (kb_map[i].retrok == RETROK_LSHIFT || kb_map[i].retrok == RETROK_RSHIFT)
+					kb_shift = now;
+
+				if (now) {
+					int c = kb_map[i].doom_key;
+					if (c == K_BACKSPACE) {
+						Char_Event(8);
+					} else if (c != '`' && c >= 32 && c < 127) {
+						Char_Event(kb_shift ? ShiftChar(c) : c);
+					}
+				}
+				kb_prev[i] = now;
+			}
+		}
+
+		// Mouse buttons
+		static const struct { unsigned retro_id; int doom_key; } mouse_buttons[] = {
+			{ RETRO_DEVICE_ID_MOUSE_LEFT,      K_MOUSE1 },
+			{ RETRO_DEVICE_ID_MOUSE_RIGHT,     K_MOUSE2 },
+			{ RETRO_DEVICE_ID_MOUSE_MIDDLE,    K_MOUSE3 },
+			{ RETRO_DEVICE_ID_MOUSE_WHEELUP,   K_MOUSE4 },
+			{ RETRO_DEVICE_ID_MOUSE_WHEELDOWN, K_MOUSE5 },
+		};
+		for (int i = 0; i < 5; i++)
+		{
+			bool now = !!input_cb(port, RETRO_DEVICE_MOUSE, 0, mouse_buttons[i].retro_id);
+			if (now != kb_mouse_btn[i])
+			{
+				Key_Event(mouse_buttons[i].doom_key, now ? 1 : 0);
+				kb_mouse_btn[i] = now;
+			}
 		}
 	}
 }
 
 void Sys_SetMouse() {
-	int rsx, rsy;
-	int slowdown = 1024 * (framerate / 60.0f);
-	
-	// Right stick Look
-	rsx = input_cb(0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT,
-		RETRO_DEVICE_ID_ANALOG_X);
-	rsy = invert_y_axis * input_cb(0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT,
-		RETRO_DEVICE_ID_ANALOG_Y);
-			   
-	if (rsx > analog_deadzone || rsx < -analog_deadzone) {
-		if (rsx > analog_deadzone)
-			rsx = rsx - analog_deadzone;
-		if (rsx < -analog_deadzone)
-			rsx = rsx + analog_deadzone;
-		
-	} else rsx = 0;
-	if (rsy > analog_deadzone || rsy < -analog_deadzone) {
-		if (rsy > analog_deadzone)
-			rsy = rsy - analog_deadzone;
-		if (rsy < -analog_deadzone)
-			rsy = rsy + analog_deadzone;
-	} else rsy = 0;
-	
-	Mouse_Event(rsx /slowdown, rsy /slowdown);
-	
+    int rsx, rsy;
+    int slowdown = 1024 * (framerate / 60.0f);
+    int effective_invert = (sessLocal.guiActive != NULL) ? 1 : invert_y_axis;
+
+    // Always read physical mouse delta regardless of device mode
+    {
+        int dx = input_cb(0, RETRO_DEVICE_MOUSE, 0, RETRO_DEVICE_ID_MOUSE_X);
+        int dy = effective_invert * input_cb(0, RETRO_DEVICE_MOUSE, 0, RETRO_DEVICE_ID_MOUSE_Y);
+        dx = (int)(dx * mouse_sensitivity);
+        dy = (int)(dy * mouse_sensitivity);
+        if (dx || dy)
+            Mouse_Event(dx, dy);
+    }
+
+    if (doom_devices[0] == RETRO_DEVICE_KEYBOARD)
+        return;
+
+    // Right stick look for gamepad modes
+    rsx = input_cb(0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT,
+        RETRO_DEVICE_ID_ANALOG_X);
+    rsy = effective_invert * input_cb(0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT,
+        RETRO_DEVICE_ID_ANALOG_Y);
+
+    if (rsx > analog_deadzone || rsx < -analog_deadzone) {
+        if (rsx > analog_deadzone) rsx = rsx - analog_deadzone;
+        if (rsx < -analog_deadzone) rsx = rsx + analog_deadzone;
+    } else rsx = 0;
+    if (rsy > analog_deadzone || rsy < -analog_deadzone) {
+        if (rsy > analog_deadzone) rsy = rsy - analog_deadzone;
+        if (rsy < -analog_deadzone) rsy = rsy + analog_deadzone;
+    } else rsy = 0;
+
+    Mouse_Event(rsx / slowdown, rsy / slowdown);
 }
 
-float flt_buffer[2][BUFFER_SIZE];
-int16_t mixed_buffer[2][BUFFER_SIZE];
-uint64_t sampletime = 0;
+#define SOUND_BUFFER_SAMPLES (MIXBUFFER_SAMPLES * 4)
+#define MAX_CHANNELS 2
+static float snd_float_buf[SOUND_BUFFER_SAMPLES];
+static int snd_buf_write = 0;
+static int snd_buf_read  = 0;
+static uint64_t sampletime = 0;
 int idx = 0;
 
 static void audio_callback(void)
 {
-	unsigned read_first, read_second;
-	float samples_per_frame = SAMPLE_RATE / framerate;
-	SIMDProcessor->Memset(flt_buffer[idx], 0, sizeof(float) * BUFFER_SIZE);
-	SIMDProcessor->Memset(mixed_buffer[idx], 0, sizeof(int16_t) * BUFFER_SIZE);
-	Sys_EnterCriticalSection();
-	soundSystem->AsyncMix(sampletime, flt_buffer[idx] );
-	Sys_LeaveCriticalSection();
-	SIMDProcessor->MixedSoundToSamples(mixed_buffer[idx], flt_buffer[idx], samples_per_frame * 2);
-	audio_batch_cb(mixed_buffer[idx], samples_per_frame);
-	sampletime += samples_per_frame;
+	if (first_boot) return;
+
+#ifdef HAVE_OPENAL
+	ALsizei samples = (ALsizei)(SAMPLE_RATE / framerate);
+
+    if (!d3_alcRenderSamplesSOFT && soundSystemLocal.openalDevice) {
+        d3_alcRenderSamplesSOFT = (LPALCRENDERSAMPLESSOFT)
+            alcGetProcAddress(soundSystemLocal.openalDevice, "alcRenderSamplesSOFT");
+    }
+
+    if (soundSystemLocal.isInitialized && d3_alcRenderSamplesSOFT && soundSystemLocal.openalDevice) {
+        d3_alcRenderSamplesSOFT(soundSystemLocal.openalDevice, mixed_buffer[idx], samples);
+        audio_batch_cb(mixed_buffer[idx], samples);
+    } else {
+        int16_t silence[RETRO_AUDIO_BUFFER_SIZE * 2] = {};
+        audio_batch_cb(silence, samples);
+    }
+
 	idx = (idx + 1) % 2;
+#else
+    int samples_per_frame = (int)(SAMPLE_RATE / framerate);
+    int total = samples_per_frame * MAX_CHANNELS;
+
+    // only mix when we need more data
+    int available = snd_buf_write - snd_buf_read;
+    while (available < total) {
+        float tmp[MIXBUFFER_SAMPLES * MAX_CHANNELS] = {};
+        Sys_EnterCriticalSection();
+        soundSystem->AsyncMix(sampletime, tmp);
+        Sys_LeaveCriticalSection();
+        sampletime += MIXBUFFER_SAMPLES;
+        for (int i = 0; i < MIXBUFFER_SAMPLES * MAX_CHANNELS; i++) {
+            snd_float_buf[snd_buf_write % SOUND_BUFFER_SAMPLES] = tmp[i];
+            snd_buf_write++;
+        }
+        available = snd_buf_write - snd_buf_read;
+    }
+
+    static int16_t out[4096 * MAX_CHANNELS];
+    static float tmp_out[4096 * MAX_CHANNELS];
+    for (int i = 0; i < total; i++) {
+        tmp_out[i] = snd_float_buf[snd_buf_read % SOUND_BUFFER_SAMPLES];
+        snd_buf_read++;
+    }
+    SIMDProcessor->MixedSoundToSamples(out, tmp_out, total);
+    audio_batch_cb(out, samples_per_frame);
+#endif
 }
 
 static bool context_framebuffer_lock(void *data)
@@ -704,7 +1005,7 @@ static bool initialize_opengl(void)
 {
    glsm_ctx_params_t params = {0};
 
-   params.context_type     = RETRO_HW_CONTEXT_OPENGL;
+   params.context_type 	   = get_hw_context_type();
    params.context_reset    = context_reset;
    params.context_destroy  = context_destroy;
    params.environ_cb       = environ_cb;
@@ -745,12 +1046,23 @@ bool retro_load_game(const struct retro_game_info *info)
 		return false;
 	}
 
-	hw_render.context_type    = RETRO_HW_CONTEXT_OPENGL;
+	hw_render.context_type    = get_hw_context_type();
 	hw_render.context_reset   = context_reset;
 	hw_render.context_destroy = context_destroy;
 	hw_render.bottom_left_origin = true;
 	hw_render.depth = true;
 	hw_render.stencil = true;
+
+#if defined(HAVE_OPENGLES_3_2)
+   hw_render.version_major = 3;
+   hw_render.version_minor = 2;
+#elif defined(HAVE_OPENGLES_3_1)
+   hw_render.version_major = 3;
+   hw_render.version_minor = 1;
+#elif defined(HAVE_OPENGLES3)
+   hw_render.version_major = 3;
+   hw_render.version_minor = 0;
+#endif
 
 	if (!initialize_opengl())
 	{
@@ -768,7 +1080,7 @@ bool retro_load_game(const struct retro_game_info *info)
 #endif
 	bool use_external_savedir = false;
 	const char *base_save_dir = NULL;
-	struct retro_keyboard_callback cb = { keyboard_cb };
+//	struct retro_keyboard_callback cb = { keyboard_cb };
 
 	if (!info)
 		return false;
@@ -822,11 +1134,10 @@ bool retro_load_game(const struct retro_game_info *info)
 
 	extract_directory(g_rom_dir, g_rom_dir, sizeof(g_rom_dir));
 	BUILD_DATADIR = g_rom_dir;
-	
+
 	return true;
 }
 
-#include "renderer/tr_local.h"
 /*
 ===================
 GLimp_ExtensionPointer
@@ -836,16 +1147,67 @@ GLExtension_t GLimp_ExtensionPointer(const char *name) {
 	return (GLExtension_t)hw_render.get_proc_address(name);
 }
 
+static const gp_layout_t *pending_layout = &classic;
+
+static void gp_layout_set_bind(const gp_layout_t *layout)
+{
+    // clear all joy keys
+    for (int k = K_FIRST_JOY; k <= K_LAST_JOY; k++) {
+        idKeyInput::SetBinding(k, "");
+    }
+    // set each binding directly
+    for (unsigned i = 0; layout->bind[i].key; ++i) {
+        int keynum = idKeyInput::StringToKeyNum(layout->bind[i].key);
+        if (keynum != -1)
+            idKeyInput::SetBinding(keynum, layout->bind[i].com);
+    }
+}
+
+void retro_set_controller_port_device(unsigned port, unsigned device)
+{
+   if (port == 0)
+   {
+      switch (device)
+      {
+         case RETRO_DEVICE_JOYPAD:
+            doom_devices[port] = RETRO_DEVICE_JOYPAD;
+            environ_cb(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, classic.desc);
+            pending_layout = &classic;
+            break;
+         case RETRO_DEVICE_JOYPAD_ALT:
+            doom_devices[port] = RETRO_DEVICE_JOYPAD;
+            environ_cb(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, classic_alt.desc);
+            pending_layout = &classic_alt;
+            break;
+         case RETRO_DEVICE_MODERN:
+            doom_devices[port] = RETRO_DEVICE_MODERN;
+            environ_cb(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, modern.desc);
+            pending_layout = &modern;
+            break;
+         case RETRO_DEVICE_NONE:
+         default:
+            doom_devices[port] = RETRO_DEVICE_NONE;
+            if (log_cb)
+               log_cb(RETRO_LOG_ERROR, "[libretro]: Invalid device.\n");
+      }
+
+      if (!first_boot)
+            gp_layout_set_bind(pending_layout);
+   }
+}
+
 void retro_run(void)
 {
    if (!libretro_shared_context)
       glsm_ctl(GLSM_CTL_STATE_BIND, NULL);
-	
+
 	if (first_boot) {
 		network_init();
+		//com_asyncSound.SetInteger(0);
 		common->Init( fake_argc, fake_argv );
 		first_boot = false;
 		update_variables(false);
+		gp_layout_set_bind(pending_layout);
 	}
 	
 	bool updated = false;
@@ -867,12 +1229,17 @@ GLimp_SwapBuffers
 ===================
 */
 void GLimp_SwapBuffers() {
+   glFlush();
    if (!libretro_shared_context)
       glsm_ctl(GLSM_CTL_STATE_UNBIND, NULL);
 	video_cb(RETRO_HW_FRAME_BUFFER_VALID, scr_width, scr_height, 0);
    if (!libretro_shared_context)
       glsm_ctl(GLSM_CTL_STATE_BIND, NULL);
 	glBindFramebuffer(RARCH_GL_FRAMEBUFFER, hw_render.get_current_framebuffer());
+}
+
+void GLimp_UpdateWindowSize()
+{
 }
 
 void retro_cheat_reset(void)
@@ -924,6 +1291,8 @@ void retro_set_video_refresh(retro_video_refresh_t cb)
 
 void retro_unload_game(void)
 {
+	if (common)
+        common->Shutdown();
 }
 
 unsigned retro_get_region(void)
@@ -984,51 +1353,6 @@ void retro_init(void)
       libretro_supports_bitmasks = true;
 }
 
-void gp_layout_set_bind(gp_layout_t gp_layout)
-{
-   char buf[100];
-   unsigned i;
-   for (i=0; gp_layout.bind[i].key; ++i)
-   {
-      snprintf(buf, sizeof(buf), "bind %s \"%s\"\n", gp_layout.bind[i].key,
-                                                   gp_layout.bind[i].com);
-      //Cbuf_AddText(buf);
-   }
-}
-
-void retro_set_controller_port_device(unsigned port, unsigned device)
-{
-   if (port == 0)
-   {
-      switch (device)
-      {
-         case RETRO_DEVICE_JOYPAD:
-            doom_devices[port] = RETRO_DEVICE_JOYPAD;
-            environ_cb(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, classic.desc);
-            gp_layout_set_bind(classic);
-            break;
-         case RETRO_DEVICE_JOYPAD_ALT:
-            doom_devices[port] = RETRO_DEVICE_JOYPAD;
-            environ_cb(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, classic_alt.desc);
-            gp_layout_set_bind(classic_alt);
-            break;
-         case RETRO_DEVICE_MODERN:
-            doom_devices[port] = RETRO_DEVICE_MODERN;
-            environ_cb(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, modern.desc);
-            gp_layout_set_bind(modern);
-            break;
-         case RETRO_DEVICE_KEYBOARD:
-            doom_devices[port] = RETRO_DEVICE_KEYBOARD;
-            break;
-         case RETRO_DEVICE_NONE:
-         default:
-            doom_devices[port] = RETRO_DEVICE_NONE;
-            if (log_cb)
-               log_cb(RETRO_LOG_ERROR, "[libretro]: Invalid device.\n");
-      }
-   }
-}
-
 void retro_get_system_info(struct retro_system_info *info)
 {
    memset(info, 0, sizeof(*info));
@@ -1056,12 +1380,11 @@ void retro_set_environment(retro_environment_t cb)
    static const struct retro_controller_description port_1[] = {
       { "Gamepad Classic", RETRO_DEVICE_JOYPAD },
       { "Gamepad Classic Alt", RETRO_DEVICE_JOYPAD_ALT },
-      { "Gamepad Modern", RETRO_DEVICE_MODERN },
-      { "Keyboard + Mouse", RETRO_DEVICE_KEYBOARD },
+      { "Gamepad Modern", RETRO_DEVICE_MODERN }
    };
 
    static const struct retro_controller_info ports[] = {
-      { port_1, 3 },
+      { port_1, 4 },
       { 0 },
    };
 
@@ -1070,41 +1393,8 @@ void retro_set_environment(retro_environment_t cb)
    libretro_set_core_options(environ_cb,
          &libretro_supports_option_categories);
    cb(RETRO_ENVIRONMENT_SET_CONTROLLER_INFO, (void*)ports);
-}
 
-#include "sound.h"
-
-idAudioHardware *idAudioHardware::Alloc() {
-	return new idAudioHardwareOSS;
-}
-
-idAudioHardware::~idAudioHardware() {
-}
-
-idAudioHardwareOSS::~idAudioHardwareOSS() { 
-	Release();
-}
-
-bool idAudioHardwareOSS::Initialize( ) { 
-	return true;
-}
-
-bool idAudioHardwareOSS::Flush( void ) {
-	return false;
-}
-
-int idAudioHardwareOSS::GetMixBufferSize() { 
-	return 0;
-}
-
-short* idAudioHardwareOSS::GetMixBuffer() {
-	return (short *)m_buffer;
-}
-
-void idAudioHardwareOSS::Write( bool flushing ) {
-}
-
-void idAudioHardwareOSS::Release( bool bSilent ) {
-	m_buffer = NULL;
-	m_buffer_size = 0;
+   struct retro_perf_callback perf;
+   if (environ_cb(RETRO_ENVIRONMENT_GET_PERF_INTERFACE, &perf))
+      perf_get_time_usec = perf.get_time_usec;
 }

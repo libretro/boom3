@@ -42,12 +42,14 @@ If you have questions concerning this license or the applicable additional terms
 	#endif
 #endif
 
-#ifdef __SWITCH__
-#include <EGL/egl.h>
-#include "glad41/glad.h"
-#else
-#include <GL/gl.h>
-#include "glsym/glsym.h"
+#ifndef HAVE_OPENGLES
+#ifdef HAVE_SDL
+#ifdef D3_SDL3
+  #include <SDL3/SDL_opengl.h>
+#else // SDL1.2 or SDL2
+  #include <SDL_opengl.h>
+#endif
+#endif
 #endif
 
 #if defined( ID_DEDICATED ) && defined( _WIN32 )
@@ -55,6 +57,18 @@ If you have questions concerning this license or the applicable additional terms
 	#ifdef WINGDIAPI
 		#pragma pop_macro("WINGDIAPI")
 	#endif
+#endif
+
+#ifdef __LIBRETRO__
+// On macOS desktop GL, use glad to provide all GL typedefs and enums
+// (including legacy/ARB ones missing from Apple's gl3.h).
+// Define gl3.h's include guard so glsym doesn't pull it in on top.
+#if defined(__APPLE__) && !defined(HAVE_OPENGLES)
+#include "../glad41/glad.h"
+#define __gl3_h_
+#define __gl3ext_h_
+#endif
+#include "../sys/libretro-common/include/glsym/glsym.h"
 #endif
 
 typedef void (*GLExtension_t)(void);
@@ -67,6 +81,18 @@ GLExtension_t GLimp_ExtensionPointer( const char *name );
 
 #ifdef __cplusplus
 	}
+#endif
+
+#ifndef HAVE_OPENGLES
+
+// SDL_opengl.h on MSVC needs windows.h included first to pull in APIENTRYP via GL/gl.h.
+// If that didn't happen, define it ourselves.
+#ifndef APIENTRYP
+#  ifdef _WIN32
+#    define APIENTRYP __stdcall *
+#  else
+#    define APIENTRYP *
+#  endif
 #endif
 
 // declare qgl functions
@@ -101,9 +127,28 @@ extern	void ( APIENTRY *qglColorTableEXT)( int, int, int, int, int, const void *
 // EXT_stencil_two_side
 extern	PFNGLACTIVESTENCILFACEEXTPROC	qglActiveStencilFaceEXT;
 
+// DG: couldn't find any extension for this, it's supported in GL2.0 and newer, incl OpenGL ES2.0
+// SE: work around missing function definition on legacy Mac OS X versions
+#if defined(OSX_TIGER) || defined(OSX_LEOPARD)
+typedef void (APIENTRYP PFNGLSTENCILOPSEPARATEPROC) (GLenum face, GLenum sfail, GLenum dpfail, GLenum dppass);
+#endif
+extern PFNGLSTENCILOPSEPARATEPROC qglStencilOpSeparate;
+
 // ARB_texture_compression
 extern	PFNGLCOMPRESSEDTEXIMAGE2DARBPROC	qglCompressedTexImage2DARB;
 extern	PFNGLGETCOMPRESSEDTEXIMAGEARBPROC	qglGetCompressedTexImageARB;
+
+// ARB_texture_compression_bptc - uses ARB_texture_compression, just adds new constants
+// that might be missing in old OpenGL headers
+#ifndef GL_COMPRESSED_RGBA_BPTC_UNORM_ARB
+  // currently the only one we use, there's also COMPRESSED_SRGB_ALPHA_BPTC_UNORM_ARB (0x8E8D)
+  // and COMPRESSED_RGB_BPTC_SIGNED_FLOAT_ARB (0x8E8E) and COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT_ARB (0x8E8F)
+  #define GL_COMPRESSED_RGBA_BPTC_UNORM_ARB 0x8E8C
+#endif
+
+#ifndef GL_COMPRESSED_RGBA_BPTC_UNORM
+  #define GL_COMPRESSED_RGBA_BPTC_UNORM GL_COMPRESSED_RGBA_BPTC_UNORM_ARB
+#endif
 
 // ARB_vertex_program / ARB_fragment_program
 extern PFNGLVERTEXATTRIBPOINTERARBPROC		qglVertexAttribPointerARB;
@@ -118,13 +163,17 @@ extern PFNGLPROGRAMLOCALPARAMETER4FVARBPROC	qglProgramLocalParameter4fvARB;
 // GL_EXT_depth_bounds_test
 extern PFNGLDEPTHBOUNDSEXTPROC              qglDepthBoundsEXT;
 
+// GL_ARB_debug_output
+#ifndef __LIBRETRO__
+extern PFNGLDEBUGMESSAGECALLBACKARBPROC    qglDebugMessageCallbackARB;
+#endif
+
+#endif // !HAVE_OPENGLES
+
 #if defined( _WIN32 ) && defined(ID_ALLOW_TOOLS)
 
-extern  int   (WINAPI * qwglChoosePixelFormat)(HDC, CONST PIXELFORMATDESCRIPTOR *);
-extern  int   (WINAPI * qwglDescribePixelFormat) (HDC, int, UINT, LPPIXELFORMATDESCRIPTOR);
-extern  int   (WINAPI * qwglGetPixelFormat)(HDC);
-extern  BOOL(WINAPI * qwglSetPixelFormat)(HDC, int, CONST PIXELFORMATDESCRIPTOR *);
 extern  BOOL(WINAPI * qwglSwapBuffers)(HDC);
+extern int Win_ChoosePixelFormat(HDC hdc);
 
 extern BOOL(WINAPI * qwglCopyContext)(HGLRC, HGLRC, UINT);
 extern HGLRC(WINAPI * qwglCreateContext)(HDC);

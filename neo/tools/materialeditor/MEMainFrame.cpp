@@ -331,7 +331,11 @@ void MEMainFrame::OnDestroy() {
 */
 void MEMainFrame::OnSize(UINT nType, int cx, int cy)
 {
+
 	CFrameWnd::OnSize(nType, cx, cy);
+
+	float scaling_factor = Win_GetWindowScalingFactor(GetSafeHwnd());
+	int s5 = int(5 * scaling_factor);
 
 	CRect statusRect;
 	m_wndStatusBar.GetWindowRect(statusRect);
@@ -342,7 +346,7 @@ void MEMainFrame::OnSize(UINT nType, int cx, int cy)
 	CRect tabRect;
 	m_tabs.GetItemRect(0, tabRect);
 
-	int tabHeight = tabRect.Height()+5;
+	int tabHeight = tabRect.Height()+ s5;
 
 	m_splitterWnd.MoveWindow(0, toolbarRect.Height(), cx, cy-statusRect.Height()-toolbarRect.Height()-tabHeight);
 

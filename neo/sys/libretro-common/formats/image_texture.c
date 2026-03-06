@@ -1,4 +1,4 @@
-/* Copyright  (C) 2010-2018 The RetroArch team
+/* Copyright  (C) 2010-2020 The RetroArch team
  *
  * ---------------------------------------------------------------------------------------
  * The following license statement only applies to this file (image_texture.c).
@@ -28,26 +28,51 @@
 #include <boolean.h>
 #include <formats/image.h>
 #include <file/nbio.h>
-
+#include <string/stdstring.h>
 
 enum image_type_enum image_texture_get_type(const char *path)
 {
-#ifdef HAVE_RTGA
-   if (strstr(path, ".tga"))
-      return IMAGE_TYPE_TGA;
-#endif
+   /* We are comparing against a fixed list of file
+    * extensions, the longest (jpeg) being 4 characters
+    * in length. We therefore only need to extract the first
+    * 5 characters from the extension of the input path
+    * to correctly validate a match */
+   const char *ext = NULL;
+   char ext_lower[6];
+
+   ext_lower[0] = '\0';
+
+   if (string_is_empty(path))
+      return IMAGE_TYPE_NONE;
+
+   /* Get file extension */
+   ext = strrchr(path, '.');
+
+   if (!ext || (*(++ext) == '\0'))
+      return IMAGE_TYPE_NONE;
+
+   /* Copy and convert to lower case */
+   strlcpy(ext_lower, ext, sizeof(ext_lower));
+   string_to_lower(ext_lower);
+
 #ifdef HAVE_RPNG
-   if (strstr(path, ".png"))
+   if (string_is_equal(ext_lower, "png"))
       return IMAGE_TYPE_PNG;
 #endif
 #ifdef HAVE_RJPEG
-   if (strstr(path, ".jpg") || strstr(path, ".jpeg"))
+   if (string_is_equal(ext_lower, "jpg") ||
+       string_is_equal(ext_lower, "jpeg"))
       return IMAGE_TYPE_JPEG;
 #endif
 #ifdef HAVE_RBMP
-   if (strstr(path, ".bmp"))
+   if (string_is_equal(ext_lower, "bmp"))
       return IMAGE_TYPE_BMP;
 #endif
+#ifdef HAVE_RTGA
+   if (string_is_equal(ext_lower, "tga"))
+      return IMAGE_TYPE_TGA;
+#endif
+
    return IMAGE_TYPE_NONE;
 }
 
@@ -90,8 +115,13 @@ bool image_texture_color_convert(unsigned r_shift,
          uint8_t r    = (uint8_t)(col >> 16);
          uint8_t g    = (uint8_t)(col >>  8);
          uint8_t b    = (uint8_t)(col >>  0);
-         pixels[i]    = (a << a_shift) |
-            (r << r_shift) | (g << g_shift) | (b << b_shift);
+         /* Explicitly cast these to uint32_t to prevent
+          * ASAN runtime error: left shift of 255 by 24 places
+          * cannot be represented in type 'int' */
+         pixels[i]    = ((uint32_t)a << a_shift) |
+                        ((uint32_t)r << r_shift) |
+                        ((uint32_t)g << g_shift) |
+                        ((uint32_t)b << b_shift);
       }
 
       return true;
@@ -169,31 +199,39 @@ static bool image_texture_load_internal(
       unsigned g_shift, unsigned b_shift)
 {
    int ret;
-   bool success = false;
    void *img    = image_transfer_new(type);
 
    if (!img)
-      goto end;
+      return false;
 
    image_transfer_set_buffer_ptr(img, type, (uint8_t*)ptr, len);
 
    if (!image_transfer_start(img, type))
-      goto end;
+   {
+      image_transfer_free(img, type);
+      return false;
+   }
 
    while (image_transfer_iterate(img, type));
 
    if (!image_transfer_is_valid(img, type))
-      goto end;
+   {
+      image_transfer_free(img, type);
+      return false;
+   }
 
    do
    {
       ret = image_transfer_process(img, type,
             (uint32_t**)&out_img->pixels, len, &out_img->width,
             &out_img->height);
-   }while(ret == IMAGE_PROCESS_NEXT);
+   } while (ret == IMAGE_PROCESS_NEXT);
 
    if (ret == IMAGE_PROCESS_ERROR || ret == IMAGE_PROCESS_ERROR_END)
-      goto end;
+   {
+      image_transfer_free(img, type);
+      return false;
+   }
 
    image_texture_color_convert(r_shift, g_shift, b_shift,
          a_shift, out_img);
@@ -202,17 +240,13 @@ static bool image_texture_load_internal(
    if (!image_texture_internal_gx_convert_texture32(out_img))
    {
       image_texture_free(out_img);
-      goto end;
+      image_transfer_free(img, type);
+      return false;
    }
 #endif
 
-   success = true;
-
-end:
-   if (img)
-      image_transfer_free(img, type);
-
-   return success;
+   image_transfer_free(img, type);
+   return true;
 }
 
 void image_texture_free(struct texture_image *img)
@@ -239,9 +273,7 @@ bool image_texture_load_buffer(struct texture_image *out_img,
       if (image_texture_load_internal(
          type, buffer, buffer_len, out_img,
          a_shift, r_shift, g_shift, b_shift))
-      {
          return true;
-      }
    }
 
    out_img->supports_rgba = false;
@@ -255,49 +287,44 @@ bool image_texture_load_buffer(struct texture_image *out_img,
 bool image_texture_load(struct texture_image *out_img,
       const char *path)
 {
-   unsigned r_shift, g_shift, b_shift, a_shift;
-   size_t file_len             = 0;
-   struct nbio_t      *handle  = NULL;
-   void                   *ptr = NULL;
    enum image_type_enum type  = image_texture_get_type(path);
-
-   image_texture_set_color_shifts(&r_shift, &g_shift, &b_shift,
-         &a_shift, out_img);
 
    if (type != IMAGE_TYPE_NONE)
    {
-      handle = (struct nbio_t*)nbio_open(path, NBIO_READ);
-      if (!handle)
-         goto error;
-      nbio_begin_read(handle);
+      struct nbio_t *handle = (struct nbio_t*)
+         nbio_open(path, NBIO_READ);
+      if (handle)
+      {
+         void *ptr       = NULL;
+         size_t file_len = 0;
 
-      while (!nbio_iterate(handle));
+         nbio_begin_read(handle);
 
-      ptr = nbio_get_ptr(handle, &file_len);
+         while (!nbio_iterate(handle));
 
-      if (!ptr)
-         goto error;
+         if ((ptr = nbio_get_ptr(handle, &file_len)))
+         {
+            unsigned r_shift, g_shift, b_shift, a_shift;
+            image_texture_set_color_shifts(&r_shift,
+                  &g_shift, &b_shift, &a_shift, out_img);
 
-      if (image_texture_load_internal(
-               type,
-               ptr, file_len, out_img,
-               a_shift, r_shift, g_shift, b_shift))
-         goto success;
+            if (image_texture_load_internal(
+                     type,
+                     ptr, file_len, out_img,
+                     a_shift, r_shift, g_shift, b_shift))
+            {
+               nbio_free(handle);
+               return true;
+            }
+         }
+         nbio_free(handle);
+      }
    }
 
-error:
    out_img->supports_rgba = false;
    out_img->pixels        = NULL;
    out_img->width         = 0;
    out_img->height        = 0;
-   if (handle)
-      nbio_free(handle);
 
    return false;
-
-success:
-   if (handle)
-      nbio_free(handle);
-
-   return true;
 }

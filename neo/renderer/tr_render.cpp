@@ -32,6 +32,10 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "renderer/tr_local.h"
 
+#ifdef HAVE_OPENGLES
+#include "renderer/gles_compat.h"
+#endif
+
 /*
 
   back end scene + lights rendering functions
@@ -91,6 +95,17 @@ void RB_DrawElementsWithCounters( const srfTriangles_t *tri ) {
 		}
 	}
 
+#ifdef HAVE_OPENGLES
+    if ( tri->indexCache ) {
+        qglDrawElements( GL_TRIANGLES, tri->numIndexes, GL_INDEX_TYPE,
+                         (int *)vertexCache.Position( tri->indexCache ) );
+        backEnd.pc.c_vboIndexes += tri->numIndexes;
+    } else {
+        qglBindBuffer( GL_ELEMENT_ARRAY_BUFFER, 0 );
+        qglDrawElements( GL_TRIANGLES, tri->numIndexes, GL_INDEX_TYPE,
+                         tri->indexes );
+    }
+#else
 	if ( tri->indexCache && r_useIndexBuffers.GetBool() ) {
 		qglDrawElements( GL_TRIANGLES,
 						r_singleTriangle.GetBool() ? 3 : tri->numIndexes,
@@ -106,6 +121,7 @@ void RB_DrawElementsWithCounters( const srfTriangles_t *tri ) {
 						GL_INDEX_TYPE,
 						tri->indexes );
 	}
+#endif
 }
 
 /*
@@ -120,6 +136,19 @@ void RB_DrawShadowElementsWithCounters( const srfTriangles_t *tri, int numIndexe
 	backEnd.pc.c_shadowIndexes += numIndexes;
 	backEnd.pc.c_shadowVertexes += tri->numVerts;
 
+#ifdef HAVE_OPENGLES
+    if ( tri->indexCache ) {
+        qglDrawElements( GL_TRIANGLES, numIndexes, GL_INDEX_TYPE,
+                         (int *)vertexCache.Position( tri->indexCache ) );
+        backEnd.pc.c_vboIndexes += numIndexes;
+    } else {
+        static bool bOnce = true;
+        if ( bOnce ) {
+            common->Warning( "Attempting to draw without index caching. This is a bug.\n" );
+            bOnce = false;
+        }
+    }
+#else
 	if ( tri->indexCache && r_useIndexBuffers.GetBool() ) {
 		qglDrawElements( GL_TRIANGLES,
 						r_singleTriangle.GetBool() ? 3 : numIndexes,
@@ -135,6 +164,7 @@ void RB_DrawShadowElementsWithCounters( const srfTriangles_t *tri, int numIndexe
 						GL_INDEX_TYPE,
 						tri->indexes );
 	}
+#endif
 }
 
 
@@ -554,23 +584,28 @@ to actually render the visible surfaces for this view
 =================
 */
 void RB_BeginDrawingView (void) {
+
+	const viewDef_t* viewDef = backEnd.viewDef;
+
+#ifndef HAVE_OPENGLES
 	// set the modelview matrix for the viewer
 	qglMatrixMode(GL_PROJECTION);
-	qglLoadMatrixf( backEnd.viewDef->projectionMatrix );
+	qglLoadMatrixf( viewDef->projectionMatrix );
 	qglMatrixMode(GL_MODELVIEW);
+#endif
 
 	// set the window clipping
-	qglViewport( tr.viewportOffset[0] + backEnd.viewDef->viewport.x1,
-		tr.viewportOffset[1] + backEnd.viewDef->viewport.y1,
-		backEnd.viewDef->viewport.x2 + 1 - backEnd.viewDef->viewport.x1,
-		backEnd.viewDef->viewport.y2 + 1 - backEnd.viewDef->viewport.y1 );
+	qglViewport( tr.viewportOffset[0] + viewDef->viewport.x1,
+		tr.viewportOffset[1] + viewDef->viewport.y1,
+		viewDef->viewport.x2 + 1 - viewDef->viewport.x1,
+		viewDef->viewport.y2 + 1 - viewDef->viewport.y1 );
 
 	// the scissor may be smaller than the viewport for subviews
-	qglScissor( tr.viewportOffset[0] + backEnd.viewDef->viewport.x1 + backEnd.viewDef->scissor.x1,
-		tr.viewportOffset[1] + backEnd.viewDef->viewport.y1 + backEnd.viewDef->scissor.y1,
-		backEnd.viewDef->scissor.x2 + 1 - backEnd.viewDef->scissor.x1,
-		backEnd.viewDef->scissor.y2 + 1 - backEnd.viewDef->scissor.y1 );
-	backEnd.currentScissor = backEnd.viewDef->scissor;
+	qglScissor( tr.viewportOffset[0] + viewDef->viewport.x1 + viewDef->scissor.x1,
+		tr.viewportOffset[1] + viewDef->viewport.y1 + viewDef->scissor.y1,
+		viewDef->scissor.x2 + 1 - viewDef->scissor.x1,
+		viewDef->scissor.y2 + 1 - viewDef->scissor.y1 );
+	backEnd.currentScissor = viewDef->scissor;
 
 	// ensures that depth writes are enabled for the depth clear
 	GL_State( GLS_DEFAULT );
@@ -652,7 +687,7 @@ void R_SetDrawInteraction( const shaderStage_t *surfaceStage, const float *surfa
 RB_SubmittInteraction
 =================
 */
-static void RB_SubmittInteraction( drawInteraction_t *din, void (*DrawInteraction)(const drawInteraction_t *) ) {
+void RB_SubmittInteraction( drawInteraction_t *din, void (*DrawInteraction)(const drawInteraction_t *) ) {
 	if ( !din->bumpImage ) {
 		return;
 	}
@@ -687,6 +722,7 @@ This can be used by different draw_* backends to decompose a complex light / sur
 interaction into primitive interactions
 =============
 */
+#ifndef HAVE_OPENGLES
 void RB_CreateSingleDrawInteractions( const drawSurf_t *surf, void (*DrawInteraction)(const drawInteraction_t *) ) {
 	const idMaterial	*surfaceShader = surf->material;
 	const float			*surfaceRegs = surf->shaderRegisters;
@@ -694,9 +730,23 @@ void RB_CreateSingleDrawInteractions( const drawSurf_t *surf, void (*DrawInterac
 	const idMaterial	*lightShader = vLight->lightShader;
 	const float			*lightRegs = vLight->shaderRegisters;
 	drawInteraction_t	inter;
+	inter.diffuseMatrix[0].Zero();
+	inter.diffuseMatrix[1].Zero();
+	inter.specularMatrix[0].Zero();
+	inter.specularMatrix[1].Zero();
 
 	if ( r_skipInteractions.GetBool() || !surf->geo || !surf->geo->ambientCache ) {
 		return;
+	}
+
+	// DG: support lights nospecular parm, if desired by mapper and/or user
+	int noSpecVar = r_supportNoSpecular.GetInteger();
+	bool allowNoSpecular = (noSpecVar == 1);
+	if ( noSpecVar == -1 ) {
+		// r_supportNoSpecular -1 only allows nospecular if the map enables
+		// it in the worldspawn by setting "allow_nospecular" "1"
+		// the value of that is saved in tr.allowNoSpecular by idRenderSystemLocal::EndLevelLoad()
+		allowNoSpecular = tr.allowNoSpecular;
 	}
 
 	// change the matrix and light projection vectors if needed
@@ -816,13 +866,18 @@ void RB_CreateSingleDrawInteractions( const drawSurf_t *surf, void (*DrawInterac
 					if ( inter.specularImage ) {
 						RB_SubmittInteraction( &inter, DrawInteraction );
 					}
-					R_SetDrawInteraction( surfaceStage, surfaceRegs, &inter.specularImage,
-											inter.specularMatrix, inter.specularColor.ToFloatPtr() );
-					inter.specularColor[0] *= lightColor[0];
-					inter.specularColor[1] *= lightColor[1];
-					inter.specularColor[2] *= lightColor[2];
-					inter.specularColor[3] *= lightColor[3];
-					inter.vertexColor = surfaceStage->vertexColor;
+// jmarshall - add no specular support(great for fill lighting).
+					if ( !allowNoSpecular || !vLight->lightDef->parms.noSpecular )
+					{
+						R_SetDrawInteraction( surfaceStage, surfaceRegs, &inter.specularImage,
+												inter.specularMatrix, inter.specularColor.ToFloatPtr() );
+						inter.specularColor[0] *= lightColor[0];
+						inter.specularColor[1] *= lightColor[1];
+						inter.specularColor[2] *= lightColor[2];
+						inter.specularColor[3] *= lightColor[3];
+						inter.vertexColor = surfaceStage->vertexColor;
+					}
+// jmarshall end
 					break;
 				}
 			}
@@ -837,6 +892,19 @@ void RB_CreateSingleDrawInteractions( const drawSurf_t *surf, void (*DrawInterac
 		RB_LeaveDepthHack();
 	}
 }
+#endif
+
+/*
+==================
+RB_SetDrawInteractions
+==================
+*/
+#ifdef HAVE_OPENGLES
+void RB_SetDrawInteraction( const shaderStage_t *surfaceStage, const float *surfaceRegs,
+                           idImage **image, idVec4 matrix[2], float color[4] ) {
+  R_SetDrawInteraction( surfaceStage, surfaceRegs, image, matrix, color );
+}
+#endif
 
 /*
 =============
@@ -847,6 +915,33 @@ void RB_DrawView( const void *data ) {
 	const drawSurfsCommand_t	*cmd;
 
 	cmd = (const drawSurfsCommand_t *)data;
+
+#ifndef HAVE_OPENGLES
+	// with r_lockSurfaces enabled, we set the locked render view
+	// for the primary viewDef for all the "what should be drawn" calculations.
+	// now it must be reverted to the real render view so the scene gets rendered
+	// from the actual current players point of view
+	if(r_lockSurfaces.GetBool() && tr.primaryView == cmd->viewDef) {
+		viewDef_t* parms = cmd->viewDef;
+		const viewDef_t origParms = *parms;
+
+		*parms = tr.lockSurfacesRealViewDef; // actual current player/camera position
+		parms->renderWorld = origParms.renderWorld;
+		parms->floatTime = origParms.floatTime;
+		parms->drawSurfs = origParms.drawSurfs;
+		parms->numDrawSurfs = origParms.numDrawSurfs;
+		parms->maxDrawSurfs = origParms.maxDrawSurfs;
+		parms->viewLights = origParms.viewLights;
+		parms->viewEntitys = origParms.viewEntitys;
+		parms->connectedAreas = origParms.connectedAreas;
+
+		for( viewEntity_t* vModel = parms->viewEntitys ; vModel ; vModel = vModel->next ) {
+			myGlMultMatrix( vModel->modelMatrix,
+				parms->worldSpace.modelViewMatrix,
+				vModel->modelViewMatrix );
+		}
+	}
+#endif
 
 	backEnd.viewDef = cmd->viewDef;
 
@@ -859,11 +954,13 @@ void RB_DrawView( const void *data ) {
 		return;
 	}
 
+#ifndef HAVE_OPENGLES
 	// skip render bypasses everything that has models, assuming
 	// them to be 3D views, but leaves 2D rendering visible
 	if ( r_skipRender.GetBool() && backEnd.viewDef->viewEntitys ) {
 		return;
 	}
+#endif
 
 	// skip render context sets the gl context to NULL,
 	// which should factor out the API cost, under the assumption
@@ -874,14 +971,18 @@ void RB_DrawView( const void *data ) {
 
 	backEnd.pc.c_surfaces += backEnd.viewDef->numDrawSurfs;
 
+#ifndef HAVE_OPENGLES
 	RB_ShowOverdraw();
+#endif
 
 	// render the scene, jumping to the hardware specific interaction renderers
 	RB_STD_DrawView();
 
+#ifndef HAVE_OPENGLES
 	// restore the context for 2D drawing if we were stubbing it out
 	if ( r_skipRenderContext.GetBool() && backEnd.viewDef->viewEntitys ) {
 		GLimp_ActivateContext();
 		RB_SetDefaultGLState();
 	}
+#endif
 }

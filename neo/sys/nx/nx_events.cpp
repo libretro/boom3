@@ -462,8 +462,10 @@ void Sys_ShutdownInput() {
 	kbd_polls.Clear();
 	mouse_polls.Clear();
 	joystick_polls.Clear();
+#ifdef HAVE_SDL
 	if (SDL_WasInit(SDL_INIT_JOYSTICK))
 		SDL_QuitSubSystem(SDL_INIT_JOYSTICK);
+#endif
 }
 
 /*

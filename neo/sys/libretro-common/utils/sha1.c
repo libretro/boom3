@@ -226,11 +226,9 @@ void SHA1Input(     SHA1Context         *context,
          context->Length_High++;
          /* Force it to 32 bits */
          context->Length_High &= 0xFFFFFFFF;
+         /* Message is too long */
          if (context->Length_High == 0)
-         {
-            /* Message is too long */
             context->Corrupted = 1;
-         }
       }
 
       if (context->Message_Block_Index == 64)
@@ -277,7 +275,7 @@ void SHA1ProcessMessageBlock(SHA1Context *context)
    /*
     *  Initialize the first 16 words in the array W
     */
-   for(t = 0; t < 16; t++)
+   for (t = 0; t < 16; t++)
    {
       W[t] = ((unsigned) context->Message_Block[t * 4]) << 24;
       W[t] |= ((unsigned) context->Message_Block[t * 4 + 1]) << 16;
@@ -285,10 +283,8 @@ void SHA1ProcessMessageBlock(SHA1Context *context)
       W[t] |= ((unsigned) context->Message_Block[t * 4 + 3]);
    }
 
-   for(t = 16; t < 80; t++)
-   {
+   for (t = 16; t < 80; t++)
       W[t] = SHA1CircularShift(1,W[t-3] ^ W[t-8] ^ W[t-14] ^ W[t-16]);
-   }
 
    A = context->Message_Digest[0];
    B = context->Message_Digest[1];
@@ -296,7 +292,7 @@ void SHA1ProcessMessageBlock(SHA1Context *context)
    D = context->Message_Digest[3];
    E = context->Message_Digest[4];
 
-   for(t = 0; t < 20; t++)
+   for (t = 0; t < 20; t++)
    {
       temp =  SHA1CircularShift(5,A) +
          ((B & C) | ((~B) & D)) + E + W[t] + K[0];
@@ -308,7 +304,7 @@ void SHA1ProcessMessageBlock(SHA1Context *context)
       A = temp;
    }
 
-   for(t = 20; t < 40; t++)
+   for (t = 20; t < 40; t++)
    {
       temp = SHA1CircularShift(5,A) + (B ^ C ^ D) + E + W[t] + K[1];
       temp &= 0xFFFFFFFF;
@@ -319,7 +315,7 @@ void SHA1ProcessMessageBlock(SHA1Context *context)
       A = temp;
    }
 
-   for(t = 40; t < 60; t++)
+   for (t = 40; t < 60; t++)
    {
       temp = SHA1CircularShift(5,A) +
          ((B & C) | (B & D) | (C & D)) + E + W[t] + K[2];
@@ -331,7 +327,7 @@ void SHA1ProcessMessageBlock(SHA1Context *context)
       A = temp;
    }
 
-   for(t = 60; t < 80; t++)
+   for (t = 60; t < 80; t++)
    {
       temp = SHA1CircularShift(5,A) + (B ^ C ^ D) + E + W[t] + K[3];
       temp &= 0xFFFFFFFF;

@@ -927,9 +927,9 @@ static void R_CreateShadowVolumeInFrustum( const idRenderEntityLocal *ent,
 		// project all of the vertexes to the shadow plane, generating
 		// an equal number of back vertexes
 //		R_ProjectPointsToFarPlane( ent, light, farPlane, firstShadowVert, numShadowVerts );
-
+#ifndef HAVE_OPENGLES
 		opt = SuperOptimizeOccluders( shadowVerts, shadowIndexes + firstShadowIndex, numCapIndexes, farPlane, lightOrigin );
-
+#endif
 		// pull off the non-optimized data
 		numShadowIndexes = firstShadowIndex;
 		numShadowVerts = firstShadowVert;
@@ -1386,9 +1386,11 @@ srfTriangles_t *R_CreateShadowVolume( const idRenderEntityLocal *ent,
 		SIMDProcessor->Memcpy( newTri->indexes, shadowIndexes, newTri->numIndexes * sizeof( newTri->indexes[0] ) );
 	}
 
+#ifndef HAVE_OPENGLES
 	if ( optimize == SG_OFFLINE ) {
 		CleanupOptimizedShadowTris( newTri );
 	}
+#endif
 
 	return newTri;
 }

@@ -1,6 +1,22 @@
 ifeq ($(LIBRETRO_COMM_DIR),)
 LIBRETRO_COMM_DIR  = $(CORE_DIR)/sys/libretro-common
 endif
+
+ifeq ($(SDL_VER),2)
+	SDL_CFLAGS := $(shell pkg-config --cflags sdl2)
+	SDL_LIBS   := $(shell pkg-config --libs sdl2)
+endif
+
+ifeq ($(SDL_VER),3)
+	SDL_CFLAGS := $(shell pkg-config --cflags sdl3)
+	SDL_LIBS   := $(shell pkg-config --libs sdl3)
+endif
+
+ifeq ($(OPENAL),1)
+	OPENAL_CFLAGS := $(shell pkg-config --cflags openal)
+	OPENAL_LIBS := $(shell pkg-config --libs openal)
+endif
+
 INCFLAGS   :=  \
 	-I$(LIBRETRO_COMM_DIR)/include \
 	-I$(CORE_DIR)/libogg/include \
@@ -8,7 +24,8 @@ INCFLAGS   :=  \
 	-I$(CORE_DIR)/libvorbis/lib \
 	-I$(CORE_DIR)/jpeg-8c \
 	-I$(CORE_DIR)/zlib \
-	-I$(CORE_DIR)/libvorbis/include
+	$(SDL_CFLAGS) \
+	$(OPENAL_CFLAGS)
 
 SRC_RENDERER	:=\
 	$(CORE_DIR)/renderer/Cinematic.cpp \
@@ -42,7 +59,6 @@ SRC_RENDERER	:=\
 	$(CORE_DIR)/renderer/RenderWorld_load.cpp \
 	$(CORE_DIR)/renderer/RenderWorld_portals.cpp \
 	$(CORE_DIR)/renderer/VertexCache.cpp \
-	$(CORE_DIR)/renderer/draw_arb2.cpp \
 	$(CORE_DIR)/renderer/draw_common.cpp \
 	$(CORE_DIR)/renderer/tr_backend.cpp \
 	$(CORE_DIR)/renderer/tr_deform.cpp \
@@ -54,13 +70,12 @@ SRC_RENDERER	:=\
 	$(CORE_DIR)/renderer/tr_orderIndexes.cpp \
 	$(CORE_DIR)/renderer/tr_polytope.cpp \
 	$(CORE_DIR)/renderer/tr_render.cpp \
-	$(CORE_DIR)/renderer/tr_rendertools.cpp \
 	$(CORE_DIR)/renderer/tr_shadowbounds.cpp \
 	$(CORE_DIR)/renderer/tr_stencilshadow.cpp \
 	$(CORE_DIR)/renderer/tr_subview.cpp \
 	$(CORE_DIR)/renderer/tr_trace.cpp \
 	$(CORE_DIR)/renderer/tr_trisurf.cpp \
-	$(CORE_DIR)/renderer/tr_turboshadow.cpp
+	$(CORE_DIR)/renderer/tr_turboshadow.cpp \
 
 SRC_FRAMEWORK	:=\
 	$(CORE_DIR)/framework/CVarSystem.cpp \
@@ -103,21 +118,23 @@ SRC_CM	:=\
 	$(CORE_DIR)/cm/CollisionModel_trace.cpp \
 	$(CORE_DIR)/cm/CollisionModel_translate.cpp
 
-SRC_DMAP	:=\
-	$(CORE_DIR)/tools/compilers/dmap/dmap.cpp \
-	$(CORE_DIR)/tools/compilers/dmap/facebsp.cpp \
-	$(CORE_DIR)/tools/compilers/dmap/gldraw.cpp \
-	$(CORE_DIR)/tools/compilers/dmap/glfile.cpp \
-	$(CORE_DIR)/tools/compilers/dmap/leakfile.cpp \
-	$(CORE_DIR)/tools/compilers/dmap/map.cpp \
-	$(CORE_DIR)/tools/compilers/dmap/optimize.cpp \
-	$(CORE_DIR)/tools/compilers/dmap/output.cpp \
-	$(CORE_DIR)/tools/compilers/dmap/portals.cpp \
-	$(CORE_DIR)/tools/compilers/dmap/shadowopt3.cpp \
-	$(CORE_DIR)/tools/compilers/dmap/tritjunction.cpp \
-	$(CORE_DIR)/tools/compilers/dmap/tritools.cpp \
-	$(CORE_DIR)/tools/compilers/dmap/ubrush.cpp \
-	$(CORE_DIR)/tools/compilers/dmap/usurface.cpp
+ifneq ($(GLES),1)
+	SRC_DMAP	:=\
+		$(CORE_DIR)/tools/compilers/dmap/dmap.cpp \
+		$(CORE_DIR)/tools/compilers/dmap/facebsp.cpp \
+		$(CORE_DIR)/tools/compilers/dmap/gldraw.cpp \
+		$(CORE_DIR)/tools/compilers/dmap/glfile.cpp \
+		$(CORE_DIR)/tools/compilers/dmap/leakfile.cpp \
+		$(CORE_DIR)/tools/compilers/dmap/map.cpp \
+		$(CORE_DIR)/tools/compilers/dmap/optimize.cpp \
+		$(CORE_DIR)/tools/compilers/dmap/output.cpp \
+		$(CORE_DIR)/tools/compilers/dmap/portals.cpp \
+		$(CORE_DIR)/tools/compilers/dmap/shadowopt3.cpp \
+		$(CORE_DIR)/tools/compilers/dmap/tritjunction.cpp \
+		$(CORE_DIR)/tools/compilers/dmap/tritools.cpp \
+		$(CORE_DIR)/tools/compilers/dmap/ubrush.cpp \
+		$(CORE_DIR)/tools/compilers/dmap/usurface.cpp
+endif
 
 SRC_AAS	:=\
 	$(CORE_DIR)/tools/compilers/aas/AASBuild.cpp \
@@ -140,8 +157,10 @@ SRC_ROQ	:=\
 	$(CORE_DIR)/tools/compilers/roqvq/roq.cpp \
 	$(CORE_DIR)/tools/compilers/roqvq/roqParam.cpp
 
+ifneq ($(GLES),1)
 SRC_RENDERBUMP	:= \
 	$(CORE_DIR)/tools/compilers/renderbump/renderbump.cpp
+endif
 
 SRC_SOUND	:=\
 	$(CORE_DIR)/sound/snd_cache.cpp \
@@ -227,11 +246,11 @@ SRC_IDLIB	:=\
 	$(CORE_DIR)/idlib/Timer.cpp \
 	$(CORE_DIR)/idlib/Heap.cpp
 
-SRC_OPENAL_STUB	:= \
-	$(CORE_DIR)/sys/stub/openal_stub.cpp
-
-SRC_OPENAL	:= \
-	$(CORE_DIR)/mojoAL/mojoal.c
+ifeq ($(OPENAL),1)
+	# SRC_OPENAL	:= $(CORE_DIR)/mojoAL/mojoal.c
+else
+	SRC_OPENAL	:= $(CORE_DIR)/sys/stub/openal_stub.cpp
+endif
 
 SRC_GLAD	:= \
 	$(CORE_DIR)/glad41/glad.c
@@ -243,10 +262,12 @@ SRC_SYS	:=\
 	$(CORE_DIR)/sys/libretro/retro_events.cpp \
 	$(CORE_DIR)/sys/libretro/retro_net.cpp \
 	$(CORE_DIR)/sys/libretro/retro_main.cpp \
-	$(CORE_DIR)/sys/libretro/libretro.cpp
+	$(CORE_DIR)/sys/libretro/libretro.cpp \
+	$(CORE_DIR)/sys/libretro/stubs.cpp
 
-SRC_SYS_CORE	:= \
-	$(CORE_DIR)/sys/glimp.cpp
+ifneq (,$(findstring win,$(platform)))
+   SRC_SYS += sys/win32/win_shared.cpp
+endif
 
 SRC_GAME_BASE	:=\
 	$(CORE_DIR)/game/AF.cpp \
@@ -397,20 +418,53 @@ SRC_LIBRETRO := \
 	$(LIBRETRO_COMM_DIR)/encodings/encoding_utf.c \
 	$(LIBRETRO_COMM_DIR)/string/stdstring.c \
 	$(LIBRETRO_COMM_DIR)/file/file_path.c \
+	$(LIBRETRO_COMM_DIR)/file/file_path_io.c \
 	$(LIBRETRO_COMM_DIR)/compat/fopen_utf8.c \
 	$(LIBRETRO_COMM_DIR)/compat/compat_strl.c \
 	$(LIBRETRO_COMM_DIR)/compat/compat_posix_string.c \
 	$(LIBRETRO_COMM_DIR)/compat/compat_strcasestr.c \
 	$(LIBRETRO_COMM_DIR)/compat/compat_snprintf.c \
 	$(LIBRETRO_COMM_DIR)/features/features_cpu.c \
+	$(LIBRETRO_COMM_DIR)/time/rtime.c \
 	$(LIBRETRO_COMM_DIR)/streams/file_stream.c \
 	$(LIBRETRO_COMM_DIR)/vfs/vfs_implementation.c \
 	$(LIBRETRO_COMM_DIR)/rthreads/rthreads.c \
 	$(LIBRETRO_COMM_DIR)/net/net_compat.c \
 	$(LIBRETRO_COMM_DIR)/net/net_socket.c \
 	$(LIBRETRO_COMM_DIR)/glsym/rglgen.c \
-	$(LIBRETRO_COMM_DIR)/glsym/glsym_gl.c \
 	$(LIBRETRO_COMM_DIR)/glsm/glsm.c
+
+ifeq ($(GLES),1)
+	SRC_RENDERER += \
+		$(CORE_DIR)/renderer/glsl/cubeMapShaderFP.o \
+		$(CORE_DIR)/renderer/glsl/diffuseMapShaderVP.o \
+		$(CORE_DIR)/renderer/glsl/diffuseCubeShaderVP.o \
+		$(CORE_DIR)/renderer/glsl/diffuseMapShaderFP.o \
+		$(CORE_DIR)/renderer/glsl/fogShaderFP.o \
+		$(CORE_DIR)/renderer/glsl/fogShaderVP.o \
+		$(CORE_DIR)/renderer/glsl/blendLightShaderVP.o \
+		$(CORE_DIR)/renderer/glsl/interactionPhongShaderFP.o \
+		$(CORE_DIR)/renderer/glsl/interactionPhongShaderVP.o \
+		$(CORE_DIR)/renderer/glsl/interactionShaderFP.o \
+		$(CORE_DIR)/renderer/glsl/interactionShaderVP.o \
+		$(CORE_DIR)/renderer/glsl/reflectionCubeShaderVP.o \
+		$(CORE_DIR)/renderer/glsl/skyboxCubeShaderVP.o \
+		$(CORE_DIR)/renderer/glsl/stencilShadowShaderFP.o \
+		$(CORE_DIR)/renderer/glsl/stencilShadowShaderVP.o \
+		$(CORE_DIR)/renderer/glsl/zfillClipShaderFP.o \
+		$(CORE_DIR)/renderer/glsl/zfillClipShaderVP.o \
+		$(CORE_DIR)/renderer/glsl/zfillShaderFP.o \
+		$(CORE_DIR)/renderer/glsl/zfillShaderVP.o \
+		$(CORE_DIR)/renderer/draw_gles2.cpp
+	SRC_LIBRETRO += \
+		$(LIBRETRO_COMM_DIR)/glsym/glsym_es2.c
+else
+	SRC_RENDERER += \
+		$(CORE_DIR)/renderer/tr_rendertools.cpp \
+		$(CORE_DIR)/renderer/draw_arb2.cpp
+	SRC_LIBRETRO += \
+		$(LIBRETRO_COMM_DIR)/glsym/glsym_gl.c
+endif
 
 SOURCES_DIR = \
 	$(CORE_DIR)/jpeg-8c \
@@ -428,7 +482,6 @@ endif
 
 SOURCES_CXX	:=\
 	$(SRC_SYS) \
-	$(SRC_SYS_CORE) \
 	$(SRC_RENDERER) \
 	$(SRC_FRAMEWORK) \
 	$(SRC_CM) \
@@ -441,10 +494,13 @@ SOURCES_CXX	:=\
 	$(SRC_TOOLS) \
 	$(SRC_IDLIB) \
 	$(SRC_GAME) \
-	$(SRC_OPENAL_STUB)
+	$(SRC_OPENAL)
 
 SOURCES_C	:=\
 	$(CORE_DIR)/framework/minizip/ioapi.c \
+	$(CORE_DIR)/framework/miniz/miniz.c \
+	$(CORE_DIR)/renderer/stblib_impls.c \
+	$(CORE_DIR)/sound/stbvorbis_impl.c \
 	$(SRC_GLAD) \
 	$(SRC_LIBRETRO) \
 	$(DIRS_C)

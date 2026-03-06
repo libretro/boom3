@@ -26,6 +26,13 @@ If you have questions concerning this license or the applicable additional terms
 ===========================================================================
 */
 
+#ifndef HAVE_OPENAL
+
+#ifdef _WIN32
+#define AL_API
+#define ALC_API
+#endif
+
 #include "sys/platform.h"
 
 #include "sound/snd_local.h"
@@ -64,6 +71,17 @@ ALC_API ALCdevice * ALC_APIENTRY alcOpenDevice( const ALchar *tokstr ) {
 ALC_API ALCboolean ALC_APIENTRY alcIsExtensionPresent( ALCdevice *device, const ALCchar *extname ) {
 	return AL_FALSE;
 }
+
+ALC_API void ALC_APIENTRY alcGetIntegerv(ALCdevice *device, ALCenum param, ALCsizei size, ALCint *values) {}
+
+ALC_API ALCenum ALC_APIENTRY alcGetError(ALCdevice *device) {
+	return ALC_NO_ERROR;
+}
+
+ALC_API void* ALC_APIENTRY alcGetProcAddress(ALCdevice *device, const ALCchar *funcname) {
+	return NULL;
+}
+
 
 AL_API void AL_APIENTRY alDeleteBuffers( ALsizei n, const ALuint* buffers ) { }
 
@@ -132,5 +150,11 @@ AL_API void AL_APIENTRY alSourcef( ALuint sid, ALenum param, ALfloat value ) { }
 AL_API void AL_APIENTRY alSourceUnqueueBuffers( ALuint sid, ALsizei numEntries, ALuint *bids ) { }
 
 AL_API void AL_APIENTRY alSourcePlay( ALuint sid ) { }
+AL_API void AL_APIENTRY alSourcePause( ALuint source ) {}
+
+int idSoundSystemLocal::AsyncUpdate( int inTime ) { return 0; }
+int idSoundSystemLocal::AsyncUpdateWrite( int inTime ) { return 0; }
 
 } // extern "C"
+
+#endif

@@ -109,6 +109,7 @@ SURFACES
 
 // drawSurf_t are always allocated and freed every frame, they are never cached
 static const int	DSF_VIEW_INSIDE_SHADOW	= 1;
+static const int	DSF_SOFT_PARTICLE		= 2; // #3878 - soft particles
 
 typedef struct drawSurf_s {
 	const srfTriangles_t	*geo;
@@ -121,6 +122,10 @@ typedef struct drawSurf_s {
 	int						dsFlags;			// DSF_VIEW_INSIDE_SHADOW, etc
 	struct vertCache_s		*dynamicTexCoords;	// float * in vertex cache memory
 	// specular directions for non vertex program cards, skybox texcoords, etc
+	float					particle_radius;	// The radius of individual quads for soft particles #3878
+#ifdef HAVE_OPENGLES
+	float  wobbleTransform[16];
+#endif
 } drawSurf_t;
 
 
@@ -454,7 +459,11 @@ typedef struct {
 	// these are loaded into the vertex program
 	idVec4				localLightOrigin;
 	idVec4				localViewOrigin;
+#ifdef HAVE_OPENGLES
+	idMat4				lightProjection;
+#else
 	idVec4				lightProjection[4];	// in local coordinates, possibly with a texture matrix baked in
+#endif
 	idVec4				bumpMatrix[2];
 	idVec4				diffuseMatrix[2];
 	idVec4				specularMatrix[2];
@@ -548,7 +557,6 @@ extern	frameData_t	*frameData;
 
 //=======================================================================
 
-void R_LockSurfaceScene( viewDef_t *parms );
 void R_ClearCommandChain( void );
 void R_AddDrawViewCmd( viewDef_t *parms );
 
@@ -609,6 +617,10 @@ typedef struct {
 	int			faceCulling;
 	int			glStateBits;
 	bool		forceGlState;		// the next GL_State will ignore glStateBits and set everything
+#ifdef HAVE_OPENGLES
+	int     	currentTexture;
+	struct shaderProgram_s	*currentProgram;
+#endif
 } glstate_t;
 
 
@@ -673,7 +685,10 @@ const int MAX_GUI_SURFACES	= 1024;		// default size of the drawSurfs list for gu
 
 typedef enum {
 	BE_ARB2,
-	BE_BAD
+	BE_BAD,
+#ifdef HAVE_OPENGLES
+    BE_GLSL,
+#endif
 } backEndName_t;
 
 typedef struct {
@@ -785,6 +800,9 @@ public:
 	performanceCounters_t	pc;					// performance counters
 
 	drawSurfsCommand_t		lockSurfacesCmd;	// use this when r_lockSurfaces = 1
+	//renderView_t			lockSurfacesRenderView;
+	viewDef_t				lockSurfacesViewDef; // of locked position/view
+	viewDef_t				lockSurfacesRealViewDef; // of actual player position
 
 	viewEntity_t			identitySpace;		// can use if we don't know viewDef->worldSpace is valid
 	int						stencilIncr, stencilDecr;	// GL_INCR / INCR_WRAP_EXT, GL_DECR / GL_DECR_EXT
@@ -796,6 +814,15 @@ public:
 	int						guiRecursionLevel;		// to prevent infinite overruns
 	class idGuiModel *		guiModel;
 	class idGuiModel *		demoGuiModel;
+
+	// DG: remember the original glConfig.vidWidth/Height values that get overwritten in BeginFrame()
+	//     so they can be reset in EndFrame() (Editors tend to mess up the viewport by using BeginFrame())
+	int						origWidth;
+	int						origHeight;
+
+	// DG: taken from the current map's worldspawn ("allow_nospecular")
+	//     true if (unlike in Vanilla Doom3) the "nospecular" parm of a light should be respected
+	bool					allowNoSpecular;
 };
 
 extern backEndState_t		backEnd;
@@ -809,7 +836,9 @@ extern glconfig_t			glConfig;		// outside of TR since it shouldn't be cleared du
 extern idCVar r_mode;					// video mode number
 extern idCVar r_displayRefresh;			// optional display refresh rate option for vid mode
 extern idCVar r_fullscreen;				// 0 = windowed, 1 = full screen
+extern idCVar r_fullscreenDesktop;		// 0: 'real' fullscreen mode 1: keep resolution 'desktop' fullscreen mode
 extern idCVar r_multiSamples;			// number of antialiasing samples
+extern idCVar r_windowResizable;		// DG: allow resizing and maximizing the window
 
 extern idCVar r_ignore;					// used for random debugging without defining new vars
 extern idCVar r_ignore2;				// used for random debugging without defining new vars
@@ -829,10 +858,16 @@ extern idCVar r_flareSize;				// scale the flare deforms from the material def
 
 extern idCVar r_gamma;					// changes gamma tables
 extern idCVar r_brightness;				// changes gamma tables
+extern idCVar r_gammaInShader;			// set gamma+brightness in shader instead of modifying system gamma tables
 
 extern idCVar r_renderer;				// arb2, etc
 
 extern idCVar r_checkBounds;			// compare all surface bounds with precalculated ones
+
+#ifdef HAVE_OPENGLES
+extern idCVar r_usePhong;
+extern idCVar r_specularExponent;
+#endif
 
 extern idCVar r_useLightPortalFlow;		// 1 = do a more precise area reference determination
 extern idCVar r_useShadowSurfaceScissor;// 1 = scissor shadows by the scissor rect of the interaction surfaces
@@ -869,6 +904,8 @@ extern idCVar r_useIndexBuffers;		// if 0, don't use ARB_vertex_buffer_object fo
 extern idCVar r_useEntityCallbacks;		// if 0, issue the callback immediately at update time, rather than defering
 extern idCVar r_lightAllBackFaces;		// light all the back faces, even when they would be shadowed
 extern idCVar r_useDepthBoundsTest;     // use depth bounds test to reduce shadow fill
+
+extern idCVar r_supportNoSpecular;		// support nospecular parm of lights
 
 extern idCVar r_skipPostProcess;		// skip all post-process renderings
 extern idCVar r_skipSuppress;			// ignore the per-view suppressions
@@ -971,6 +1008,15 @@ extern idCVar r_materialOverride;		// override all materials
 
 extern idCVar r_debugRenderToTexture;
 
+extern idCVar r_glDebugContext; // DG: use debug context to call logging callbacks on GL errors
+extern idCVar r_enableDepthCapture; // DG: disable capturing depth buffer, used for soft particles
+extern idCVar r_useSoftParticles;
+
+#ifdef __LIBRETRO__
+extern idCVar	r_customWidth;
+extern idCVar	r_customHeight;
+#endif
+
 /*
 ====================================================================
 
@@ -1033,6 +1079,10 @@ const int GLS_DEFAULT							= GLS_DEPTHFUNC_ALWAYS;
 void R_Init( void );
 void R_InitOpenGL( void );
 
+#ifdef __LIBRETRO__
+void R_ReinitOpenGL( void );
+#endif
+
 void R_DoneFreeType( void );
 
 void R_SetColorMappings( void );
@@ -1055,8 +1105,9 @@ typedef struct {
 	int			width;
 	int			height;
 	bool		fullScreen;
+	bool		fullScreenDesktop;
 	bool		stereo;
-	int			displayHz;
+	int			displayHz; // TODO: SDL3 uses float
 	int			multiSamples;
 } glimpParms_t;
 
@@ -1084,6 +1135,8 @@ void		GLimp_SetGamma( unsigned short red[256],
 // These are now taken as 16 bit values, so we can take full advantage
 // of dacs with >8 bits of precision
 
+void		GLimp_ResetGamma();
+// resets the gamma to what it was at startup
 
 // Returns false if the system only has a single processor
 
@@ -1097,12 +1150,21 @@ void		GLimp_DeactivateContext( void );
 // being immediate returns, which lets us guage how much time is
 // being spent inside OpenGL.
 
-const int GRAB_ENABLE		= (1 << 0);
-const int GRAB_REENABLE		= (1 << 1);
-const int GRAB_HIDECURSOR	= (1 << 2);
-const int GRAB_SETSTATE		= (1 << 3);
+const int GRAB_GRABMOUSE	= (1 << 0);
+const int GRAB_HIDECURSOR	= (1 << 1);
+const int GRAB_RELATIVEMOUSE = (1 << 2);
+const int GRAB_ENABLETEXTINPUT = (1 << 3); // to explicitly enable/disable textinput in SDL2/3
 
 void GLimp_GrabInput(int flags);
+
+bool GLimp_SetSwapInterval( int swapInterval );
+int GLimp_GetSwapInterval();
+bool GLimp_SetWindowResizable( bool enableResizable );
+void GLimp_UpdateWindowSize();
+
+glimpParms_t GLimp_GetCurState();
+float GLimp_GetDisplayRefresh();
+
 /*
 ====================================================================
 
@@ -1160,7 +1222,7 @@ viewEntity_t *R_SetEntityDefViewEntity( idRenderEntityLocal *def );
 viewLight_t *R_SetLightDefViewLight( idRenderLightLocal *def );
 
 void R_AddDrawSurf( const srfTriangles_t *tri, const viewEntity_t *space, const renderEntity_t *renderEntity,
-					const idMaterial *shader, const idScreenRect &scissor );
+					const idMaterial *shader, const idScreenRect &scissor, const float soft_particle_radius = -1.0f ); // soft particles in #3878
 
 void R_LinkLightSurf( const drawSurf_t **link, const srfTriangles_t *tri, const viewEntity_t *space,
 				   const idRenderLightLocal *light, const idMaterial *shader, const idScreenRect &scissor, bool viewInsideShadow );
@@ -1249,6 +1311,11 @@ void RB_DetermineLightScale( void );
 void RB_STD_LightScale( void );
 void RB_BeginDrawingView (void);
 
+#ifdef HAVE_OPENGLES
+void RB_SubmittInteraction( drawInteraction_t *din, void (*DrawInteraction)(const drawInteraction_t *) );
+void RB_SetDrawInteraction( const shaderStage_t *surfaceStage, const float *surfaceRegs, idImage **image, idVec4 matrix[2], float color[4] );
+#endif
+
 /*
 ============================================================
 
@@ -1266,7 +1333,11 @@ void RB_FinishStageTexture( const textureStage_t *texture, const drawSurf_t *sur
 void RB_StencilShadowPass( const drawSurf_t *drawSurfs );
 void RB_STD_DrawView( void );
 void RB_STD_FogAllLights( void );
+#ifdef HAVE_OPENGLES
+void RB_BakeTextureMatrixIntoTexgen( idMat4 & lightProject, const float* textureMatrix);
+#else
 void RB_BakeTextureMatrixIntoTexgen( idPlane lightProject[3], const float textureMatrix[16] );
+#endif
 
 /*
 ============================================================
@@ -1296,6 +1367,10 @@ typedef enum {
 	FPROG_AMBIENT,
 	VPROG_GLASSWARP,
 	FPROG_GLASSWARP,
+	// SteveL #3878: soft particles
+	VPROG_SOFT_PARTICLE,
+	FPROG_SOFT_PARTICLE,
+	//
 	PROG_USER
 } program_t;
 
@@ -1343,11 +1418,91 @@ typedef enum {
 	PP_SPECULAR_MATRIX_S,
 	PP_SPECULAR_MATRIX_T,
 	PP_COLOR_MODULATE,
-	PP_COLOR_ADD,
+	PP_COLOR_ADD, // 17
 
-	PP_LIGHT_FALLOFF_TQ = 20	// only for NV programs
+	PP_LIGHT_FALLOFF_TQ = 20,	// only for NV programs - DG: unused
+	PP_GAMMA_BRIGHTNESS = 21, // DG: for gamma in shader: { r_brightness, r_brightness, r_brightness, 1/r_gamma }
+	// DG: for soft particles from TDM: reciprocal of _currentDepth size.
+	//     Lets us convert a screen position to a texcoord in _currentDepth
+	PP_CURDEPTH_RECIPR  = 22,
+	// DG: for soft particles from TDM: particle radius, given as { radius, 1/(fadeRange), 1/radius }
+	//     fadeRange is the particle diameter for alpha blends (like smoke), but the particle radius for additive
+	//     blends (light glares), because additive effects work differently. Fog is half as apparent when a wall
+	//     is in the middle of it. Light glares lose no visibility when they have something to reflect off.
+	PP_PARTICLE_RADIUS  = 23,
+	// DG: for soft particles from TDM: color channel mask.
+	//     Particles with additive blend need their RGB channels modifying to blend them out
+	//     Particles with an alpha blend need their alpha channel modifying.
+	PP_PARTICLE_COLCHAN_MASK = 24,
 } programParameter_t;
 
+#ifdef HAVE_OPENGLES
+
+/*
+============================================================
+
+DRAW_GLSL
+ NB: Specific to GLSL shader stuff
+
+============================================================
+*/
+
+typedef struct shaderProgram_s {
+	GLuint		program;
+
+	GLuint		vertexShader;
+	GLuint		fragmentShader;
+
+	GLint		glColor;
+	GLint		alphaTest;
+	GLint		specularExponent;
+
+	GLint		modelViewProjectionMatrix;
+  GLint		modelViewMatrix;
+	GLint		textureMatrix;
+	GLint		localLightOrigin;
+	GLint		localViewOrigin;
+
+  GLint		lightProjection;
+
+	GLint		bumpMatrixS;
+	GLint		bumpMatrixT;
+	GLint		diffuseMatrixS;
+	GLint		diffuseMatrixT;
+	GLint		specularMatrixS;
+	GLint		specularMatrixT;
+
+	GLint		colorModulate;
+	GLint		colorAdd;
+	GLint		diffuseColor;
+	GLint		specularColor;
+	GLint		fogColor;
+
+  GLint		fogMatrix;
+
+	GLint		clipPlane;
+
+	/* gl_... */
+	GLint		attr_TexCoord;
+	GLint		attr_Tangent;
+	GLint		attr_Bitangent;
+	GLint		attr_Normal;
+	GLint		attr_Vertex;
+	GLint		attr_Color;
+
+	GLint		u_fragmentMap[MAX_FRAGMENT_IMAGES];
+  GLint		u_fragmentCubeMap[MAX_FRAGMENT_IMAGES];
+} shaderProgram_t;
+
+void R_ReloadGLSLPrograms_f(const idCmdArgs &args);
+
+void RB_GLSL_PrepareShaders(void);
+void RB_GLSL_FillDepthBuffer(drawSurf_t **drawSurfs, int numDrawSurfs);
+void RB_GLSL_DrawInteractions(void);
+int  RB_GLSL_DrawShaderPasses(drawSurf_t **drawSurfs, int numDrawSurfs);
+void RB_GLSL_FogAllLights(void);
+
+#endif
 
 /*
 ============================================================
@@ -1448,6 +1603,8 @@ void				R_ResizeStaticTriSurfShadowVerts( srfTriangles_t *tri, int numVerts );
 void				R_ReferenceStaticTriSurfVerts( srfTriangles_t *tri, const srfTriangles_t *reference );
 void				R_ReferenceStaticTriSurfIndexes( srfTriangles_t *tri, const srfTriangles_t *reference );
 void				R_FreeStaticTriSurfSilIndexes( srfTriangles_t *tri );
+void				R_FreeStaticTriSurfSilEdges( srfTriangles_t *tri );
+void				R_FreeStaticTriSurfIndexes( srfTriangles_t *tri );
 void				R_FreeStaticTriSurf( srfTriangles_t *tri );
 void				R_FreeStaticTriSurfVertexCaches( srfTriangles_t *tri );
 void				R_ReallyFreeStaticTriSurf( srfTriangles_t *tri );
@@ -1457,6 +1614,7 @@ int					R_TriSurfMemory( const srfTriangles_t *tri );
 void				R_BoundTriSurf( srfTriangles_t *tri );
 void				R_RemoveDuplicatedTriangles( srfTriangles_t *tri );
 void				R_CreateSilIndexes( srfTriangles_t *tri );
+void				R_IdentifySilEdges( srfTriangles_t *tri, bool omitCoplanarEdges );
 void				R_RemoveDegenerateTriangles( srfTriangles_t *tri );
 void				R_RemoveUnusedVerts( srfTriangles_t *tri );
 void				R_RangeCheckIndexes( const srfTriangles_t *tri );
