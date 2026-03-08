@@ -85,16 +85,6 @@ GLExtension_t GLimp_ExtensionPointer( const char *name );
 
 #ifndef HAVE_OPENGLES
 
-// SDL_opengl.h on MSVC needs windows.h included first to pull in APIENTRYP via GL/gl.h.
-// If that didn't happen, define it ourselves.
-#ifndef APIENTRYP
-#  ifdef _WIN32
-#    define APIENTRYP __stdcall *
-#  else
-#    define APIENTRYP *
-#  endif
-#endif
-
 // declare qgl functions
 #define QGLPROC(name, rettype, args) extern rettype (APIENTRYP q##name) args;
 #include "renderer/qgl_proc.h"

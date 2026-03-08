@@ -26,7 +26,7 @@ If you have questions concerning this license or the applicable additional terms
 ===========================================================================
 */
 
-#ifndef HAVE_OPENAL
+#if !defined(HAVE_OPENAL) || defined(ID_DEDICATED)
 
 #ifdef _WIN32
 #define AL_API
@@ -152,8 +152,10 @@ AL_API void AL_APIENTRY alSourceUnqueueBuffers( ALuint sid, ALsizei numEntries, 
 AL_API void AL_APIENTRY alSourcePlay( ALuint sid ) { }
 AL_API void AL_APIENTRY alSourcePause( ALuint source ) {}
 
+#ifndef HAVE_OPENAL
 int idSoundSystemLocal::AsyncUpdate( int inTime ) { return 0; }
 int idSoundSystemLocal::AsyncUpdateWrite( int inTime ) { return 0; }
+#endif
 
 } // extern "C"
 
