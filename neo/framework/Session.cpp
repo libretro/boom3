@@ -2728,14 +2728,19 @@ void idSessionLocal::Frame() {
 		minTic = latchedTicNumber;
 	}
 
-	while( 1 ) {
-		latchedTicNumber = com_ticNumber;
-		if ( latchedTicNumber >= minTic ) {
-			break;
-		}
-		D3P_ScopedCPUSample(WaitForNextFrameTime);
-		Com_WaitForNextTicStart();
-	}
+	// libretro: NEVER block here. Sys_MillisecondsPrecise() is frame-quantized
+	// and only advances between retro_run() calls, so spinning until
+	// com_ticNumber reaches minTic can never make progress within a frame -
+	// this hung engine init, where ShowLoadingGui() pumps session->Frame()
+	// before the first tic has elapsed (and it would hang every frame at
+	// framerates above USERCMD_HZ, e.g. a 120Hz display with framerate=auto).
+	// If no new tic has arrived yet, gameTicsToRun below is simply 0 and we
+	// render this frame without advancing the game; the tic arrives on a
+	// subsequent retro_run. The old wait produced the same total tic count,
+	// just by blocking inside one frame instead of spreading across frames.
+	(void)minTic;
+	Com_UpdateFrameTime();
+	latchedTicNumber = com_ticNumber;
 
 	if ( authEmitTimeout ) {
 		// waiting for a game auth
@@ -2819,9 +2824,12 @@ void idSessionLocal::Frame() {
 	// which makes it go into slow motion when recording
 	if ( writeDemo ) {
 		int fixedTic = USERCMD_PER_DEMO_FRAME;
-		// we should have waited long enough
 		if ( numCmdsToRun < fixedTic ) {
-			common->Error( "idSessionLocal::Frame: numCmdsToRun < fixedTic" );
+			// libretro: Frame() no longer blocks until enough tics have
+			// elapsed, so a full demo frame's worth may not have accumulated
+			// yet; render this frame and try again next retro_run instead of
+			// hitting the fatal "numCmdsToRun < fixedTic" error.
+			return;
 		}
 		// we may need to dump older commands
 		lastGameTic = latchedTicNumber - fixedTic;
