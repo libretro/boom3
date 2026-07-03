@@ -12,37 +12,21 @@
 
 extern retro_perf_get_time_usec_t perf_get_time_usec;
 
+// Deterministic, frame-quantized time source.
+//
+// A libretro core must not derive game state from wall-clock time: the
+// frontend controls pacing (fast-forward, slow motion, frame stepping,
+// runahead), so all timing has to be a pure function of how many times
+// retro_run() has been called. libretro_time_ms is advanced by exactly
+// (1000 / framerate) once per retro_run() in libretro.cpp.
+//
+// It starts slightly above 0 (like dhewm3's Posix_InitTime offset) so that
+// Sys_Milliseconds()/Sys_MillisecondsPrecise() never return 0 or negative
+// values, which parts of the engine treat as "uninitialized".
+double libretro_time_ms = 16.0;
+
 double Sys_MillisecondsPrecise() {
-    if (perf_get_time_usec)
-        return (double)perf_get_time_usec() / 1000.0;
-    // fallback implementation if the performance interface isn't available
-#if defined(_WIN32)
-    static LARGE_INTEGER freq;
-    static bool init = false;
-    if (!init) {
-        QueryPerformanceFrequency(&freq);
-        init = true;
-    }
-    LARGE_INTEGER now;
-    QueryPerformanceCounter(&now);
-    return (now.QuadPart * 1000.0) / freq.QuadPart;
-
-#elif defined(__APPLE__)
-    static mach_timebase_info_data_t timebase;
-    static uint64_t start = 0;
-    if (start == 0) {
-        mach_timebase_info(&timebase);
-        start = mach_absolute_time();
-    }
-    uint64_t now = mach_absolute_time() - start;
-    double ms = (double)now * timebase.numer / timebase.denom / 1e6;
-    return ms;
-
-#else
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (ts.tv_sec * 1000.0) + (ts.tv_nsec / 1000000.0);
-#endif
+    return libretro_time_ms;
 }
 
 void Sys_SleepUntilPrecise(double targetTime) {

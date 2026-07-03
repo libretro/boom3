@@ -88,8 +88,6 @@ char g_rom_dir[1024], g_pak_path[1024], g_save_dir[1024];
 
 char *BUILD_DATADIR;
 
-volatile bool flushed = false;
-
 extern struct retro_hw_render_callback hw_render;
 
 static retro_log_printf_t log_cb;
@@ -124,7 +122,7 @@ static int analog_deadzone = (int)(0.15f * ANALOG_RANGE);
 extern void Key_Event(int button, int val);
 extern void Mouse_Event(int x, int y);
 uint32_t oldanalogs;
-int16_t old_ret;
+static uint32_t old_ret; // button bitmask from previous frame (bit 15 = R3, so keep it unsigned/wide)
 
 typedef struct {
    struct retro_input_descriptor desc[GP_MAXBINDS];
@@ -296,7 +294,7 @@ static void update_variables(bool startup)
 	
 	if (startup)
 	{
-		if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var))
+		if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
 		{
 			if (!strcmp(var.value, "auto"))
 			{
@@ -310,12 +308,18 @@ static void update_variables(bool startup)
 		}
 		else
 			framerate    = 60;
+
+		// keep per-frame audio demand within the fixed buffers in audio_callback()
+		if (framerate < 30)
+			framerate = 30;
+		else if (framerate > 240)
+			framerate = 240;
 	}
 	
 	var.key = "doom_resolution";
 	var.value = NULL;
 	
-	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && !initial_resolution_set)
+	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value && !initial_resolution_set)
 	{
 		char *pch;
 		char str[100];
@@ -395,8 +399,13 @@ static void extract_directory(char *buf, const char *path, size_t size)
 {
    char *base = NULL;
 
-   strncpy(buf, path, size - 1);
-   buf[size - 1] = '\0';
+   if (buf != path)
+   {
+      // strncpy has undefined behavior on overlapping buffers; this function
+      // is also called with buf == path (in-place), so only copy when needed
+      strncpy(buf, path, size - 1);
+      buf[size - 1] = '\0';
+   }
 
    base = strrchr(buf, '/');
    if (!base)
@@ -617,9 +626,9 @@ void Sys_SetKeys(){
 		case RETRO_DEVICE_MODERN:
 		{
 			unsigned i;
-			int16_t ret    = 0;
+			uint32_t ret   = 0;
 			if (libretro_supports_bitmasks)
-				ret = input_cb(port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_MASK);
+				ret = (uint16_t)input_cb(port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_MASK);
 			else
 			{
 				for (i=RETRO_DEVICE_ID_JOYPAD_B; i <= RETRO_DEVICE_ID_JOYPAD_R3; ++i)
@@ -710,7 +719,7 @@ void Sys_SetKeys(){
 				if (doom_devices[port] == RETRO_DEVICE_MODERN)
 					Key_Event(K_MOUSE1, 0);
 				else
-					Key_Event(K_JOY_TRIGGER2, 1);
+					Key_Event(K_JOY_TRIGGER2, 0); // was 1: fire button got stuck on release
 			}
 
 			// Stick buttons
@@ -937,62 +946,87 @@ void Sys_SetMouse() {
     Mouse_Event(rsx / slowdown, rsy / slowdown);
 }
 
-#define SOUND_BUFFER_SAMPLES (MIXBUFFER_SAMPLES * 4)
 #define MAX_CHANNELS 2
-static float snd_float_buf[SOUND_BUFFER_SAMPLES];
-static int snd_buf_write = 0;
-static int snd_buf_read  = 0;
-static uint64_t sampletime = 0;
-int idx = 0;
+/* Ring buffer of mixed float samples (interleaved stereo).
+ * Capacity must comfortably exceed the largest per-frame demand:
+ * at the minimum supported framerate (30 fps) one frame needs
+ * 44100/30 * 2 = 2940 floats; MIXBUFFER_SAMPLES chunks are 8192 floats,
+ * so demand + one full mix chunk stays well below the capacity. */
+#define SOUND_BUFFER_SAMPLES (MIXBUFFER_SAMPLES * MAX_CHANNELS * 4)
+static float    snd_float_buf[SOUND_BUFFER_SAMPLES];
+/* read/write positions are kept normalized to [0, SOUND_BUFFER_SAMPLES) and
+ * 'snd_buf_avail' tracks the fill level, so nothing here can overflow no
+ * matter how long the core runs (the old code incremented signed ints
+ * forever: undefined behavior after ~6.7h at 44.1kHz stereo, followed by
+ * negative modulo -> out-of-bounds indexing). */
+static int      snd_buf_write = 0;
+static int      snd_buf_read  = 0;
+static int      snd_buf_avail = 0;
+static uint64_t sampletime    = 0;
+
+/* Largest number of output frames we ever hand to the frontend per call:
+ * 44100 / 30 fps = 1470 frames; keep headroom. */
+#define MAX_FRAME_SAMPLES 2048
 
 static void audio_callback(void)
 {
 	if (first_boot) return;
 
+	int samples_per_frame = SAMPLE_RATE / (framerate > 0 ? framerate : 60);
+	if (samples_per_frame > MAX_FRAME_SAMPLES)
+		samples_per_frame = MAX_FRAME_SAMPLES;
+
 #ifdef HAVE_OPENAL
-	ALsizei samples = (ALsizei)(SAMPLE_RATE / framerate);
+	static int16_t al_buf[MAX_FRAME_SAMPLES * MAX_CHANNELS];
 
-    if (!d3_alcRenderSamplesSOFT && soundSystemLocal.openalDevice) {
-        d3_alcRenderSamplesSOFT = (LPALCRENDERSAMPLESSOFT)
-            alcGetProcAddress(soundSystemLocal.openalDevice, "alcRenderSamplesSOFT");
-    }
+	/* The async sound thread is disabled for libretro, so run the per-tic
+	 * OpenAL source/channel update here, on the frontend's thread, with the
+	 * deterministic frame-derived clock. */
+	soundSystem->AsyncUpdateWrite(Sys_Milliseconds());
 
-    if (soundSystemLocal.isInitialized && d3_alcRenderSamplesSOFT && soundSystemLocal.openalDevice) {
-        d3_alcRenderSamplesSOFT(soundSystemLocal.openalDevice, mixed_buffer[idx], samples);
-        audio_batch_cb(mixed_buffer[idx], samples);
-    } else {
-        int16_t silence[RETRO_AUDIO_BUFFER_SIZE * 2] = {};
-        audio_batch_cb(silence, samples);
-    }
+	if (!d3_alcRenderSamplesSOFT && soundSystemLocal.openalDevice) {
+		d3_alcRenderSamplesSOFT = (LPALCRENDERSAMPLESSOFT)
+			alcGetProcAddress(soundSystemLocal.openalDevice, "alcRenderSamplesSOFT");
+	}
 
-	idx = (idx + 1) % 2;
+	if (soundSystemLocal.isInitialized && d3_alcRenderSamplesSOFT && soundSystemLocal.openalDevice) {
+		d3_alcRenderSamplesSOFT(soundSystemLocal.openalDevice, al_buf, (ALCsizei)samples_per_frame);
+		audio_batch_cb(al_buf, samples_per_frame);
+	} else {
+		memset(al_buf, 0, samples_per_frame * MAX_CHANNELS * sizeof(int16_t));
+		audio_batch_cb(al_buf, samples_per_frame);
+	}
 #else
-    int samples_per_frame = (int)(SAMPLE_RATE / framerate);
-    int total = samples_per_frame * MAX_CHANNELS;
+	int total = samples_per_frame * MAX_CHANNELS;
 
-    // only mix when we need more data
-    int available = snd_buf_write - snd_buf_read;
-    while (available < total) {
-        float tmp[MIXBUFFER_SAMPLES * MAX_CHANNELS] = {};
-        Sys_EnterCriticalSection();
-        soundSystem->AsyncMix(sampletime, tmp);
-        Sys_LeaveCriticalSection();
-        sampletime += MIXBUFFER_SAMPLES;
-        for (int i = 0; i < MIXBUFFER_SAMPLES * MAX_CHANNELS; i++) {
-            snd_float_buf[snd_buf_write % SOUND_BUFFER_SAMPLES] = tmp[i];
-            snd_buf_write++;
-        }
-        available = snd_buf_write - snd_buf_read;
-    }
+	// mix (single-threaded: this is the only caller of AsyncMix in the core)
+	while (snd_buf_avail < total) {
+		float tmp[MIXBUFFER_SAMPLES * MAX_CHANNELS] = {};
+		soundSystem->AsyncMix((int)sampletime, tmp);
+		sampletime += MIXBUFFER_SAMPLES;
+		for (int i = 0; i < MIXBUFFER_SAMPLES * MAX_CHANNELS; i++) {
+			snd_float_buf[snd_buf_write] = tmp[i];
+			if (++snd_buf_write == SOUND_BUFFER_SAMPLES)
+				snd_buf_write = 0;
+		}
+		snd_buf_avail += MIXBUFFER_SAMPLES * MAX_CHANNELS;
+		/* can't happen with the sizes above, but never let the writer lap the reader */
+		if (snd_buf_avail > SOUND_BUFFER_SAMPLES) {
+			snd_buf_read  = snd_buf_write;
+			snd_buf_avail = SOUND_BUFFER_SAMPLES;
+		}
+	}
 
-    static int16_t out[4096 * MAX_CHANNELS];
-    static float tmp_out[4096 * MAX_CHANNELS];
-    for (int i = 0; i < total; i++) {
-        tmp_out[i] = snd_float_buf[snd_buf_read % SOUND_BUFFER_SAMPLES];
-        snd_buf_read++;
-    }
-    SIMDProcessor->MixedSoundToSamples(out, tmp_out, total);
-    audio_batch_cb(out, samples_per_frame);
+	static int16_t out[MAX_FRAME_SAMPLES * MAX_CHANNELS];
+	static float tmp_out[MAX_FRAME_SAMPLES * MAX_CHANNELS];
+	for (int i = 0; i < total; i++) {
+		tmp_out[i] = snd_float_buf[snd_buf_read];
+		if (++snd_buf_read == SOUND_BUFFER_SAMPLES)
+			snd_buf_read = 0;
+	}
+	snd_buf_avail -= total;
+	SIMDProcessor->MixedSoundToSamples(out, tmp_out, total);
+	audio_batch_cb(out, samples_per_frame);
 #endif
 }
 
@@ -1071,8 +1105,6 @@ bool retro_load_game(const struct retro_game_info *info)
 		return false;
 	}
 	
-	int i;
-	char *path_lower;
 #if defined(_WIN32)
 	char slash = '\\';
 #else
@@ -1080,17 +1112,9 @@ bool retro_load_game(const struct retro_game_info *info)
 #endif
 	bool use_external_savedir = false;
 	const char *base_save_dir = NULL;
-//	struct retro_keyboard_callback cb = { keyboard_cb };
 
 	if (!info)
 		return false;
-	
-	path_lower = strdup(info->path);
-	
-	for (i=0; path_lower[i]; ++i)
-		path_lower[i] = tolower(path_lower[i]);
-	
-//	environ_cb(RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK, &cb);
 
 	update_variables(true);
 	
@@ -1196,8 +1220,16 @@ void retro_set_controller_port_device(unsigned port, unsigned device)
    }
 }
 
+extern double libretro_time_ms; // deterministic clock, see stubs.cpp
+
 void retro_run(void)
 {
+   /* Advance the deterministic clock by exactly one frame period. All engine
+    * timing (game tics, com_frameTime, sound sample time) derives from this,
+    * so core behavior is a pure function of the retro_run() call count and
+    * polled input - independent of host speed, fast-forward or frame stepping. */
+   libretro_time_ms += 1000.0 / (double)framerate;
+
    if (!libretro_shared_context)
       glsm_ctl(GLSM_CTL_STATE_BIND, NULL);
 
@@ -1291,8 +1323,21 @@ void retro_set_video_refresh(retro_video_refresh_t cb)
 
 void retro_unload_game(void)
 {
-	if (common)
-        common->Shutdown();
+	// common->Init() only runs on the first retro_run(); if the frontend
+	// unloads before ever running a frame, shutting down an uninitialized
+	// engine would touch unconstructed subsystems.
+	if (common && !first_boot)
+		common->Shutdown();
+
+	// reset for a potential re-load within the same core instance
+	extern void LibRetro_ResetInputQueues(void);
+	LibRetro_ResetInputQueues();
+	old_ret = 0;
+	oldanalogs = 0;
+	memset((void*)kb_mouse_btn, 0, sizeof(kb_mouse_btn));
+	first_boot = true;
+	initial_resolution_set = false;
+	d3_alcRenderSamplesSOFT = NULL;
 }
 
 unsigned retro_get_region(void)

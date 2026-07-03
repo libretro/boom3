@@ -3185,11 +3185,18 @@ void idCommonLocal::Init( int argc, char **argv ) {
 		Sys_Error( "Error during initialization" );
 	}
 
-	// This should not be required, but without it we get no sound despite sound mode being 0
-//#ifndef __LIBRETRO__
+#ifndef __LIBRETRO__
 	runAsyncThread = true;
 	Sys_CreateThread( AsyncThread, this, asyncThread, "AsyncThread" );
-//#endif
+#else
+	// libretro: no background thread. In the libretro core all sound mixing is
+	// driven synchronously from retro_run() (audio_callback() -> AsyncMix()),
+	// so AsyncThread would only busy-spin (Sys_SleepUntilPrecise is a no-op
+	// there) fighting the main thread for CRITICAL_SECTION_ZERO. Keeping
+	// everything on the frontend's thread also makes the core deterministic
+	// and re-entrancy safe with respect to libretro API callbacks.
+	runAsyncThread = false;
+#endif
 }
 
 

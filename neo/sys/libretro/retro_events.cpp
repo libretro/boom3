@@ -95,15 +95,6 @@ static idList<joystick_poll_t> joystick_polls;
 static idList<kbd_poll_t> kbd_polls;
 static idList<mouse_poll_t> mouse_polls;
 
-static void PushConsoleEvent(const char *s) {
-	char *b;
-	size_t len;
-
-	len = strlen(s) + 1;
-	b = (char *)Mem_Alloc(len);
-	strcpy(b, s);
-}
-
 static inline byte JoyToKey(int button) {
     static const int keymap[] = {
         /* KEY_A      */ K_ENTER,
@@ -185,68 +176,13 @@ bool Sys_IsWindowVisible( void ) {
 
 void Conbuf_AppendText( const char *pMsg )
 {
-#define CONSOLE_BUFFER_SIZE		16384
-
-	char buffer[CONSOLE_BUFFER_SIZE*2];
-	char *b = buffer;
-	const char *msg;
-	int bufLen;
-	int i = 0;
-	static unsigned long s_totalChars;
-
-	//
-	// if the message is REALLY long, use just the last portion of it
-	//
-	if ( strlen( pMsg ) > CONSOLE_BUFFER_SIZE - 1 )	{
-		msg = pMsg + strlen( pMsg ) - CONSOLE_BUFFER_SIZE + 1;
-	} else {
-		msg = pMsg;
-	}
-
-	//
-	// copy into an intermediate buffer
-	//
-	while ( msg[i] && ( ( b - buffer ) < sizeof( buffer ) - 1 ) ) {
-		if ( msg[i] == '\n' && msg[i+1] == '\r' ) {
-			b[0] = '\r';
-			b[1] = '\n';
-			b += 2;
-			i++;
-		} else if ( msg[i] == '\r' ) {
-			b[0] = '\r';
-			b[1] = '\n';
-			b += 2;
-		} else if ( msg[i] == '\n' ) {
-			b[0] = '\r';
-			b[1] = '\n';
-			b += 2;
-		} else if ( idStr::IsColor( &msg[i] ) ) {
-			i++;
-		} else {
-			*b= msg[i];
-			b++;
-		}
-		i++;
-	}
-	*b = 0;
-	bufLen = b - buffer;
-
-	s_totalChars += bufLen;
-/*
-	//
-	// replace selection instead of appending if we're overflowing
-	//
-	if ( s_totalChars > 0x7000 ) {
-		SendMessage( s_wcd.hwndBuffer, EM_SETSEL, 0, -1 );
-		s_totalChars = bufLen;
-	}
-
-	//
-	// put this text into the windows console
-	//
-	SendMessage( s_wcd.hwndBuffer, EM_LINESCROLL, 0, 0xffff );
-	SendMessage( s_wcd.hwndBuffer, EM_SCROLLCARET, 0, 0 );
-	SendMessage( s_wcd.hwndBuffer, EM_REPLACESEL, 0, (LPARAM) buffer );*/
+	// This was a leftover of the Win32 console window: it reformatted the
+	// message into a 32KB stack buffer whose only consumers were commented
+	// out (dead SendMessage calls), and its bounds check was off by one -
+	// the terminating '*b = 0' could write one byte past the buffer when a
+	// two-byte "\r\n" expansion landed exactly at the end. The libretro core
+	// has no console window; engine output already goes through Sys_Printf.
+	(void)pMsg;
 }
 
 /*
@@ -345,6 +281,13 @@ uint8_t snum = 0;
 uint8_t snum2 = 0;
 uint8_t schar_num = 0;
 
+// drop any queued-but-undelivered events (used when the game is unloaded)
+void LibRetro_ResetInputQueues(void) {
+	snum = 0;
+	snum2 = 0;
+	schar_num = 0;
+}
+
 void Char_Event(int c) {
     if (schar_num >= SKEYS_LENGTH) return;
     schar_buf[schar_num].key = c;
@@ -360,7 +303,9 @@ void Key_Event(int key, int val) {
 }
 
 void Mouse_Event(int x, int y) {
-	if (snum >= SKEYS_LENGTH) return;
+	// was checking snum (the *key* queue) - once more than 32 mouse events
+	// arrived in a frame this wrote past the end of smouse[]
+	if (snum2 >= SKEYS_LENGTH) return;
 	smouse[snum2].x = x;
 	smouse[snum2].y = y;
 	snum2++;
@@ -374,34 +319,48 @@ Sys_GetEvent
 static const sysEvent_t res_none = { SE_NONE, 0, 0, 0, NULL };
 sysEvent_t Sys_GetEvent() {
 	sysEvent_t res = { };
-	byte key;
-	
-	if (snum == 0 && snum2 == 0) {
+	static bool polled_this_pass = false;
+
+	// Poll the frontend exactly once per drain pass. The old code returned
+	// SE_NONE right after polling, which ended the event loop with the
+	// freshly queued events still pending - every input arrived one frame
+	// late. Now we poll and immediately fall through to draining.
+	if (snum == 0 && snum2 == 0 && schar_num == 0) {
+		if (polled_this_pass) {
+			// queues fully drained after a poll: end of this pass
+			polled_this_pass = false;
+			return res_none;
+		}
 		Sys_SetKeys();
 		Sys_SetMouse();
-	} else if (snum2 == 0) {
-		snum--;
-		
-		res.evType = SE_KEY;
-		res.evValue = skeys[snum].key;
-		res.evValue2 = skeys[snum].val;
+		polled_this_pass = true;
+	}
 
-		kbd_polls.Append(kbd_poll_t(skeys[snum].key, skeys[snum].val));
-		
-		return res;
-	} else {
+	if (snum2 > 0) {
 		snum2--;
-		
+
 		res.evType = SE_MOUSE;
 		res.evValue = smouse[snum2].x;
 		res.evValue2 = smouse[snum2].y;
 
 		mouse_polls.Append(mouse_poll_t(M_DELTAX, smouse[snum2].x));
 		mouse_polls.Append(mouse_poll_t(M_DELTAY, smouse[snum2].y));
-		
+
 		return res;
 	}
-	
+
+	if (snum > 0) {
+		snum--;
+
+		res.evType = SE_KEY;
+		res.evValue = skeys[snum].key;
+		res.evValue2 = skeys[snum].val;
+
+		kbd_polls.Append(kbd_poll_t(skeys[snum].key, skeys[snum].val));
+
+		return res;
+	}
+
 	// drain char events after key/mouse
 	if (schar_num > 0) {
 		schar_num--;
@@ -410,6 +369,7 @@ sysEvent_t Sys_GetEvent() {
 		return res;
 	}
 
+	polled_this_pass = false;
 	return res_none;
 }
 
