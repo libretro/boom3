@@ -40,7 +40,6 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "Weapon.h"
 
-extern bool IsDoom3DemoVersion(); // DG: hack to support the Demo version of Doom3
 
 /***********************************************************************
 
@@ -401,8 +400,11 @@ void idWeapon::Restore( idRestoreGame *savefile ) {
 	WEAPON_RELOAD.LinkTo(		scriptObject, "WEAPON_RELOAD" );
 	WEAPON_NETRELOAD.LinkTo(	scriptObject, "WEAPON_NETRELOAD" );
 	WEAPON_NETENDRELOAD.LinkTo(	scriptObject, "WEAPON_NETENDRELOAD" );
-	if (!IsDoom3DemoVersion()) // the demo assets don't support WEAPON_NETFIRING
-		WEAPON_NETFIRING.LinkTo(	scriptObject, "WEAPON_NETFIRING" );
+	// WEAPON_NETFIRING was only added to the game scripts by the official
+	// patches (it's used for MP client prediction), so link it optionally:
+	// unpatched retail 1.0/1.1 and demo game data don't have it, and every
+	// access below is already guarded with IsLinked().
+	WEAPON_NETFIRING.LinkToOptional(	scriptObject, "WEAPON_NETFIRING" );
 	WEAPON_RAISEWEAPON.LinkTo(	scriptObject, "WEAPON_RAISEWEAPON" );
 	WEAPON_LOWERWEAPON.LinkTo(	scriptObject, "WEAPON_LOWERWEAPON" );
 
@@ -1012,8 +1014,11 @@ void idWeapon::GetWeaponDef( const char *objectname, int ammoinclip ) {
 	WEAPON_RELOAD.LinkTo(		scriptObject, "WEAPON_RELOAD" );
 	WEAPON_NETRELOAD.LinkTo(	scriptObject, "WEAPON_NETRELOAD" );
 	WEAPON_NETENDRELOAD.LinkTo(	scriptObject, "WEAPON_NETENDRELOAD" );
-	if (!IsDoom3DemoVersion()) // the demo assets don't support WEAPON_NETFIRING
-		WEAPON_NETFIRING.LinkTo(	scriptObject, "WEAPON_NETFIRING" );
+	// WEAPON_NETFIRING was only added to the game scripts by the official
+	// patches (it's used for MP client prediction), so link it optionally:
+	// unpatched retail 1.0/1.1 and demo game data don't have it, and every
+	// access below is already guarded with IsLinked().
+	WEAPON_NETFIRING.LinkToOptional(	scriptObject, "WEAPON_NETFIRING" );
 	WEAPON_RAISEWEAPON.LinkTo(	scriptObject, "WEAPON_RAISEWEAPON" );
 	WEAPON_LOWERWEAPON.LinkTo(	scriptObject, "WEAPON_LOWERWEAPON" );
 

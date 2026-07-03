@@ -201,6 +201,7 @@ public:
 	bool				IsLinked( void ) const;
 	void				Unlink( void );
 	void				LinkTo( idScriptObject &obj, const char *name );
+	bool				LinkToOptional( idScriptObject &obj, const char *name );
 	idScriptVariable	&operator=( const returnType &value );
 						operator returnType() const;
 };
@@ -226,6 +227,22 @@ ID_INLINE void idScriptVariable<type, etype, returnType>::LinkTo( idScriptObject
 	if ( !data ) {
 		gameError( "Missing '%s' field in script object '%s'", name, obj.GetTypeName() );
 	}
+}
+
+// DG-style optional linking: like LinkTo(), but a missing field is not fatal.
+// Used for script variables that were added by the official patches (e.g.
+// WEAPON_NETFIRING, introduced with the 1.3 patch scripts) so unpatched
+// retail 1.0/1.1 and demo game data still work; callers must guard access
+// with IsLinked().
+template<class type, etype_t etype, class returnType>
+ID_INLINE bool idScriptVariable<type, etype, returnType>::LinkToOptional( idScriptObject &obj, const char *name ) {
+	data = ( type * )obj.GetVariable( name, etype );
+	if ( !data ) {
+		common->DPrintf( "script object '%s' has no '%s' field (old game data?), continuing without it\n",
+		                 obj.GetTypeName(), name );
+		return false;
+	}
+	return true;
 }
 
 template<class type, etype_t etype, class returnType>
