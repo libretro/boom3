@@ -44,9 +44,6 @@ If you have questions concerning this license or the applicable additional terms
 #include "framework/Game.h"
 
 // Vista OpenGL wrapper check
-#if defined(_WIN32) && !defined(__LIBRETRO__)
-#include "sys/win32/win_local.h"
-#endif
 
 #include "stb_image_write.h"
 
@@ -315,9 +312,6 @@ PFNGLDEPTHBOUNDSEXTPROC                 qglDepthBoundsEXT;
 PFNGLSTENCILOPSEPARATEPROC qglStencilOpSeparate;
 
 // GL_ARB_debug_output
-#ifndef __LIBRETRO__
-PFNGLDEBUGMESSAGECALLBACKARBPROC        qglDebugMessageCallbackARB;
-#endif
 
 #endif // !HAVE_OPENGLES
 
@@ -337,53 +331,6 @@ enum {
 /*
  * Callback function for debug output.
  */
-#ifndef __LIBRETRO__
-static void APIENTRY
-DebugCallback( GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length,
-              const GLchar *message, const void *userParam )
-{
-	const char* sourceStr = "Source: Unknown";
-	const char* typeStr = "Type: Unknown";
-	const char* severityStr = "Severity: Unknown";
-
-	switch (severity)
-	{
-#define SVRCASE(X, STR)  case GL_DEBUG_SEVERITY_ ## X ## _ARB : severityStr = STR; break;
-		case QGL_DEBUG_SEVERITY_NOTIFICATION: return;
-		SVRCASE(HIGH, "Severity: High")
-		SVRCASE(MEDIUM, "Severity: Medium")
-		SVRCASE(LOW, "Severity: Low")
-#undef SVRCASE
-	}
-
-	switch (source)
-	{
-#define SRCCASE(X)  case GL_DEBUG_SOURCE_ ## X ## _ARB: sourceStr = "Source: " #X; break;
-		SRCCASE(API);
-		SRCCASE(WINDOW_SYSTEM);
-		SRCCASE(SHADER_COMPILER);
-		SRCCASE(THIRD_PARTY);
-		SRCCASE(APPLICATION);
-		SRCCASE(OTHER);
-#undef SRCCASE
-	}
-
-	switch(type)
-	{
-#define TYPECASE(X)  case GL_DEBUG_TYPE_ ## X ## _ARB: typeStr = "Type: " #X; break;
-		TYPECASE(ERROR);
-		TYPECASE(DEPRECATED_BEHAVIOR);
-		TYPECASE(UNDEFINED_BEHAVIOR);
-		TYPECASE(PORTABILITY);
-		TYPECASE(PERFORMANCE);
-		TYPECASE(OTHER);
-#undef TYPECASE
-	}
-
-	common->Warning( "GLDBG %s %s %s: %s\n", sourceStr, typeStr, severityStr, message );
-
-}
-#endif // !__LIBRETRO__
 
 /*
 =================
@@ -617,25 +564,6 @@ static void R_CheckPortableExtensions( void ) {
 	// GL_ARB_debug_output
 	glConfig.glDebugOutputAvailable = false;
 	if ( glConfig.haveDebugContext ) {
-#ifndef __LIBRETRO__
-		if ( strstr( glConfig.extensions_string, "GL_ARB_debug_output" ) ) {
-			glConfig.glDebugOutputAvailable = true;
-			qglDebugMessageCallbackARB = (PFNGLDEBUGMESSAGECALLBACKARBPROC)GLimp_ExtensionPointer( "glDebugMessageCallbackARB" );
-			if ( r_glDebugContext.GetBool() ) {
-				common->Printf( "...using GL_ARB_debug_output (r_glDebugContext is set)\n" );
-				qglDebugMessageCallbackARB(DebugCallback, NULL);
-				qglEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS_ARB);
-			} else {
-				common->Printf( "...found GL_ARB_debug_output, but not using it (r_glDebugContext is not set)\n" );
-			}
-		} else {
-			common->Printf( "X..GL_ARB_debug_output not found\n" );
-			qglDebugMessageCallbackARB = NULL;
-			if ( r_glDebugContext.GetBool() ) {
-				common->Warning( "r_glDebugContext is set, but can't be used because GL_ARB_debug_output is not supported" );
-			}
-		}
-#endif
 	} else {
 		if ( strstr( glConfig.extensions_string, "GL_ARB_debug_output" ) ) {
 			if ( r_glDebugContext.GetBool() ) {
@@ -846,11 +774,9 @@ void R_InitOpenGL( void ) {
 
 	initSortedVidModes();
 
-#ifdef __LIBRETRO__
 	r_customWidth.SetInteger( glConfig.vidWidth );
 	r_customHeight.SetInteger( glConfig.vidHeight );
 	r_mode.SetInteger( -1 );
-#endif
 
 	//
 	// initialize OS specific portions of the renderSystem
@@ -878,10 +804,8 @@ void R_InitOpenGL( void ) {
 
 		// if we failed, set everything back to "safe mode"
 		// and try again
-#ifdef __LIBRETRO__
 		r_customWidth.SetInteger( 1920 );
 		r_customHeight.SetInteger( 1080 );
-#endif
 		r_mode.SetInteger( 3 );
 		r_fullscreen.SetInteger( 0 );
 		r_displayRefresh.SetInteger( 0 );
@@ -957,30 +881,8 @@ void R_InitOpenGL( void ) {
 		R_SetColorMappings();
 	}
 
-#if defined(_WIN32) && !defined(__LIBRETRO__)
-	static bool glCheck = false;
-	if ( !glCheck && win32.osversion.dwMajorVersion == 6 ) {
-		glCheck = true;
-		if ( !idStr::Icmp( glConfig.vendor_string, "Microsoft" ) && idStr::FindText( glConfig.renderer_string, "OpenGL-D3D" ) != -1 ) {
-			if ( cvarSystem->GetCVarBool( "r_fullscreen" ) ) {
-				cmdSystem->BufferCommandText( CMD_EXEC_NOW, "vid_restart partial windowed\n" );
-				Sys_GrabMouseCursor( false );
-			}
-			int ret = MessageBox( NULL, "Please install OpenGL drivers from your graphics hardware vendor to run " GAME_NAME ".\nYour OpenGL functionality is limited.",
-				"Insufficient OpenGL capabilities", MB_OKCANCEL | MB_ICONWARNING | MB_TASKMODAL );
-			if ( ret == IDCANCEL ) {
-				cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "quit\n" );
-				cmdSystem->ExecuteCommandBuffer();
-			}
-			if ( cvarSystem->GetCVarBool( "r_fullscreen" ) ) {
-				cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "vid_restart\n" );
-			}
-		}
-	}
-#endif
 }
 
-#ifdef __LIBRETRO__
 void R_ReinitOpenGL( void ) {
     glConfig.isInitialized = false;
 
@@ -1018,7 +920,6 @@ void R_ReinitOpenGL( void ) {
     globalImages->PurgeAllImages();
 	globalImages->ReloadAllImages();
 }
-#endif
 
 /*
 ==================

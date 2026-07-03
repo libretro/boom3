@@ -525,20 +525,11 @@ void idSessionLocal::CompleteWipe() {
 		UpdateScreen( true );
 		return;
 	}
-#ifdef __LIBRETRO__
 	// libretro: Sys_Milliseconds() is frame-quantized and does not advance
 	// within retro_run(), so a wall-time wait would never terminate. The
 	// wipe is purely cosmetic; finish it immediately with a single update.
 	wipeStopTime = 0;
 	UpdateScreen( true );
-#else
-	while ( Sys_Milliseconds() < wipeStopTime ) {
-#if ID_CONSOLE_LOCK
-		emptyDrawCount = 0;
-#endif
-		UpdateScreen( true );
-	}
-#endif
 }
 
 
@@ -556,16 +547,10 @@ void idSessionLocal::ShowLoadingGui() {
 	// introduced in D3XP code. don't think it actually fixes anything, but doesn't hurt either
 #if 1
 	// Try and prevent the while loop from being skipped over (long hitch on the main thread?)
-#ifdef __LIBRETRO__
 	// libretro: time does not advance within retro_run(), so bound this loop
 	// by iterations only (the wall-time condition would spin forever).
 	int force = 10;
 	while ( force-- > 0 ) {
-#else
-	int stop = Sys_Milliseconds() + 1000;
-	int force = 10;
-	while ( Sys_Milliseconds() < stop || force-- > 0 ) {
-#endif
 		Com_UpdateFrameTime(); // DG: put updating com_frameTime into a function
 		session->Frame();
 		session->UpdateScreen( false );

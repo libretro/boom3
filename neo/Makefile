@@ -2,7 +2,6 @@ STATIC_LINKING := 0
 AR             := ar
 CORE           := -DCORE=ON
 SDL_VER        := 0
-IMGGUI         := 0
 OPENAL         := 0
 DEBUG          := 0
 RELWITHDEBINFO := 0
@@ -303,20 +302,19 @@ else ifeq ($(SDL_VER),3)
     SDL2 := -DD3_SDL3 -DHAVE_SDL
 endif
 
-ifeq ($(IMGGUI),0)
-    CFLAGS   += -DIMGUI_DISABLE
-    CXXFLAGS += -DIMGUI_DISABLE
-endif
+# ImGui is not part of the libretro core
+CFLAGS   += -DIMGUI_DISABLE
+CXXFLAGS += -DIMGUI_DISABLE
 
 ifeq ($(OPENAL),1)
     CFLAGS   += -DHAVE_OPENAL
     CXXFLAGS += -DHAVE_OPENAL
 endif
 
-CFLAGS   += -Wall -D__LIBRETRO__ $(fpic) $(CORE) $(SDL2) -DBASE=ON -DUSE_FILE32API -ffast-math \
+CFLAGS   += -Wall $(fpic) $(CORE) $(SDL2) -DBASE=ON -DUSE_FILE32API -ffast-math \
 			-fno-unsafe-math-optimizations -fno-strict-aliasing -fomit-frame-pointer \
 			-Wno-sign-compare -Wno-switch -Wno-format-security -I$(TOPDIR) -I$(TOPDIR)/sys/libretro/config
-CXXFLAGS += -Wall -D__LIBRETRO__ $(fpic) -fpermissive -std=gnu++11
+CXXFLAGS += -Wall $(fpic) -fpermissive -std=gnu++11
 
 ifeq ($(D3XP), 1)
 	CFLAGS	 +=	-I$(TOPDIR)/d3xp -D_D3XP

@@ -144,7 +144,6 @@ public:
 
 								// Called 60 times a second from a background thread for sound mixing.
 								// Not called until idCommon::Init() has completed.
-	virtual void				Async( void ) = 0;
 
 								// Checks for and removes command line "+set var arg" constructs.
 								// If match is NULL, all set commands will be executed, otherwise

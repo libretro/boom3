@@ -162,7 +162,6 @@ public:
 	virtual bool				IsInitialized( void ) const;
 	virtual void				Frame( void );
 	virtual void				GUIFrame( bool execCmd, bool network );
-	virtual void				Async( void );
 	virtual void				StartupVariable( const char *match, bool once );
 	virtual void				InitTool( const toolFlag_t tool, const idDict *dict );
 	virtual void				ActivateTool( bool active );
@@ -255,9 +254,6 @@ private:
 	idCompressor *				config_compressor;
 #endif
 
-	static int					AsyncThread(void* arg);
-	xthreadInfo					asyncThread;
-	volatile bool				runAsyncThread;
 };
 
 idCommonLocal	commonLocal;
@@ -342,8 +338,6 @@ idCommonLocal::idCommonLocal( void ) {
 	config_compressor = NULL;
 #endif
 
-	memset( &asyncThread, 0, sizeof(asyncThread) );
-	runAsyncThread = false;
 }
 
 /*
@@ -2605,41 +2599,6 @@ void idCommonLocal::GUIFrame( bool execCmd, bool network ) {
 
 /*
 =================
-idCommonLocal::Async
-
-Called 60 times per second (by AsyncThread), updates audio.
-
-We are not using thread safe libraries, so any functionality put here must
-be VERY VERY careful about what it calls.
-=================
-*/
-void idCommonLocal::Async( void ) {
-	// main thread code can prevent this from happening while modifying
-	// critical data structures
-
-	Sys_EnterCriticalSection();
-
-	int now = Sys_Milliseconds();
-
-	switch ( com_asyncSound.GetInteger() ) {
-		case 1:
-		case 3:
-			// DG: these are now used for the new default behavior of "update every async tic (every 16ms)"
-			soundSystem->AsyncUpdateWrite( now );
-			break;
-		case 2:
-			// DG: use 2 for the old "update only 10x/second" behavior in case anyone likes that..
-			soundSystem->AsyncUpdate( now );
-			break;
-	}
-
-	// Note: com_ticNumber is now updated in the main thread.
-
-	Sys_LeaveCriticalSection();
-}
-
-/*
-=================
 idCommonLocal::LoadGameDLLbyName
 
 Helper for LoadGameDLL() to make it less painful to try different dll names.
@@ -2866,24 +2825,6 @@ void idCommonLocal::SetMachineSpec( void ) {
 }
 
 
-int idCommonLocal::AsyncThread(void* arg)
-{
-	idCommonLocal* self = (idCommonLocal*)arg;
-
-	double nextTicTargetMsec = Sys_MillisecondsPrecise();
-
-	while ( self->runAsyncThread ) {
-		D3P_ScopedCPUSample(Async_Frame);
-		self->Async();
-
-		// TODO: Should this be synchronized with the main thread somehow?
-		//       Might make sense to run this when game tics are done, while main thread is rendering?
-		//       For now I'll assume that just doing this 60 times per second works well enough...
-		nextTicTargetMsec += com_preciseFrameLengthMS;
-		Sys_SleepUntilPrecise( nextTicTargetMsec );
-	}
-	return 0;
-}
 
 #ifdef _WIN32
 #include "../sys/win32/win_local.h" // for Conbuf_AppendText()
@@ -3022,28 +2963,6 @@ void idCommonLocal::Init( int argc, char **argv ) {
 #endif
 #endif
 
-#ifndef __LIBRETRO__
-#if SDL_VERSION_ATLEAST(3, 0, 0)
-	if ( ! SDL_Init(SDL_INIT_VIDEO | SDL_INIT_JOYSTICK | SDL_INIT_GAMEPAD) )
-	{
-		if ( SDL_Init(SDL_INIT_VIDEO) ) { // retry without joystick/gamepad if it failed
-			Sys_Printf( "WARNING: Couldn't get SDL gamepad support! Gamepads won't work!\n" );
-		} else
-#elif SDL_VERSION_ATLEAST(2, 0, 0)
-	if (SDL_Init(SDL_INIT_TIMER | SDL_INIT_VIDEO | SDL_INIT_JOYSTICK | SDL_INIT_GAMECONTROLLER) != 0)
-	{
-		if (SDL_Init(SDL_INIT_TIMER | SDL_INIT_VIDEO) == 0) { // retry without joystick/gamecontroller if it failed
-			Sys_Printf( "WARNING: Couldn't get SDL gamecontroller support! Gamepads won't work!\n" );
-		} else
-#else // SDL1.2
-	if (SDL_Init(SDL_INIT_TIMER | SDL_INIT_VIDEO) != 0) // no gamecontroller support in SDL1
-	{
-#endif
-		{
-			Sys_Error("Error while initializing SDL: %s", SDL_GetError());
-		}
-	}
-#endif // !__LIBRETRO__
 
 	Sys_InitThreads();
 
@@ -3185,18 +3104,6 @@ void idCommonLocal::Init( int argc, char **argv ) {
 		Sys_Error( "Error during initialization" );
 	}
 
-#ifndef __LIBRETRO__
-	runAsyncThread = true;
-	Sys_CreateThread( AsyncThread, this, asyncThread, "AsyncThread" );
-#else
-	// libretro: no background thread. In the libretro core all sound mixing is
-	// driven synchronously from retro_run() (audio_callback() -> AsyncMix()),
-	// so AsyncThread would only busy-spin (Sys_SleepUntilPrecise is a no-op
-	// there) fighting the main thread for CRITICAL_SECTION_ZERO. Keeping
-	// everything on the frontend's thread also makes the core deterministic
-	// and re-entrancy safe with respect to libretro API callbacks.
-	runAsyncThread = false;
-#endif
 }
 
 
@@ -3206,12 +3113,6 @@ idCommonLocal::Shutdown
 =================
 */
 void idCommonLocal::Shutdown( void ) {
-	if ( asyncThread.threadHandle != NULL ) {
-		runAsyncThread = false;
-		Sys_DestroyThread( asyncThread );
-		memset( &asyncThread, 0, sizeof(asyncThread) );
-	}
-
 	idAsyncNetwork::server.Kill();
 	idAsyncNetwork::client.Shutdown();
 
@@ -3288,16 +3189,9 @@ void idCommonLocal::InitGame( void ) {
 
 	idCmdArgs args;
 
-#ifdef __LIBRETRO__
 	if (com_machineSpec.GetInteger() == -1)
 		SetMachineSpec();
 	Com_ExecMachineSpec_f( args );
-#else
-	if ( sysDetect ) {
-		SetMachineSpec();
-		Com_ExecMachineSpec_f( args );
-	}
-#endif
 
 	// initialize the renderSystem data structures, but don't start OpenGL yet
 	renderSystem->Init();
@@ -3319,7 +3213,6 @@ void idCommonLocal::InitGame( void ) {
 	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "exec editor.cfg\n" );
 	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "exec default.cfg\n" );
 
-#ifdef __LIBRETRO__
 	// default bindings for libretro
 	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "unbindall\n" );
 
@@ -3332,7 +3225,6 @@ void idCommonLocal::InitGame( void ) {
 	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"AUX8\"       \"_moveRight\"\n" );
 	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"AUX9\"       \"_forward\"\n" );
 	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind \"AUX10\"      \"_back\"\n" );
-#endif
 
 	// skip the config file if "safe" is on the command line
 	if ( !SafeMode() ) {
@@ -3349,7 +3241,6 @@ void idCommonLocal::InitGame( void ) {
 	// re-override anything from the config files with command line args
 	StartupVariable( NULL, false );
 
-#ifdef __LIBRETRO__
 	// Applied AFTER DoomConfig.cfg so it doesn't get overwritten
 	cmdSystem->BufferCommandText( CMD_EXEC_NOW, "m_strafe 0\n" );
 	cmdSystem->BufferCommandText( CMD_EXEC_NOW, "in_mouse 1\n" );
@@ -3378,7 +3269,6 @@ void idCommonLocal::InitGame( void ) {
 	cmdSystem->BufferCommandText( CMD_EXEC_NOW, "bind \"6\"          \"_impulse6\"\n" );
 	cmdSystem->BufferCommandText( CMD_EXEC_NOW, "bind \"7\"          \"_impulse7\"\n" );
 	cmdSystem->BufferCommandText( CMD_EXEC_NOW, "bind \"ESCAPE\" 	 \"_escape\"\n" );
-#endif
 
 	// if any archived cvars are modified after this, we will trigger a writing of the config file
 	cvarSystem->ClearModifiedFlags( CVAR_ARCHIVE );

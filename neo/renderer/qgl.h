@@ -59,7 +59,6 @@ If you have questions concerning this license or the applicable additional terms
 	#endif
 #endif
 
-#ifdef __LIBRETRO__
 // On macOS desktop GL, use glad to provide all GL typedefs and enums
 // (including legacy/ARB ones missing from Apple's gl3.h).
 // Define gl3.h's include guard so glsym doesn't pull it in on top.
@@ -69,7 +68,6 @@ If you have questions concerning this license or the applicable additional terms
 #define __gl3ext_h_
 #endif
 #include "../sys/libretro-common/include/glsym/glsym.h"
-#endif
 
 typedef void (*GLExtension_t)(void);
 
@@ -154,9 +152,6 @@ extern PFNGLPROGRAMLOCALPARAMETER4FVARBPROC	qglProgramLocalParameter4fvARB;
 extern PFNGLDEPTHBOUNDSEXTPROC              qglDepthBoundsEXT;
 
 // GL_ARB_debug_output
-#ifndef __LIBRETRO__
-extern PFNGLDEBUGMESSAGECALLBACKARBPROC    qglDebugMessageCallbackARB;
-#endif
 
 #endif // !HAVE_OPENGLES
 

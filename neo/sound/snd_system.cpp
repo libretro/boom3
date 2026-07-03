@@ -154,7 +154,6 @@ bool CheckOpenALDeviceAndRecoverIfNeeded()
 	return true;
 }
 
-#ifdef __LIBRETRO__
 typedef ALCdevice* (ALC_APIENTRY*LPALCLOOPBACKOPENDEVICESOFT)(const ALCchar*);
 static LPALCLOOPBACKOPENDEVICESOFT d3_alcLoopbackOpenDeviceSOFT = NULL;
 
@@ -163,7 +162,6 @@ static void LoadLoopbackFunctions() {
         alcGetProcAddress(NULL, "alcLoopbackOpenDeviceSOFT");
 }
 
-#endif // __LIBRETRO__
 
 #else
 bool CheckOpenALDeviceAndRecoverIfNeeded() { return true; }
@@ -410,7 +408,6 @@ void idSoundSystemLocal::Init() {
 	resetRetryCount = 0;
 	lastCheckTime = 0;
 
-#ifdef __LIBRETRO__
 	LoadLoopbackFunctions();
 	if (d3_alcLoopbackOpenDeviceSOFT) {
 		openalDevice = d3_alcLoopbackOpenDeviceSOFT(NULL);
@@ -427,94 +424,11 @@ void idSoundSystemLocal::Init() {
 	} else {
 		common->Printf("[sound] WARNING: alcLoopbackOpenDeviceSOFT not available!\n");
 	}
-#endif // __LIBRETRO__
 
 	// DG: no point in initializing OpenAL if sound is disabled with s_noSound
 	if ( s_noSound.GetBool() ) {
 		common->Printf( "Sound disabled with s_noSound 1 !\n" );
-#ifndef __LIBRETRO__
-		openalDevice = NULL;
-		openalContext = NULL;
-#endif
 	} else {
-#ifndef __LIBRETRO__
-		// set up openal device and context
-		common->Printf( "Setup OpenAL device and context\n" );
-
-		const char *device = s_device.GetString();
-		if (strlen(device) < 1)
-			device = NULL;
-		else if (!idStr::Icmp(device, "default"))
-			device = NULL;
-
-		alEnumerateAllAvailable = alcIsExtensionPresent(NULL, "ALC_ENUMERATE_ALL_EXT");
-		if ( alEnumerateAllAvailable ) {
-			const char *devs = alcGetString(NULL, ALC_ALL_DEVICES_SPECIFIER);
-			bool found = false;
-
-			while (devs && *devs) {
-				common->Printf("OpenAL: found device '%s'", devs);
-
-				if ( device && !idStr::Icmp(devs, device) ) {
-					common->Printf(" (ACTIVE)\n");
-					found = true;
-				} else {
-					common->Printf("\n");
-				}
-
-				devs += strlen(devs) + 1;
-			}
-
-			if ( device && !found ) {
-				common->Printf("OpenAL: device %s not found, using default\n", device);
-				device = NULL;
-			}
-		}
-
-		openalDevice = alcOpenDevice(device);
-		if ( !openalDevice && device ) {
-			common->Printf( "OpenAL: failed to open device '%s' (0x%x), trying default...\n", device, alGetError() );
-			openalDevice = alcOpenDevice( NULL );
-		}
-
-		// DG: handle the possibility that opening the default device or creating context failed
-		if ( openalDevice == NULL ) {
-			common->Printf( "OpenAL: failed to open default device (0x%x), disabling sound\n", alGetError() );
-			openalContext = NULL;
-		} else {
-			// DG: extensions needed for CheckDeviceAndRecoverIfNeeded(), HRTF, output-limiter, the info in the settings menu, ...
-			alHRTFavailable = alcIsExtensionPresent( openalDevice, "ALC_SOFT_HRTF" ) != AL_FALSE;
-			alIsDisconnectAvailable = alcIsExtensionPresent( openalDevice, "ALC_EXT_disconnect" ) != AL_FALSE;
-			if ( alHRTFavailable ) {
-				common->Printf( "OpenAL: found extension for HRTF\n" );
-				alcResetDeviceSOFT = (LPALCRESETDEVICESOFT)alcGetProcAddress( openalDevice, "alcResetDeviceSOFT" );
-				if ( alIsDisconnectAvailable ) {
-					common->Printf( "OpenAL: found extensions for resetting disconnected devices\n" );
-				}
-				alOutputLimiterAvailable = alcIsExtensionPresent( openalDevice, "ALC_SOFT_output_limiter" ) != AL_FALSE;
-				if ( alOutputLimiterAvailable ) {
-					common->Printf( "OpenAL: found extension to control output-limiter\n" );
-				}
-			} else {
-				alOutputLimiterAvailable = false;
-				alcResetDeviceSOFT = NULL;
-			}
-			alOutputModeAvailable = alcIsExtensionPresent( openalDevice, "ALC_SOFT_output_mode" );
-
-			ALCint attrList[D3_ALC_ATTRLIST_LEN] = {};
-			SetAlcAttrList( attrList );
-
-			s_alHRTF.ClearModified();
-			s_alOutputLimiter.ClearModified();
-
-			openalContext = alcCreateContext( openalDevice, attrList );
-			if ( openalContext == NULL ) {
-				common->Printf( "OpenAL: failed to create context (0x%x), disabling sound\n", alcGetError(openalDevice) );
-				alcCloseDevice( openalDevice );
-				openalDevice = NULL;
-			}
-		}
-#endif // !__LIBRETRO__
 	}
 
 	// DG: only do these things if opening device and creating context succeeded and sound is enabled
@@ -1178,9 +1092,6 @@ int idSoundSystemLocal::AsyncUpdateWrite( int inTime ) {
 	int numSpeakers = s_numberOfSpeakers.GetInteger();
 
 	// enable audio hardware caching
-#ifndef __LIBRETRO__
-	alcSuspendContext( openalContext );
-#endif
 
 	// let the active sound world mix all the channels in unless muted or avi demo recording
 	if ( !muted && currentSoundWorld && !currentSoundWorld->fpa[0] ) {
@@ -1188,9 +1099,6 @@ int idSoundSystemLocal::AsyncUpdateWrite( int inTime ) {
 	}
 
 	// disable audio hardware caching (this updates ALL settings since last alcSuspendContext)
-#ifndef __LIBRETRO__
-	alcProcessContext( openalContext );
-#endif
 
 	CurrentSoundTime = sampleTime;
 
