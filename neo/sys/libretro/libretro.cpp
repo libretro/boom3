@@ -1076,6 +1076,13 @@ bool retro_load_game(const struct retro_game_info *info)
 		return false;
 	}
 
+	{
+		uint64_t quirks = RETRO_SERIALIZATION_QUIRK_CORE_VARIABLE_SIZE
+		                | RETRO_SERIALIZATION_QUIRK_ENDIAN_DEPENDENT
+		                | RETRO_SERIALIZATION_QUIRK_PLATFORM_DEPENDENT;
+		environ_cb(RETRO_ENVIRONMENT_SET_SERIALIZATION_QUIRKS, &quirks);
+	}
+
 	hw_render.context_type    = get_hw_context_type();
 	hw_render.context_reset   = context_reset;
 	hw_render.context_destroy = context_destroy;
@@ -1367,19 +1374,85 @@ bool retro_load_game_special(unsigned type, const struct retro_game_info *info, 
    return false;
 }
 
+/* ============ savestates ============
+ * v1: route retro_serialize through the engine's own savegame machinery,
+ * which already serializes complete game state (entities, scripts, physics,
+ * player). SaveGame is synchronous; LoadGame restores synchronously via
+ * ExecuteMapChange. retro_savestate_active suppresses all rendering side
+ * effects during both. The state buffer is the .save file's bytes.
+ *
+ * Properties (declared via serialization quirks): variable size per state,
+ * endian- and platform-dependent (the savegame format writes native types),
+ * and NOT fast enough for run-ahead (a restore is a synchronous map load).
+ * Fast in-memory states for run-ahead remain future work.
+ */
+extern bool retro_savestate_active;
+#define RETRO_STATE_NAME "retro_state"
+
+static idList<byte> retro_state_cache;
+static int retro_state_cache_tic = -1;
+
+static bool RetroBuildState(void)
+{
+	extern volatile int com_ticNumber;
+	if (retro_state_cache_tic == com_ticNumber && retro_state_cache.Num() > 0)
+		return true;	// still current: state can only change on a tic
+
+	if (!sessLocal.mapSpawned)
+		return false;
+
+	retro_savestate_active = true;
+	bool ok = sessLocal.SaveGame(RETRO_STATE_NAME, true);
+	retro_savestate_active = false;
+	if (!ok)
+		return false;
+
+	void *buf = NULL;
+	int len = fileSystem->ReadFile("savegames/" RETRO_STATE_NAME ".save", &buf, NULL);
+	if (len <= 0 || !buf)
+		return false;
+	retro_state_cache.SetNum(len);
+	memcpy(retro_state_cache.Ptr(), buf, len);
+	fileSystem->FreeFile(buf);
+	retro_state_cache_tic = com_ticNumber;
+	return true;
+}
+
 size_t retro_serialize_size(void)
 {
-   return 0;
+	if (!RetroBuildState())
+		return 0;
+	return (size_t)retro_state_cache.Num();
 }
 
 bool retro_serialize(void *data_, size_t size)
 {
-   return false;
+	if (!RetroBuildState())
+		return false;
+	if (size < (size_t)retro_state_cache.Num())
+		return false;
+	memcpy(data_, retro_state_cache.Ptr(), retro_state_cache.Num());
+	return true;
 }
 
 bool retro_unserialize(const void *data_, size_t size)
 {
-   return false;
+	if (!data_ || size == 0 || !fileSystem || !fileSystem->IsInitialized())
+		return false;
+
+	idFile *f = fileSystem->OpenFileWrite("savegames/" RETRO_STATE_NAME ".save");
+	if (!f)
+		return false;
+	f->Write(data_, (int)size);
+	fileSystem->CloseFile(f);
+
+	retro_savestate_active = true;
+	bool ok = sessLocal.LoadGame(RETRO_STATE_NAME);
+	retro_savestate_active = false;
+
+	// state changed out from under the cache
+	retro_state_cache_tic = -1;
+	return ok;
 }
 
 void *retro_get_memory_data(unsigned id)

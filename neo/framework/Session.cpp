@@ -1783,6 +1783,12 @@ void idSessionLocal::ScrubSaveGameFileName( idStr &saveFileName ) const {
 idSessionLocal::SaveGame
 ===============
 */
+// set while retro_serialize/retro_unserialize drive the savegame machinery:
+// suppresses all rendering side effects (preview screenshot, loading-screen
+// UpdateScreen draws), since libretro HW-render GL is only valid inside
+// retro_run's render phase
+bool retro_savestate_active = false;
+
 bool idSessionLocal::SaveGame( const char *saveName, bool autosave, const char* saveFileName ) {
 #ifdef	ID_DEDICATED
 	common->Printf( "Dedicated servers cannot save games.\n" );
@@ -2462,6 +2468,14 @@ idSessionLocal::UpdateScreen
 ===============
 */
 void idSessionLocal::UpdateScreen( bool outOfSequence ) {
+	extern bool retro_savestate_active;
+	if ( retro_savestate_active ) {
+		// no rendering while a libretro savestate drives the savegame
+		// machinery: HW-render GL is only valid inside retro_run's render
+		// phase, and the frontend is not expecting frames here
+		return;
+	}
+
 	D3P_ScopedCPUSample(Session_UpdateScreen);
 #ifdef _WIN32
 
