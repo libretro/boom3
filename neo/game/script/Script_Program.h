@@ -229,20 +229,20 @@ ID_INLINE void idScriptVariable<type, etype, returnType>::LinkTo( idScriptObject
 	}
 }
 
-// DG-style optional linking: like LinkTo(), but a missing field is not fatal.
-// Used for script variables that were added by the official patches (e.g.
-// WEAPON_NETFIRING, introduced with the 1.3 patch scripts) so unpatched
-// retail 1.0/1.1 and demo game data still work; callers must guard access
-// with IsLinked().
+// DG-style optional linking: like LinkTo(), but a missing field is not fatal -
+// the variable is left unlinked and false is returned so the caller can react
+// (and must guard all access with IsLinked()). Used for script variables that
+// were added by the official patches (e.g. WEAPON_NETFIRING, introduced with
+// the 1.3 patch scripts) so unpatched retail 1.0/1.1 and demo game data still
+// work. Deliberately does no printing here: this header is included by TUs
+// where neither 'common' nor 'gameLocal' are declared at this point, and a
+// non-dependent name in a template is bound at definition, which broke clean
+// builds even though incremental builds (no header deps in the Makefile)
+// happened to pass.
 template<class type, etype_t etype, class returnType>
 ID_INLINE bool idScriptVariable<type, etype, returnType>::LinkToOptional( idScriptObject &obj, const char *name ) {
 	data = ( type * )obj.GetVariable( name, etype );
-	if ( !data ) {
-		common->DPrintf( "script object '%s' has no '%s' field (old game data?), continuing without it\n",
-		                 obj.GetTypeName(), name );
-		return false;
-	}
-	return true;
+	return ( data != NULL );
 }
 
 template<class type, etype_t etype, class returnType>

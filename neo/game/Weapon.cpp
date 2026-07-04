@@ -404,7 +404,10 @@ void idWeapon::Restore( idRestoreGame *savefile ) {
 	// patches (it's used for MP client prediction), so link it optionally:
 	// unpatched retail 1.0/1.1 and demo game data don't have it, and every
 	// access below is already guarded with IsLinked().
-	WEAPON_NETFIRING.LinkToOptional(	scriptObject, "WEAPON_NETFIRING" );
+	if ( !WEAPON_NETFIRING.LinkToOptional( scriptObject, "WEAPON_NETFIRING" ) ) {
+		gameLocal.DPrintf( "script object '%s' has no WEAPON_NETFIRING field (old game data?), continuing without it\n",
+		                   scriptObject.GetTypeName() );
+	}
 	WEAPON_RAISEWEAPON.LinkTo(	scriptObject, "WEAPON_RAISEWEAPON" );
 	WEAPON_LOWERWEAPON.LinkTo(	scriptObject, "WEAPON_LOWERWEAPON" );
 
@@ -1018,7 +1021,10 @@ void idWeapon::GetWeaponDef( const char *objectname, int ammoinclip ) {
 	// patches (it's used for MP client prediction), so link it optionally:
 	// unpatched retail 1.0/1.1 and demo game data don't have it, and every
 	// access below is already guarded with IsLinked().
-	WEAPON_NETFIRING.LinkToOptional(	scriptObject, "WEAPON_NETFIRING" );
+	if ( !WEAPON_NETFIRING.LinkToOptional( scriptObject, "WEAPON_NETFIRING" ) ) {
+		gameLocal.DPrintf( "script object '%s' has no WEAPON_NETFIRING field (old game data?), continuing without it\n",
+		                   scriptObject.GetTypeName() );
+	}
 	WEAPON_RAISEWEAPON.LinkTo(	scriptObject, "WEAPON_RAISEWEAPON" );
 	WEAPON_LOWERWEAPON.LinkTo(	scriptObject, "WEAPON_LOWERWEAPON" );
 
