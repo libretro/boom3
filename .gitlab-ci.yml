@@ -12,13 +12,6 @@
     MAKEFILE_PATH: neo
     MAKEFILE: Makefile
     
-.core-defs-xp:
-  variables:
-    CORENAME: boom3_xp
-    MAKEFILE_PATH: neo
-    MAKEFILE: Makefile
-    D3XP: 1
-
 # Inclusion templates, required for the build to work
 include:
   ################################## DESKTOPS ################################
@@ -87,10 +80,6 @@ libretro-build-windows-x64:
     - .libretro-windows-x64-mingw-make-default
     - .core-defs
 
-libretro-build-windows-x64-xp:
-  extends:
-    - .libretro-windows-x64-mingw-make-default
-    - .core-defs-xp
 
 # Windows 32-bit
 libretro-build-windows-i686:
@@ -98,10 +87,6 @@ libretro-build-windows-i686:
     - .libretro-windows-i686-mingw-make-default
     - .core-defs
 
-libretro-build-windows-i686-xp:
-  extends:
-    - .libretro-windows-i686-mingw-make-default
-    - .core-defs-xp
 
 # Linux 64-bit
 libretro-build-linux-x64:
@@ -109,10 +94,6 @@ libretro-build-linux-x64:
     - .libretro-linux-x64-make-default
     - .core-defs
     
-libretro-build-linux-x64-xp:
-  extends:
-    - .libretro-linux-x64-make-default
-    - .core-defs-xp
 
 # Linux 32-bit
 libretro-build-linux-i686:
@@ -126,10 +107,6 @@ libretro-build-osx-x64:
     - .libretro-osx-x64-make-default
     - .core-defs
 
-libretro-build-osx-x64-xp:
-  extends:
-    - .libretro-osx-x64-make-default
-    - .core-defs-xp
 
 # MacOS ARM 64-bit
 libretro-build-osx-arm64:
@@ -137,10 +114,6 @@ libretro-build-osx-arm64:
     - .libretro-osx-arm64-make-default
     - .core-defs
 
-libretro-build-osx-arm64-xp:
-  extends:
-    - .libretro-osx-arm64-make-default
-    - .core-defs-xp
 
 ################################### CELLULAR #################################
 # Android ARMv8a
@@ -155,10 +128,6 @@ libretro-build-ios-arm64:
     - .libretro-ios-arm64-make-default
     - .core-defs
 
-libretro-build-ios-arm64-xp:
-  extends:
-    - .libretro-ios-arm64-make-default
-    - .core-defs-xp
 
 # tvOS
 libretro-build-tvos-arm64:
@@ -166,10 +135,6 @@ libretro-build-tvos-arm64:
     - .libretro-tvos-arm64-make-default
     - .core-defs
 
-libretro-build-tvos-arm64-xp:
-  extends:
-    - .libretro-tvos-arm64-make-default
-    - .core-defs-xp
 
 ################################### CONSOLES #################################
 # Nintendo Switch
@@ -178,10 +143,6 @@ libretro-build-libnx-aarch64:
     - .libretro-libnx-static-retroarch-master
     - .core-defs
 
-libretro-build-libnx-aarch64-xp:
-  extends:
-    - .libretro-libnx-static-retroarch-master
-    - .core-defs-xp
 
 #################################### MISC ##################################
 # webOS 32-bit
@@ -190,7 +151,3 @@ libretro-build-webos-armv7a:
     - .libretro-webos-armv7a-make-default
     - .core-defs
 
-libretro-build-webos-armv7a-xp:
-  extends:
-    - .libretro-webos-armv7a-make-default
-    - .core-defs-xp
