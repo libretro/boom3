@@ -31,6 +31,8 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "framework/UsercmdGen.h"
 #include "sound/sound.h"
+#include "sound/snd_reverb.h"
+#include "sound/efxlib.h"
 
 // demo sound commands
 typedef enum {
@@ -582,6 +584,14 @@ public:
 	idVec3					listenerQU;			// position in "quake units"
 	int						listenerArea;
 	idStr					listenerAreaName;
+
+	// environmental reverb (replaces the OpenAL EFX slot): per-world DSP,
+	// preset selected by listener area, mono send accumulated during the
+	// channel loop in whichever format the mixer is running
+	idSoundReverb			reverb;
+	idStr					reverbEffectName;	// currently applied preset
+	float					reverbSendF[MIXBUFFER_SAMPLES];
+	int						reverbSendI[MIXBUFFER_SAMPLES];
 	bool					listenerAreFiltersInitialized;
 
 	int						gameMsec;
@@ -634,6 +644,11 @@ public:
 	virtual void			SetOutputFloat( bool isFloat ) { outputIsFloat = isFloat; }
 
 	bool					outputIsFloat;
+
+	idEFXFile				EFXDatabase;
+	bool					efxloaded;
+	static idCVar			s_useReverb;
+	static idCVar			s_reverbGain;
 
 	idSoundCache *			soundCache;
 

@@ -162,6 +162,7 @@ SRC_SOUND	:=\
 	$(CORE_DIR)/sound/snd_decoder.cpp \
 	$(CORE_DIR)/sound/snd_emitter.cpp \
 	$(CORE_DIR)/sound/snd_shader.cpp \
+	$(CORE_DIR)/sound/snd_efxfile.cpp \
 	$(CORE_DIR)/sound/snd_system.cpp \
 	$(CORE_DIR)/sound/snd_wavefile.cpp \
 	$(CORE_DIR)/sound/snd_world.cpp

@@ -32,6 +32,8 @@ If you have questions concerning this license or the applicable additional terms
 #include "sound/snd_mix_kernels.h"
 #include <limits.h>
 
+idCVar idSoundSystemLocal::s_useReverb( "s_useReverb", "1", CVAR_SOUND | CVAR_BOOL | CVAR_ARCHIVE, "environmental reverb from efxs/*.efx" );
+idCVar idSoundSystemLocal::s_reverbGain( "s_reverbGain", "0.5", CVAR_SOUND | CVAR_FLOAT | CVAR_ARCHIVE, "reverb wet gain", 0.0f, 1.0f );
 #ifdef ID_DEDICATED
 idCVar idSoundSystemLocal::s_noSound( "s_noSound", "1", CVAR_SOUND | CVAR_BOOL | CVAR_ROM, "" );
 #else
@@ -290,6 +292,7 @@ void idSoundSystemLocal::Init() {
 	isInitialized = false;
 	muted = false;
 	shutdown = false;
+	efxloaded = false;
 
 	currentSoundWorld = NULL;
 	soundCache = NULL;
@@ -772,6 +775,11 @@ void idSoundSystemLocal::BeginLevelLoad() {
 		return;
 	}
 	soundCache->BeginLevelLoad();
+
+	if ( efxloaded ) {
+		EFXDatabase.Clear();
+		efxloaded = false;
+	}
 }
 
 /*
@@ -780,6 +788,22 @@ idSoundSystemLocal::EndLevelLoad
 ===================
 */
 void idSoundSystemLocal::EndLevelLoad( const char *mapstring ) {
+	if ( isInitialized ) {
+		idStr efxname( "efxs/" );
+		idStr mapname( mapstring );
+
+		mapname.SetFileExtension( ".efx" );
+		mapname.StripPath();
+		efxname += mapname;
+
+		efxloaded = EFXDatabase.LoadFile( efxname );
+		if ( efxloaded ) {
+			common->Printf( "sound: found %s\n", efxname.c_str() );
+		} else {
+			common->Printf( "sound: missing %s\n", efxname.c_str() );
+		}
+	}
+
 	if ( !isInitialized ) {
 		return;
 	}

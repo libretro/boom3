@@ -431,6 +431,34 @@ void idSoundWorldLocal::MixLoop( int current44kHz, int numFrames, float *finalMi
 
 
 	// debugging option to mute all but a single soundEmitter
+	// environmental reverb: pick the preset for the listener's portal area
+	// (area number -> area name -> "default", same chain as the OpenAL era)
+	const bool reverbOn = idSoundSystemLocal::s_useReverb.GetBool()
+	                       && soundSystemLocal.efxloaded && listenerArea >= 0;
+	if ( reverbOn ) {
+		idStr s( listenerArea );
+		sndReverbParams_t rp;
+		bool found = soundSystemLocal.EFXDatabase.FindEffect( s, &rp );
+		if ( !found ) {
+			s = listenerAreaName;
+			found = soundSystemLocal.EFXDatabase.FindEffect( s, &rp );
+		}
+		if ( !found ) {
+			s = "default";
+			found = soundSystemLocal.EFXDatabase.FindEffect( s, &rp );
+		}
+		if ( found && reverbEffectName != s ) {
+			reverbEffectName = s;
+			reverb.SetParams( rp );
+		}
+	}
+	// clear the mono send accumulator for this block (format-appropriate)
+	if ( soundSystemLocal.outputIsFloat ) {
+		memset( reverbSendF, 0, numFrames * sizeof( float ) );
+	} else {
+		memset( reverbSendI, 0, numFrames * sizeof( int ) );
+	}
+
 	if ( idSoundSystemLocal::s_singleEmitter.GetInteger() > 0 && idSoundSystemLocal::s_singleEmitter.GetInteger() < emitters.Num() ) {
 		sound = emitters[idSoundSystemLocal::s_singleEmitter.GetInteger()];
 
@@ -476,6 +504,17 @@ void idSoundWorldLocal::MixLoop( int current44kHz, int numFrames, float *finalMi
 	// TODO port to OpenAL
 	if ( false && enviroSuitActive ) {
 		soundSystemLocal.DoEnviroSuit( finalMixBuffer, numFrames, 2 );
+	}
+
+	// environmental reverb: process the accumulated mono send and add the
+	// stereo wet into this block, in whichever format the mixer is running
+	if ( reverbOn && reverb.IsActive() ) {
+		const float wet = idSoundSystemLocal::s_reverbGain.GetFloat();
+		if ( soundSystemLocal.outputIsFloat ) {
+			reverb.ProcessFloat( reverbSendF, finalMixBuffer, numFrames, wet );
+		} else {
+			reverb.ProcessS16( reverbSendI, (int *)finalMixBuffer, numFrames, wet );
+		}
 	}
 }
 
@@ -1622,6 +1661,45 @@ void idSoundWorldLocal::AddChannelContribution( idSoundEmitterLocal *sound, idSo
 				Snd_MixTwoSpeakerStereoS16( accum, srcS16, numFrames, lastQ, currentQ );
 			} else {
 				Snd_MixTwoSpeakerMonoS16( accum, srcS16, numFrames, lastQ, currentQ );
+			}
+		}
+
+		// environmental reverb send: accumulate this channel into the world's
+		// mono send at its (mono-summed) volume. Private/no-occlusion global
+		// channels (menu, voiceovers) skip the room: send only spatialized
+		// sounds, matching the character of the old per-source EFX send.
+		if ( idSoundSystemLocal::s_useReverb.GetBool() && soundSystemLocal.efxloaded
+		     && !( chan->parms.soundShaderFlags & ( SSF_GLOBAL | SSF_PRIVATE_SOUND ) ) ) {
+			const float sendVol = ( ears[0] + ears[1] ) * 0.5f;
+			if ( soundSystemLocal.outputIsFloat ) {
+				if ( stereoSample ) {
+					for ( int k = 0; k < numFrames; k++ ) {
+						reverbSendF[k] += ( alignedInputSamples[(size_t)k*2] + alignedInputSamples[(size_t)k*2+1] ) * ( 0.5f * sendVol );
+					}
+				} else {
+					for ( int k = 0; k < numFrames; k++ ) {
+						reverbSendF[k] += alignedInputSamples[k] * sendVol;
+					}
+				}
+			} else {
+				const short sq = Snd_ClampGainQ15( sendVol );
+				const short *srcQ = (const short *)0;
+				// reuse the s16 conversion done for the mix
+				extern void Snd_ReverbSendAccumS16_unused( void ); // (no-op marker)
+				(void)srcQ;
+				if ( stereoSample ) {
+					short tmpQ[MIXBUFFER_SAMPLES*2];
+					Snd_FloatToS16( tmpQ, alignedInputSamples, numFrames*2 );
+					for ( int k = 0; k < numFrames; k++ ) {
+						reverbSendI[k] += ( ( ( tmpQ[(size_t)k*2] + tmpQ[(size_t)k*2+1] ) / 2 ) * sq ) >> 15;
+					}
+				} else {
+					short tmpQ[MIXBUFFER_SAMPLES];
+					Snd_FloatToS16( tmpQ, alignedInputSamples, numFrames );
+					for ( int k = 0; k < numFrames; k++ ) {
+						reverbSendI[k] += ( tmpQ[k] * sq ) >> 15;
+					}
+				}
 			}
 		}
 

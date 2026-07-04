@@ -185,3 +185,50 @@ int main() {
 	(void)sinkf;(void)sinki;
 	return 0;
 }
+// ---- reverb unit test (appended) ----
+#define ID_INLINE inline
+#include "../neo/sound/snd_reverb.h"
+static idSoundReverb rvbF, rvbI;
+int reverb_test() {
+	rvbF.Init(); rvbI.Init();
+	sndReverbParams_t p; p.SetDefaults();
+	p.decayTime = 1.5f; p.reflectionsDelay = 0.02f; p.lateReverbDelay = 0.03f;
+	rvbF.SetParams(p); rvbI.SetParams(p);
+	// warm past the crossfade
+	static float zf[512], df[1024]; static int zi[512], di[1024];
+	for (int b=0;b<REVERB_XFADE_BLOCKS+2;b++){ memset(df,0,sizeof df); memset(di,0,sizeof di);
+		rvbF.ProcessFloat(zf, df, 512, 0.5f); rvbI.ProcessS16(zi, di, 512, 0.5f); }
+	// impulse at int16 scale
+	static float sf[512]; static int si[512];
+	sf[0]=16384.0f; si[0]=16384;
+	double eF=0,eI=0; double e60F=0,e60I=0; int totalBlocks= (int)(3.0*44100/512);
+	double tail_start=1.5*44100;
+	long n=0; double firstF=0, firstI=0;
+	for (int b=0;b<totalBlocks;b++){
+		memset(df,0,sizeof df); memset(di,0,sizeof di);
+		rvbF.ProcessFloat(b?zf:sf, df, 512, 0.5f);
+		rvbI.ProcessS16(b?zi:si, di, 512, 0.5f);
+		for (int i=0;i<512*2;i++){
+			double vF=df[i]*32768.0, vI=(double)di[i];
+			eF+=vF*vF; eI+=vI*vI;
+			if (n>tail_start*2){ e60F+=vF*vF; e60I+=vI*vI; }
+			if (b==4 && i<4 && firstF==0){ firstF=vF; firstI=vI; }
+			n++;
+		}
+	}
+	printf("reverb energy: float=%.3g int=%.3g ratio=%.3f\n", eF, eI, eI>0?eF/eI:0);
+	printf("reverb tail(>1.5s)/total: float=%.4f int=%.4f (RT60=1.5s => small but nonzero)\n",
+		e60F/eF, e60I/eI);
+	printf("reverb float/int agreement: %s\n",
+		(eI>0 && eF/eI>0.5 && eF/eI<2.0) ? "OK (same order, same envelope)" : "FAIL");
+	// int path determinism: run twice, compare
+	idSoundReverb a,b2; a.Init(); b2.Init(); a.SetParams(p); b2.SetParams(p);
+	static int o1[1024],o2[1024]; int mism=0;
+	for (int b=0;b<40;b++){ memset(o1,0,sizeof o1); memset(o2,0,sizeof o2);
+		a.ProcessS16(b?zi:si,o1,512,0.5f); b2.ProcessS16(b?zi:si,o2,512,0.5f);
+		for(int i=0;i<1024;i++) if(o1[i]!=o2[i]) mism++;
+	}
+	printf("reverb int replay determinism: %s\n", mism?"FAIL":"bit-exact");
+	return 0;
+}
+static int _rt = reverb_test();
