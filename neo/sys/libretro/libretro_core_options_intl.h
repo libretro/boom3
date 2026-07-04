@@ -144,20 +144,6 @@ struct retro_core_option_v2_definition option_defs_ar[] = {
       },
       "enabled"
    },
-   {
-      "doom_fps",
-      DOOM_FPS_LABEL_AR,
-      NULL,
-      DOOM_FPS_INFO_0_AR,
-      NULL,
-      NULL,
-      {
-         { "disabled",  "Disabled" },
-         { "enabled",   "Enabled" },
-         { NULL, NULL },
-      },
-      "disabled"
-   },
    { NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL },
 };
 struct retro_core_options_v2 options_ar = {
@@ -271,20 +257,6 @@ struct retro_core_option_v2_definition option_defs_ast[] = {
          { NULL, NULL },
       },
       "enabled"
-   },
-   {
-      "doom_fps",
-      DOOM_FPS_LABEL_AST,
-      NULL,
-      DOOM_FPS_INFO_0_AST,
-      NULL,
-      NULL,
-      {
-         { "disabled",  "Disabled" },
-         { "enabled",   "Enabled" },
-         { NULL, NULL },
-      },
-      "disabled"
    },
    { NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL },
 };
@@ -400,20 +372,6 @@ struct retro_core_option_v2_definition option_defs_ca[] = {
       },
       "enabled"
    },
-   {
-      "doom_fps",
-      DOOM_FPS_LABEL_CA,
-      NULL,
-      DOOM_FPS_INFO_0_CA,
-      NULL,
-      NULL,
-      {
-         { "disabled",  "Disabled" },
-         { "enabled",   "Enabled" },
-         { NULL, NULL },
-      },
-      "disabled"
-   },
    { NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL },
 };
 struct retro_core_options_v2 options_ca = {
@@ -527,20 +485,6 @@ struct retro_core_option_v2_definition option_defs_chs[] = {
          { NULL, NULL },
       },
       "enabled"
-   },
-   {
-      "doom_fps",
-      DOOM_FPS_LABEL_CHS,
-      NULL,
-      DOOM_FPS_INFO_0_CHS,
-      NULL,
-      NULL,
-      {
-         { "disabled",  "Disabled" },
-         { "enabled",   "Enabled" },
-         { NULL, NULL },
-      },
-      "disabled"
    },
    { NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL },
 };
@@ -656,20 +600,6 @@ struct retro_core_option_v2_definition option_defs_cht[] = {
       },
       "enabled"
    },
-   {
-      "doom_fps",
-      DOOM_FPS_LABEL_CHT,
-      NULL,
-      DOOM_FPS_INFO_0_CHT,
-      NULL,
-      NULL,
-      {
-         { "disabled",  "Disabled" },
-         { "enabled",   "Enabled" },
-         { NULL, NULL },
-      },
-      "disabled"
-   },
    { NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL },
 };
 struct retro_core_options_v2 options_cht = {
@@ -783,20 +713,6 @@ struct retro_core_option_v2_definition option_defs_cs[] = {
          { NULL, NULL },
       },
       "enabled"
-   },
-   {
-      "doom_fps",
-      DOOM_FPS_LABEL_CS,
-      NULL,
-      DOOM_FPS_INFO_0_CS,
-      NULL,
-      NULL,
-      {
-         { "disabled",  "Disabled" },
-         { "enabled",   "Enabled" },
-         { NULL, NULL },
-      },
-      "disabled"
    },
    { NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL },
 };
@@ -912,20 +828,6 @@ struct retro_core_option_v2_definition option_defs_cy[] = {
       },
       "enabled"
    },
-   {
-      "doom_fps",
-      DOOM_FPS_LABEL_CY,
-      NULL,
-      DOOM_FPS_INFO_0_CY,
-      NULL,
-      NULL,
-      {
-         { "disabled",  "Disabled" },
-         { "enabled",   "Enabled" },
-         { NULL, NULL },
-      },
-      "disabled"
-   },
    { NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL },
 };
 struct retro_core_options_v2 options_cy = {
@@ -1039,20 +941,6 @@ struct retro_core_option_v2_definition option_defs_da[] = {
          { NULL, NULL },
       },
       "enabled"
-   },
-   {
-      "doom_fps",
-      DOOM_FPS_LABEL_DA,
-      NULL,
-      DOOM_FPS_INFO_0_DA,
-      NULL,
-      NULL,
-      {
-         { "disabled",  "Disabled" },
-         { "enabled",   "Enabled" },
-         { NULL, NULL },
-      },
-      "disabled"
    },
    { NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL },
 };
@@ -1168,20 +1056,6 @@ struct retro_core_option_v2_definition option_defs_de[] = {
       },
       "enabled"
    },
-   {
-      "doom_fps",
-      DOOM_FPS_LABEL_DE,
-      NULL,
-      DOOM_FPS_INFO_0_DE,
-      NULL,
-      NULL,
-      {
-         { "disabled",  "Disabled" },
-         { "enabled",   "Enabled" },
-         { NULL, NULL },
-      },
-      "disabled"
-   },
    { NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL },
 };
 struct retro_core_options_v2 options_de = {
@@ -1295,20 +1169,6 @@ struct retro_core_option_v2_definition option_defs_el[] = {
          { NULL, NULL },
       },
       "enabled"
-   },
-   {
-      "doom_fps",
-      DOOM_FPS_LABEL_EL,
-      NULL,
-      DOOM_FPS_INFO_0_EL,
-      NULL,
-      NULL,
-      {
-         { "disabled",  "Disabled" },
-         { "enabled",   "Enabled" },
-         { NULL, NULL },
-      },
-      "disabled"
    },
    { NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL },
 };
@@ -1424,20 +1284,6 @@ struct retro_core_option_v2_definition option_defs_eo[] = {
       },
       "enabled"
    },
-   {
-      "doom_fps",
-      DOOM_FPS_LABEL_EO,
-      NULL,
-      DOOM_FPS_INFO_0_EO,
-      NULL,
-      NULL,
-      {
-         { "disabled",  "Disabled" },
-         { "enabled",   "Enabled" },
-         { NULL, NULL },
-      },
-      "disabled"
-   },
    { NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL },
 };
 struct retro_core_options_v2 options_eo = {
@@ -1551,20 +1397,6 @@ struct retro_core_option_v2_definition option_defs_es[] = {
          { NULL, NULL },
       },
       "enabled"
-   },
-   {
-      "doom_fps",
-      DOOM_FPS_LABEL_ES,
-      NULL,
-      DOOM_FPS_INFO_0_ES,
-      NULL,
-      NULL,
-      {
-         { "disabled",  "Disabled" },
-         { "enabled",   "Enabled" },
-         { NULL, NULL },
-      },
-      "disabled"
    },
    { NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL },
 };
@@ -1680,20 +1512,6 @@ struct retro_core_option_v2_definition option_defs_fa[] = {
       },
       "enabled"
    },
-   {
-      "doom_fps",
-      DOOM_FPS_LABEL_FA,
-      NULL,
-      DOOM_FPS_INFO_0_FA,
-      NULL,
-      NULL,
-      {
-         { "disabled",  "Disabled" },
-         { "enabled",   "Enabled" },
-         { NULL, NULL },
-      },
-      "disabled"
-   },
    { NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL },
 };
 struct retro_core_options_v2 options_fa = {
@@ -1807,20 +1625,6 @@ struct retro_core_option_v2_definition option_defs_fi[] = {
          { NULL, NULL },
       },
       "enabled"
-   },
-   {
-      "doom_fps",
-      DOOM_FPS_LABEL_FI,
-      NULL,
-      DOOM_FPS_INFO_0_FI,
-      NULL,
-      NULL,
-      {
-         { "disabled",  "Disabled" },
-         { "enabled",   "Enabled" },
-         { NULL, NULL },
-      },
-      "disabled"
    },
    { NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL },
 };
@@ -1936,20 +1740,6 @@ struct retro_core_option_v2_definition option_defs_fr[] = {
       },
       "enabled"
    },
-   {
-      "doom_fps",
-      DOOM_FPS_LABEL_FR,
-      NULL,
-      DOOM_FPS_INFO_0_FR,
-      NULL,
-      NULL,
-      {
-         { "disabled",  "Disabled" },
-         { "enabled",   "Enabled" },
-         { NULL, NULL },
-      },
-      "disabled"
-   },
    { NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL },
 };
 struct retro_core_options_v2 options_fr = {
@@ -2063,20 +1853,6 @@ struct retro_core_option_v2_definition option_defs_gl[] = {
          { NULL, NULL },
       },
       "enabled"
-   },
-   {
-      "doom_fps",
-      DOOM_FPS_LABEL_GL,
-      NULL,
-      DOOM_FPS_INFO_0_GL,
-      NULL,
-      NULL,
-      {
-         { "disabled",  "Disabled" },
-         { "enabled",   "Enabled" },
-         { NULL, NULL },
-      },
-      "disabled"
    },
    { NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL },
 };
@@ -2192,20 +1968,6 @@ struct retro_core_option_v2_definition option_defs_he[] = {
       },
       "enabled"
    },
-   {
-      "doom_fps",
-      DOOM_FPS_LABEL_HE,
-      NULL,
-      DOOM_FPS_INFO_0_HE,
-      NULL,
-      NULL,
-      {
-         { "disabled",  "Disabled" },
-         { "enabled",   "Enabled" },
-         { NULL, NULL },
-      },
-      "disabled"
-   },
    { NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL },
 };
 struct retro_core_options_v2 options_he = {
@@ -2319,20 +2081,6 @@ struct retro_core_option_v2_definition option_defs_hu[] = {
          { NULL, NULL },
       },
       "enabled"
-   },
-   {
-      "doom_fps",
-      DOOM_FPS_LABEL_HU,
-      NULL,
-      DOOM_FPS_INFO_0_HU,
-      NULL,
-      NULL,
-      {
-         { "disabled",  "Disabled" },
-         { "enabled",   "Enabled" },
-         { NULL, NULL },
-      },
-      "disabled"
    },
    { NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL },
 };
@@ -2448,20 +2196,6 @@ struct retro_core_option_v2_definition option_defs_id[] = {
       },
       "enabled"
    },
-   {
-      "doom_fps",
-      DOOM_FPS_LABEL_ID,
-      NULL,
-      DOOM_FPS_INFO_0_ID,
-      NULL,
-      NULL,
-      {
-         { "disabled",  "Disabled" },
-         { "enabled",   "Enabled" },
-         { NULL, NULL },
-      },
-      "disabled"
-   },
    { NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL },
 };
 struct retro_core_options_v2 options_id = {
@@ -2575,20 +2309,6 @@ struct retro_core_option_v2_definition option_defs_it[] = {
          { NULL, NULL },
       },
       "enabled"
-   },
-   {
-      "doom_fps",
-      DOOM_FPS_LABEL_IT,
-      NULL,
-      DOOM_FPS_INFO_0_IT,
-      NULL,
-      NULL,
-      {
-         { "disabled",  "Disabled" },
-         { "enabled",   "Enabled" },
-         { NULL, NULL },
-      },
-      "disabled"
    },
    { NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL },
 };
@@ -2704,20 +2424,6 @@ struct retro_core_option_v2_definition option_defs_ja[] = {
       },
       "enabled"
    },
-   {
-      "doom_fps",
-      DOOM_FPS_LABEL_JA,
-      NULL,
-      DOOM_FPS_INFO_0_JA,
-      NULL,
-      NULL,
-      {
-         { "disabled",  "Disabled" },
-         { "enabled",   "Enabled" },
-         { NULL, NULL },
-      },
-      "disabled"
-   },
    { NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL },
 };
 struct retro_core_options_v2 options_ja = {
@@ -2831,20 +2537,6 @@ struct retro_core_option_v2_definition option_defs_ko[] = {
          { NULL, NULL },
       },
       "enabled"
-   },
-   {
-      "doom_fps",
-      DOOM_FPS_LABEL_KO,
-      NULL,
-      DOOM_FPS_INFO_0_KO,
-      NULL,
-      NULL,
-      {
-         { "disabled",  "Disabled" },
-         { "enabled",   "Enabled" },
-         { NULL, NULL },
-      },
-      "disabled"
    },
    { NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL },
 };
@@ -2960,20 +2652,6 @@ struct retro_core_option_v2_definition option_defs_mt[] = {
       },
       "enabled"
    },
-   {
-      "doom_fps",
-      DOOM_FPS_LABEL_MT,
-      NULL,
-      DOOM_FPS_INFO_0_MT,
-      NULL,
-      NULL,
-      {
-         { "disabled",  "Disabled" },
-         { "enabled",   "Enabled" },
-         { NULL, NULL },
-      },
-      "disabled"
-   },
    { NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL },
 };
 struct retro_core_options_v2 options_mt = {
@@ -3087,20 +2765,6 @@ struct retro_core_option_v2_definition option_defs_nl[] = {
          { NULL, NULL },
       },
       "enabled"
-   },
-   {
-      "doom_fps",
-      DOOM_FPS_LABEL_NL,
-      NULL,
-      DOOM_FPS_INFO_0_NL,
-      NULL,
-      NULL,
-      {
-         { "disabled",  "Disabled" },
-         { "enabled",   "Enabled" },
-         { NULL, NULL },
-      },
-      "disabled"
    },
    { NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL },
 };
@@ -3216,20 +2880,6 @@ struct retro_core_option_v2_definition option_defs_no[] = {
       },
       "enabled"
    },
-   {
-      "doom_fps",
-      DOOM_FPS_LABEL_NO,
-      NULL,
-      DOOM_FPS_INFO_0_NO,
-      NULL,
-      NULL,
-      {
-         { "disabled",  "Disabled" },
-         { "enabled",   "Enabled" },
-         { NULL, NULL },
-      },
-      "disabled"
-   },
    { NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL },
 };
 struct retro_core_options_v2 options_no = {
@@ -3343,20 +2993,6 @@ struct retro_core_option_v2_definition option_defs_oc[] = {
          { NULL, NULL },
       },
       "enabled"
-   },
-   {
-      "doom_fps",
-      DOOM_FPS_LABEL_OC,
-      NULL,
-      DOOM_FPS_INFO_0_OC,
-      NULL,
-      NULL,
-      {
-         { "disabled",  "Disabled" },
-         { "enabled",   "Enabled" },
-         { NULL, NULL },
-      },
-      "disabled"
    },
    { NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL },
 };
@@ -3472,20 +3108,6 @@ struct retro_core_option_v2_definition option_defs_pl[] = {
       },
       "enabled"
    },
-   {
-      "doom_fps",
-      DOOM_FPS_LABEL_PL,
-      NULL,
-      DOOM_FPS_INFO_0_PL,
-      NULL,
-      NULL,
-      {
-         { "disabled",  "Disabled" },
-         { "enabled",   "Enabled" },
-         { NULL, NULL },
-      },
-      "disabled"
-   },
    { NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL },
 };
 struct retro_core_options_v2 options_pl = {
@@ -3599,20 +3221,6 @@ struct retro_core_option_v2_definition option_defs_pt_br[] = {
          { NULL, NULL },
       },
       "enabled"
-   },
-   {
-      "doom_fps",
-      DOOM_FPS_LABEL_PT_BR,
-      NULL,
-      DOOM_FPS_INFO_0_PT_BR,
-      NULL,
-      NULL,
-      {
-         { "disabled",  "Disabled" },
-         { "enabled",   "Enabled" },
-         { NULL, NULL },
-      },
-      "disabled"
    },
    { NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL },
 };
@@ -3728,20 +3336,6 @@ struct retro_core_option_v2_definition option_defs_pt_pt[] = {
       },
       "enabled"
    },
-   {
-      "doom_fps",
-      DOOM_FPS_LABEL_PT_PT,
-      NULL,
-      DOOM_FPS_INFO_0_PT_PT,
-      NULL,
-      NULL,
-      {
-         { "disabled",  "Disabled" },
-         { "enabled",   "Enabled" },
-         { NULL, NULL },
-      },
-      "disabled"
-   },
    { NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL },
 };
 struct retro_core_options_v2 options_pt_pt = {
@@ -3855,20 +3449,6 @@ struct retro_core_option_v2_definition option_defs_ro[] = {
          { NULL, NULL },
       },
       "enabled"
-   },
-   {
-      "doom_fps",
-      DOOM_FPS_LABEL_RO,
-      NULL,
-      DOOM_FPS_INFO_0_RO,
-      NULL,
-      NULL,
-      {
-         { "disabled",  "Disabled" },
-         { "enabled",   "Enabled" },
-         { NULL, NULL },
-      },
-      "disabled"
    },
    { NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL },
 };
@@ -3984,20 +3564,6 @@ struct retro_core_option_v2_definition option_defs_ru[] = {
       },
       "enabled"
    },
-   {
-      "doom_fps",
-      DOOM_FPS_LABEL_RU,
-      NULL,
-      DOOM_FPS_INFO_0_RU,
-      NULL,
-      NULL,
-      {
-         { "disabled",  "Disabled" },
-         { "enabled",   "Enabled" },
-         { NULL, NULL },
-      },
-      "disabled"
-   },
    { NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL },
 };
 struct retro_core_options_v2 options_ru = {
@@ -4111,20 +3677,6 @@ struct retro_core_option_v2_definition option_defs_si[] = {
          { NULL, NULL },
       },
       "enabled"
-   },
-   {
-      "doom_fps",
-      DOOM_FPS_LABEL_SI,
-      NULL,
-      DOOM_FPS_INFO_0_SI,
-      NULL,
-      NULL,
-      {
-         { "disabled",  "Disabled" },
-         { "enabled",   "Enabled" },
-         { NULL, NULL },
-      },
-      "disabled"
    },
    { NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL },
 };
@@ -4240,20 +3792,6 @@ struct retro_core_option_v2_definition option_defs_sk[] = {
       },
       "enabled"
    },
-   {
-      "doom_fps",
-      DOOM_FPS_LABEL_SK,
-      NULL,
-      DOOM_FPS_INFO_0_SK,
-      NULL,
-      NULL,
-      {
-         { "disabled",  "Disabled" },
-         { "enabled",   "Enabled" },
-         { NULL, NULL },
-      },
-      "disabled"
-   },
    { NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL },
 };
 struct retro_core_options_v2 options_sk = {
@@ -4367,20 +3905,6 @@ struct retro_core_option_v2_definition option_defs_sr[] = {
          { NULL, NULL },
       },
       "enabled"
-   },
-   {
-      "doom_fps",
-      DOOM_FPS_LABEL_SR,
-      NULL,
-      DOOM_FPS_INFO_0_SR,
-      NULL,
-      NULL,
-      {
-         { "disabled",  "Disabled" },
-         { "enabled",   "Enabled" },
-         { NULL, NULL },
-      },
-      "disabled"
    },
    { NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL },
 };
@@ -4496,20 +4020,6 @@ struct retro_core_option_v2_definition option_defs_sv[] = {
       },
       "enabled"
    },
-   {
-      "doom_fps",
-      DOOM_FPS_LABEL_SV,
-      NULL,
-      DOOM_FPS_INFO_0_SV,
-      NULL,
-      NULL,
-      {
-         { "disabled",  "Disabled" },
-         { "enabled",   "Enabled" },
-         { NULL, NULL },
-      },
-      "disabled"
-   },
    { NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL },
 };
 struct retro_core_options_v2 options_sv = {
@@ -4623,20 +4133,6 @@ struct retro_core_option_v2_definition option_defs_tr[] = {
          { NULL, NULL },
       },
       "enabled"
-   },
-   {
-      "doom_fps",
-      DOOM_FPS_LABEL_TR,
-      NULL,
-      DOOM_FPS_INFO_0_TR,
-      NULL,
-      NULL,
-      {
-         { "disabled",  "Disabled" },
-         { "enabled",   "Enabled" },
-         { NULL, NULL },
-      },
-      "disabled"
    },
    { NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL },
 };
@@ -4752,20 +4248,6 @@ struct retro_core_option_v2_definition option_defs_uk[] = {
       },
       "enabled"
    },
-   {
-      "doom_fps",
-      DOOM_FPS_LABEL_UK,
-      NULL,
-      DOOM_FPS_INFO_0_UK,
-      NULL,
-      NULL,
-      {
-         { "disabled",  "Disabled" },
-         { "enabled",   "Enabled" },
-         { NULL, NULL },
-      },
-      "disabled"
-   },
    { NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL },
 };
 struct retro_core_options_v2 options_uk = {
@@ -4880,20 +4362,6 @@ struct retro_core_option_v2_definition option_defs_val[] = {
       },
       "enabled"
    },
-   {
-      "doom_fps",
-      DOOM_FPS_LABEL_VAL,
-      NULL,
-      DOOM_FPS_INFO_0_VAL,
-      NULL,
-      NULL,
-      {
-         { "disabled",  "Disabled" },
-         { "enabled",   "Enabled" },
-         { NULL, NULL },
-      },
-      "disabled"
-   },
    { NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL },
 };
 struct retro_core_options_v2 options_val = {
@@ -5007,20 +4475,6 @@ struct retro_core_option_v2_definition option_defs_vn[] = {
          { NULL, NULL },
       },
       "enabled"
-   },
-   {
-      "doom_fps",
-      DOOM_FPS_LABEL_VN,
-      NULL,
-      DOOM_FPS_INFO_0_VN,
-      NULL,
-      NULL,
-      {
-         { "disabled",  "Disabled" },
-         { "enabled",   "Enabled" },
-         { NULL, NULL },
-      },
-      "disabled"
    },
    { NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL },
 };

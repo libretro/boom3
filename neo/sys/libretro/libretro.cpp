@@ -352,19 +352,6 @@ static void update_variables(bool startup)
 			invert_y_axis = -1;
 	}
 	
-	// We need setup sequence to be finished to change Cvar values
-	if (!startup) {
-		var.key = "doom_fps";
-		var.value = NULL;
-
-		if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
-		{
-			extern idCVar com_showFPS;
-			com_showFPS.SetBool(strcmp(var.value, "disabled"));
-		}
-		
-	}
-
 	var.key = "doom_mouse_sensitivity";
 	var.value = NULL;
 

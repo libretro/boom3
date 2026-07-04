@@ -174,20 +174,6 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       },
       "3.0"
    },
-   {
-      "doom_fps",
-      "Show FPS",
-      NULL,
-      "Show frame rate on screen.",
-      NULL,
-      NULL,
-      {
-         { "disabled",  "Disabled" },
-         { "enabled",   "Enabled" },
-         { NULL, NULL },
-      },
-      "disabled"
-   },
    { NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL },
 };
 
