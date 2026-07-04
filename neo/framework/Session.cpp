@@ -1789,7 +1789,7 @@ idSessionLocal::SaveGame
 // retro_run's render phase
 bool retro_savestate_active = false;
 
-bool idSessionLocal::SaveGame( const char *saveName, bool autosave, const char* saveFileName ) {
+bool idSessionLocal::SaveGame( const char *saveName, bool autosave, const char* saveFileName, idFile *overrideFile ) {
 #ifdef	ID_DEDICATED
 	common->Printf( "Dedicated servers cannot save games.\n" );
 	return false;
@@ -1815,7 +1815,7 @@ bool idSessionLocal::SaveGame( const char *saveName, bool autosave, const char* 
 		return false;
 	}
 
-	if ( Sys_GetDriveFreeSpace( cvarSystem->GetCVarString( "fs_savepath" ) ) < 25 ) {
+	if ( !overrideFile && Sys_GetDriveFreeSpace( cvarSystem->GetCVarString( "fs_savepath" ) ) < 25 ) {
 		MessageBox( MSG_OK, common->GetLanguageDict()->GetString ( "#str_04313" ), common->GetLanguageDict()->GetString ( "#str_04314" ), true );
 		common->Printf( "Not enough drive space to save the game\n" );
 		return false;
@@ -1839,8 +1839,9 @@ bool idSessionLocal::SaveGame( const char *saveName, bool autosave, const char* 
 	descriptionFile = gameFile;
 	descriptionFile.SetFileExtension( ".txt" );
 
-	// Open savegame file
-	idFile *fileOut = fileSystem->OpenFileWrite( gameFile );
+	// Open savegame file (or write into the caller-provided file, e.g. an
+	// idFile_Memory for libretro savestates - no disk I/O in that path)
+	idFile *fileOut = overrideFile ? overrideFile : fileSystem->OpenFileWrite( gameFile );
 	if ( fileOut == NULL ) {
 		common->Warning( "Failed to open save file '%s'\n", gameFile.c_str() );
 		if ( pauseWorld ) {
@@ -1873,11 +1874,14 @@ bool idSessionLocal::SaveGame( const char *saveName, bool autosave, const char* 
 	// let the game save its state
 	game->SaveGame( fileOut );
 
-	// close the sava game file
-	fileSystem->CloseFile( fileOut );
+	// close the sava game file (caller owns and reads back memory targets)
+	if ( !overrideFile ) {
+		fileSystem->CloseFile( fileOut );
+	}
 
-	// Write screenshot
-	if ( !autosave ) {
+	// Write screenshot (never for memory targets: no files, and HW-render
+	// GL may not be available outside the render phase)
+	if ( !autosave && !overrideFile ) {
 		renderSystem->CropRenderSize( 320, 240, false );
 		game->Draw( 0 );
 		renderSystem->CaptureRenderToFile( previewFile, true );
@@ -1886,38 +1890,40 @@ bool idSessionLocal::SaveGame( const char *saveName, bool autosave, const char* 
 
 	// Write description, which is just a text file with
 	// the unclean save name on line 1, map name on line 2, screenshot on line 3
-	idFile *fileDesc = fileSystem->OpenFileWrite( descriptionFile );
-	if ( fileDesc == NULL ) {
-		common->Warning( "Failed to open description file '%s'\n", descriptionFile.c_str() );
-		if ( pauseWorld ) {
-			soundSystem->SetPlayingSoundWorld( pauseWorld );
-			pauseWorld->UnPause();
+	if ( !overrideFile ) {
+		idFile *fileDesc = fileSystem->OpenFileWrite( descriptionFile );
+		if ( fileDesc == NULL ) {
+			common->Warning( "Failed to open description file '%s'\n", descriptionFile.c_str() );
+			if ( pauseWorld ) {
+				soundSystem->SetPlayingSoundWorld( pauseWorld );
+				pauseWorld->UnPause();
+			}
+			return false;
 		}
-		return false;
+
+		idStr description = saveName;
+		description.Replace( "\\", "\\\\" );
+		description.Replace( "\"", "\\\"" );
+
+		const idDeclEntityDef *mapDef = static_cast<const idDeclEntityDef *>(declManager->FindType( DECL_MAPDEF, mapName, false ));
+		if ( mapDef ) {
+			mapName = common->GetLanguageDict()->GetString( mapDef->dict.GetString( "name", mapName ) );
+		}
+
+		fileDesc->Printf( "\"%s\"\n", description.c_str() );
+		fileDesc->Printf( "\"%s\"\n", mapName.c_str());
+
+		if ( autosave ) {
+			idStr sshot = mapSpawnData.serverInfo.GetString( "si_map" );
+			sshot.StripPath();
+			sshot.StripFileExtension();
+			fileDesc->Printf( "\"guis/assets/autosave/%s\"\n", sshot.c_str() );
+		} else {
+			fileDesc->Printf( "\"\"\n" );
+		}
+
+		fileSystem->CloseFile( fileDesc );
 	}
-
-	idStr description = saveName;
-	description.Replace( "\\", "\\\\" );
-	description.Replace( "\"", "\\\"" );
-
-	const idDeclEntityDef *mapDef = static_cast<const idDeclEntityDef *>(declManager->FindType( DECL_MAPDEF, mapName, false ));
-	if ( mapDef ) {
-		mapName = common->GetLanguageDict()->GetString( mapDef->dict.GetString( "name", mapName ) );
-	}
-
-	fileDesc->Printf( "\"%s\"\n", description.c_str() );
-	fileDesc->Printf( "\"%s\"\n", mapName.c_str());
-
-	if ( autosave ) {
-		idStr sshot = mapSpawnData.serverInfo.GetString( "si_map" );
-		sshot.StripPath();
-		sshot.StripFileExtension();
-		fileDesc->Printf( "\"guis/assets/autosave/%s\"\n", sshot.c_str() );
-	} else {
-		fileDesc->Printf( "\"\"\n" );
-	}
-
-	fileSystem->CloseFile( fileDesc );
 
 	if ( pauseWorld ) {
 		soundSystem->SetPlayingSoundWorld( pauseWorld );
@@ -1936,7 +1942,7 @@ bool idSessionLocal::SaveGame( const char *saveName, bool autosave, const char* 
 idSessionLocal::LoadGame
 ===============
 */
-bool idSessionLocal::LoadGame( const char *saveName ) {
+bool idSessionLocal::LoadGame( const char *saveName, idFile *overrideFile ) {
 #ifdef	ID_DEDICATED
 	common->Printf( "Dedicated servers cannot load games.\n" );
 	return false;
@@ -1952,17 +1958,26 @@ bool idSessionLocal::LoadGame( const char *saveName ) {
 	//Hide the dialog box if it is up.
 	StopBox();
 
-	loadFile = saveName;
-	ScrubSaveGameFileName( loadFile );
-	loadFile.SetFileExtension( ".save" );
+	if ( overrideFile ) {
+		// caller-provided file (e.g. an idFile_Memory wrapping a libretro
+		// savestate buffer - no disk I/O). The normal savegameFile lifecycle
+		// applies: every exit path closes it via fileSystem->CloseFile,
+		// which deletes the idFile, so the caller must heap-allocate and
+		// not touch it after this call.
+		savegameFile = overrideFile;
+	} else {
+		loadFile = saveName;
+		ScrubSaveGameFileName( loadFile );
+		loadFile.SetFileExtension( ".save" );
 
-	in = "savegames/";
-	in += loadFile;
+		in = "savegames/";
+		in += loadFile;
 
-	// Open savegame file
-	// only allow loads from the game directory because we don't want a base game to load
-	idStr game = cvarSystem->GetCVarString( "fs_game" );
-	savegameFile = fileSystem->OpenFileRead( in, true, game.Length() ? game : NULL );
+		// Open savegame file
+		// only allow loads from the game directory because we don't want a base game to load
+		idStr game = cvarSystem->GetCVarString( "fs_game" );
+		savegameFile = fileSystem->OpenFileRead( in, true, game.Length() ? game : NULL );
+	}
 
 	if ( savegameFile == NULL ) {
 		common->Warning( "Couldn't open savegame file %s", in.c_str() );

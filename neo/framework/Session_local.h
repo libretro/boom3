@@ -167,9 +167,9 @@ public:
 	void				ScrubSaveGameFileName( idStr &saveFileName ) const;
 	idStr				GetAutoSaveName( const char *mapName ) const;
 
-	bool				LoadGame(const char *saveName);
+	bool				LoadGame(const char *saveName, idFile *overrideFile = NULL);
 	// DG: added saveFileName so we can set a sensible filename for autosaves (see comment in MoveToNewMap())
-	bool				SaveGame(const char *saveName, bool autosave = false, const char* saveFileName = NULL);
+	bool				SaveGame(const char *saveName, bool autosave = false, const char* saveFileName = NULL, idFile *overrideFile = NULL);
 
 	bool				QuickSave();
 	bool				QuickLoad();

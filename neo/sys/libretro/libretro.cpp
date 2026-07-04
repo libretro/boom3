@@ -1401,19 +1401,16 @@ static bool RetroBuildState(void)
 	if (!sessLocal.mapSpawned)
 		return false;
 
+	// serialize straight into memory: no disk I/O anywhere in this path
+	idFile_Memory mem(RETRO_STATE_NAME ".save");
 	retro_savestate_active = true;
-	bool ok = sessLocal.SaveGame(RETRO_STATE_NAME, true);
+	bool ok = sessLocal.SaveGame(RETRO_STATE_NAME, true, NULL, &mem);
 	retro_savestate_active = false;
-	if (!ok)
+	if (!ok || mem.Length() <= 0)
 		return false;
 
-	void *buf = NULL;
-	int len = fileSystem->ReadFile("savegames/" RETRO_STATE_NAME ".save", &buf, NULL);
-	if (len <= 0 || !buf)
-		return false;
-	retro_state_cache.SetNum(len);
-	memcpy(retro_state_cache.Ptr(), buf, len);
-	fileSystem->FreeFile(buf);
+	retro_state_cache.SetNum(mem.Length());
+	memcpy(retro_state_cache.Ptr(), mem.GetDataPtr(), mem.Length());
 	retro_state_cache_tic = com_ticNumber;
 	return true;
 }
@@ -1440,14 +1437,14 @@ bool retro_unserialize(const void *data_, size_t size)
 	if (!data_ || size == 0 || !fileSystem || !fileSystem->IsInitialized())
 		return false;
 
-	idFile *f = fileSystem->OpenFileWrite("savegames/" RETRO_STATE_NAME ".save");
-	if (!f)
-		return false;
-	f->Write(data_, (int)size);
-	fileSystem->CloseFile(f);
+	// wrap the frontend's buffer in a read-mode memory file: no disk I/O.
+	// Heap-allocated because LoadGame's savegameFile lifecycle deletes it
+	// (fileSystem->CloseFile) on every exit path.
+	idFile_Memory *mem = new idFile_Memory(RETRO_STATE_NAME ".save",
+	                                       (const char *)data_, (int)size);
 
 	retro_savestate_active = true;
-	bool ok = sessLocal.LoadGame(RETRO_STATE_NAME);
+	bool ok = sessLocal.LoadGame(RETRO_STATE_NAME, mem);
 	retro_savestate_active = false;
 
 	// state changed out from under the cache
