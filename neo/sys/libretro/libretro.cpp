@@ -872,13 +872,13 @@ void Sys_SetKeys(){
 			}
 		}
 
-		// Mouse buttons
+		// Mouse buttons (edge-detected state)
 		static const struct { unsigned retro_id; int doom_key; } mouse_buttons[] = {
 			{ RETRO_DEVICE_ID_MOUSE_LEFT,      K_MOUSE1 },
 			{ RETRO_DEVICE_ID_MOUSE_RIGHT,     K_MOUSE2 },
 			{ RETRO_DEVICE_ID_MOUSE_MIDDLE,    K_MOUSE3 },
-			{ RETRO_DEVICE_ID_MOUSE_WHEELUP,   K_MOUSE4 },
-			{ RETRO_DEVICE_ID_MOUSE_WHEELDOWN, K_MOUSE5 },
+			{ RETRO_DEVICE_ID_MOUSE_BUTTON_4,  K_MOUSE4 },
+			{ RETRO_DEVICE_ID_MOUSE_BUTTON_5,  K_MOUSE5 },
 		};
 		for (int i = 0; i < 5; i++)
 		{
@@ -889,6 +889,20 @@ void Sys_SetKeys(){
 				kb_mouse_btn[i] = now;
 			}
 		}
+		// Mouse wheel: the frontend reports a one-frame pulse per detent.
+		// The old code edge-detected it like a held button mapped to
+		// K_MOUSE4/5, which (a) broke the game's default MWHEELUP/DOWN
+		// weapon-cycle binds and (b) delivered the release a frame late.
+		// Send a proper press+release pulse on the real wheel keys in the
+		// same frame the detent arrives.
+		if (input_cb(port, RETRO_DEVICE_MOUSE, 0, RETRO_DEVICE_ID_MOUSE_WHEELUP)) {
+			Key_Event(K_MWHEELUP, 1);
+			Key_Event(K_MWHEELUP, 0);
+		}
+		if (input_cb(port, RETRO_DEVICE_MOUSE, 0, RETRO_DEVICE_ID_MOUSE_WHEELDOWN)) {
+			Key_Event(K_MWHEELDOWN, 1);
+			Key_Event(K_MWHEELDOWN, 0);
+		}
 	}
 }
 
@@ -897,12 +911,19 @@ void Sys_SetMouse() {
     int slowdown = 1024 * (framerate / 60.0f);
     int effective_invert = (sessLocal.guiActive != NULL) ? 1 : invert_y_axis;
 
-    // Always read physical mouse delta regardless of device mode
+    // Always read physical mouse delta regardless of device mode.
+    // Scale in float and carry the fractional remainder across frames:
+    // the old (int) truncation silently dropped sub-unit deltas, so slow
+    // precise aiming lost movement entirely at sensitivity < 1 and gained
+    // quantization notchiness at any non-integer sensitivity.
     {
-        int dx = input_cb(0, RETRO_DEVICE_MOUSE, 0, RETRO_DEVICE_ID_MOUSE_X);
-        int dy = effective_invert * input_cb(0, RETRO_DEVICE_MOUSE, 0, RETRO_DEVICE_ID_MOUSE_Y);
-        dx = (int)(dx * mouse_sensitivity);
-        dy = (int)(dy * mouse_sensitivity);
+        static float mrem_x = 0.0f, mrem_y = 0.0f;
+        float fdx = input_cb(0, RETRO_DEVICE_MOUSE, 0, RETRO_DEVICE_ID_MOUSE_X) * mouse_sensitivity + mrem_x;
+        float fdy = effective_invert * input_cb(0, RETRO_DEVICE_MOUSE, 0, RETRO_DEVICE_ID_MOUSE_Y) * mouse_sensitivity + mrem_y;
+        int dx = (int)fdx;
+        int dy = (int)fdy;
+        mrem_x = fdx - dx;
+        mrem_y = fdy - dy;
         if (dx || dy)
             Mouse_Event(dx, dy);
     }
@@ -925,7 +946,21 @@ void Sys_SetMouse() {
         if (rsy < -analog_deadzone) rsy = rsy + analog_deadzone;
     } else rsy = 0;
 
-    Mouse_Event(rsx / slowdown, rsy / slowdown);
+    // float scaling with fractional carry: the old integer division by
+    // 'slowdown' (1024 * framerate/60) truncated every deflection below one
+    // full step to zero, adding a huge artificial dead band on top of the
+    // configured deadzone and making slow analog aiming skip
+    {
+        static float arem_x = 0.0f, arem_y = 0.0f;
+        float fx = rsx / (float)slowdown + arem_x;
+        float fy = rsy / (float)slowdown + arem_y;
+        int ix = (int)fx;
+        int iy = (int)fy;
+        arem_x = fx - ix;
+        arem_y = fy - iy;
+        if (ix || iy)
+            Mouse_Event(ix, iy);
+    }
 }
 
 #define MAX_CHANNELS 2

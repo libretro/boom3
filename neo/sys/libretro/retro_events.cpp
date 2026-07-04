@@ -280,12 +280,19 @@ simulated2 smouse[SKEYS_LENGTH];
 uint8_t snum = 0;
 uint8_t snum2 = 0;
 uint8_t schar_num = 0;
+// FIFO read cursors: events must be delivered in arrival order (the old
+// drain popped from the tail, reversing same-frame ordering - e.g. the
+// wheel's press+release pulse arrived as release-then-press and was eaten)
+static uint8_t sread = 0;
+static uint8_t s2read = 0;
+static uint8_t scread = 0;
 
 // drop any queued-but-undelivered events (used when the game is unloaded)
 void LibRetro_ResetInputQueues(void) {
 	snum = 0;
 	snum2 = 0;
 	schar_num = 0;
+	sread = s2read = scread = 0;
 }
 
 void Char_Event(int c) {
@@ -324,8 +331,11 @@ sysEvent_t Sys_GetEvent() {
 	// Poll the frontend exactly once per drain pass. The old code returned
 	// SE_NONE right after polling, which ended the event loop with the
 	// freshly queued events still pending - every input arrived one frame
-	// late. Now we poll and immediately fall through to draining.
-	if (snum == 0 && snum2 == 0 && schar_num == 0) {
+	// late. Now we poll and immediately fall through to draining, in FIFO
+	// (arrival) order.
+	if (sread >= snum && s2read >= snum2 && scread >= schar_num) {
+		snum = snum2 = schar_num = 0;
+		sread = s2read = scread = 0;
 		if (polled_this_pass) {
 			// queues fully drained after a poll: end of this pass
 			polled_this_pass = false;
@@ -336,36 +346,34 @@ sysEvent_t Sys_GetEvent() {
 		polled_this_pass = true;
 	}
 
-	if (snum2 > 0) {
-		snum2--;
-
+	if (s2read < snum2) {
 		res.evType = SE_MOUSE;
-		res.evValue = smouse[snum2].x;
-		res.evValue2 = smouse[snum2].y;
+		res.evValue = smouse[s2read].x;
+		res.evValue2 = smouse[s2read].y;
 
-		mouse_polls.Append(mouse_poll_t(M_DELTAX, smouse[snum2].x));
-		mouse_polls.Append(mouse_poll_t(M_DELTAY, smouse[snum2].y));
+		mouse_polls.Append(mouse_poll_t(M_DELTAX, smouse[s2read].x));
+		mouse_polls.Append(mouse_poll_t(M_DELTAY, smouse[s2read].y));
 
+		s2read++;
 		return res;
 	}
 
-	if (snum > 0) {
-		snum--;
-
+	if (sread < snum) {
 		res.evType = SE_KEY;
-		res.evValue = skeys[snum].key;
-		res.evValue2 = skeys[snum].val;
+		res.evValue = skeys[sread].key;
+		res.evValue2 = skeys[sread].val;
 
-		kbd_polls.Append(kbd_poll_t(skeys[snum].key, skeys[snum].val));
+		kbd_polls.Append(kbd_poll_t(skeys[sread].key, skeys[sread].val));
 
+		sread++;
 		return res;
 	}
 
 	// drain char events after key/mouse
-	if (schar_num > 0) {
-		schar_num--;
+	if (scread < schar_num) {
 		res.evType  = SE_CHAR;
-		res.evValue = schar_buf[schar_num].key;
+		res.evValue = schar_buf[scread].key;
+		scread++;
 		return res;
 	}
 
