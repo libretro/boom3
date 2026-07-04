@@ -485,6 +485,7 @@ enum retro_language
    RETRO_LANGUAGE_GALICIAN            = 33,
    RETRO_LANGUAGE_NORWEGIAN           = 34,
    RETRO_LANGUAGE_IRISH               = 35,
+   RETRO_LANGUAGE_THAI                = 36,
    RETRO_LANGUAGE_LAST,
 
    /** Defined to ensure that <tt>sizeof(retro_language) == sizeof(int)</tt>. Do not use. */
@@ -518,6 +519,9 @@ enum retro_language
 
 /* Video ram lets a frontend peek into a game systems video RAM (VRAM). */
 #define RETRO_MEMORY_VIDEO_RAM   3
+
+/* ROM lets a frontend peek into a game systems ROM. */
+#define RETRO_MEMORY_ROM   4
 
 /** @} */
 
@@ -1696,20 +1700,6 @@ enum retro_mod
 #define RETRO_ENVIRONMENT_SET_SERIALIZATION_QUIRKS 44
 
 /**
- * The frontend will try to use a "shared" context when setting up a hardware context.
- * Mostly applicable to OpenGL.
- *
- * In order for this to have any effect,
- * the core must call \c RETRO_ENVIRONMENT_SET_HW_RENDER at some point
- * if it hasn't already.
- *
- * @param data Ignored.
- * @returns \c true if the environment call is available
- * and the frontend supports shared hardware contexts.
- */
-#define RETRO_ENVIRONMENT_SET_HW_SHARED_CONTEXT (44 | RETRO_ENVIRONMENT_EXPERIMENTAL)
-
-/**
  * Returns an interface that the core can use to access the file system.
  * Should be called as early as possible.
  *
@@ -2587,6 +2577,155 @@ enum retro_mod
 */
 #define RETRO_ENVIRONMENT_GET_TARGET_SAMPLE_RATE (81 | RETRO_ENVIRONMENT_EXPERIMENTAL)
 
+/**
+ * Returns the local player's netplay client index when using frontend-managed
+ * multiplayer/rollback netplay.
+ *
+ * @param[out] data <tt>unsigned *</tt>.
+ * Pointer to an unsigned integer where the frontend stores the local client index.
+ * 0 indicates host. Values > 0 indicate connected clients.
+ * @return \\c true if the environment call is available and value was written,
+ * \\c false otherwise.
+*/
+#define RETRO_ENVIRONMENT_GET_NETPLAY_CLIENT_INDEX (82 | RETRO_ENVIRONMENT_EXPERIMENTAL)
+
+/**
+ * Allocates a region of executable memory, optionally dual-mapped.
+ *
+ * The frontend allocates memory suitable for JIT code generation and returns
+ * it to the core.  The returned mode tells the core how to use the memory:
+ *
+ *  - \c RETRO_EXEC_MEM_MODE_UNRESTRICTED: The platform has no restrictions
+ *    on executable memory.  The core should self-allocate.  Do not call
+ *    this environment with a non-zero size in this mode.
+ *  - \c RETRO_EXEC_MEM_MODE_RWX: Single mapping, read-write-execute.
+ *    \c rx and \c rw point to the same region.
+ *  - \c RETRO_EXEC_MEM_MODE_WX_TOGGLE: Single mapping, write XOR execute.
+ *    \c rx and \c rw point to the same region; the core must toggle
+ *    protections itself (e.g. mprotect) before writing or executing.
+ *  - \c RETRO_EXEC_MEM_MODE_DUAL_MAP: Separate read-execute and read-write
+ *    mappings of the same physical pages.  The core writes through \c rw
+ *    and executes from \c rx.
+ *
+ * Returned memory is page-aligned.  The frontend tracks all allocations
+ * and frees any outstanding ones when the core is unloaded.
+ *
+ * The core sets \c version and \c size before calling.  The frontend fills
+ * in \c mode, \c rx, and \c rw on success.
+ *
+ * If \c size is 0, this is a probe: the frontend returns \c true and sets
+ * \c mode to indicate what kind of memory it would provide, but does not
+ * allocate.  \c rx and \c rw will be NULL.  Cores can use this to decide
+ * whether to take a JIT code path before committing to an allocation.
+ *
+ * @param[in,out] data <tt>struct retro_exec_mem_alloc *</tt>.
+ * @return \c true if the allocation succeeded, \c false otherwise.
+ *         If the frontend does not support this call, returns \c false
+ *         and the core should fall back to managing its own executable memory.
+ * @see retro_exec_mem_alloc
+ * @see RETRO_ENVIRONMENT_EXEC_MEM_FREE
+ */
+#define RETRO_ENVIRONMENT_EXEC_MEM_ALLOC 83
+
+/**
+ * Frees a region of executable memory previously allocated with
+ * \c RETRO_ENVIRONMENT_EXEC_MEM_ALLOC.
+ *
+ * This is optional; the frontend will free all outstanding allocations
+ * when the core is unloaded.  Cores that never need to release memory
+ * mid-session need not call this.
+ *
+ * @param[in] data <tt>struct retro_exec_mem_free *</tt>.
+ * @return \c true if the memory was freed, \c false otherwise.
+ * @see retro_exec_mem_free
+ * @see RETRO_ENVIRONMENT_EXEC_MEM_ALLOC
+ */
+#define RETRO_ENVIRONMENT_EXEC_MEM_FREE  84
+
+/**
+ * Queries whether the frontend can accept audio samples in 32-bit
+ * native-endian IEEE-754 float format, and, if so, obtains a float
+ * sample-batch callback the core may use in place of the standard
+ * int16 \c retro_audio_sample_batch_t callback.
+ *
+ * Rationale: frontend resamplers and DSP chains operate on float, and
+ * most modern audio drivers expose a native float output path. A core
+ * whose audio is float-native (e.g. one with a float software mixer or
+ * a float decoder) currently has to squash its output down to int16 at
+ * the libretro boundary, only for the frontend to immediately widen it
+ * back to float. Negotiating float output here removes that redundant
+ * int16<->float round-trip on both sides of the boundary.
+ *
+ * On success the frontend sets \c batch in the supplied
+ * \c retro_audio_sample_float_callback. The core may call that function
+ * from within \c retro_run() (or from the audio callback registered via
+ * \c RETRO_ENVIRONMENT_SET_AUDIO_CALLBACK), passing interleaved stereo
+ * frames of float samples normalized to the range [-1.0, 1.0]. The
+ * return value has the same meaning as \c retro_audio_sample_batch_t.
+ *
+ * Contract:
+ *  - The core must commit to a single output format for the lifetime of
+ *    a loaded game; it must not mix int16 and float batch calls. Perform
+ *    negotiation once, during \c retro_load_game() (after any
+ *    \c RETRO_ENVIRONMENT_SET_AUDIO_CALLBACK call).
+ *  - If this returns \c false the core must keep using the int16
+ *    \c retro_audio_sample_batch_t / \c retro_audio_sample_t callbacks.
+ *  - The \c batch function pointer is owned by the frontend and remains
+ *    valid until \c retro_unload_game().
+ *  - Frontends that do not recognize this call return \c false, so older
+ *    frontends transparently keep the int16 path.
+ *
+ * @param[out] data <tt>struct retro_audio_sample_float_callback *</tt>.
+ * @return \c true if float audio output is supported, \c false otherwise.
+ * @see retro_audio_sample_batch_float_t
+ * @see retro_audio_sample_float_callback
+ */
+#define RETRO_ENVIRONMENT_GET_AUDIO_SAMPLE_BATCH_FLOAT (85 | RETRO_ENVIRONMENT_EXPERIMENTAL)
+
+/**
+ * Queries how much system memory the frontend has available.
+ *
+ * A core may use this to size large internal allocations (a memory pool,
+ * heap or asset cache) to the running machine instead of to a fixed
+ * compile-time default. The reported values are advisory snapshots: \c free
+ * in particular may include reclaimable cache and can change immediately
+ * after the call, so a core should take a fraction of it and clamp the
+ * result -- it must never assume it can allocate the whole amount.
+ *
+ * Frontends that do not implement this return \c false, in which case the
+ * core is expected to fall back to its own defaults.
+ *
+ * @param[out] data <tt>struct retro_memory_status *</tt>.
+ * @return \c true if the frontend filled in the structure, \c false otherwise.
+ * @see retro_memory_status
+ */
+#define RETRO_ENVIRONMENT_GET_MEMORY_STATUS (86 | RETRO_ENVIRONMENT_EXPERIMENTAL)
+
+/**
+ * The frontend will try to use a "shared" context when setting up a hardware context.
+ * Mostly applicable to OpenGL.
+ *
+ * In order for this to have any effect,
+ * the core must call \c RETRO_ENVIRONMENT_SET_HW_RENDER at some point
+ * if it hasn't already.
+ *
+ * @param data Ignored.
+ * @returns \c true if the environment call is available
+ * and the frontend supports shared hardware contexts.
+ */
+#define RETRO_ENVIRONMENT_SET_HW_SHARED_CONTEXT (87 | RETRO_ENVIRONMENT_EXPERIMENTAL)
+
+/**
+ * Result of \c RETRO_ENVIRONMENT_GET_MEMORY_STATUS.
+ *
+ * Sizes are in bytes; a field the frontend cannot determine is left at 0.
+ */
+struct retro_memory_status
+{
+   uint64_t free;   /**< Physical memory currently available to allocate. */
+   uint64_t total;  /**< Total physical memory installed. */
+};
+
 /**@}*/
 
 /**
@@ -2921,6 +3060,19 @@ typedef int (RETRO_CALLCONV *retro_vfs_rename_t)(const char *old_path, const cha
 typedef int (RETRO_CALLCONV *retro_vfs_stat_t)(const char *path, int32_t *size);
 
 /**
+ * Gets information about the given file (64-bit size).
+ *
+ * @param path The path to the file to query.
+ * @param[out] size The reported size of the file in bytes.
+ * May be \c NULL, in which case this value is ignored.
+ * @return A bitmask of \c RETRO_VFS_STAT flags,
+ * or 0 if \c path doesn't refer to a valid file.
+ * @see RETRO_VFS_STAT
+ * @since VFS API v4
+ */
+typedef int (RETRO_CALLCONV *retro_vfs_stat_64_t)(const char *path, int64_t *size);
+
+/**
  * Creates a directory at the given path.
  *
  * @param dir The desired location of the new directory.
@@ -3075,6 +3227,10 @@ struct retro_vfs_interface
 
    /** @copydoc retro_vfs_closedir_t */
    retro_vfs_closedir_t closedir;
+
+   /* VFS API v4 */
+   /** @copydoc retro_vfs_stat_64_t */
+   retro_vfs_stat_64_t stat_64;
 };
 
 /**
@@ -4215,6 +4371,12 @@ struct retro_log_callback
 /** Indicates CPU support for the ASIMD instruction set. */
 #define RETRO_SIMD_ASIMD    (1 << 21)
 
+/** Indicates CPU support for the AVX512 instruction set. */
+#define RETRO_SIMD_AVX512   (1 << 22)
+
+/** Indicates CPU support for the LZCNT instruction (x86 ABM / ARM CLZ). */
+#define RETRO_SIMD_LZCNT    (1 << 23)
+
 /** @} */
 
 /**
@@ -4476,15 +4638,18 @@ enum retro_sensor_action
 /* Id values for SENSOR types. */
 
 /**
- * Returns the device's acceleration along its local X axis minus the effect of gravity, in m/s^2.
+ * Returns the device's acceleration along its local X axis, in g (standard gravity, 9.80665 m/s^2).
+ * Includes the effect of gravity;
+ * a device at rest on a table will have values close to 0, 0, 1.
  *
- * Positive values mean that the device is accelerating to the right.
+ * Positive values mean that the device is accelerating to the right,
  * assuming the user is looking at it head-on.
  */
 #define RETRO_SENSOR_ACCELEROMETER_X 0
 
 /**
- * Returns the device's acceleration along its local Y axis minus the effect of gravity, in m/s^2.
+ * Returns the device's acceleration along its local Y axis, in g (standard gravity, 9.80665 m/s^2).
+ * Includes the effect of gravity.
  *
  * Positive values mean that the device is accelerating upwards,
  * assuming the user is looking at it head-on.
@@ -4492,7 +4657,8 @@ enum retro_sensor_action
 #define RETRO_SENSOR_ACCELEROMETER_Y 1
 
 /**
- * Returns the the device's acceleration along its local Z axis minus the effect of gravity, in m/s^2.
+ * Returns the device's acceleration along its local Z axis, in g (standard gravity, 9.80665 m/s^2).
+ * Includes the effect of gravity.
  *
  * Positive values indicate forward acceleration towards the user,
  * assuming the user is looking at the device head-on.
@@ -7395,6 +7561,45 @@ struct retro_device_power
 
 /** @} */
 
+/** @defgroup Executable Memory Modes
+ * Describes how the frontend provisions executable memory.
+ * @{
+ */
+
+#define RETRO_EXEC_MEM_MODE_UNAVAILABLE  0 /**< No executable memory available */
+#define RETRO_EXEC_MEM_MODE_UNRESTRICTED 1 /**< No restrictions; core should self-allocate */
+#define RETRO_EXEC_MEM_MODE_RWX          2 /**< Single mapping, read-write-execute */
+#define RETRO_EXEC_MEM_MODE_WX_TOGGLE    3 /**< Single mapping, write XOR execute (core toggles) */
+#define RETRO_EXEC_MEM_MODE_DUAL_MAP     4 /**< Separate R-X and R-W mappings of same pages */
+
+/**
+ * Parameters for \c RETRO_ENVIRONMENT_EXEC_MEM_ALLOC.
+ *
+ * The core fills in \c version and \c size before calling.
+ * The frontend fills in \c mode, \c rx, and \c rw on success.
+ * @see RETRO_ENVIRONMENT_EXEC_MEM_ALLOC
+ */
+struct retro_exec_mem_alloc
+{
+   unsigned version;  /**< Set by core (currently 1). */
+   size_t   size;     /**< Set by core: requested bytes.  */
+   unsigned mode;     /**< Set by frontend: one of \c RETRO_EXEC_MEM_MODE_*. */
+   void    *rx;       /**< Set by frontend: execute from this pointer. */
+   void    *rw;       /**< Set by frontend: write through this pointer.
+                           Equal to \c rx when mode is RWX or WX_TOGGLE. */
+};
+
+/**
+ * Parameters for \c RETRO_ENVIRONMENT_EXEC_MEM_FREE.
+ * @see RETRO_ENVIRONMENT_EXEC_MEM_FREE
+ */
+struct retro_exec_mem_free
+{
+   void *rx;  /**< The \c rx pointer returned by a previous alloc call. */
+};
+
+/** @} */
+
 /**
  * @defgroup Callbacks
  * @{
@@ -7464,6 +7669,40 @@ typedef void (RETRO_CALLCONV *retro_audio_sample_t)(int16_t left, int16_t right)
  */
 typedef size_t (RETRO_CALLCONV *retro_audio_sample_batch_t)(const int16_t *data,
       size_t frames);
+
+/**
+ * Renders multiple audio frames in one go, in float format.
+ *
+ * This is the float counterpart of \c retro_audio_sample_batch_t. It is
+ * only valid after the frontend has answered \c true to
+ * \c RETRO_ENVIRONMENT_GET_AUDIO_SAMPLE_BATCH_FLOAT, and must not be
+ * mixed with the int16 callbacks within the same loaded game.
+ *
+ * @param data A pointer to interleaved stereo float sample frames,
+ *     normalized to the range [-1.0, 1.0]. One frame is a left/right
+ *     pair, e.g. <tt>float buf[4] = { l, r, l, r };</tt> is 2 frames.
+ * @param frames The number of frames represented in \c data.
+ *
+ * @return The number of frames that were processed.
+ *
+ * @see RETRO_ENVIRONMENT_GET_AUDIO_SAMPLE_BATCH_FLOAT
+ * @see retro_audio_sample_batch_t
+ */
+typedef size_t (RETRO_CALLCONV *retro_audio_sample_batch_float_t)(
+      const float *data, size_t frames);
+
+/**
+ * Float audio sample-batch callback handed to the core in response to
+ * \c RETRO_ENVIRONMENT_GET_AUDIO_SAMPLE_BATCH_FLOAT.
+ *
+ * @see RETRO_ENVIRONMENT_GET_AUDIO_SAMPLE_BATCH_FLOAT
+ */
+struct retro_audio_sample_float_callback
+{
+   /* Set by the frontend. The core calls this instead of the int16
+    * batch callback once float output has been negotiated. */
+   retro_audio_sample_batch_float_t batch;
+};
 
 /**
  * Polls input.

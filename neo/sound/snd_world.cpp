@@ -32,6 +32,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "renderer/RenderWorld.h"
 
 #include "sound/snd_local.h"
+#include "sound/snd_mix_kernels.h"
 
 /*
 ==================
@@ -49,60 +50,10 @@ void idSoundWorldLocal::Init( idRenderWorld *renderWorld ) {
 	listenerArea = 0;
 	listenerAreaName = "Undefined";
 
-	if (idSoundSystemLocal::useEFXReverb) {
-		if (!soundSystemLocal.alIsAuxiliaryEffectSlot(listenerSlot)) {
-			alGetError();
-
-			soundSystemLocal.alGenAuxiliaryEffectSlots(1, &listenerSlot);
-			ALuint e = alGetError();
-			if (e != AL_NO_ERROR) {
-				common->Warning("idSoundWorldLocal::Init: alGenAuxiliaryEffectSlots failed: 0x%x", e);
-				listenerSlot = AL_EFFECTSLOT_NULL;
-			}
-		}
-
-		if (!listenerAreFiltersInitialized) {
-			listenerAreFiltersInitialized = true;
-
-			alGetError();
-			soundSystemLocal.alGenFilters(2, listenerFilters);
-			ALuint e = alGetError();
-			if (e != AL_NO_ERROR) {
-				common->Warning("idSoundWorldLocal::Init: alGenFilters failed: 0x%x", e);
-				listenerFilters[0] = AL_FILTER_NULL;
-				listenerFilters[1] = AL_FILTER_NULL;
-			} else {
-				soundSystemLocal.alFilteri(listenerFilters[0], AL_FILTER_TYPE, AL_FILTER_LOWPASS);
-				// original EAX occusion value was -1150
-				// default OCCLUSIONLFRATIO is 0.25
-				// default OCCLUSIONDIRECTRATIO is 1.0
-
-				// pow(10.0, (-1150*0.25*1.0)/2000.0)
-				soundSystemLocal.alFilterf(listenerFilters[0], AL_LOWPASS_GAIN, 0.718208f);
-				// pow(10.0, (-1150*1.0)/2000.0)
-				soundSystemLocal.alFilterf(listenerFilters[0], AL_LOWPASS_GAINHF, 0.266073f);
-
-
-				soundSystemLocal.alFilteri(listenerFilters[1], AL_FILTER_TYPE, AL_FILTER_LOWPASS);
-				// original EAX occusion value was -1150
-				// default OCCLUSIONLFRATIO is 0.25
-				// default OCCLUSIONROOMRATIO is 1.5
-
-				// pow(10.0, (-1150*(0.25+1.5-1.0))/2000.0)
-				soundSystemLocal.alFilterf(listenerFilters[1], AL_LOWPASS_GAIN, 0.370467f);
-				// pow(10.0, (-1150*1.5)/2000.0)
-				soundSystemLocal.alFilterf(listenerFilters[1], AL_LOWPASS_GAINHF, 0.137246f);
-			}
-			// allow reducing the gain effect globally via s_alReverbGain CVar
-			listenerSlotReverbGain = soundSystemLocal.s_alReverbGain.GetFloat();
-			soundSystemLocal.alAuxiliaryEffectSlotf(listenerSlot, AL_EFFECTSLOT_GAIN, listenerSlotReverbGain);
-		}
-	}
 
 	gameMsec = 0;
 	game44kHz = 0;
 	pause44kHz = -1;
-	lastAVI44kHz = 0;
 
 	for ( int i = 0 ; i < SOUND_MAX_CLASSES ; i++ ) {
 		soundClassFade[i].Clear();
@@ -112,10 +63,7 @@ void idSoundWorldLocal::Init( idRenderWorld *renderWorld ) {
 	idSoundEmitterLocal	*placeHolder = new idSoundEmitterLocal;
 	emitters.Append( placeHolder );
 
-	fpa[0] = fpa[1] = fpa[2] = fpa[3] = fpa[4] = fpa[5] = NULL;
 
-	aviDemoPath = "";
-	aviDemoName = "";
 
 	localSound = NULL;
 
@@ -130,10 +78,7 @@ idSoundWorldLocal::idSoundWorldLocal
 ===============
 */
 idSoundWorldLocal::idSoundWorldLocal() {
-	listenerEffect                = 0;
-	listenerSlot                  = 0;
 	listenerAreFiltersInitialized = false;
-	listenerSlotReverbGain = 1.0f;
 }
 
 /*
@@ -159,10 +104,7 @@ void idSoundWorldLocal::Shutdown() {
 		soundSystemLocal.currentSoundWorld = NULL;
 	}
 
-	AVIClose();
 
-	// delete emitters before deletign the listenerSlot, so their sources aren't
-	// associated with the listenerSlot anymore
 	for ( i = 0; i < emitters.Num(); i++ ) {
 		if ( emitters[i] ) {
 			delete emitters[i];
@@ -170,24 +112,6 @@ void idSoundWorldLocal::Shutdown() {
 		}
 	}
 
-	if (idSoundSystemLocal::useEFXReverb) {
-		if (soundSystemLocal.alIsAuxiliaryEffectSlot(listenerSlot)) {
-			soundSystemLocal.alAuxiliaryEffectSloti(listenerSlot, AL_EFFECTSLOT_EFFECT, AL_EFFECTSLOT_NULL);
-			soundSystemLocal.alDeleteAuxiliaryEffectSlots(1, &listenerSlot);
-			listenerSlot = AL_EFFECTSLOT_NULL;
-		}
-
-		if (listenerAreFiltersInitialized) {
-			listenerAreFiltersInitialized = false;
-
-			if (listenerFilters[0] != AL_FILTER_NULL && listenerFilters[1] != AL_FILTER_NULL) {
-				soundSystemLocal.alDeleteFilters(2, listenerFilters);
-				listenerFilters[0] = AL_FILTER_NULL;
-				listenerFilters[1] = AL_FILTER_NULL;
-			}
-		}
-		listenerSlotReverbGain = 1.0f;
-	}
 
 	localSound = NULL;
 }
@@ -202,7 +126,6 @@ void idSoundWorldLocal::ClearAllSoundEmitters() {
 
 	Sys_EnterCriticalSection();
 
-	AVIClose();
 
 	for ( i = 0; i < emitters.Num(); i++ ) {
 		idSoundEmitterLocal *sound = emitters[i];
@@ -488,71 +411,24 @@ idSoundWorldLocal::MixLoop
 
 Sum all sound contributions into finalMixBuffer, an unclamped float buffer holding
 all output channels.  MIXBUFFER_SAMPLES samples will be created, with each sample consisting
-of 2 or 6 floats depending on numSpeakers.
+of 2 floats (the libretro core is stereo-only). numFrames is the variable
+per-retro_run block size; the mix destination is either the float output
+buffer (float mode, gains pre-normalized to [-1,1]) or the int32
+accumulator (s16 mode) - AddChannelContribution dispatches on the sound
+system's negotiated output format.
 
-this is normally called from the sound thread, but also from the main thread
-for AVIdemo writing
+called once per retro_run from MixFrameFloat/MixFrameS16
 ===================
 */
-void idSoundWorldLocal::MixLoop( int current44kHz, int numSpeakers, float *finalMixBuffer ) {
+void idSoundWorldLocal::MixLoop( int current44kHz, int numFrames, float *finalMixBuffer ) {
 	int i, j;
 	idSoundEmitterLocal *sound;
 
 	// if noclip flying outside the world, leave silence
 	if ( listenerArea == -1 ) {
-		alListenerf( AL_GAIN, 0.0f );
-		return;
+			return;
 	}
 
-	// update the listener position and orientation
-	ALfloat listenerPosition[3];
-
-	listenerPosition[0] = -listenerPos.y;
-	listenerPosition[1] =  listenerPos.z;
-	listenerPosition[2] = -listenerPos.x;
-
-	ALfloat listenerOrientation[6];
-
-	listenerOrientation[0] = -listenerAxis[0].y;
-	listenerOrientation[1] =  listenerAxis[0].z;
-	listenerOrientation[2] = -listenerAxis[0].x;
-
-	listenerOrientation[3] = -listenerAxis[2].y;
-	listenerOrientation[4] =  listenerAxis[2].z;
-	listenerOrientation[5] = -listenerAxis[2].x;
-
-	alListenerf( AL_GAIN, 1.0f );
-	alListenerfv( AL_POSITION, listenerPosition );
-	alListenerfv( AL_ORIENTATION, listenerOrientation );
-
-	if (idSoundSystemLocal::useEFXReverb && soundSystemLocal.efxloaded) {
-		ALuint effect = 0;
-		idStr s(listenerArea);
-
-		// allow reducing the gain effect globally via s_alReverbGain CVar
-		float gain = soundSystemLocal.s_alReverbGain.GetFloat();
-		if (listenerSlotReverbGain != gain) {
-			listenerSlotReverbGain = gain;
-			soundSystemLocal.alAuxiliaryEffectSlotf(listenerSlot, AL_EFFECTSLOT_GAIN, gain);
-		}
-
-		bool found = soundSystemLocal.EFXDatabase.FindEffect(s, &effect);
-		if (!found) {
-			s = listenerAreaName;
-			found = soundSystemLocal.EFXDatabase.FindEffect(s, &effect);
-		}
-		if (!found) {
-			s = "default";
-			found = soundSystemLocal.EFXDatabase.FindEffect(s, &effect);
-		}
-
-		// only update if change in settings
-		if (found && listenerEffect != effect) {
-			EFXprintf("Switching to EFX '%s' (#%u)\n", s.c_str(), effect);
-			listenerEffect = effect;
-			soundSystemLocal.alAuxiliaryEffectSloti(listenerSlot, AL_EFFECTSLOT_EFFECT, effect);
-		}
-	}
 
 	// debugging option to mute all but a single soundEmitter
 	if ( idSoundSystemLocal::s_singleEmitter.GetInteger() > 0 && idSoundSystemLocal::s_singleEmitter.GetInteger() < emitters.Num() ) {
@@ -565,11 +441,10 @@ void idSoundWorldLocal::MixLoop( int current44kHz, int numSpeakers, float *final
 
 				// see if we have a sound triggered on this channel
 				if ( !chan->triggerState ) {
-					chan->ALStop();
 					continue;
 				}
 
-				AddChannelContribution( sound, chan, current44kHz, numSpeakers, finalMixBuffer );
+				AddChannelContribution( sound, chan, current44kHz, numFrames, finalMixBuffer );
 			}
 		}
 		return;
@@ -591,191 +466,20 @@ void idSoundWorldLocal::MixLoop( int current44kHz, int numSpeakers, float *final
 
 			// see if we have a sound triggered on this channel
 			if ( !chan->triggerState ) {
-				chan->ALStop();
 				continue;
 			}
 
-			AddChannelContribution( sound, chan, current44kHz, numSpeakers, finalMixBuffer );
+			AddChannelContribution( sound, chan, current44kHz, numFrames, finalMixBuffer );
 		}
 	}
 
 	// TODO port to OpenAL
 	if ( false && enviroSuitActive ) {
-		soundSystemLocal.DoEnviroSuit( finalMixBuffer, MIXBUFFER_SAMPLES, numSpeakers );
+		soundSystemLocal.DoEnviroSuit( finalMixBuffer, numFrames, 2 );
 	}
 }
 
 //==============================================================================
-
-/*
-===================
-idSoundWorldLocal::AVIOpen
-
-	this is called by the main thread
-===================
-*/
-void idSoundWorldLocal::AVIOpen( const char *path, const char *name ) {
-	aviDemoPath = path;
-	aviDemoName = name;
-
-	lastAVI44kHz = game44kHz - game44kHz % MIXBUFFER_SAMPLES;
-
-	if ( idSoundSystemLocal::s_numberOfSpeakers.GetInteger() == 6 ) {
-		fpa[0] = fileSystem->OpenFileWrite( aviDemoPath + "channel_51_left.raw" );
-		fpa[1] = fileSystem->OpenFileWrite( aviDemoPath + "channel_51_right.raw" );
-		fpa[2] = fileSystem->OpenFileWrite( aviDemoPath + "channel_51_center.raw" );
-		fpa[3] = fileSystem->OpenFileWrite( aviDemoPath + "channel_51_lfe.raw" );
-		fpa[4] = fileSystem->OpenFileWrite( aviDemoPath + "channel_51_backleft.raw" );
-		fpa[5] = fileSystem->OpenFileWrite( aviDemoPath + "channel_51_backright.raw" );
-	} else {
-		fpa[0] = fileSystem->OpenFileWrite( aviDemoPath + "channel_left.raw" );
-		fpa[1] = fileSystem->OpenFileWrite( aviDemoPath + "channel_right.raw" );
-	}
-
-	soundSystemLocal.SetMute( true );
-}
-
-/*
-===================
-idSoundWorldLocal::AVIUpdate
-
-this is called by the main thread
-writes one block of sound samples if enough time has passed
-This can be used to write wave files even if no sound hardware exists
-===================
-*/
-void idSoundWorldLocal::AVIUpdate() {
-	int		numSpeakers;
-
-	if ( game44kHz - lastAVI44kHz < MIXBUFFER_SAMPLES ) {
-		return;
-	}
-
-	numSpeakers = idSoundSystemLocal::s_numberOfSpeakers.GetInteger();
-
-	float	mix[MIXBUFFER_SAMPLES*6+16];
-	float	*mix_p = (float *)((( intptr_t)mix + 15 ) & ~15);	// SIMD align
-
-	SIMDProcessor->Memset( mix_p, 0, MIXBUFFER_SAMPLES*sizeof(float)*numSpeakers );
-
-	MixLoop( lastAVI44kHz, numSpeakers, mix_p );
-
-	for ( int i = 0; i < numSpeakers; i++ ) {
-		short outD[MIXBUFFER_SAMPLES];
-
-		for( int j = 0; j < MIXBUFFER_SAMPLES; j++ ) {
-			float s = mix_p[ j*numSpeakers + i];
-			if ( s < -32768.0f ) {
-				outD[j] = -32768;
-			} else if ( s > 32767.0f ) {
-				outD[j] = 32767;
-			} else {
-				outD[j] = idMath::FtoiFast( s );
-			}
-		}
-		// write to file
-		fpa[i]->Write( outD, MIXBUFFER_SAMPLES*sizeof(short) );
-	}
-
-	lastAVI44kHz += MIXBUFFER_SAMPLES;
-
-	return;
-}
-
-/*
-===================
-idSoundWorldLocal::AVIClose
-===================
-*/
-void idSoundWorldLocal::AVIClose( void ) {
-	int i;
-
-	if ( !fpa[0] ) {
-		return;
-	}
-
-	// make sure the final block is written
-	game44kHz += MIXBUFFER_SAMPLES;
-	AVIUpdate();
-	game44kHz -= MIXBUFFER_SAMPLES;
-
-	for ( i = 0; i < 6; i++ ) {
-		if ( fpa[i] != NULL ) {
-			fileSystem->CloseFile( fpa[i] );
-			fpa[i] = NULL;
-		}
-	}
-	if ( idSoundSystemLocal::s_numberOfSpeakers.GetInteger() == 2 ) {
-		// convert it to a wave file
-		idFile *rL, *lL, *wO;
-		idStr	name;
-
-		name = aviDemoPath + aviDemoName + ".wav";
-		wO = fileSystem->OpenFileWrite( name );
-		if ( !wO ) {
-			common->Error( "Couldn't write %s", name.c_str() );
-		}
-
-		name = aviDemoPath + "channel_right.raw";
-		rL = fileSystem->OpenFileRead( name );
-		if ( !rL ) {
-			common->Error( "Couldn't open %s", name.c_str() );
-		}
-
-		name = aviDemoPath + "channel_left.raw";
-		lL = fileSystem->OpenFileRead( name );
-		if ( !lL ) {
-			common->Error( "Couldn't open %s", name.c_str() );
-		}
-
-		int numSamples = rL->Length()/2;
-		mminfo_t	info;
-		pcmwaveformat_t format;
-
-		info.ckid = fourcc_riff;
-		info.fccType = mmioFOURCC( 'W', 'A', 'V', 'E' );
-		info.cksize = (rL->Length()*2) - 8 + 4 + 16 + 8 + 8;
-		info.dwDataOffset = 12;
-
-		wO->Write( &info, 12 );
-
-		info.ckid = mmioFOURCC( 'f', 'm', 't', ' ' );
-		info.cksize = 16;
-
-		wO->Write( &info, 8 );
-
-		format.wBitsPerSample = 16;
-		format.wf.nAvgBytesPerSec = 44100*4;		// sample rate * block align
-		format.wf.nChannels = 2;
-		format.wf.nSamplesPerSec = 44100;
-		format.wf.wFormatTag = WAVE_FORMAT_TAG_PCM;
-		format.wf.nBlockAlign = 4;					// channels * bits/sample / 8
-
-		wO->Write( &format, 16 );
-
-		info.ckid = mmioFOURCC( 'd', 'a', 't', 'a' );
-		info.cksize = rL->Length() * 2;
-
-		wO->Write( &info, 8 );
-
-		short s0, s1;
-		for( i = 0; i < numSamples; i++ ) {
-			lL->Read( &s0, 2 );
-			rL->Read( &s1, 2 );
-			wO->Write( &s0, 2 );
-			wO->Write( &s1, 2 );
-		}
-
-		fileSystem->CloseFile( wO );
-		fileSystem->CloseFile( lL );
-		fileSystem->CloseFile( rL );
-
-		fileSystem->RemoveFile( aviDemoPath + "channel_right.raw" );
-		fileSystem->RemoveFile( aviDemoPath + "channel_left.raw" );
-	}
-
-	soundSystemLocal.SetMute( false );
-}
 
 //==============================================================================
 
@@ -988,13 +692,8 @@ void idSoundWorldLocal::PlaceListener( const idVec3& origin, const idMat3& axis,
 	}
 
 	gameMsec = gameTime;
-	if ( fpa[0] ) {
-		// exactly 30 fps so the wave file can be used for exact video frames
-		game44kHz = idMath::FtoiFast( gameMsec * ( ( 1000.0f / 60.0f ) / 16.0f ) * 0.001f * 44100.0f );
-	} else {
-		// the normal 16 msec / frame
-		game44kHz = idMath::FtoiFast( gameMsec * 0.001f * 44100.0f );
-	}
+	// the normal 16 msec / frame
+	game44kHz = idMath::FtoiFast( gameMsec * 0.001f * 44100.0f );
 
 	listenerPrivateId = listenerId;
 
@@ -1031,11 +730,6 @@ void idSoundWorldLocal::ForegroundUpdate( int current44kHzTime ) {
 	}
 
 	Sys_EnterCriticalSection();
-
-	// if we are recording an AVI demo, don't use hardware time
-	if ( fpa[0] ) {
-		current44kHzTime = lastAVI44kHz;
-	}
 
 	//
 	// check to see if each sound is visible or not
@@ -1120,12 +814,6 @@ void idSoundWorldLocal::ForegroundUpdate( int current44kHzTime ) {
 		}
 	}
 
-	//
-	// optionally dump out the generated sound
-	//
-	if ( fpa[0] ) {
-		AVIUpdate();
-	}
 }
 
 /*
@@ -1380,14 +1068,8 @@ void idSoundWorldLocal::ReadFromSaveGame( idFile *savefile ) {
 			// adjust the hardware start time
 			chan->trigger44kHzTime += soundTimeOffset;
 
-			// make sure we start up the hardware voice if needed
+			// make sure the channel restarts mixing
 			chan->triggered = chan->triggerState;
-			chan->openalStreamingOffset = currentSoundTime - chan->trigger44kHzTime;
-			// DG: round up openalStreamingOffset to multiple of 8, so it still has an even number
-			//  if we calculate "how many 11kHz stereo samples do we need to decode" and don't
-			//  run into a "I need one more sample apparently, so decode 0 stereo samples"
-			//  situation that could cause an endless loop.. (44kHz/11kHz = 4; *2 for stereo => 8)
-			chan->openalStreamingOffset = (chan->openalStreamingOffset+7) & ~7;
 
 			// adjust the hardware fade time
 			if ( chan->channelFade.fadeStart44kHz != 0 ) {
@@ -1663,7 +1345,7 @@ finalMixBuffer
 ===============
 */
 void idSoundWorldLocal::AddChannelContribution( idSoundEmitterLocal *sound, idSoundChannel *chan,
-				   int current44kHz, int numSpeakers, float *finalMixBuffer ) {
+				   int current44kHz, int numFrames, float *finalMixBuffer ) {
 	int j;
 	float volume;
 
@@ -1800,7 +1482,7 @@ void idSoundWorldLocal::AddChannelContribution( idSoundEmitterLocal *sound, idSo
 	//     OpenAL just makes *everything* quiter or sth like that.
 	//     See also https://github.com/dhewm/dhewm3/issues/179
 	if( soundSystemLocal.s_scaleDownAndClamp.GetBool() ) {
-		// First clamp it to 1.0 - that's done anyway when setting AL_GAIN below,
+		// First clamp it to 1.0 - that's what the old OpenAL path did too,
 		// for consistency it must be done before scaling, because many player-weapon
 		// sounds have a too high volume defined and only sound right (relative to
 		// other weapons) when clamped
@@ -1831,130 +1513,19 @@ void idSoundWorldLocal::AddChannelContribution( idSoundEmitterLocal *sound, idSo
 	float inputSamples[MIXBUFFER_SAMPLES*2+16];
 	float *alignedInputSamples = (float *) ( ( ( (intptr_t)inputSamples ) + 15 ) & ~15 );
 
-	//
-	// allocate and initialize hardware source
-	//
-#ifdef HAVE_OPENAL
-	if ( sound->removeStatus < REMOVE_STATUS_SAMPLEFINISHED ) {
-		if ( !alIsSource( chan->openalSource ) ) {
-			chan->openalSource = soundSystemLocal.AllocOpenALSource( chan, !chan->leadinSample->hardwareBuffer || !chan->soundShader->entries[0]->hardwareBuffer || looping, chan->leadinSample->objectInfo.nChannels == 2 );
-		}
-
-		if ( alIsSource( chan->openalSource ) ) {
-
-			// stop source if needed..
-			if ( chan->triggered ) {
-				alSourceStop( chan->openalSource );
-			}
-
-			// update source parameters
-			if ( global || omni ) {
-				alSourcei( chan->openalSource, AL_SOURCE_RELATIVE, AL_TRUE);
-				alSource3f( chan->openalSource, AL_POSITION, 0.0f, 0.0f, 0.0f );
-				alSourcef( chan->openalSource, AL_GAIN, ( volume ) < ( 1.0f ) ? ( volume ) : ( 1.0f ) );
-			} else {
-				alSourcei( chan->openalSource, AL_SOURCE_RELATIVE, AL_FALSE);
-				alSource3f( chan->openalSource, AL_POSITION, -spatializedOriginInMeters.y, spatializedOriginInMeters.z, -spatializedOriginInMeters.x );
-				alSourcef( chan->openalSource, AL_GAIN, ( volume ) < ( 1.0f ) ? ( volume ) : ( 1.0f ) );
-			}
-			// DG: looping sounds with a leadin can't just use a HW buffer and openal's AL_LOOPING
-			//     because we need to switch from leadin to the looped sound.. see https://github.com/dhewm/dhewm3/issues/291
-			bool haveLeadin = chan->soundShader->numLeadins > 0;
-			alSourcei( chan->openalSource, AL_LOOPING, ( looping && chan->soundShader->entries[0]->hardwareBuffer && !haveLeadin ) ? AL_TRUE : AL_FALSE );
-#if 1
-			alSourcef( chan->openalSource, AL_REFERENCE_DISTANCE, mind );
-			alSourcef( chan->openalSource, AL_MAX_DISTANCE, maxd );
-#endif
-			alSourcef( chan->openalSource, AL_PITCH, ( slowmoActive && !chan->disallowSlow ) ? ( slowmoSpeed ) : ( 1.0f ) );
-
-			if (idSoundSystemLocal::useEFXReverb) {
-				if (enviroSuitActive) {
-					alSourcei(chan->openalSource, AL_DIRECT_FILTER, listenerFilters[0]);
-					alSource3i(chan->openalSource, AL_AUXILIARY_SEND_FILTER, listenerSlot, 0, listenerFilters[1]);
-				} else {
-					alSourcei(chan->openalSource, AL_DIRECT_FILTER, AL_FILTER_NULL);
-					alSource3i(chan->openalSource, AL_AUXILIARY_SEND_FILTER, listenerSlot, 0, AL_FILTER_NULL);
-				}
-			}
-
-
-			if ( ( !looping && chan->leadinSample->hardwareBuffer )
-				|| ( looping && !haveLeadin && chan->soundShader->entries[0]->hardwareBuffer ) ) {
-				// handle uncompressed (non streaming) single shot and looping sounds
-				// DG: ... that have no leadin (with leadin we still need to switch to another sound,
-				//     just use streaming code for that) - see https://github.com/dhewm/dhewm3/issues/291
-				if ( chan->triggered ) {
-					alSourcei( chan->openalSource, AL_BUFFER, looping ? chan->soundShader->entries[0]->openalBuffer : chan->leadinSample->openalBuffer );
-				}
-			} else {
-				ALint finishedbuffers;
-				ALuint buffers[3];
-
-				// handle streaming sounds (decode on the fly) both single shot AND looping
-				if ( chan->triggered ) {
-					alSourcei( chan->openalSource, AL_BUFFER, 0 );
-					alDeleteBuffers( 3, &chan->lastopenalStreamingBuffer[0] );
-					chan->lastopenalStreamingBuffer[0] = chan->openalStreamingBuffer[0];
-					chan->lastopenalStreamingBuffer[1] = chan->openalStreamingBuffer[1];
-					chan->lastopenalStreamingBuffer[2] = chan->openalStreamingBuffer[2];
-					alGenBuffers( 3, &chan->openalStreamingBuffer[0] );
-					buffers[0] = chan->openalStreamingBuffer[0];
-					buffers[1] = chan->openalStreamingBuffer[1];
-					buffers[2] = chan->openalStreamingBuffer[2];
-					finishedbuffers = 3;
-				} else {
-					alGetSourcei( chan->openalSource, AL_BUFFERS_PROCESSED, &finishedbuffers );
-					alSourceUnqueueBuffers( chan->openalSource, finishedbuffers, &buffers[0] );
-					if ( finishedbuffers == 3 ) {
-						chan->triggered = true;
-					}
-				}
-
-				for ( j = 0; j < finishedbuffers; j++ ) {
-					chan->GatherChannelSamples( chan->openalStreamingOffset * sample->objectInfo.nChannels, MIXBUFFER_SAMPLES * sample->objectInfo.nChannels, alignedInputSamples );
-					for ( int i = 0; i < ( MIXBUFFER_SAMPLES * sample->objectInfo.nChannels ); i++ ) {
-						if ( alignedInputSamples[i] < -32768.0f )
-							((short *)alignedInputSamples)[i] = -32768;
-						else if ( alignedInputSamples[i] > 32767.0f )
-							((short *)alignedInputSamples)[i] = 32767;
-						else
-							((short *)alignedInputSamples)[i] = idMath::FtoiFast( alignedInputSamples[i] );
-					}
-					alBufferData( buffers[j], chan->leadinSample->objectInfo.nChannels == 1 ? AL_FORMAT_MONO16 : AL_FORMAT_STEREO16, alignedInputSamples, MIXBUFFER_SAMPLES * sample->objectInfo.nChannels * sizeof( short ), 44100 );
-					chan->openalStreamingOffset += MIXBUFFER_SAMPLES;
-				}
-
-				if ( finishedbuffers ) {
-					alSourceQueueBuffers( chan->openalSource, finishedbuffers, &buffers[0] );
-				}
-			}
-
-			// (re)start if needed..
-			if ( chan->triggered ) {
-				alSourcePlay( chan->openalSource );
-				chan->triggered = false;
-			}
-		}
-	}
-#endif // HAVE_OPENAL
-#if 1 // DG: I /think/ this was only relevant for the old sound backends?
-	// FIXME: completely remove else branch, but for testing leave it in under com_asyncSound 2
-	//        (which also does the old 92-100ms updates)
-#ifdef HAVE_OPENAL
-	else if( com_asyncSound.GetInteger() == 2 ) {
-#else
 	if ( true ) {
-#endif
+		const bool stereoSample = ( sample->objectInfo.nChannels == 2 );
+
 		if ( slowmoActive && !chan->disallowSlow ) {
 			idSlowChannel slow = sound->GetSlowChannel( chan );
 
 			slow.AttachSoundChannel( chan );
 
-				if ( sample->objectInfo.nChannels == 2 ) {
+				if ( stereoSample ) {
 					// need to add a stereo path, but very few samples go through this
-					memset( alignedInputSamples, 0, sizeof( alignedInputSamples[0] ) * MIXBUFFER_SAMPLES * 2 );
+					memset( alignedInputSamples, 0, sizeof( alignedInputSamples[0] ) * numFrames * 2 );
 				} else {
-					slow.GatherChannelSamples( offset, MIXBUFFER_SAMPLES, alignedInputSamples );
+					slow.GatherChannelSamples( offset, numFrames, alignedInputSamples );
 				}
 
 			sound->SetSlowChannel( chan, slow );
@@ -1962,11 +1533,11 @@ void idSoundWorldLocal::AddChannelContribution( idSoundEmitterLocal *sound, idSo
 			sound->ResetSlowChannel( chan );
 
 			// if we are getting a stereo sample adjust accordingly
-			if ( sample->objectInfo.nChannels == 2 ) {
+			if ( stereoSample ) {
 				// we should probably check to make sure any looping is also to a stereo sample...
-				chan->GatherChannelSamples( offset*2, MIXBUFFER_SAMPLES*2, alignedInputSamples );
+				chan->GatherChannelSamples( offset*2, numFrames*2, alignedInputSamples );
 			} else {
-				chan->GatherChannelSamples( offset, MIXBUFFER_SAMPLES, alignedInputSamples );
+				chan->GatherChannelSamples( offset, numFrames, alignedInputSamples );
 			}
 		}
 
@@ -1982,7 +1553,7 @@ void idSoundWorldLocal::AddChannelContribution( idSoundEmitterLocal *sound, idSo
 			ears[3] = idSoundSystemLocal::s_subFraction.GetFloat() * volume;		// subwoofer
 
 		} else {
-			CalcEars( numSpeakers, spatializedOriginInMeters, listenerPos, listenerAxis, ears, spatialize );
+			CalcEars( 2, spatializedOriginInMeters, listenerPos, listenerAxis, ears, spatialize );
 
 			for ( int i = 0 ; i < 6 ; i++ ) {
 				ears[i] *= volume;
@@ -2019,17 +1590,38 @@ void idSoundWorldLocal::AddChannelContribution( idSoundEmitterLocal *sound, idSo
 			}
 		}
 
-		if ( numSpeakers == 6 ) {
-			if ( sample->objectInfo.nChannels == 1 ) {
-				SIMDProcessor->MixSoundSixSpeakerMono( finalMixBuffer, alignedInputSamples, MIXBUFFER_SAMPLES, chan->lastV, ears );
+		//
+		// mix into the frame block - stereo only, variable block size,
+		// format selected once at load by libretro float-audio negotiation
+		//
+		if ( soundSystemLocal.outputIsFloat ) {
+			// float pipeline: fold the [-1,1] output normalization into the
+			// per-block gains, so the accumulation buffer IS the final
+			// float output - no conversion pass at the libretro edge
+			const float norm = 1.0f / 32768.0f;
+			float lastN[2]    = { chan->lastV[0] * norm, chan->lastV[1] * norm };
+			float currentN[2] = { ears[0] * norm,        ears[1] * norm };
+			if ( stereoSample ) {
+				Snd_MixTwoSpeakerStereo( finalMixBuffer, alignedInputSamples, numFrames, lastN, currentN );
 			} else {
-				SIMDProcessor->MixSoundSixSpeakerStereo( finalMixBuffer, alignedInputSamples, MIXBUFFER_SAMPLES, chan->lastV, ears );
+				Snd_MixTwoSpeakerMono( finalMixBuffer, alignedInputSamples, numFrames, lastN, currentN );
 			}
 		} else {
-			if ( sample->objectInfo.nChannels == 1 ) {
-				SIMDProcessor->MixSoundTwoSpeakerMono( finalMixBuffer, alignedInputSamples, MIXBUFFER_SAMPLES, chan->lastV, ears );
+			// all-s16 pipeline: quantize gains to Q15 at a single defined
+			// choke point, convert the gathered block to s16 (lossless for
+			// PCM sources - decode floats are exact integers), and mix in
+			// integer math into the int32 accumulator. Bit-deterministic
+			// across compilers and architectures.
+			short srcS16[MIXBUFFER_SAMPLES*2];
+			const int n = stereoSample ? numFrames*2 : numFrames;
+			Snd_FloatToS16( srcS16, alignedInputSamples, n );
+			short lastQ[2]    = { Snd_ClampGainQ15( chan->lastV[0] ), Snd_ClampGainQ15( chan->lastV[1] ) };
+			short currentQ[2] = { Snd_ClampGainQ15( ears[0] ),        Snd_ClampGainQ15( ears[1] ) };
+			int *accum = (int *)finalMixBuffer;   // s16 mode: the buffer is the int32 accumulator
+			if ( stereoSample ) {
+				Snd_MixTwoSpeakerStereoS16( accum, srcS16, numFrames, lastQ, currentQ );
 			} else {
-				SIMDProcessor->MixSoundTwoSpeakerStereo( finalMixBuffer, alignedInputSamples, MIXBUFFER_SAMPLES, chan->lastV, ears );
+				Snd_MixTwoSpeakerMonoS16( accum, srcS16, numFrames, lastQ, currentQ );
 			}
 		}
 
@@ -2038,7 +1630,6 @@ void idSoundWorldLocal::AddChannelContribution( idSoundEmitterLocal *sound, idSo
 		}
 
 	}
-#endif // 1/0
 
 	soundSystemLocal.soundStats.activeSounds++;
 
@@ -2237,12 +1828,11 @@ void	idSoundWorldLocal::FadeSoundClasses( const int soundClass, const float to, 
 
 	int	start44kHz;
 
-	if ( fpa[0] ) {
-		// if we are recording an AVI demo, don't use hardware time
-		start44kHz = lastAVI44kHz + MIXBUFFER_SAMPLES;
-	} else {
-		start44kHz = soundSystemLocal.GetCurrent44kHzTime() + MIXBUFFER_SAMPLES;
-	}
+	// per-frame mixing: the next mix pass starts exactly at the current
+	// sample clock, so fades take effect on the very next frame (the old
+	// +MIXBUFFER_SAMPLES lookahead matched the old block-ahead scheduler
+	// and added ~93ms of latency)
+	start44kHz = soundSystemLocal.GetCurrent44kHzTime();
 
 	// fade it
 	fade->fadeStartVolume = fade->FadeDbAt44kHz( start44kHz );

@@ -250,8 +250,6 @@ public:
 	// <path>_51center.raw, <path>_51lfe.raw, <path>_51backleft.raw, <path>_51backright.raw,
 	// If only two channel mixing is enabled, the left and right .raw files will also be
 	// combined into a stereo .wav file.
-	virtual void			AVIOpen( const char *path, const char *name ) = 0;
-	virtual void			AVIClose( void ) = 0;
 
 	// SaveGame / demo Support
 	virtual void			WriteToSaveGame( idFile *savefile ) = 0;
@@ -300,10 +298,8 @@ public:
 	virtual bool			ShutdownHW( void ) = 0;
 
 	// asyn loop, called at 60Hz
-	virtual int				AsyncUpdate( int time ) = 0;
 
 	// async loop, when the sound driver uses a write strategy
-	virtual int				AsyncUpdateWrite( int time ) = 0;
 
 	// it is a good idea to mute everything when starting a new level,
 	// because sounds may be started before a valid listener origin
@@ -336,13 +332,23 @@ public:
 	virtual	void			EndLevelLoad( const char *mapString ) = 0;
 
 	// direct mixing for OSes that support it
-	virtual int				AsyncMix( int soundTime, float *mixBuffer ) = 0;
+	// libretro: render exactly numFrames interleaved stereo frames of the
+	// current sound world and advance the 44kHz sample clock by numFrames.
+	// Fully deterministic: output is a pure function of the trigger history
+	// and the sequence of frame counts. The output format is fixed once at
+	// load time by float-audio negotiation with the frontend:
+	//  - MixFrameFloat writes floats normalized to [-1,1] (the accumulation
+	//    buffer is the output buffer - normalization is folded into gains);
+	//  - MixFrameS16 mixes in pure integer math (s16 samples, Q15 gains,
+	//    int32 accumulation, saturating narrow) and is bit-exact across
+	//    compilers and architectures.
+	virtual void			MixFrameFloat( float *dest, int numFrames ) = 0;
+	virtual void			MixFrameS16( short *dest, int numFrames ) = 0;
+	virtual void			SetOutputFloat( bool isFloat ) = 0;
 
 	// prints memory info
 	virtual void			PrintMemInfo( MemInfo_t *mi ) = 0;
 
-	// is EFX support present - -1: disabled at compile time, 0: no suitable hardware, 1: ok
-	virtual int				IsEFXAvailable( void ) = 0;
 };
 
 extern idSoundSystem	*soundSystem;

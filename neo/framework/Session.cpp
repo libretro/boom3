@@ -51,10 +51,6 @@ idCVar	idSessionLocal::com_showTics( "com_showTics", "0", CVAR_SYSTEM | CVAR_BOO
 idCVar	idSessionLocal::com_fixedTic( "com_fixedTic", "0", CVAR_SYSTEM | CVAR_INTEGER | CVAR_ARCHIVE, "", -1, 10 );
 idCVar	idSessionLocal::com_showDemo( "com_showDemo", "0", CVAR_SYSTEM | CVAR_BOOL, "" );
 idCVar	idSessionLocal::com_skipGameDraw( "com_skipGameDraw", "0", CVAR_SYSTEM | CVAR_BOOL, "" );
-idCVar	idSessionLocal::com_aviDemoSamples( "com_aviDemoSamples", "16", CVAR_SYSTEM, "" );
-idCVar	idSessionLocal::com_aviDemoWidth( "com_aviDemoWidth", "256", CVAR_SYSTEM, "" );
-idCVar	idSessionLocal::com_aviDemoHeight( "com_aviDemoHeight", "256", CVAR_SYSTEM, "" );
-idCVar	idSessionLocal::com_aviDemoTics( "com_aviDemoTics", "2", CVAR_SYSTEM | CVAR_INTEGER, "", 1, 60 );
 idCVar	idSessionLocal::com_wipeSeconds( "com_wipeSeconds", "1", CVAR_SYSTEM, "" );
 idCVar	idSessionLocal::com_guid( "com_guid", "", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_ROM, "" );
 
@@ -332,7 +328,6 @@ void idSessionLocal::Clear() {
 	savegameVersion = 0;
 
 	currentMapName.Clear();
-	aviDemoShortName.Clear();
 	msgFireBack[ 0 ].Clear();
 	msgFireBack[ 1 ].Clear();
 
@@ -349,7 +344,6 @@ void idSessionLocal::Clear() {
 	syncNextGameFrame = false;
 	mapSpawned = false;
 	guiActive = NULL;
-	aviCaptureMode = false;
 	timeDemo = TD_NO;
 	waitingOnBind = false;
 	lastPacifierTime = 0;
@@ -437,9 +431,6 @@ idSessionLocal::Shutdown
 void idSessionLocal::Shutdown() {
 	int i;
 
-	if ( aviCaptureMode ) {
-		EndAVICapture();
-	}
 
 	if(timeDemo == TD_YES) {
 		// else the game freezes when showing the timedemo results
@@ -710,33 +701,6 @@ static void Session_TimeDemoQuit_f( const idCmdArgs &args ) {
 
 /*
 ================
-Session_AVIDemo_f
-================
-*/
-static void Session_AVIDemo_f( const idCmdArgs &args ) {
-	sessLocal.AVIRenderDemo( va( "demos/%s", args.Argv(1) ) );
-}
-
-/*
-================
-Session_AVIGame_f
-================
-*/
-static void Session_AVIGame_f( const idCmdArgs &args ) {
-	sessLocal.AVIGame( args.Argv(1) );
-}
-
-/*
-================
-Session_AVICmdDemo_f
-================
-*/
-static void Session_AVICmdDemo_f( const idCmdArgs &args ) {
-	sessLocal.AVICmdDemo( args.Argv(1) );
-}
-
-/*
-================
 Session_WriteCmdDemo_f
 ================
 */
@@ -872,7 +836,6 @@ void idSessionLocal::StopPlayingRenderDemo() {
 	// Record the stop time before doing anything that could be time consuming
 	int timeDemoStopTime = Sys_Milliseconds();
 
-	EndAVICapture();
 
 	readDemo->Close();
 
@@ -1010,106 +973,7 @@ void idSessionLocal::TimeRenderDemo( const char *demoName, bool twice ) {
 }
 
 
-/*
-================
-idSessionLocal::BeginAVICapture
-================
-*/
-void idSessionLocal::BeginAVICapture( const char *demoName ) {
-	idStr name = demoName;
-	name.ExtractFileBase( aviDemoShortName );
-	aviCaptureMode = true;
-	aviDemoFrameCount = 0;
-	aviTicStart = 0;
-	sw->AVIOpen( va( "demos/%s/", aviDemoShortName.c_str() ), aviDemoShortName.c_str() );
-}
 
-/*
-================
-idSessionLocal::EndAVICapture
-================
-*/
-void idSessionLocal::EndAVICapture() {
-	if ( !aviCaptureMode ) {
-		return;
-	}
-
-	sw->AVIClose();
-
-	// write a .roqParam file so the demo can be converted to a roq file
-	idFile *f = fileSystem->OpenFileWrite( va( "demos/%s/%s.roqParam",
-		aviDemoShortName.c_str(), aviDemoShortName.c_str() ) );
-	f->Printf( "INPUT_DIR demos/%s\n", aviDemoShortName.c_str() );
-	f->Printf( "FILENAME demos/%s/%s.RoQ\n", aviDemoShortName.c_str(), aviDemoShortName.c_str() );
-	f->Printf( "\nINPUT\n" );
-	f->Printf( "%s_*.tga [00000-%05i]\n", aviDemoShortName.c_str(), (int)( aviDemoFrameCount-1 ) );
-	f->Printf( "END_INPUT\n" );
-	delete f;
-
-	common->Printf( "captured %i frames for %s.\n", ( int )aviDemoFrameCount, aviDemoShortName.c_str() );
-
-	aviCaptureMode = false;
-}
-
-
-/*
-================
-idSessionLocal::AVIRenderDemo
-================
-*/
-void idSessionLocal::AVIRenderDemo( const char *_demoName ) {
-	idStr	demoName = _demoName;	// copy off from va() buffer
-
-	StartPlayingRenderDemo( demoName );
-	if ( !readDemo ) {
-		return;
-	}
-
-	BeginAVICapture( demoName.c_str() ) ;
-
-	// I don't understand why I need to do this twice, something
-	// strange with the nvidia swapbuffers?
-	UpdateScreen();
-}
-
-/*
-================
-idSessionLocal::AVICmdDemo
-================
-*/
-void idSessionLocal::AVICmdDemo( const char *demoName ) {
-	StartPlayingCmdDemo( demoName );
-
-	BeginAVICapture( demoName ) ;
-}
-
-/*
-================
-idSessionLocal::AVIGame
-
-Start AVI recording the current game session
-================
-*/
-void idSessionLocal::AVIGame( const char *demoName ) {
-	if ( aviCaptureMode ) {
-		EndAVICapture();
-		return;
-	}
-
-	if ( !mapSpawned ) {
-		common->Printf( "No map spawned.\n" );
-	}
-
-	if ( !demoName || !demoName[0] ) {
-		idStr filename = FindUnusedFileName( "demos/game%03i.game" );
-		demoName = filename.c_str();
-
-		// write a one byte stub .game file just so the FindUnusedFileName works,
-		fileSystem->WriteFile( demoName, demoName, 1 );
-	}
-
-	BeginAVICapture( demoName ) ;
-}
 
 /*
 ================
@@ -2373,7 +2237,7 @@ void idSessionLocal::AdvanceRenderDemo( bool singleFrameOnly ) {
 
 	int skipFrames = 0;
 
-	if ( !aviCaptureMode && !timeDemo && !singleFrameOnly ) {
+	if ( !timeDemo && !singleFrameOnly ) {
 		skipFrames = ( (latchedTicNumber - lastDemoTic) / USERCMD_PER_DEMO_FRAME ) - 1;
 		// never skip too many frames, just let it go into slightly slow motion
 		if ( skipFrames > 4 ) {
@@ -2644,19 +2508,13 @@ void idSessionLocal::UpdateScreen( bool outOfSequence ) {
 idSessionLocal::Frame
 ===============
 */
-extern bool CheckOpenALDeviceAndRecoverIfNeeded();
 extern int g_screenshotFormat;
 void idSessionLocal::Frame() {
 	D3P_ScopedCPUSample(Session_Frame);
 
-	if ( com_asyncSound.GetInteger() == 0 ) {
-		soundSystem->AsyncUpdateWrite( Sys_Milliseconds() );
-	}
-
-	// DG: periodically check if sound device is still there and try to reset it if not
-	//     (calling this from idSoundSystem::AsyncUpdate(), which runs in a separate thread
-	//      by default, causes a deadlock when calling idCommon->Warning())
-	CheckOpenALDeviceAndRecoverIfNeeded();
+	// libretro: all sound mixing happens per-frame in retro_run via
+	// MixFrameFloat/MixFrameS16; there is no async update, no wall clock
+	// and no device to babysit.
 
 	// Editors that completely take over the game
 	if ( com_editorActive && ( com_editors & ( EDITOR_RADIANT | EDITOR_GUI ) ) ) {
@@ -2672,33 +2530,6 @@ void idSessionLocal::Frame() {
 		Sys_GrabMouseCursor( true );
 	}
 #endif
-
-	// save the screenshot and audio from the last draw if needed
-	if ( aviCaptureMode ) {
-		idStr	name;
-
-		name = va("demos/%s/%s_%05i.tga", aviDemoShortName.c_str(), aviDemoShortName.c_str(), aviTicStart );
-
-		float ratio = 30.0f / ( 1000.0f / USERCMD_MSEC / com_aviDemoTics.GetInteger() );
-		aviDemoFrameCount += ratio;
-		if ( aviTicStart + 1 != ( int )aviDemoFrameCount ) {
-			// skipped frames so write them out
-			int c = aviDemoFrameCount - aviTicStart;
-			while ( c-- ) {
-				g_screenshotFormat = 0;
-				renderSystem->TakeScreenshot( com_aviDemoWidth.GetInteger(), com_aviDemoHeight.GetInteger(), name, com_aviDemoSamples.GetInteger(), NULL );
-				name = va("demos/%s/%s_%05i.tga", aviDemoShortName.c_str(), aviDemoShortName.c_str(), ++aviTicStart );
-			}
-		}
-		aviTicStart = aviDemoFrameCount;
-
-		// remove any printed lines at the top before taking the screenshot
-		console->ClearNotifyLines();
-
-		// this will call Draw, possibly multiple times if com_aviDemoSamples is > 1
-		g_screenshotFormat = 0;
-		renderSystem->TakeScreenshot( com_aviDemoWidth.GetInteger(), com_aviDemoHeight.GetInteger(), name, com_aviDemoSamples.GetInteger(), NULL );
-	}
 
 	// at startup, we may be backwards
 	if ( latchedTicNumber > com_ticNumber ) {
@@ -2837,8 +2668,6 @@ void idSessionLocal::Frame() {
 		// this may cause commands run in a previous frame to
 		// be run again if we are going at above the real time rate
 		lastGameTic = latchedTicNumber - com_fixedTic.GetInteger();
-	} else if (	aviCaptureMode ) {
-		lastGameTic = latchedTicNumber - com_aviDemoTics.GetInteger();
 	}
 
 	// force only one game frame update this frame.  the game code requests this after skipping cinematics
@@ -2886,10 +2715,6 @@ void idSessionLocal::RunGameTic() {
 			common->Printf( "Command demo completed at logIndex %i\n", logIndex );
 			fileSystem->CloseFile( cmdDemoFile );
 			cmdDemoFile = NULL;
-			if ( aviCaptureMode ) {
-				EndAVICapture();
-				Shutdown();
-			}
 			// we fall out of the demo to normal commands
 			// the impulse and chat character toggles may not be correct, and the view
 			// angle will definitely be wrong
@@ -2992,15 +2817,12 @@ void idSessionLocal::Init() {
 	cmdSystem->AddCommand( "playCmdDemo", Session_PlayCmdDemo_f, CMD_FL_SYSTEM, "plays back a command demo" );
 	cmdSystem->AddCommand( "timeCmdDemo", Session_TimeCmdDemo_f, CMD_FL_SYSTEM, "times a command demo" );
 	cmdSystem->AddCommand( "exitCmdDemo", Session_ExitCmdDemo_f, CMD_FL_SYSTEM, "exits a command demo" );
-	cmdSystem->AddCommand( "aviCmdDemo", Session_AVICmdDemo_f, CMD_FL_SYSTEM, "writes AVIs for a command demo" );
-	cmdSystem->AddCommand( "aviGame", Session_AVIGame_f, CMD_FL_SYSTEM, "writes AVIs for the current game" );
 
 	cmdSystem->AddCommand( "recordDemo", Session_RecordDemo_f, CMD_FL_SYSTEM, "records a demo" );
 	cmdSystem->AddCommand( "stopRecording", Session_StopRecordingDemo_f, CMD_FL_SYSTEM, "stops demo recording" );
 	cmdSystem->AddCommand( "playDemo", Session_PlayDemo_f, CMD_FL_SYSTEM, "plays back a demo", idCmdSystem::ArgCompletion_DemoName );
 	cmdSystem->AddCommand( "timeDemo", Session_TimeDemo_f, CMD_FL_SYSTEM, "times a demo", idCmdSystem::ArgCompletion_DemoName );
 	cmdSystem->AddCommand( "timeDemoQuit", Session_TimeDemoQuit_f, CMD_FL_SYSTEM, "times a demo and quits", idCmdSystem::ArgCompletion_DemoName );
-	cmdSystem->AddCommand( "aviDemo", Session_AVIDemo_f, CMD_FL_SYSTEM, "writes AVIs for a demo", idCmdSystem::ArgCompletion_DemoName );
 	cmdSystem->AddCommand( "compressDemo", Session_CompressDemo_f, CMD_FL_SYSTEM, "compresses a demo file", idCmdSystem::ArgCompletion_DemoName );
 #endif
 

@@ -61,12 +61,7 @@ extern "C" {
 
 #include <glsm/glsm.h>
 
-#ifdef HAVE_OPENAL
-#include <AL/alc.h>
-#include <AL/alext.h>
-#endif
 
-static LPALCRENDERSAMPLESSOFT d3_alcRenderSamplesSOFT = NULL;
 
 #define RETRO_AUDIO_BUFFER_SIZE 2048
 #define SAMPLE_RATE   	44100
@@ -102,7 +97,7 @@ retro_perf_get_time_usec_t perf_get_time_usec = NULL;
 static bool libretro_supports_bitmasks = false;
 static bool needs_gl_reinit = false;
 
-static void audio_callback(void);
+static void audio_upload_frame(void);
 
 #define MAX_PADS 1
 static unsigned doom_devices[MAX_PADS];
@@ -947,87 +942,66 @@ void Sys_SetMouse() {
 }
 
 #define MAX_CHANNELS 2
-/* Ring buffer of mixed float samples (interleaved stereo).
- * Capacity must comfortably exceed the largest per-frame demand:
- * at the minimum supported framerate (30 fps) one frame needs
- * 44100/30 * 2 = 2940 floats; MIXBUFFER_SAMPLES chunks are 8192 floats,
- * so demand + one full mix chunk stays well below the capacity. */
-#define SOUND_BUFFER_SAMPLES (MIXBUFFER_SAMPLES * MAX_CHANNELS * 4)
-static float    snd_float_buf[SOUND_BUFFER_SAMPLES];
-/* read/write positions are kept normalized to [0, SOUND_BUFFER_SAMPLES) and
- * 'snd_buf_avail' tracks the fill level, so nothing here can overflow no
- * matter how long the core runs (the old code incremented signed ints
- * forever: undefined behavior after ~6.7h at 44.1kHz stereo, followed by
- * negative modulo -> out-of-bounds indexing). */
-static int      snd_buf_write = 0;
-static int      snd_buf_read  = 0;
-static int      snd_buf_avail = 0;
-static uint64_t sampletime    = 0;
 
-/* Largest number of output frames we ever hand to the frontend per call:
- * 44100 / 30 fps = 1470 frames; keep headroom. */
-#define MAX_FRAME_SAMPLES 2048
+/* Largest number of output frames per retro_run: 44100/30fps = 1470 frames
+ * at the minimum supported framerate; MIXBUFFER_SAMPLES (4096) is the hard
+ * engine-side cap on a single mix block. No ring buffer: every retro_run
+ * mixes exactly the frames it outputs and hands them straight to the
+ * frontend. */
+#define MAX_FRAME_SAMPLES MIXBUFFER_SAMPLES
 
-static void audio_callback(void)
+/* Float output negotiation (RETRO_ENVIRONMENT_GET_AUDIO_SAMPLE_BATCH_FLOAT):
+ * decided once per loaded game; never mix formats afterwards. */
+static struct retro_audio_sample_float_callback audio_float_cb;
+static bool audio_output_float = false;
+
+/* Deterministic per-frame sample budget.
+ * The exact rational 44100/framerate frames per retro_run is distributed
+ * with an integer remainder accumulator, then rounded down to a multiple
+ * of 8 with a sample carry (11kHz sources decode with a >>2 offset shift,
+ * stereo doubles it: 8-sample alignment keeps decode offsets exact - the
+ * same constraint the old engine satisfied by rounding its ms-derived
+ * sample time to multiples of 8). Long-run average is exactly 44100 Hz
+ * and every quantity is an integer: the emitted count sequence is a pure
+ * function of the frame index. */
+static int audio_rem_acc    = 0;  /* rational remainder, in units of 1/framerate frame */
+static int audio_frame_carry = 0; /* 0..7 frames deferred by the multiple-of-8 rounding */
+
+static void audio_upload_frame(void)
 {
-	if (first_boot) return;
+	if (first_boot)
+		return;
 
-	int samples_per_frame = SAMPLE_RATE / (framerate > 0 ? framerate : 60);
-	if (samples_per_frame > MAX_FRAME_SAMPLES)
-		samples_per_frame = MAX_FRAME_SAMPLES;
+	unsigned fps = framerate > 0 ? framerate : 60;
 
-#ifdef HAVE_OPENAL
-	static int16_t al_buf[MAX_FRAME_SAMPLES * MAX_CHANNELS];
+	/* exact rational distribution of 44100/fps */
+	audio_rem_acc += SAMPLE_RATE;
+	int want = audio_rem_acc / (int)fps;
+	audio_rem_acc -= want * (int)fps;
 
-	/* The async sound thread is disabled for libretro, so run the per-tic
-	 * OpenAL source/channel update here, on the frontend's thread, with the
-	 * deterministic frame-derived clock. */
-	soundSystem->AsyncUpdateWrite(Sys_Milliseconds());
+	/* round to multiple of 8, carrying the remainder to the next frame */
+	want += audio_frame_carry;
+	int frames = want & ~7;
+	audio_frame_carry = want - frames;
 
-	if (!d3_alcRenderSamplesSOFT && soundSystemLocal.openalDevice) {
-		d3_alcRenderSamplesSOFT = (LPALCRENDERSAMPLESSOFT)
-			alcGetProcAddress(soundSystemLocal.openalDevice, "alcRenderSamplesSOFT");
-	}
+	if (frames <= 0)
+		return;
+	if (frames > MAX_FRAME_SAMPLES)
+		frames = MAX_FRAME_SAMPLES;
 
-	if (soundSystemLocal.isInitialized && d3_alcRenderSamplesSOFT && soundSystemLocal.openalDevice) {
-		d3_alcRenderSamplesSOFT(soundSystemLocal.openalDevice, al_buf, (ALCsizei)samples_per_frame);
-		audio_batch_cb(al_buf, samples_per_frame);
+	if (audio_output_float) {
+		/* float pipeline: MixFrameFloat writes [-1,1] normalized stereo -
+		 * the mix accumulation buffer IS the output buffer */
+		static float outF[MAX_FRAME_SAMPLES * MAX_CHANNELS];
+		soundSystem->MixFrameFloat(outF, frames);
+		audio_float_cb.batch(outF, frames);
 	} else {
-		memset(al_buf, 0, samples_per_frame * MAX_CHANNELS * sizeof(int16_t));
-		audio_batch_cb(al_buf, samples_per_frame);
+		/* all-s16 pipeline: integer mix (s16 samples, Q15 gains, int32
+		 * accumulation, saturating narrow) - bit-deterministic */
+		static int16_t outS[MAX_FRAME_SAMPLES * MAX_CHANNELS];
+		soundSystem->MixFrameS16(outS, frames);
+		audio_batch_cb(outS, frames);
 	}
-#else
-	int total = samples_per_frame * MAX_CHANNELS;
-
-	// mix (single-threaded: this is the only caller of AsyncMix in the core)
-	while (snd_buf_avail < total) {
-		float tmp[MIXBUFFER_SAMPLES * MAX_CHANNELS] = {};
-		soundSystem->AsyncMix((int)sampletime, tmp);
-		sampletime += MIXBUFFER_SAMPLES;
-		for (int i = 0; i < MIXBUFFER_SAMPLES * MAX_CHANNELS; i++) {
-			snd_float_buf[snd_buf_write] = tmp[i];
-			if (++snd_buf_write == SOUND_BUFFER_SAMPLES)
-				snd_buf_write = 0;
-		}
-		snd_buf_avail += MIXBUFFER_SAMPLES * MAX_CHANNELS;
-		/* can't happen with the sizes above, but never let the writer lap the reader */
-		if (snd_buf_avail > SOUND_BUFFER_SAMPLES) {
-			snd_buf_read  = snd_buf_write;
-			snd_buf_avail = SOUND_BUFFER_SAMPLES;
-		}
-	}
-
-	static int16_t out[MAX_FRAME_SAMPLES * MAX_CHANNELS];
-	static float tmp_out[MAX_FRAME_SAMPLES * MAX_CHANNELS];
-	for (int i = 0; i < total; i++) {
-		tmp_out[i] = snd_float_buf[snd_buf_read];
-		if (++snd_buf_read == SOUND_BUFFER_SAMPLES)
-			snd_buf_read = 0;
-	}
-	snd_buf_avail -= total;
-	SIMDProcessor->MixedSoundToSamples(out, tmp_out, total);
-	audio_batch_cb(out, samples_per_frame);
-#endif
 }
 
 static bool context_framebuffer_lock(void *data)
@@ -1117,6 +1091,23 @@ bool retro_load_game(const struct retro_game_info *info)
 		return false;
 
 	update_variables(true);
+
+	// negotiate float audio output (RETRO_ENVIRONMENT_GET_AUDIO_SAMPLE_BATCH_FLOAT):
+	// decided once per loaded game. On success the whole pipeline runs the
+	// all-float mixer with [-1,1] output; otherwise the all-s16 integer mixer.
+	audio_output_float = false;
+	memset(&audio_float_cb, 0, sizeof(audio_float_cb));
+	if (environ_cb(RETRO_ENVIRONMENT_GET_AUDIO_SAMPLE_BATCH_FLOAT, &audio_float_cb)
+	    && audio_float_cb.batch) {
+		audio_output_float = true;
+	}
+	soundSystem->SetOutputFloat(audio_output_float);
+	if (log_cb)
+		log_cb(RETRO_LOG_INFO, "[boom3] audio output format: %s\n",
+		       audio_output_float ? "float32 [-1,1] (negotiated)" : "int16 (deterministic integer mixer)");
+	// reset the per-frame sample budget for the new session
+	audio_rem_acc = 0;
+	audio_frame_carry = 0;
 	
 	extract_directory(g_rom_dir, info->path, sizeof(g_rom_dir));
 	
@@ -1252,7 +1243,7 @@ void retro_run(void)
       glsm_ctl(GLSM_CTL_STATE_UNBIND, NULL);
 	
 	audio_process();
-	audio_callback();
+	audio_upload_frame();
 }
 
 /*
@@ -1335,9 +1326,10 @@ void retro_unload_game(void)
 	old_ret = 0;
 	oldanalogs = 0;
 	memset((void*)kb_mouse_btn, 0, sizeof(kb_mouse_btn));
+	audio_output_float = false;
+	memset(&audio_float_cb, 0, sizeof(audio_float_cb));
 	first_boot = true;
 	initial_resolution_set = false;
-	d3_alcRenderSamplesSOFT = NULL;
 }
 
 unsigned retro_get_region(void)

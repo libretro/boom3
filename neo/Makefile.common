@@ -12,10 +12,6 @@ ifeq ($(SDL_VER),3)
 	SDL_LIBS   := $(shell pkg-config --libs sdl3)
 endif
 
-ifeq ($(OPENAL),1)
-	OPENAL_CFLAGS := $(shell pkg-config --cflags openal)
-	OPENAL_LIBS := $(shell pkg-config --libs openal)
-endif
 
 INCFLAGS   :=  \
 	-I$(LIBRETRO_COMM_DIR)/include \
@@ -25,7 +21,6 @@ INCFLAGS   :=  \
 	-I$(CORE_DIR)/jpeg-8c \
 	-I$(CORE_DIR)/zlib \
 	$(SDL_CFLAGS) \
-	$(OPENAL_CFLAGS)
 
 SRC_RENDERER	:=\
 	$(CORE_DIR)/renderer/Cinematic.cpp \
@@ -165,7 +160,6 @@ endif
 SRC_SOUND	:=\
 	$(CORE_DIR)/sound/snd_cache.cpp \
 	$(CORE_DIR)/sound/snd_decoder.cpp \
-	$(CORE_DIR)/sound/snd_efxfile.cpp \
 	$(CORE_DIR)/sound/snd_emitter.cpp \
 	$(CORE_DIR)/sound/snd_shader.cpp \
 	$(CORE_DIR)/sound/snd_system.cpp \
@@ -246,11 +240,6 @@ SRC_IDLIB	:=\
 	$(CORE_DIR)/idlib/Timer.cpp \
 	$(CORE_DIR)/idlib/Heap.cpp
 
-ifeq ($(OPENAL),1)
-	# SRC_OPENAL	:= $(CORE_DIR)/mojoAL/mojoal.c
-else
-	SRC_OPENAL	:= $(CORE_DIR)/sys/stub/openal_stub.cpp
-endif
 
 SRC_GLAD	:= \
 	$(CORE_DIR)/glad41/glad.c
@@ -494,7 +483,6 @@ SOURCES_CXX	:=\
 	$(SRC_TOOLS) \
 	$(SRC_IDLIB) \
 	$(SRC_GAME) \
-	$(SRC_OPENAL)
 
 SOURCES_C	:=\
 	$(CORE_DIR)/framework/minizip/ioapi.c \

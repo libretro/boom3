@@ -187,10 +187,6 @@ void idSoundChannel::Clear( void ) {
 
 	triggered = false;
 	paused = false;
-	openalSource = 0;
-	openalStreamingOffset = 0;
-	openalStreamingBuffer[0] = openalStreamingBuffer[1] = openalStreamingBuffer[2] = 0;
-	lastopenalStreamingBuffer[0] = lastopenalStreamingBuffer[1] = lastopenalStreamingBuffer[2] = 0;
 }
 
 /*
@@ -216,38 +212,6 @@ void idSoundChannel::Stop( void ) {
 	if ( decoder != NULL ) {
 		idSampleDecoder::Free( decoder );
 		decoder = NULL;
-	}
-}
-
-/*
-===================
-idSoundChannel::ALStop
-===================
-*/
-void idSoundChannel::ALStop( void ) {
-	if ( alIsSource( openalSource ) ) {
-		alSourceStop( openalSource );
-		alSourcei( openalSource, AL_BUFFER, 0 );
-		// unassociate effect slot from source, so the effect slot can be deleted on shutdown
-		// even though the source itself is deleted later (in idSoundSystemLocal::Shutdown())
-		alSource3i( openalSource, AL_AUXILIARY_SEND_FILTER, AL_EFFECTSLOT_NULL, 0, AL_FILTER_NULL );
-		soundSystemLocal.FreeOpenALSource( openalSource );
-	}
-
-	if ( openalStreamingBuffer[0] && openalStreamingBuffer[1] && openalStreamingBuffer[2] ) {
-		alGetError();
-		alDeleteBuffers( 3, &openalStreamingBuffer[0] );
-		if ( alGetError() == AL_NO_ERROR ) {
-			openalStreamingBuffer[0] = openalStreamingBuffer[1] = openalStreamingBuffer[2] = 0;
-		}
-	}
-
-	if ( lastopenalStreamingBuffer[0] && lastopenalStreamingBuffer[1] && lastopenalStreamingBuffer[2] ) {
-		alGetError();
-		alDeleteBuffers( 3, &lastopenalStreamingBuffer[0] );
-		if ( alGetError() == AL_NO_ERROR ) {
-			lastopenalStreamingBuffer[0] = lastopenalStreamingBuffer[1] = lastopenalStreamingBuffer[2] = 0;
-		}
 	}
 }
 
@@ -366,7 +330,6 @@ void idSoundEmitterLocal::Clear( void ) {
 	int i;
 
 	for( i = 0; i < SOUND_MAX_CHANNELS; i++ ) {
-		channels[i].ALStop();
 		channels[i].Clear();
 	}
 
@@ -453,11 +416,6 @@ void idSoundEmitterLocal::CheckForCompletion( int current44kHzTime ) {
 
 			// see if this channel has completed
 			if ( !( chan->parms.soundShaderFlags & SSF_LOOPING ) ) {
-				ALint state = AL_PLAYING;
-
-				if ( alIsSource( chan->openalSource ) ) {
-					alGetSourcei( chan->openalSource, AL_SOURCE_STATE, &state );
-				}
 				idSlowChannel slow = GetSlowChannel( chan );
 
 				if ( soundWorld->slowmoActive && slow.IsActive() ) {
@@ -472,7 +430,6 @@ void idSoundEmitterLocal::CheckForCompletion( int current44kHzTime ) {
 					chan->Stop();
 
 					// free hardware resources
-					chan->ALStop();
 
 					// if this was an onDemand sound, purge the sample now
 					if ( chan->leadinSample->onDemand ) {
@@ -688,12 +645,11 @@ int idSoundEmitterLocal::StartSound( const idSoundShader *shader, const s_channe
 	// this is the sample time it will be first mixed
 	int start44kHz;
 
-	if ( soundWorld->fpa[0] ) {
-		// if we are recording an AVI demo, don't use hardware time
-		start44kHz = soundWorld->lastAVI44kHz + MIXBUFFER_SAMPLES;
-	} else {
-		start44kHz = soundSystemLocal.GetCurrent44kHzTime() + MIXBUFFER_SAMPLES;
-	}
+	// per-frame mixing: the sound starts on the very next mix pass, which
+	// begins exactly at the current sample clock. The old +MIXBUFFER_SAMPLES
+	// lookahead matched the old 4096-sample block-ahead scheduler and was
+	// responsible for ~93ms of trigger-to-output latency.
+	start44kHz = soundSystemLocal.GetCurrent44kHzTime();
 
 	//
 	// pick which sound to play from the shader
@@ -769,7 +725,6 @@ int idSoundEmitterLocal::StartSound( const idSoundShader *shader, const s_channe
 
 				// if this was an onDemand sound, purge the sample now
 				if ( chan->leadinSample->onDemand ) {
-					chan->ALStop();
 					chan->leadinSample->PurgeSoundSample();
 				}
 				break;
@@ -809,10 +764,8 @@ int idSoundEmitterLocal::StartSound( const idSoundShader *shader, const s_channe
 		chan->leadinSample->Load();
 		int		end = Sys_Milliseconds();
 		session->TimeHitch( end - start );
-		// recalculate start44kHz, because loading may have taken a fair amount of time
-		if ( !soundWorld->fpa[0] ) {
-			start44kHz = soundSystemLocal.GetCurrent44kHzTime() + MIXBUFFER_SAMPLES;
-		}
+		// note: with the deterministic clock, on-demand loading consumes no
+		// sample time within the frame, so start44kHz needs no recalculation
 	}
 
 	if ( idSoundSystemLocal::s_showStartSound.GetInteger() ) {
@@ -829,7 +782,6 @@ int idSoundEmitterLocal::StartSound( const idSoundShader *shader, const s_channe
 
 	// the sound will start mixing in the next async mix block
 	chan->triggered = true;
-	chan->openalStreamingOffset = 0;
 	chan->trigger44kHzTime = start44kHz;
 	chan->parms = chanParms;
 	chan->triggerGame44kHzTime = soundWorld->game44kHz;
@@ -949,7 +901,6 @@ void idSoundEmitterLocal::StopSound( const s_channelType channel ) {
 		chan->Stop();
 
 		// free hardware resources
-		chan->ALStop();
 
 		// if this was an onDemand sound, purge the sample now
 		// Note: if sound is disabled (s_noSound 1), leadinSample can be NULL
@@ -964,7 +915,7 @@ void idSoundEmitterLocal::StopSound( const s_channelType channel ) {
 	Sys_LeaveCriticalSection();
 }
 
-// DG: to pause active OpenAL sources when entering menu etc
+// DG: mark channels paused when entering menu etc
 void idSoundEmitterLocal::PauseAll( void ) {
 
 	Sys_EnterCriticalSection();
@@ -976,17 +927,14 @@ void idSoundEmitterLocal::PauseAll( void ) {
 			continue;
 		}
 
-		if ( alIsSource( chan->openalSource ) ) {
-			alSourcePause( chan->openalSource );
-			chan->paused = true;
-		}
+		chan->paused = true;
 	}
 
 	Sys_LeaveCriticalSection();
 }
 
 
-// DG: to resume active OpenAL sources when leaving menu etc
+// DG: unmark paused channels when leaving menu etc
 void idSoundEmitterLocal::UnPauseAll( void ) {
 
 	Sys_EnterCriticalSection();
@@ -998,10 +946,7 @@ void idSoundEmitterLocal::UnPauseAll( void ) {
 			continue;
 		}
 
-		if ( alIsSource( chan->openalSource ) && chan->paused ) {
-			alSourcePlay( chan->openalSource );
-			chan->paused = false;
-		}
+		chan->paused = false;
 	}
 
 	Sys_LeaveCriticalSection();
@@ -1032,12 +977,11 @@ void idSoundEmitterLocal::FadeSound( const s_channelType channel, float to, floa
 
 	int	start44kHz;
 
-	if ( soundWorld->fpa[0] ) {
-		// if we are recording an AVI demo, don't use hardware time
-		start44kHz = soundWorld->lastAVI44kHz + MIXBUFFER_SAMPLES;
-	} else {
-		start44kHz = soundSystemLocal.GetCurrent44kHzTime() + MIXBUFFER_SAMPLES;
-	}
+	// per-frame mixing: the sound starts on the very next mix pass, which
+	// begins exactly at the current sample clock. The old +MIXBUFFER_SAMPLES
+	// lookahead matched the old 4096-sample block-ahead scheduler and was
+	// responsible for ~93ms of trigger-to-output latency.
+	start44kHz = soundSystemLocal.GetCurrent44kHzTime();
 
 	int	length44kHz = soundSystemLocal.MillisecondsToSamples( over * 1000 );
 

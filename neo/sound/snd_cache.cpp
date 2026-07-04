@@ -292,8 +292,6 @@ idSoundSample::idSoundSample() {
 	objectMemSize = 0;
 	nonCacheData = NULL;
 	amplitudeData = NULL;
-	openalBuffer = 0;
-	hardwareBuffer = false;
 	defaultSound = false;
 	onDemand = false;
 	purged = false;
@@ -353,21 +351,6 @@ void idSoundSample::MakeDefault( void ) {
 		sample = v * 0x4000;
 		ncd[i*2+0] = sample;
 		ncd[i*2+1] = sample;
-	}
-
-	alGetError();
-	alGenBuffers( 1, &openalBuffer );
-	if ( alGetError() != AL_NO_ERROR ) {
-		common->Error( "idSoundCache: error generating OpenAL hardware buffer" );
-	}
-
-	alGetError();
-	alBufferData( openalBuffer, objectInfo.nChannels==1?AL_FORMAT_MONO16:AL_FORMAT_STEREO16, nonCacheData, objectMemSize, objectInfo.nSamplesPerSec );
-	if ( alGetError() != AL_NO_ERROR ) {
-		common->Warning( "idSoundCache: error loading data into OpenAL hardware buffer" );
-		hardwareBuffer = false;
-	} else {
-		hardwareBuffer = true;
 	}
 
 	defaultSound = true;
@@ -433,7 +416,6 @@ Loads based on name, possibly doing a MakeDefault if necessary
 void idSoundSample::Load( void ) {
 	defaultSound = false;
 	purged = false;
-	hardwareBuffer = false;
 
 	timestamp = GetNewTimeStamp();
 
@@ -484,85 +466,8 @@ void idSoundSample::Load( void ) {
 	// optionally convert it to 22kHz to save memory
 	CheckForDownSample();
 
-	// create hardware audio buffers
-	// PCM loads directly
-	if ( objectInfo.wFormatTag == WAVE_FORMAT_TAG_PCM ) {
-		alGetError();
-		alGenBuffers( 1, &openalBuffer );
-		if ( alGetError() != AL_NO_ERROR )
-			common->Error( "idSoundCache: error generating OpenAL hardware buffer" );
-		if ( alIsBuffer( openalBuffer ) ) {
-			alGetError();
-			alBufferData( openalBuffer, objectInfo.nChannels==1?AL_FORMAT_MONO16:AL_FORMAT_STEREO16, nonCacheData, objectMemSize, objectInfo.nSamplesPerSec );
-			if ( alGetError() != AL_NO_ERROR ) {
-				common->Warning( "idSoundCache: error loading data into OpenAL hardware buffer" );
-				hardwareBuffer = false;
-			} else {
-				hardwareBuffer = true;
-			}
-		}
-	}
-
-	{
-		// OGG decompressed at load time (when smaller than s_decompressionLimit seconds, 6 seconds by default)
-		if ( objectInfo.wFormatTag == WAVE_FORMAT_TAG_OGG ) {
-			if ( ( objectSize < ( ( int ) objectInfo.nSamplesPerSec * idSoundSystemLocal::s_decompressionLimit.GetInteger() ) ) ) {
-				alGetError();
-				alGenBuffers( 1, &openalBuffer );
-				if ( alGetError() != AL_NO_ERROR )
-					common->Error( "idSoundCache: error generating OpenAL hardware buffer" );
-				if ( alIsBuffer( openalBuffer ) ) {
-					idSampleDecoder *decoder = idSampleDecoder::Alloc();
-					float *destData = (float *)soundCacheAllocator.Alloc( ( LengthIn44kHzSamples() + 1 ) * sizeof( float ) );
-
-					// Decoder *always* outputs 44 kHz data
-					decoder->Decode( this, 0, LengthIn44kHzSamples(), destData );
-
-					// Downsample back to original frequency (save memory)
-					if ( objectInfo.nSamplesPerSec == 11025 ) {
-						for ( int i = 0; i < objectSize; i++ ) {
-							if ( destData[i*4] < -32768.0f )
-								((short *)destData)[i] = -32768;
-							else if ( destData[i*4] > 32767.0f )
-								((short *)destData)[i] = 32767;
-							else
-								((short *)destData)[i] = idMath::FtoiFast( destData[i*4] );
-						}
-					} else if ( objectInfo.nSamplesPerSec == 22050 ) {
-						for ( int i = 0; i < objectSize; i++ ) {
-							if ( destData[i*2] < -32768.0f )
-								((short *)destData)[i] = -32768;
-							else if ( destData[i*2] > 32767.0f )
-								((short *)destData)[i] = 32767;
-							else
-								((short *)destData)[i] = idMath::FtoiFast( destData[i*2] );
-						}
-					} else {
-						for ( int i = 0; i < objectSize; i++ ) {
-							if ( destData[i] < -32768.0f )
-								((short *)destData)[i] = -32768;
-							else if ( destData[i] > 32767.0f )
-								((short *)destData)[i] = 32767;
-							else
-								((short *)destData)[i] = idMath::FtoiFast( destData[i] );
-						}
-					}
-
-					alGetError();
-					alBufferData( openalBuffer, objectInfo.nChannels==1?AL_FORMAT_MONO16:AL_FORMAT_STEREO16, destData, objectSize * sizeof( short ), objectInfo.nSamplesPerSec );
-					if ( alGetError() != AL_NO_ERROR ) {
-						common->Warning( "idSoundCache: error loading data into OpenAL hardware buffer" );
-						hardwareBuffer = false;
-					} else {
-						hardwareBuffer = true;
-					}
-
-					soundCacheAllocator.Free( (byte *)destData );
-					idSampleDecoder::Free( decoder );
-				}
-			}
-		}
-	}
+	// note: the old OpenAL "hardware buffer" upload used to happen here; the
+	// libretro core mixes everything in software from nonCacheData
 
 	fh.Close();
 }
@@ -575,14 +480,7 @@ idSoundSample::PurgeSoundSample
 void idSoundSample::PurgeSoundSample() {
 	purged = true;
 
-	alGetError();
-	alDeleteBuffers( 1, &openalBuffer );
-	if ( alGetError() != AL_NO_ERROR ) {
-		common->Warning( "idSoundCache: error unloading data from OpenAL hardware buffer" );
-	}
 
-	openalBuffer = 0;
-	hardwareBuffer = false;
 
 	if ( amplitudeData ) {
 		soundCacheAllocator.Free( amplitudeData );

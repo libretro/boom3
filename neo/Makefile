@@ -2,7 +2,6 @@ STATIC_LINKING := 0
 AR             := ar
 CORE           := -DCORE=ON
 SDL_VER        := 0
-OPENAL         := 0
 DEBUG          := 0
 RELWITHDEBINFO := 0
 
@@ -306,10 +305,6 @@ endif
 CFLAGS   += -DIMGUI_DISABLE
 CXXFLAGS += -DIMGUI_DISABLE
 
-ifeq ($(OPENAL),1)
-    CFLAGS   += -DHAVE_OPENAL
-    CXXFLAGS += -DHAVE_OPENAL
-endif
 
 CFLAGS   += -Wall $(fpic) $(CORE) $(SDL2) -DBASE=ON -DUSE_FILE32API -ffast-math \
 			-fno-unsafe-math-optimizations -fno-strict-aliasing -fomit-frame-pointer \
@@ -332,7 +327,7 @@ $(TARGET): $(OBJECTS)
 ifeq ($(STATIC_LINKING), 1)
 	$(AR) rcs $@ $(OBJECTS)
 else
-	$(CXX) $(fpic) $(SHARED) -o $@ $(OBJECTS) $(LDFLAGS) $(GL_LIB) $(LIBS) $(SDL_LIBS) $(OPENAL_LIBS)
+	$(CXX) $(fpic) $(SHARED) -o $@ $(OBJECTS) $(LDFLAGS) $(GL_LIB) $(LIBS) $(SDL_LIBS)
 endif
 
 %.o: $(CORE_DIR)/%.cpp

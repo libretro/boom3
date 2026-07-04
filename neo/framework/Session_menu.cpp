@@ -916,28 +916,7 @@ void idSessionLocal::HandleMainMenuCommands( const char *menuCommand ) {
 				}
 			}
 			if ( !vcmd.Icmp( "eax" ) ) {
-				if ( cvarSystem->GetCVarBool( "s_useEAXReverb" ) ) {
-					int efx = soundSystem->IsEFXAvailable();
-					switch ( efx ) {
-					case 1:
-						// when you restart
-						MessageBox( MSG_OK, common->GetLanguageDict()->GetString( "#str_04137" ), common->GetLanguageDict()->GetString( "#str_07231" ), true );
-						break;
-					case -1:
-						cvarSystem->SetCVarBool( "s_useEAXReverb", false );
-						// disabled
-						MessageBox( MSG_OK, common->GetLanguageDict()->GetString( "#str_07233" ), common->GetLanguageDict()->GetString( "#str_07231" ), true );
-						break;
-					case 0:
-						cvarSystem->SetCVarBool( "s_useEAXReverb", false );
-						// not available
-						MessageBox( MSG_OK, common->GetLanguageDict()->GetString( "#str_07232" ), common->GetLanguageDict()->GetString( "#str_07231" ), true );
-						break;
-					}
-				} else {
-					// when you restart
-					MessageBox( MSG_OK, common->GetLanguageDict()->GetString( "#str_04137" ), common->GetLanguageDict()->GetString( "#str_07231" ), true );
-				}
+				// EFX reverb was removed along with OpenAL; nothing to toggle
 			}
 			if ( !vcmd.Icmp( "drivar" ) ) {
 				cmdSystem->BufferCommandText( CMD_EXEC_NOW, "s_restart\n" );
