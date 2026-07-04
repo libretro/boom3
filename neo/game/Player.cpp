@@ -955,6 +955,8 @@ idPlayer::idPlayer
 ==============
 */
 idPlayer::idPlayer() {
+	prevFirstPersonViewOrigin.Zero();
+	firstPersonViewTic = prevFirstPersonViewTic = -1000;
 	memset( &usercmd, 0, sizeof( usercmd ) );
 
 	noclip					= false;
@@ -7284,6 +7286,16 @@ idPlayer::CalculateFirstPersonView
 ===============
 */
 void idPlayer::CalculateFirstPersonView( void ) {
+	// stage 2 interpolation bookkeeping: runs once per game tic
+	{
+		extern volatile int com_ticNumber;
+		if ( firstPersonViewTic != com_ticNumber ) {
+			prevFirstPersonViewOrigin = firstPersonViewOrigin;
+			prevFirstPersonViewTic    = firstPersonViewTic;
+			firstPersonViewTic        = com_ticNumber;
+		}
+	}
+
 	if ( ( pm_modelView.GetInteger() == 1 ) || ( ( pm_modelView.GetInteger() == 2 ) && ( health <= 0 ) ) ) {
 		//	Displays the view from the point of view of the "camera" joint in the player model
 
@@ -7398,20 +7410,45 @@ void idPlayer::CalculateRenderView( void ) {
 	//    frames where a tic just ran, so this too is an exact no-op at 60fps;
 	//    the same deltas are consumed by the next tic's usercmd as always -
 	//    nothing feeds back into the simulation).
-	if ( g_frameInterpolation.GetBool() && !gameLocal.inCinematic ) {
-		renderView->time = gameLocal.time + (int)( Com_GetTicFraction() * USERCMD_MSEC );
+	{
+		extern float tr_ticFraction;
+		extern volatile int com_ticNumber;
+		tr_ticFraction = 0.0f;
 
-		// rotation preview only for the normal first-person view (not
-		// cameras, not third person, not death cam)
-		if ( !gameLocal.GetCamera() && !privateCameraView && !pm_thirdPerson.GetBool()
-		     && !pm_thirdPersonDeath.GetBool() && !g_stopTime.GetBool() ) {
-			float dYaw, dPitch;
-			usercmdGen->GetPendingViewDelta( dYaw, dPitch );
-			if ( dYaw != 0.0f || dPitch != 0.0f ) {
-				idAngles a = renderView->viewaxis.ToAngles();
-				a.yaw   += dYaw;
-				a.pitch  = idMath::ClampFloat( -89.0f, 89.0f, a.pitch + dPitch );
-				renderView->viewaxis = a.ToMat3();
+		if ( g_frameInterpolation.GetBool() && !gameLocal.inCinematic ) {
+			const float frac = Com_GetTicFraction();
+			renderView->time = gameLocal.time + (int)( frac * USERCMD_MSEC );
+
+			// stage 2: publish the fraction so the renderer interpolates all
+			// entity transforms (movers, characters, projectiles, and the
+			// view weapon, which thereby stays coherent with the lerped
+			// camera origin below)
+			tr_ticFraction = frac;
+
+			if ( !gameLocal.GetCamera() && !privateCameraView && !pm_thirdPerson.GetBool()
+			     && !pm_thirdPersonDeath.GetBool() && !g_stopTime.GetBool() ) {
+				// stage 2: interpolate the first-person view ORIGIN between
+				// the previous and current tic (guarded against teleports and
+				// stale states); rotation stays fresh via the sub-tic mouse
+				// preview below, so look latency is unchanged
+				if ( frac > 0.0f
+				     && firstPersonViewTic == com_ticNumber
+				     && firstPersonViewTic - prevFirstPersonViewTic == 1 ) {
+					idVec3 delta = firstPersonViewOrigin - prevFirstPersonViewOrigin;
+					if ( delta.LengthSqr() < ( 256.0f * 256.0f ) ) {
+						renderView->vieworg = prevFirstPersonViewOrigin + delta * frac;
+					}
+				}
+
+				// stage 1: sub-tic mouse look (render-only rotation preview)
+				float dYaw, dPitch;
+				usercmdGen->GetPendingViewDelta( dYaw, dPitch );
+				if ( dYaw != 0.0f || dPitch != 0.0f ) {
+					idAngles a = renderView->viewaxis.ToAngles();
+					a.yaw   += dYaw;
+					a.pitch  = idMath::ClampFloat( -89.0f, 89.0f, a.pitch + dPitch );
+					renderView->viewaxis = a.ToMat3();
+				}
 			}
 		}
 	}

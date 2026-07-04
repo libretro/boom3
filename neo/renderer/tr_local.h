@@ -259,6 +259,17 @@ public:
 
 	float					modelMatrix[16];		// this is just a rearrangement of parms.axis and parms.origin
 
+	// framerate independence stage 2: previous tic's transform for
+	// render-side interpolation. Updated by UpdateEntityDef whenever
+	// origin/axis change; R_SetEntityDefViewEntity lerps prev->cur by
+	// tr_ticFraction, but only when the transform changed on consecutive
+	// tics and the current tic is fresh (teleports, first present, and
+	// entities at rest all snap to the current transform).
+	idVec3					prevTransformOrigin;
+	idMat3					prevTransformAxis;
+	int						prevTransformTic;
+	int						curTransformTic;
+
 	idRenderWorldLocal *	world;
 	int						index;					// in world entityDefs
 
@@ -1177,6 +1188,10 @@ bool R_RadiusCullLocalBox( const idBounds &bounds, const float modelMatrix[16], 
 bool R_CornerCullLocalBox( const idBounds &bounds, const float modelMatrix[16], int numPlanes, const idPlane *planes );
 
 void R_AxisToModelMatrix( const idMat3 &axis, const idVec3 &origin, float modelMatrix[16] );
+
+// [0,1) sub-tic fraction for render-side transform interpolation, set per
+// frame by the game's view setup (0 = disabled / tic frame / cinematic)
+extern float tr_ticFraction;
 
 // note that many of these assume a normalized matrix, and will not work with scaled axis
 void R_GlobalPointToLocal( const float modelMatrix[16], const idVec3 &in, idVec3 &out );

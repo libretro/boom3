@@ -323,6 +323,11 @@ public:
 	// the first person view values are always calculated, even
 	// if a third person view is used
 	idVec3					firstPersonViewOrigin;
+	// framerate independence stage 2: previous tic's first-person view
+	// origin for render-side interpolation (presentation only, not saved)
+	idVec3					prevFirstPersonViewOrigin;
+	int						firstPersonViewTic;
+	int						prevFirstPersonViewTic;
 	idMat3					firstPersonViewAxis;
 
 	idDragEntity			dragEntity;

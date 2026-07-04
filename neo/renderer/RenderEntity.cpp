@@ -31,6 +31,10 @@ If you have questions concerning this license or the applicable additional terms
 #include "renderer/tr_local.h"
 
 idRenderEntityLocal::idRenderEntityLocal() {
+	prevTransformOrigin.Zero();
+	prevTransformAxis.Identity();
+	prevTransformTic = -1000;	// never interpolate before two consecutive-tic updates
+	curTransformTic  = -1000;
 	memset( &parms, 0, sizeof( parms ) );
 	memset( modelMatrix, 0, sizeof( modelMatrix ) );
 

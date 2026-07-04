@@ -32,6 +32,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "renderer/GuiModel.h"
 #include "renderer/RenderWorld_local.h"
 
+#include "framework/Common.h"
 #include "renderer/tr_local.h"
 
 /*
@@ -252,7 +253,16 @@ void idRenderWorldLocal::UpdateEntityDef( qhandle_t entityHandle, const renderEn
 					// only clear the dynamic model and interaction surfaces if they exist
 					c_callbackUpdate++;
 					R_ClearEntityDefDynamicModel( def );
-					def->parms = *re;
+					// framerate independence stage 2: remember the previous transform and the
+	// tics it changed on, for render-side interpolation
+	if ( def->parms.origin != re->origin || def->parms.axis != re->axis ) {
+		def->prevTransformOrigin = def->parms.origin;
+		def->prevTransformAxis   = def->parms.axis;
+		def->prevTransformTic    = def->curTransformTic;
+		def->curTransformTic     = com_ticNumber;
+	}
+
+	def->parms = *re;
 					return;
 				}
 			}

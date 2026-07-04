@@ -39,6 +39,9 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "renderer/tr_local.h"
 
+// set per frame by idPlayer::CalculateRenderView; 0 disables interpolation
+float tr_ticFraction = 0.0f;
+
 //====================================================================
 
 /*

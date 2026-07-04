@@ -403,7 +403,34 @@ viewEntity_t *R_SetEntityDefViewEntity( idRenderEntityLocal *def ) {
 	vModel->modelDepthHack = def->parms.modelDepthHack;
 	vModel->weaponDepthHack = def->parms.weaponDepthHack;
 
-	R_AxisToModelMatrix( def->parms.axis, def->parms.origin, vModel->modelMatrix );
+	// framerate independence stage 2: interpolate the render transform
+	// between the previous and current game tic by the sub-tic fraction.
+	// Strictly render-side: parms are untouched, and we only interpolate
+	// when the transform changed on consecutive tics AND the latest change
+	// happened on the current tic (entities at rest, teleports, and first
+	// presents all snap). A distance guard catches respawn-style jumps that
+	// happen to land on consecutive tics.
+	if ( tr_ticFraction > 0.0f
+	     && def->curTransformTic == com_ticNumber
+	     && def->curTransformTic - def->prevTransformTic == 1 ) {
+		idVec3 delta = def->parms.origin - def->prevTransformOrigin;
+		if ( delta.LengthSqr() < ( 256.0f * 256.0f ) ) {
+			idVec3 iOrigin = def->prevTransformOrigin + delta * tr_ticFraction;
+			idMat3 iAxis;
+			if ( def->parms.axis.Compare( def->prevTransformAxis ) ) {
+				iAxis = def->parms.axis;
+			} else {
+				idQuat q;
+				q.Slerp( def->prevTransformAxis.ToQuat(), def->parms.axis.ToQuat(), tr_ticFraction );
+				iAxis = q.ToMat3();
+			}
+			R_AxisToModelMatrix( iAxis, iOrigin, vModel->modelMatrix );
+		} else {
+			R_AxisToModelMatrix( def->parms.axis, def->parms.origin, vModel->modelMatrix );
+		}
+	} else {
+		R_AxisToModelMatrix( def->parms.axis, def->parms.origin, vModel->modelMatrix );
+	}
 
 	// we may not have a viewDef if we are just creating shadows at entity creation time
 	if ( tr.viewDef ) {
