@@ -37,6 +37,8 @@ If you have questions concerning this license or the applicable additional terms
 #include "ai/AI.h"
 #include "WorldSpawn.h"
 #include "Player.h"
+
+idCVar g_frameInterpolation( "g_frameInterpolation", "1", CVAR_GAME | CVAR_BOOL | CVAR_ARCHIVE, "render-side sub-tic time and mouse-look presentation at output rates above 60fps" );
 #include "Camera.h"
 #include "Fx.h"
 #include "Misc.h"
@@ -1275,6 +1277,8 @@ idPlayer::idPlayer() {
 	maxRespawnTime			= 0;
 
 	firstPersonViewOrigin	= vec3_zero;
+	prevFirstPersonViewOrigin = vec3_zero;
+	firstPersonViewTic = prevFirstPersonViewTic = -1000;
 	firstPersonViewAxis		= mat3_identity;
 
 	hipJoint				= INVALID_JOINT;
@@ -1500,7 +1504,7 @@ void idPlayer::Init( void ) {
 	weapon_bloodstone_active3 = SlotForWeapon( "weapon_bloodstone_active3" );
 	harvest_lock			= false;
 #endif
-	showWeaponViewModel		= GetUserInfo()->GetBool( "ui_showGun" );
+	showWeaponViewModel		= GetUserInfo()->GetBool( "ui_showGun", "1" );	// default VISIBLE if the key is absent - a missing key must never hide the gun
 
 
 	lastDmgTime				= 0;
@@ -2937,7 +2941,7 @@ bool idPlayer::UserInfoChanged( bool canModify ) {
 	bool	newready;
 
 	userInfo = GetUserInfo();
-	showWeaponViewModel = userInfo->GetBool( "ui_showGun" );
+	showWeaponViewModel = userInfo->GetBool( "ui_showGun", "1" );	// default VISIBLE if the key is absent - a missing key must never hide the gun
 
 	if ( !gameLocal.isMultiplayer ) {
 		return false;
@@ -8659,6 +8663,16 @@ idPlayer::CalculateFirstPersonView
 ===============
 */
 void idPlayer::CalculateFirstPersonView( void ) {
+	// stage 2 interpolation bookkeeping: runs once per game tic
+	{
+		extern volatile int com_ticNumber;
+		if ( firstPersonViewTic != com_ticNumber ) {
+			prevFirstPersonViewOrigin = firstPersonViewOrigin;
+			prevFirstPersonViewTic    = firstPersonViewTic;
+			firstPersonViewTic        = com_ticNumber;
+		}
+	}
+
 	if ( ( pm_modelView.GetInteger() == 1 ) || ( ( pm_modelView.GetInteger() == 2 ) && ( health <= 0 ) ) ) {
 		//	Displays the view from the point of view of the "camera" joint in the player model
 
@@ -8765,6 +8779,49 @@ void idPlayer::CalculateRenderView( void ) {
 
 	if ( renderView->fov_y == 0 ) {
 		common->Error( "renderView->fov_y == 0" );
+	}
+
+	{
+		extern float tr_ticFraction;
+		extern volatile int com_ticNumber;
+		tr_ticFraction = 0.0f;
+
+		if ( g_frameInterpolation.GetBool() && !gameLocal.inCinematic ) {
+			const float frac = Com_GetTicFraction();
+			renderView->time = gameLocal.time + (int)( frac * USERCMD_MSEC );
+
+			// stage 2: publish the fraction so the renderer interpolates all
+			// entity transforms (movers, characters, projectiles, and the
+			// view weapon, which thereby stays coherent with the lerped
+			// camera origin below)
+			tr_ticFraction = frac;
+
+			if ( !gameLocal.GetCamera() && !privateCameraView && !pm_thirdPerson.GetBool()
+			     && !pm_thirdPersonDeath.GetBool() && !g_stopTime.GetBool() ) {
+				// stage 2: interpolate the first-person view ORIGIN between
+				// the previous and current tic (guarded against teleports and
+				// stale states); rotation stays fresh via the sub-tic mouse
+				// preview below, so look latency is unchanged
+				if ( frac > 0.0f
+				     && firstPersonViewTic == com_ticNumber
+				     && firstPersonViewTic - prevFirstPersonViewTic == 1 ) {
+					idVec3 delta = firstPersonViewOrigin - prevFirstPersonViewOrigin;
+					if ( delta.LengthSqr() < ( 256.0f * 256.0f ) ) {
+						renderView->vieworg = prevFirstPersonViewOrigin + delta * frac;
+					}
+				}
+
+				// stage 1: sub-tic mouse look (render-only rotation preview)
+				float dYaw, dPitch;
+				usercmdGen->GetPendingViewDelta( dYaw, dPitch );
+				if ( dYaw != 0.0f || dPitch != 0.0f ) {
+					idAngles a = renderView->viewaxis.ToAngles();
+					a.yaw   += dYaw;
+					a.pitch  = idMath::ClampFloat( -89.0f, 89.0f, a.pitch + dPitch );
+					renderView->viewaxis = a.ToMat3();
+				}
+			}
+		}
 	}
 
 	if ( g_showviewpos.GetBool() ) {

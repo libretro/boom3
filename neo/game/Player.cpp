@@ -1218,7 +1218,7 @@ void idPlayer::Init( void ) {
 	weapon_soulcube			= SlotForWeapon( "weapon_soulcube" );
 	weapon_pda				= SlotForWeapon( "weapon_pda" );
 	weapon_fists			= SlotForWeapon( "weapon_fists" );
-	showWeaponViewModel		= GetUserInfo()->GetBool( "ui_showGun" );
+	showWeaponViewModel		= GetUserInfo()->GetBool( "ui_showGun", "1" );	// default VISIBLE if the key is absent - a missing key must never hide the gun
 
 
 	lastDmgTime				= 0;
@@ -2438,7 +2438,7 @@ bool idPlayer::UserInfoChanged( bool canModify ) {
 	bool	newready;
 
 	userInfo = GetUserInfo();
-	showWeaponViewModel = userInfo->GetBool( "ui_showGun" );
+	showWeaponViewModel = userInfo->GetBool( "ui_showGun", "1" );	// default VISIBLE if the key is absent - a missing key must never hide the gun
 
 	if ( !gameLocal.isMultiplayer ) {
 		return false;

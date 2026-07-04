@@ -215,6 +215,7 @@ public:
 	bool				IsLinked( void ) const;
 	void				Unlink( void );
 	void				LinkTo( idScriptObject &obj, const char *name );
+	bool				LinkToOptional( idScriptObject &obj, const char *name );
 	idScriptVariable	&operator=( const returnType &value );
 						operator returnType() const;
 };
@@ -241,6 +242,13 @@ ID_INLINE void idScriptVariable<type, etype, returnType>::LinkTo( idScriptObject
 		gameError( "Missing '%s' field in script object '%s'", name, obj.GetTypeName() );
 	}
 }
+
+template<class type, etype_t etype, class returnType>
+ID_INLINE bool idScriptVariable<type, etype, returnType>::LinkToOptional( idScriptObject &obj, const char *name ) {
+	data = ( type * )obj.GetVariable( name, etype );
+	return ( data != NULL );
+}
+
 
 template<class type, etype_t etype, class returnType>
 ID_INLINE idScriptVariable<type, etype, returnType> &idScriptVariable<type, etype, returnType>::operator=( const returnType &value ) {
