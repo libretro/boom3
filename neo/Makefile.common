@@ -464,11 +464,8 @@ SOURCES_DIR = \
 	
 DIRS_C  := $(foreach dir,$(SOURCES_DIR), $(wildcard $(dir)/*.c))
 
-ifeq ($(D3XP),1)
-	SRC_GAME	:=	$(SRC_GAME_D3XP)
-else
-	SRC_GAME	:=	$(SRC_GAME_BASE)
-endif
+# unified core: always the d3xp game module (superset of the base game)
+SRC_GAME	:=	$(SRC_GAME_D3XP)
 
 SOURCES_CXX	:=\
 	$(SRC_SYS) \

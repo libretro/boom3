@@ -2371,7 +2371,9 @@ void idWeapon::EnterCinematic( void ) {
 		WEAPON_RELOAD		= false;
 		WEAPON_NETRELOAD	= false;
 		WEAPON_NETENDRELOAD	= false;
-		WEAPON_NETFIRING	= false;
+		if ( WEAPON_NETFIRING.IsLinked() ) {
+			WEAPON_NETFIRING	= false;
+		}
 		WEAPON_RAISEWEAPON	= false;
 		WEAPON_LOWERWEAPON	= false;
 

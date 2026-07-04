@@ -37,6 +37,21 @@ struct retro_core_option_v2_category option_cats_us[] = {
 
 struct retro_core_option_v2_definition option_defs_us[] = {
 	{
+      "doom_game",
+      "Game (Restart Required)",
+      NULL,
+      "Which game the loaded content belongs to. 'Auto' detects Resurrection of Evil when the content sits in a directory named 'd3xp' (the retail layout); override for unconventional layouts.",
+      NULL,
+      NULL,
+      {
+         { "auto",  "Auto (Detect)" },
+         { "doom3", "Doom 3" },
+         { "d3xp",  "Doom 3: Resurrection of Evil" },
+         { NULL, NULL },
+      },
+      "auto"
+   },
+	{
       "doom_framerate",
       "Frame rate (Restart Required)",
       NULL,

@@ -769,7 +769,20 @@ idInventory::AmmoIndexForWeaponClass
 ammo_t idInventory::AmmoIndexForWeaponClass( const char *weapon_classname, int *ammoRequired ) {
 	const idDeclEntityDef *decl = gameLocal.FindEntityDef( weapon_classname, false );
 	if ( !decl ) {
-		gameLocal.Error( "Unknown weapon in decl '%s'", weapon_classname );
+		// unified core: RoE-only weapon classes (bloodstone, grabber, ...)
+		// legitimately have no def when running base Doom 3 data under the
+		// d3xp game module - degrade to a warning and "no ammo" instead of
+		// aborting the map (the weapon is simply unavailable)
+		// warn once, then stay quiet: the HUD queries ammo per frame
+		static bool warnedMissingWeaponDef = false;
+		if ( !warnedMissingWeaponDef ) {
+			gameLocal.Warning( "Unknown weapon in decl '%s' (not present in this game's data; RoE-only weapons are unavailable)", weapon_classname );
+			warnedMissingWeaponDef = true;
+		}
+		if ( ammoRequired ) {
+			*ammoRequired = 0;
+		}
+		return 0;
 	}
 	if ( ammoRequired ) {
 		*ammoRequired = decl->dict.GetInt( "ammoRequired" );
@@ -1069,7 +1082,9 @@ bool idInventory::HasEmptyClipCannotRefill(const char *weapon_classname, idPlaye
 
 	const idDeclEntityDef *decl = gameLocal.FindEntityDef( weapon_classname, false );
 	if ( !decl ) {
-		gameLocal.Error( "Unknown weapon in decl '%s'", weapon_classname );
+		// unified core: see AmmoIndexForWeaponClass - absent RoE-only defs
+		// under base data are not an error
+		return false;	// absent RoE-only def under base data; warned in AmmoIndexForWeaponClass
 	}
 	int minclip = decl->dict.GetInt("minclipsize");
 	if(!minclip) {
@@ -1968,7 +1983,10 @@ void idPlayer::Spawn( void ) {
 #endif
 
 #ifdef _D3XP
-	if(g_skill.GetInteger() >= 3) {
+	if(g_skill.GetInteger() >= 3
+	   && gameLocal.FindEntityDef( "weapon_bloodstone_passive", false ) != NULL) {
+		// unified core: the RoE Nightmare bloodstone grant only applies when
+		// the RoE defs exist (i.e. actually running Resurrection of Evil)
 		if(!WeaponAvailable("weapon_bloodstone_passive")) {
 			GiveInventoryItem("weapon_bloodstone_passive");
 		}

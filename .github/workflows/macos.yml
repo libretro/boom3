@@ -22,17 +22,12 @@ jobs:
     - name: Build (libretro Makefile)
       run: |
         make -C neo -j$(sysctl -n hw.ncpu)
-        mv neo/boom3_libretro.dylib .
-        make -C neo clean
-        make -C neo -j$(sysctl -n hw.ncpu) D3XP=1
-        mv neo/boom3_xp_libretro.dylib .
-        mv boom3_libretro.dylib neo/
     - name: Stage artifact
       run: |
         export PKGDIR="boom3_libretro-macos-$(git rev-parse --short HEAD)"
         echo "pkgname=$PKGDIR" >> $GITHUB_ENV
         mkdir -p publish/$PKGDIR
-        cp neo/boom3_libretro.dylib neo/boom3_xp_libretro.dylib publish/$PKGDIR/
+        cp neo/boom3_libretro.dylib publish/$PKGDIR/
         cp COPYING.txt publish/$PKGDIR/ 2>/dev/null || true
         echo "boom3_libretro for macOS (arm64), built $(date)" > publish/$PKGDIR/README.txt
         echo "from ${{ github.ref_name }} commit ${{ github.sha }}" >> publish/$PKGDIR/README.txt

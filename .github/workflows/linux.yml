@@ -34,17 +34,12 @@ jobs:
     - name: Build (libretro Makefile)
       run: |
         make -C neo -j$(nproc)
-        mv neo/boom3_libretro.so .
-        make -C neo clean
-        make -C neo -j$(nproc) D3XP=1
-        mv neo/boom3_xp_libretro.so .
-        mv boom3_libretro.so neo/
     - name: Stage artifact
       run: |
         export PKGDIR="boom3_libretro-linux-${{ matrix.arch }}-$(git rev-parse --short HEAD)"
         echo "pkgname=$PKGDIR" >> $GITHUB_ENV
         mkdir -p publish/$PKGDIR
-        cp neo/boom3_libretro.so neo/boom3_xp_libretro.so publish/$PKGDIR/
+        cp neo/boom3_libretro.so publish/$PKGDIR/
         cp COPYING.txt publish/$PKGDIR/ 2>/dev/null || true
         echo "boom3_libretro for ${{ matrix.arch }} Linux, built $(date)" > publish/$PKGDIR/README.txt
         echo "from ${{ github.ref_name }} commit ${{ github.sha }}" >> publish/$PKGDIR/README.txt

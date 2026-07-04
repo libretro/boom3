@@ -526,20 +526,29 @@ main
 ===============
 */
 
-#ifdef _D3XP
-static int fake_argc = 3;
-static char *fake_argv[] = {
-  (char *)"+set",
-  (char *)"fs_game",
-  (char *)"d3xp",
-  nullptr
-};
-#else
+/* Runtime game selection. The game module compiled into this core is the
+ * d3xp (Resurrection of Evil) code, which is a superset of the base Doom 3
+ * game module (every base entity class and script event exists in it - the
+ * same unification the BFG edition shipped). One binary therefore serves
+ * both titles; which content set the engine mounts is decided per load via
+ * fs_game: unset for Doom 3, "d3xp" for RoE. Selected automatically from
+ * the content's directory name, overridable with the doom_game core option. */
 static int fake_argc = 0;
-static char *fake_argv[] = {
-  nullptr
-};
-#endif
+static char *fake_argv[4] = { nullptr };
+
+static void set_game_args(bool roe)
+{
+	if (roe) {
+		fake_argv[0] = (char *)"+set";
+		fake_argv[1] = (char *)"fs_game";
+		fake_argv[2] = (char *)"d3xp";
+		fake_argv[3] = nullptr;
+		fake_argc    = 3;
+	} else {
+		fake_argv[0] = nullptr;
+		fake_argc    = 0;
+	}
+}
 
 static void extract_basename(char *buf, const char *path, size_t size)
 {
@@ -1141,6 +1150,33 @@ bool retro_load_game(const struct retro_game_info *info)
 	extract_directory(g_rom_dir, info->path, sizeof(g_rom_dir));
 	
 	snprintf(g_pak_path, sizeof(g_pak_path), "%s", info->path);
+
+	/* game selection: auto-detect RoE from the content's directory name
+	 * (retail installs keep RoE data in <install>/d3xp/ beside base/),
+	 * with a core option override for unconventional layouts */
+	{
+		char content_dir_name[1024];
+		bool roe = false;
+		struct retro_variable gv = { "doom_game", NULL };
+
+		extract_basename(content_dir_name, g_rom_dir, sizeof(content_dir_name));
+		if (idStr::Icmp(content_dir_name, "d3xp") == 0)
+			roe = true;
+
+		if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &gv) && gv.value)
+		{
+			if (strcmp(gv.value, "doom3") == 0)
+				roe = false;
+			else if (strcmp(gv.value, "d3xp") == 0)
+				roe = true;
+			/* "auto": keep the detection result */
+		}
+		set_game_args(roe);
+		if (log_cb)
+			log_cb(RETRO_LOG_INFO, "[boom3] game: %s (content dir '%s')\n",
+			       roe ? "Doom 3: Resurrection of Evil (fs_game d3xp)" : "Doom 3",
+			       content_dir_name);
+	}
 	
 	if (environ_cb(RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY, &base_save_dir) && base_save_dir)
 	{
@@ -1398,16 +1434,20 @@ static bool RetroBuildState(void)
 	if (retro_state_cache_tic == com_ticNumber && retro_state_cache.Num() > 0)
 		return true;	// still current: state can only change on a tic
 
-	if (!sessLocal.mapSpawned)
+	if (!sessLocal.mapSpawned) {
+		if (log_cb) log_cb(RETRO_LOG_INFO, "[boom3] state: refused, mapSpawned=false\n");
 		return false;
+	}
 
 	// serialize straight into memory: no disk I/O anywhere in this path
 	idFile_Memory mem(RETRO_STATE_NAME ".save");
 	retro_savestate_active = true;
 	bool ok = sessLocal.SaveGame(RETRO_STATE_NAME, true, NULL, &mem);
 	retro_savestate_active = false;
-	if (!ok || mem.Length() <= 0)
+	if (!ok || mem.Length() <= 0) {
+		if (log_cb) log_cb(RETRO_LOG_INFO, "[boom3] state: SaveGame ok=%d len=%d\n", (int)ok, mem.Length());
 		return false;
+	}
 
 	retro_state_cache.SetNum(mem.Length());
 	memcpy(retro_state_cache.Ptr(), mem.GetDataPtr(), mem.Length());

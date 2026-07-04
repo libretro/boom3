@@ -27,11 +27,9 @@ endif
 endif
 
 CORE_DIR    += .
-ifeq ($(D3XP), 1)
-TARGET_NAME := boom3_xp
-else
+# One unified core: the game module is the d3xp (RoE) code, a superset of
+# the base game; title selection happens at runtime via fs_game.
 TARGET_NAME := boom3
-endif
 LIBM		    = -lm
 
 ifeq ($(ARCHFLAGS),)
@@ -311,12 +309,9 @@ CFLAGS   += -Wall $(fpic) $(CORE) $(SDL2) -DBASE=ON -DUSE_FILE32API -ffast-math 
 			-Wno-sign-compare -Wno-switch -Wno-format-security -I$(TOPDIR) -I$(TOPDIR)/sys/libretro/config
 CXXFLAGS += -Wall $(fpic) -fpermissive -std=gnu++11
 
-ifeq ($(D3XP), 1)
-	CFLAGS	 +=	-I$(TOPDIR)/d3xp -D_D3XP
-	CXXFLAGS +=     -I$(TOPDIR)/d3xp -D_D3XP
-else
-	CFLAGS	+=	-I$(TOPDIR)/game
-endif
+# unified core: always the d3xp game module (superset of the base game)
+CFLAGS	 +=	-I$(TOPDIR)/d3xp -D_D3XP
+CXXFLAGS +=     -I$(TOPDIR)/d3xp -D_D3XP
 
 CFLAGS     += $(INCFLAGS)
 CXXFLAGS   += $(INCFLAGS)

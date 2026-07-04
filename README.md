@@ -1,10 +1,11 @@
 # boom3 — Doom 3 (dhewm3) libretro core
 
 A libretro core running the Doom 3 engine (based on dhewm3 1.5.5), for use in
-RetroArch and other libretro frontends. Two cores build from this tree:
-
-- **boom3** — Doom 3 (base game)
-- **boom3_xp** — Doom 3: Resurrection of Evil (`make D3XP=1`)
+RetroArch and other libretro frontends. **One core runs both Doom 3 and
+Doom 3: Resurrection of Evil**: the compiled game module is the d3xp (RoE)
+code, a superset of the base game, and the title is selected at load time -
+automatically when the content sits in a directory named `d3xp` (the retail
+layout), or explicitly via the `Game` core option.
 
 ## Game data
 
@@ -16,7 +17,8 @@ engine locates the rest of the data relative to it.
   1.3.1-patched data and the Steam/GOG/Humble releases work as well.
 - **The free demo** (`demo00.pk4` from `doom3-linux-1.1.1286-demo`) is fully
   playable and is what the in-tree test harness uses.
-- **Resurrection of Evil** requires the boom3_xp core and the d3xp data.
+- **Resurrection of Evil**: load a pk4 from the `d3xp` directory (base data
+  must be installed beside it, as on a retail install).
 - Environmental reverb uses the game's `efxs/<map>.efx` files where present
   (retail data ships them; the console logs `sound: found efxs/...` per map).
 
@@ -69,11 +71,9 @@ and at output rates above 60 fps mouse look renders sub-tic.
 
 ## Building
 
-    make -C neo -j$(nproc)            # boom3_libretro
-    make -C neo -j$(nproc) D3XP=1     # boom3_xp_libretro (clean between variants)
+    make -C neo -j$(nproc)            # boom3_libretro (runs both games)
 
-Pure `make`/GCC; autodetects Linux/MinGW/macOS. `-D_D3XP` applies globally,
-so run `make clean` when switching variants. **Header changes require a
+Pure `make`/GCC; autodetects Linux/MinGW/macOS. **Header changes require a
 clean build** — the Makefile has no dependency tracking.
 
 ## Testing
