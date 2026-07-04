@@ -433,4 +433,48 @@ static inline void Snd_FloatToS16( short *out, const float *in, int numSamples )
 	Snd_MixedSoundToSamples( out, in, numSamples );
 }
 
+
+/*
+====================
+Snd_ClampFloatOutput
+
+Saturate the float mix to the output range before handing it to the
+frontend. The engine's mix is deliberately hot (sums of channels regularly
+exceed full scale - that is by design, every previous pipeline saturated
+at the final int16 conversion), so unclamped float output overloads the
+frontend's audio chain and distorts. Range is [-1.0, 32767/32768] for
+exact behavioral parity with the s16 pipeline's saturating narrow.
+====================
+*/
+static inline void Snd_ClampFloatOutput( float *buf, int numSamples ) {
+	const float loF = -1.0f;
+	const float hiF = 32767.0f / 32768.0f;
+	int i = 0;
+
+#if SND_MIX_SSE2
+	const __m128 lo = _mm_set1_ps( loF );
+	const __m128 hi = _mm_set1_ps( hiF );
+	for ( ; i + 8 <= numSamples; i += 8 ) {
+		__m128 a = _mm_loadu_ps( buf + i );
+		__m128 b = _mm_loadu_ps( buf + i + 4 );
+		_mm_storeu_ps( buf + i,     _mm_min_ps( _mm_max_ps( a, lo ), hi ) );
+		_mm_storeu_ps( buf + i + 4, _mm_min_ps( _mm_max_ps( b, lo ), hi ) );
+	}
+#elif SND_MIX_NEON
+	const float32x4_t lo = vdupq_n_f32( loF );
+	const float32x4_t hi = vdupq_n_f32( hiF );
+	for ( ; i + 8 <= numSamples; i += 8 ) {
+		float32x4_t a = vld1q_f32( buf + i );
+		float32x4_t b = vld1q_f32( buf + i + 4 );
+		vst1q_f32( buf + i,     vminq_f32( vmaxq_f32( a, lo ), hi ) );
+		vst1q_f32( buf + i + 4, vminq_f32( vmaxq_f32( b, lo ), hi ) );
+	}
+#endif
+
+	for ( ; i < numSamples; i++ ) {
+		float v = buf[i];
+		buf[i] = v < loF ? loF : ( v > hiF ? hiF : v );
+	}
+}
+
 #endif /* !__SND_MIX_KERNELS_H__ */

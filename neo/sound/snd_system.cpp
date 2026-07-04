@@ -431,6 +431,10 @@ void idSoundSystemLocal::MixFrameFloat( float *dest, int numFrames ) {
 	if ( !muted && currentSoundWorld ) {
 		currentSoundWorld->MixLoop( CurrentSoundTime, numFrames, dest );
 	}
+	// saturate: the sum of channels is deliberately unclamped during mixing
+	// (Doom 3's mix runs hot); every previous pipeline saturated at the final
+	// int16 conversion, and the frontend's float chain expects [-1,1]
+	Snd_ClampFloatOutput( dest, numFrames * 2 );
 	CurrentSoundTime += numFrames;
 }
 

@@ -1,3 +1,4 @@
+#include <initializer_list>
 // snd_mix_bench.cpp - correctness + performance harness for snd_mix_kernels.h
 // Compares: OLD generic (fixed-4096, /MIXBUFFER divisor), NEW scalar C,
 // NEW SIMD (SSE2 or NEON per target). Verifies s16 kernels bit-exact
@@ -104,6 +105,34 @@ int main() {
 	Snd_SumToS16(outA, accA, 64);
 	int sat=0; for(int i=0;i<64;i++){int v=accA[i];short e=(short)(v<-32768?-32768:(v>32767?32767:v)); if(outA[i]!=e)sat++;}
 	printf("Snd_SumToS16 saturation: %s\n", sat?"FAIL":"bit-exact");
+
+
+	// float stereo + small-n mono: SIMD vs serial reference
+	{
+		double wm=0, wrel=0;
+		for (int n : {1,2,3,7,8,367,368,735,736,1470}) {
+			memset(dstA,0,sizeof dstA); memset(dstB,0,sizeof dstB);
+			// serial reference with correct divisor
+			{ float sL=lastV[0],sR=lastV[1];
+			  float iL=(curV[0]-lastV[0])/n, iR=(curV[1]-lastV[1])/n;
+			  for(int i=0;i<n;i++){dstA[i*2]+=src[i*2]*sL;dstA[i*2+1]+=src[i*2+1]*sR;sL+=iL;sR+=iR;} }
+			Snd_MixTwoSpeakerStereo(dstB, src, n, lastV, curV);
+			for(int i=0;i<n*2;i++){double d=fabs((double)dstA[i]-dstB[i]);if(d>wm)wm=d;double m=fabs((double)dstA[i]);if(m>1e-3&&d/m>wrel)wrel=d/m;}
+		}
+		printf("float stereo SIMD-vs-serial (10 sizes): max abs %.4g max rel %.3g %s\n", wm, wrel, wrel<1e-3?"OK":"FAIL");
+	}
+	{
+		double wm=0, wrel=0;
+		for (int n : {1,3,5,367,735}) {
+			memset(dstA,0,sizeof dstA); memset(dstB,0,sizeof dstB);
+			{ float sL=lastV[0],sR=lastV[1];
+			  float iL=(curV[0]-lastV[0])/n, iR=(curV[1]-lastV[1])/n;
+			  for(int i=0;i<n;i++){dstA[i*2]+=src[i]*sL;dstA[i*2+1]+=src[i]*sR;sL+=iL;sR+=iR;} }
+			Snd_MixTwoSpeakerMono(dstB, src, n, lastV, curV);
+			for(int i=0;i<n*2;i++){double d=fabs((double)dstA[i]-dstB[i]);if(d>wm)wm=d;double m=fabs((double)dstA[i]);if(m>1e-3&&d/m>wrel)wrel=d/m;}
+		}
+		printf("float mono small-n SIMD-vs-serial: max abs %.4g max rel %.3g %s\n", wm, wrel, wrel<1e-3?"OK":"FAIL");
+	}
 
 	// ---------- performance ----------
 	const int REPS = 20000;
