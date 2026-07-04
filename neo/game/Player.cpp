@@ -37,6 +37,8 @@ If you have questions concerning this license or the applicable additional terms
 #include "ai/AI.h"
 #include "WorldSpawn.h"
 #include "Player.h"
+
+idCVar g_frameInterpolation( "g_frameInterpolation", "1", CVAR_GAME | CVAR_BOOL | CVAR_ARCHIVE, "render-side sub-tic time and mouse-look presentation at output rates above 60fps" );
 #include "Camera.h"
 #include "Fx.h"
 #include "Misc.h"
@@ -7385,6 +7387,33 @@ void idPlayer::CalculateRenderView( void ) {
 
 	if ( renderView->fov_y == 0 ) {
 		common->Error( "renderView->fov_y == 0" );
+	}
+
+	// framerate independence, stage 1 (render-only, never writes game state):
+	//  - present sub-tic TIME so keyframe-lerped skeletal animation, particles
+	//    and material/gui shader time advance smoothly between 60Hz tics at
+	//    higher output rates (exact no-op at 60fps: the fraction is 0 there);
+	//  - apply the mouse motion polled since the last tic as a render-only
+	//    first-person view rotation preview (the pending queue is empty on
+	//    frames where a tic just ran, so this too is an exact no-op at 60fps;
+	//    the same deltas are consumed by the next tic's usercmd as always -
+	//    nothing feeds back into the simulation).
+	if ( g_frameInterpolation.GetBool() && !gameLocal.inCinematic ) {
+		renderView->time = gameLocal.time + (int)( Com_GetTicFraction() * USERCMD_MSEC );
+
+		// rotation preview only for the normal first-person view (not
+		// cameras, not third person, not death cam)
+		if ( !gameLocal.GetCamera() && !privateCameraView && !pm_thirdPerson.GetBool()
+		     && !pm_thirdPersonDeath.GetBool() && !g_stopTime.GetBool() ) {
+			float dYaw, dPitch;
+			usercmdGen->GetPendingViewDelta( dYaw, dPitch );
+			if ( dYaw != 0.0f || dPitch != 0.0f ) {
+				idAngles a = renderView->viewaxis.ToAngles();
+				a.yaw   += dYaw;
+				a.pitch  = idMath::ClampFloat( -89.0f, 89.0f, a.pitch + dPitch );
+				renderView->viewaxis = a.ToMat3();
+			}
+		}
 	}
 
 	if ( g_showviewpos.GetBool() ) {

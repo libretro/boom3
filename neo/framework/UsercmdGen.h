@@ -163,6 +163,12 @@ public:
 
 	// Directly sample a usercmd.
 	virtual usercmd_t	GetDirectUsercmd( void ) = 0;
+
+	// render-only preview: yaw/pitch view delta implied by mouse input that
+	// has been polled but not yet consumed by a game tic (non-destructive
+	// peek; empty on frames where a tic just ran). Used for sub-tic mouse
+	// look at output rates above USERCMD_HZ. Never feeds back into usercmds.
+	virtual void		GetPendingViewDelta( float &deltaYaw, float &deltaPitch ) = 0;
 };
 
 extern idUsercmdGen	*usercmdGen;

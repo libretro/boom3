@@ -307,6 +307,27 @@ void Com_UpdateFrameTime() {
 }
 
 // DG: waits until com_ticNumber should be increased and then calls Com_UpdateFrameTime() to make that happen
+/*
+==============
+Com_GetTicFraction
+
+Fraction [0,1) of the current 60Hz game tic that has elapsed at this
+render frame, derived from the deterministic clock. Exactly 0 on frames
+where a tic just ran (60fps: always 0 -> all interpolation below is a
+strict no-op); alternates 0.0/0.5 at 120fps by construction. Render-side
+consumers use it to present sub-tic time without touching game state.
+==============
+*/
+float Com_GetTicFraction( void ) {
+	if ( nextTicTime == 0.0 ) {
+		return 0.0f;
+	}
+	double f = 1.0 - ( nextTicTime - Sys_MillisecondsPrecise() ) / com_preciseFrameLengthMS;
+	if ( f < 0.0 ) f = 0.0;
+	if ( f > 0.999 ) f = 0.999;
+	return (float)f;
+}
+
 void Com_WaitForNextTicStart() {
 	D3P_CPUSampleFn();
 	if ( nextTicTime != 0.0 ) {

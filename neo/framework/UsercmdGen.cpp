@@ -342,6 +342,7 @@ public:
 	int				KeyState( int key );
 
 	usercmd_t		GetDirectUsercmd( void );
+	void			GetPendingViewDelta( float &deltaYaw, float &deltaPitch );
 
 private:
 	void			MakeCurrent( void );
@@ -1382,6 +1383,42 @@ void idUsercmdGenLocal::MouseState( int *x, int *y, int *button, bool *down ) {
 idUsercmdGenLocal::GetDirectUsercmd
 ================
 */
+/*
+================
+idUsercmdGenLocal::GetPendingViewDelta
+
+Non-destructive peek at mouse deltas queued since the last game tic,
+converted with the same sensitivity/invert math MouseMove() will apply
+when the next tic consumes them. Render-side only.
+================
+*/
+void idUsercmdGenLocal::GetPendingViewDelta( float &deltaYaw, float &deltaPitch ) {
+	int dx = 0, dy = 0;
+	int num = Sys_PollMouseInputEvents();
+	for ( int i = 0; i < num; i++ ) {
+		int action, value;
+		if ( Sys_ReturnMouseInputEvent( i, action, value ) ) {
+			if ( action == M_DELTAX ) {
+				dx += value;
+			} else if ( action == M_DELTAY ) {
+				dy += value;
+			}
+		}
+	}
+	// note: deliberately NOT calling Sys_EndMouseInputEvents() - the next
+	// tic's MouseMove() consumes these normally
+	if ( !dx && !dy ) {
+		deltaYaw = deltaPitch = 0.0f;
+		return;
+	}
+	float mx = dx * sensitivity.GetFloat();
+	float my = dy * sensitivity.GetFloat();
+	float invYaw   = ( m_invertLook.GetInteger() & 2 ) ? -1.0f : 1.0f;
+	float invPitch = ( m_invertLook.GetInteger() & 1 ) ? -1.0f : 1.0f;
+	deltaYaw   = -m_yaw.GetFloat()   * mx * invYaw;
+	deltaPitch =  m_pitch.GetFloat() * my * invPitch;
+}
+
 usercmd_t idUsercmdGenLocal::GetDirectUsercmd( void ) {
 
 	pollTime = Sys_Milliseconds();
