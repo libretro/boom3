@@ -295,7 +295,14 @@ void idSoundSystemLocal::Init() {
 	soundCache = NULL;
 
 	CurrentSoundTime = 0;
-	outputIsFloat = false;
+	// note: outputIsFloat is deliberately NOT reset here. Init() runs on the
+	// first retro_run, i.e. AFTER retro_load_game negotiated the output
+	// format and called SetOutputFloat(); resetting it here made the mixer
+	// take the s16 branch (writing int32 accumulator words into the float
+	// output buffer, reinterpreted as garbage floats) while the libretro
+	// layer was in float mode. The MixFrame* entry points also assert the
+	// format authoritatively on every call, so no reset ordering (s_restart,
+	// re-Init, re-load) can ever desync the two again.
 
 	memset( meterTops, 0, sizeof( meterTops ) );
 	memset( meterTopsTime, 0, sizeof( meterTopsTime ) );
@@ -421,6 +428,7 @@ sized to it); the libretro layer never asks for more (44100/30fps = 1470).
 ===================
 */
 void idSoundSystemLocal::MixFrameFloat( float *dest, int numFrames ) {
+	outputIsFloat = true;	// authoritative: this entry point IS the float pipeline
 	if ( numFrames > MIXBUFFER_SAMPLES ) {
 		numFrames = MIXBUFFER_SAMPLES;
 	}
@@ -440,6 +448,8 @@ void idSoundSystemLocal::MixFrameFloat( float *dest, int numFrames ) {
 
 void idSoundSystemLocal::MixFrameS16( short *dest, int numFrames ) {
 	static int accum[MIXBUFFER_SAMPLES * 2];
+
+	outputIsFloat = false;	// authoritative: this entry point IS the s16 pipeline
 
 	if ( numFrames > MIXBUFFER_SAMPLES ) {
 		numFrames = MIXBUFFER_SAMPLES;

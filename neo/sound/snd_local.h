@@ -613,6 +613,7 @@ class idSoundSystemLocal : public idSoundSystem {
 public:
 	idSoundSystemLocal( ) {
 		isInitialized = false;
+		outputIsFloat = false;
 	}
 
 	// all non-hardware initialization
