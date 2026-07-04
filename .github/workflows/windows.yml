@@ -1,5 +1,5 @@
-name: Testbuild for Linux
-run-name: testbuild_linux
+name: Testbuild for Windows
+run-name: testbuild_windows
 on:
   push:
     branches:
@@ -14,21 +14,21 @@ concurrency:
   group: ${{github.workflow}}-${{github.event_name == 'pull_request' && github.head_ref || github.sha}}
   cancel-in-progress: true
 jobs:
-  build_linux:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: x86_64
-            runner: ubuntu-22.04
-          - arch: aarch64
-            runner: ubuntu-22.04-arm
-    runs-on: ${{ matrix.runner }}
+  build_win_x86_64_mingw:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
     steps:
-    - name: Install build dependencies
-      run: |
-        sudo apt update
-        sudo apt install -y build-essential libgl1-mesa-dev
+    - name: Set up MSYS2 (MINGW64)
+      uses: msys2/setup-msys2@v2
+      with:
+        msystem: MINGW64
+        update: false
+        install: >-
+          make
+          git
+          mingw-w64-x86_64-toolchain
     - name: Check out repository code
       uses: actions/checkout@v6
     - name: Build (libretro Makefile)
@@ -36,12 +36,12 @@ jobs:
         make -C neo -j$(nproc)
     - name: Stage artifact
       run: |
-        export PKGDIR="boom3_libretro-linux-${{ matrix.arch }}-$(git rev-parse --short HEAD)"
+        export PKGDIR="boom3_libretro-win64-$(git rev-parse --short HEAD)"
         echo "pkgname=$PKGDIR" >> $GITHUB_ENV
         mkdir -p publish/$PKGDIR
-        cp neo/boom3_libretro.so publish/$PKGDIR/
+        cp neo/boom3_libretro.dll publish/$PKGDIR/
         cp COPYING.txt publish/$PKGDIR/ 2>/dev/null || true
-        echo "boom3_libretro for ${{ matrix.arch }} Linux, built $(date)" > publish/$PKGDIR/README.txt
+        echo "boom3_libretro for x86_64 Windows (MINGW64), built $(date)" > publish/$PKGDIR/README.txt
         echo "from ${{ github.ref_name }} commit ${{ github.sha }}" >> publish/$PKGDIR/README.txt
     - name: Upload testbuild package
       uses: actions/upload-artifact@v7
