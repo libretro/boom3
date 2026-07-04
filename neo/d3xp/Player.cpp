@@ -8732,6 +8732,12 @@ void idPlayer::CalculateRenderView( void ) {
 
 #ifdef _D3XP
 	renderView->time = gameLocal.slow.time;
+	if ( g_frameInterpolation.GetBool() ) {
+		// set the sub-tic presentation time BEFORE the camera-POV branch so
+		// cutscene cameras (GetViewParms) sample at the interpolated time.
+		// Time-group correct: presentation follows the player's (slow) clock.
+		renderView->time = gameLocal.slow.time + (int)( Com_GetTicFraction() * USERCMD_MSEC );
+	}
 #endif
 
 	// calculate size of 3D view
@@ -8786,9 +8792,9 @@ void idPlayer::CalculateRenderView( void ) {
 		extern volatile int com_ticNumber;
 		tr_ticFraction = 0.0f;
 
-		if ( g_frameInterpolation.GetBool() && !gameLocal.inCinematic ) {
+		if ( g_frameInterpolation.GetBool() ) {
 			const float frac = Com_GetTicFraction();
-			renderView->time = gameLocal.time + (int)( frac * USERCMD_MSEC );
+			renderView->time = gameLocal.slow.time + (int)( frac * USERCMD_MSEC );
 
 			// stage 2: publish the fraction so the renderer interpolates all
 			// entity transforms (movers, characters, projectiles, and the

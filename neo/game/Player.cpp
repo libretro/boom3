@@ -7353,6 +7353,11 @@ void idPlayer::CalculateRenderView( void ) {
 	}
 	renderView->globalMaterial = gameLocal.GetGlobalMaterial();
 	renderView->time = gameLocal.time;
+	if ( g_frameInterpolation.GetBool() ) {
+		// set the sub-tic presentation time BEFORE the camera-POV branch so
+		// cutscene cameras (GetViewParms) sample at the interpolated time
+		renderView->time = gameLocal.time + (int)( Com_GetTicFraction() * USERCMD_MSEC );
+	}
 
 	// calculate size of 3D view
 	renderView->x = 0;
@@ -7415,14 +7420,17 @@ void idPlayer::CalculateRenderView( void ) {
 		extern volatile int com_ticNumber;
 		tr_ticFraction = 0.0f;
 
-		if ( g_frameInterpolation.GetBool() && !gameLocal.inCinematic ) {
+		if ( g_frameInterpolation.GetBool() ) {
 			const float frac = Com_GetTicFraction();
 			renderView->time = gameLocal.time + (int)( frac * USERCMD_MSEC );
 
 			// stage 2: publish the fraction so the renderer interpolates all
 			// entity transforms (movers, characters, projectiles, and the
 			// view weapon, which thereby stays coherent with the lerped
-			// camera origin below)
+			// camera origin below). Cinematics are included: actors and
+			// cutscene cameras interpolate too (idCameraAnim resamples its
+			// keyframes at the sub-tic time; its loop/stop decisions stay
+			// on game time).
 			tr_ticFraction = frac;
 
 			if ( !gameLocal.GetCamera() && !privateCameraView && !pm_thirdPerson.GetBool()

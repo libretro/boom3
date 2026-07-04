@@ -634,7 +634,39 @@ void idCameraAnim::GetViewParms( renderView_t *view ) {
 			view->vieworg = camFrame->t + offset;
 			view->fov_x = camFrame->fov;
 		}
-	} else if ( lerp == 0.0f ) {
+	} else if ( true ) {
+	// framerate independence: re-derive the SAMPLED frame/lerp from the
+	// render view's sub-tic time (view->time = gameLocal.time + frac*tic,
+	// presentation only). All loop/stop DECISIONS above intentionally used
+	// gameLocal.time - this block only smooths the pose between keyframes,
+	// and the resampled frame is clamped so camFrame[1] stays in range and
+	// the decision boundary is never crossed from the render path.
+	{
+		int subMs = view->time - gameLocal.time;
+		if ( subMs > 0 ) {
+			int sFrameTime, sFrame;
+			float sLerp;
+			if ( frameRate == USERCMD_HZ ) {
+				sFrameTime = gameLocal.time + subMs - starttime;
+				sFrame     = (int)( sFrameTime / gameLocal.msecPrecise );
+				sLerp      = ( sFrameTime - sFrame * gameLocal.msecPrecise ) / gameLocal.msecPrecise;
+			} else {
+				sFrameTime = ( gameLocal.time + subMs - starttime ) * frameRate;
+				sFrame     = sFrameTime / 1000;
+				sLerp      = ( sFrameTime % 1000 ) * 0.001f;
+			}
+			if ( sFrame > camera.Num() - 2 ) {
+				sFrame = camera.Num() - 2;
+				sLerp  = 1.0f;
+			}
+			if ( sFrame >= frame ) {	// never move backwards past a cut
+				frame = sFrame;
+				lerp  = sLerp;
+			}
+		}
+	}
+
+	if ( lerp == 0.0f ) {
 		camFrame = &camera[ frame ];
 		view->viewaxis = camFrame[ 0 ].q.ToMat3();
 		view->vieworg = camFrame[ 0 ].t + offset;
@@ -648,6 +680,7 @@ void idCameraAnim::GetViewParms( renderView_t *view ) {
 		view->viewaxis = q3.ToMat3();
 		view->vieworg = camFrame[ 0 ].t * invlerp + camFrame[ 1 ].t * lerp + offset;
 		view->fov_x = camFrame[ 0 ].fov * invlerp + camFrame[ 1 ].fov * lerp;
+	}
 	}
 
 	gameLocal.CalcFov( view->fov_x, view->fov_x, view->fov_y );
