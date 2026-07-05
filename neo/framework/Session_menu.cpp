@@ -330,6 +330,11 @@ void idSessionLocal::SetMainMenuGuiVars( void ) {
 	// r_swapInterval) does nothing here - hide it too.
 	guiMainMenu->SetChildWinVarVal( "ADV5", "visible", "0" );
 
+	// ADV5 (vsync) sat between ADV4 (bump maps, y=116) and ADV7
+	// (antialiasing, y=168) on a 26px row pitch. With ADV5 hidden, move
+	// ADV7 up into the vacated slot (y 168 -> 142) so the list has no gap.
+	guiMainMenu->SetChildWinVarVal( "ADV7", "rect", "20 142 400 16" );
+
 	SetMainMenuSkin();
 	// Mods Menu
 	SetModsMenuGuiVars();
