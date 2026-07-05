@@ -238,6 +238,13 @@ public:
 	idInteraction *			lastInteraction;
 
 	struct doublePortal_s *	foggedPortals;
+	// framerate independence: previous tic transform for render-side
+	// interpolation of the light's backend-visible data (see
+	// R_SetLightDefViewLight); recorded in UpdateLightDef
+	idVec3					prevTransformOrigin;
+	idMat3					prevTransformAxis;
+	int						prevTransformTic;
+	int						curTransformTic;
 };
 
 

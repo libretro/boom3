@@ -32,6 +32,8 @@ If you have questions concerning this license or the applicable additional terms
 #include "renderer/GuiModel.h"
 #include "renderer/RenderWorld_local.h"
 
+extern volatile int com_ticNumber;
+
 #include "framework/Common.h"
 #include "renderer/tr_local.h"
 
@@ -413,6 +415,16 @@ void idRenderWorldLocal::UpdateLightDef( qhandle_t lightHandle, const renderLigh
 	bool justUpdate = false;
 	idRenderLightLocal *light = lightDefs[lightHandle];
 	if ( light ) {
+		// framerate independence: remember the previous transform and the
+		// tics it changed on, for render-side interpolation of the light's
+		// backend-visible data (mirrors the entity bookkeeping)
+		if ( light->parms.origin != rlight->origin || light->parms.axis != rlight->axis ) {
+			light->prevTransformOrigin = light->parms.origin;
+			light->prevTransformAxis   = light->parms.axis;
+			light->prevTransformTic    = light->curTransformTic;
+			light->curTransformTic     = com_ticNumber;
+		}
+
 		// if the shape of the light stays the same, we don't need to dump
 		// any of our derived data, because shader parms are calculated every frame
 		if ( rlight->axis == light->parms.axis && rlight->end == light->parms.end &&

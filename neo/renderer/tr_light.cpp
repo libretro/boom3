@@ -537,11 +537,82 @@ viewLight_t *R_SetLightDefViewLight( idRenderLightLocal *light ) {
 	vLight->viewSeesGlobalLightOrigin = R_PointInFrustum( light->globalLightOrigin, tr.viewDef->frustum, 4 );
 
 	// copy data used by backend
-	vLight->globalLightOrigin = light->globalLightOrigin;
-	vLight->lightProject[0] = light->lightProject[0];
-	vLight->lightProject[1] = light->lightProject[1];
-	vLight->lightProject[2] = light->lightProject[2];
-	vLight->lightProject[3] = light->lightProject[3];
+	//
+	// framerate independence: if the light's transform changed on
+	// consecutive tics (a mover - e.g. a swinging light), interpolate the
+	// BACKEND-visible data (globalLightOrigin and the four lightProject
+	// planes) by the sub-tic fraction, mirroring entity interpolation.
+	// Everything derived on the lightDef itself (frustum, light refs,
+	// shadow frustums, interactions) stays tic-authoritative, so culling
+	// and interaction caching are untouched. This is what makes swinging-
+	// light shadows and lighting sweep smoothly at output rates above
+	// USERCMD_HZ instead of stepping once per game tic: the stencil
+	// shadow projection (RB_T_Shadow) and the interaction light vectors
+	// both read these fields at draw time.
+	{
+		extern float tr_ticFraction;
+		extern volatile int com_ticNumber;
+		bool interpolated = false;
+
+		if ( tr_ticFraction > 0.0f
+		     && light->curTransformTic == com_ticNumber
+		     && light->curTransformTic - light->prevTransformTic == 1 ) {
+			idVec3 delta = light->parms.origin - light->prevTransformOrigin;
+			if ( delta.LengthSqr() < ( 256.0f * 256.0f ) ) {
+				idVec3 iOrigin = light->prevTransformOrigin + delta * tr_ticFraction;
+				idMat3 iAxis;
+				if ( light->parms.axis.Compare( light->prevTransformAxis ) ) {
+					iAxis = light->parms.axis;
+				} else {
+					idQuat q;
+					q.Slerp( light->prevTransformAxis.ToQuat(), light->parms.axis.ToQuat(), tr_ticFraction );
+					iAxis = q.ToMat3();
+				}
+
+				// mirror R_DeriveLightData's projection setup for the
+				// interpolated transform: local planes first...
+				idPlane localProject[4];
+				if ( !light->parms.pointLight ) {
+					R_SetLightProject( localProject, vec3_origin, light->parms.target,
+						light->parms.right, light->parms.up, light->parms.start, light->parms.end );
+				} else {
+					memset( localProject, 0, sizeof( localProject ) );
+					localProject[0][0] = 0.5f / light->parms.lightRadius[0];
+					localProject[1][1] = 0.5f / light->parms.lightRadius[1];
+					localProject[3][2] = 0.5f / light->parms.lightRadius[2];
+					localProject[0][3] = 0.5f;
+					localProject[1][3] = 0.5f;
+					localProject[2][3] = 1.0f;
+					localProject[3][3] = 0.5f;
+				}
+				// ...then rotated into world space by the lerped transform
+				float iMatrix[16];
+				R_AxisToModelMatrix( iAxis, iOrigin, iMatrix );
+				for ( int i = 0; i < 4; i++ ) {
+					idPlane temp = localProject[i];
+					R_LocalPlaneToGlobal( iMatrix, temp, vLight->lightProject[i] );
+				}
+				if ( light->parms.parallel ) {
+					idVec3 dir = light->parms.lightCenter;
+					if ( !dir.Normalize() ) {
+						dir[2] = 1;
+					}
+					vLight->globalLightOrigin = iOrigin + dir * 100000;
+				} else {
+					vLight->globalLightOrigin = iOrigin + iAxis * light->parms.lightCenter;
+				}
+				interpolated = true;
+			}
+		}
+
+		if ( !interpolated ) {
+			vLight->globalLightOrigin = light->globalLightOrigin;
+			vLight->lightProject[0] = light->lightProject[0];
+			vLight->lightProject[1] = light->lightProject[1];
+			vLight->lightProject[2] = light->lightProject[2];
+			vLight->lightProject[3] = light->lightProject[3];
+		}
+	}
 	vLight->fogPlane = light->frustum[5];
 	vLight->frustumTris = light->frustumTris;
 	vLight->falloffImage = light->falloffImage;

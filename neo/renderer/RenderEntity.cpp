@@ -105,6 +105,10 @@ idRenderLightLocal::idRenderLightLocal() {
 	foggedPortals			= NULL;
 	firstInteraction		= NULL;
 	lastInteraction			= NULL;
+	prevTransformOrigin.Zero();
+	prevTransformAxis.Identity();
+	prevTransformTic = curTransformTic = -1000;
+
 }
 
 void idRenderLightLocal::FreeRenderLight() {
