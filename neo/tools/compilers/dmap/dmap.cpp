@@ -326,7 +326,7 @@ void Dmap( const idCmdArgs &args ) {
 	//
 	// start from scratch
 	//
-	start = Sys_Milliseconds();
+	start = Core_Milliseconds();
 
 	if ( !LoadDMapFile( passedName ) ) {
 		return;
@@ -343,7 +343,7 @@ void Dmap( const idCmdArgs &args ) {
 	common->Printf( "%i total shadow triangles\n", dmapGlobals.totalShadowTriangles );
 	common->Printf( "%i total shadow verts\n", dmapGlobals.totalShadowVerts );
 
-	end = Sys_Milliseconds();
+	end = Core_Milliseconds();
 	common->Printf( "-----------------------\n" );
 	common->Printf( "%5.0f seconds for dmap\n", ( end - start ) * 0.001f );
 
@@ -355,12 +355,12 @@ void Dmap( const idCmdArgs &args ) {
 			cmdSystem->BufferCommandText( CMD_EXEC_NOW, "disconnect" );
 
 			// create the collision map
-			start = Sys_Milliseconds();
+			start = Core_Milliseconds();
 
 			collisionModelManager->LoadMap( dmapGlobals.dmapFile );
 			collisionModelManager->FreeMap();
 
-			end = Sys_Milliseconds();
+			end = Core_Milliseconds();
 			common->Printf( "-------------------------------------\n" );
 			common->Printf( "%5.0f seconds to create collision map\n", ( end - start ) * 0.001f );
 		}

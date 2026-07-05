@@ -1004,7 +1004,7 @@ void Prelight( uEntity_t *e ) {
 
 	if ( dmapGlobals.shadowOptLevel > 0 ) {
 		common->Printf( "----- BuildLightShadows -----\n" );
-		start = Sys_Milliseconds();
+		start = Core_Milliseconds();
 
 		// calc bounds for all the groups to speed things up
 		for ( i = 0 ; i < e->numAreas ; i++ ) {
@@ -1020,14 +1020,14 @@ void Prelight( uEntity_t *e ) {
 			BuildLightShadows( e, light );
 		}
 
-		end = Sys_Milliseconds();
+		end = Core_Milliseconds();
 		common->Printf( "%5.1f seconds for BuildLightShadows\n", ( end - start ) / 1000.0 );
 	}
 
 
 	if ( !dmapGlobals.noLightCarve ) {
 		common->Printf( "----- CarveGroupsByLight -----\n" );
-		start = Sys_Milliseconds();
+		start = Core_Milliseconds();
 		// now subdivide the optimize groups into additional groups for
 		// each light that illuminates them
 		for ( i = 0 ; i < dmapGlobals.mapLights.Num() ; i++ ) {
@@ -1035,7 +1035,7 @@ void Prelight( uEntity_t *e ) {
 			CarveGroupsByLight( e, light );
 		}
 
-		end = Sys_Milliseconds();
+		end = Core_Milliseconds();
 		common->Printf( "%5.1f seconds for CarveGroupsByLight\n", ( end - start ) / 1000.0 );
 	}
 

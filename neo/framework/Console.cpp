@@ -201,7 +201,7 @@ float SCR_DrawFPS( float y ) {
 
 	// don't use serverTime, because that will be drifting to
 	// correct for internet lag changes, timescales, timedemos, etc
-	double t = Sys_MillisecondsPrecise();
+	double t = Core_MillisecondsPrecise();
 	float frameTime = t - previous;
 	previous = t;
 

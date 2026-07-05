@@ -249,33 +249,45 @@ private:
 idCommonLocal	commonLocal;
 idCommon *		common = &commonLocal;
 
-static double nextTicTime = 0.0;
+// Exact integer tic scheduling: USERCMD_HZ game tics per com_frameHz
+// render frames, in 10-bit fixed point (so com_timescale keeps working).
+// No clocks and no accumulated floating-point error - the tic cadence and
+// the render-side tic fraction are pure functions of the frame count,
+// bit-exact and periodic. At 60 fps the fraction is exactly 0 on every
+// frame (interpolation provably inert); at 120 fps it alternates 0, 0.5.
+static int com_frameHz  = 60;
+static int com_ticAccum = 0;	// remainder, in 1/(com_frameHz*1024) tic units
 
-// DG: updates the tic number based on the (real) time expired since it has last been updated
+void Com_SetFrameSchedule( int framerateHz ) {
+	if ( framerateHz < 1 ) {
+		framerateHz = 60;
+	}
+	if ( framerateHz != com_frameHz ) {
+		com_frameHz  = framerateHz;
+		com_ticAccum = 0;
+	}
+}
+
+// advances com_ticNumber according to the frame schedule. Idempotent
+// within a frame: the session's loading pumps call this repeatedly inside
+// one retro_run() and must not fabricate extra tics.
 void Com_UpdateTicNumber() {
 	D3P_CPUSampleFn();
-	double now = Sys_MillisecondsPrecise();
-	double timeDiff = now - nextTicTime + 0.1; // 0.1 ms tolerance in case we're just a little early
-	if ( timeDiff >= 0.0) {
-		if ( nextTicTime == 0.0 ) {
-			nextTicTime = now + com_preciseFrameLengthMS;
-			com_ticNumber = 1;
-		} else {
-			// usually numTics should be 1, except if timeDiff > 16.6667 (skipped a frame?)
-			// should be `1 + timediff / com_preciseFrameLengthMS`
-			// <=> 1 + timediff / (1000.0 / USERCMD_HZ) // 1000ms in one second
-			// <=> 1 + timediff * (USERCMD_HZ / 1000.0) // USERCMD_HZ = 60;
-			// <=> 1 + timediff * 0.06;
-			int numTics = 1 + timeDiff * 0.06;
-			com_ticNumber += numTics;
+	static uint64_t lastFrame = (uint64_t)-1;
+	uint64_t f = Core_FrameCount();
+	if ( f == lastFrame ) {
+		return;
+	}
+	uint64_t n = ( lastFrame == (uint64_t)-1 ) ? 1 : ( f - lastFrame );
+	lastFrame = f;
 
-			// the number of msec per tic can be varied with the timescale cvar
-			float timescale = com_timescale.GetFloat();
-			if ( timescale == 1.0f ) {
-				nextTicTime += numTics * com_preciseFrameLengthMS;
-			} else {
-				nextTicTime += numTics * com_preciseFrameLengthMS / timescale;
-			}
+	const int inc   = (int)( USERCMD_HZ * 1024 * com_timescale.GetFloat() + 0.5f );
+	const int denom = com_frameHz * 1024;
+	while ( n-- ) {
+		com_ticAccum += inc;
+		while ( com_ticAccum >= denom ) {
+			com_ticAccum -= denom;
+			com_ticNumber++;
 		}
 	}
 }
@@ -283,47 +295,22 @@ void Com_UpdateTicNumber() {
 // DG: updates com_frameTime based on the current tic number (which is also updated if necessary)
 //     and com_preciseFrameLengthMS
 void Com_UpdateFrameTime() {
-	static int lastTicNum = 0;
-
 	Com_UpdateTicNumber();
-
-	int ticNum = com_ticNumber;
-	int ticDiff = ticNum - lastTicNum;
-
-	com_preciseFrameTimeMS += ticDiff * com_preciseFrameLengthMS;
+	// derived, not accumulated: no floating-point drift
+	com_preciseFrameTimeMS = (double)com_ticNumber * com_preciseFrameLengthMS;
 	com_frameTime = idMath::Rint( com_preciseFrameTimeMS );
-
-	lastTicNum = ticNum;
 }
 
-// DG: waits until com_ticNumber should be increased and then calls Com_UpdateFrameTime() to make that happen
 /*
-==============
+==================
 Com_GetTicFraction
 
-Fraction [0,1) of the current 60Hz game tic that has elapsed at this
-render frame, derived from the deterministic clock. Exactly 0 on frames
-where a tic just ran (60fps: always 0 -> all interpolation below is a
-strict no-op); alternates 0.0/0.5 at 120fps by construction. Render-side
-consumers use it to present sub-tic time without touching game state.
-==============
+Fraction of the current game tic the NEXT rendered frame represents,
+in [0,1). Presentation only - drives render-side interpolation.
+==================
 */
 float Com_GetTicFraction( void ) {
-	if ( nextTicTime == 0.0 ) {
-		return 0.0f;
-	}
-	double f = 1.0 - ( nextTicTime - Sys_MillisecondsPrecise() ) / com_preciseFrameLengthMS;
-	if ( f < 0.0 ) f = 0.0;
-	if ( f > 0.999 ) f = 0.999;
-	return (float)f;
-}
-
-void Com_WaitForNextTicStart() {
-	D3P_CPUSampleFn();
-	if ( nextTicTime != 0.0 ) {
-		Sys_SleepUntilPrecise( nextTicTime );
-	}
-	Com_UpdateFrameTime();
+	return (float)com_ticAccum / (float)( com_frameHz * 1024 );
 }
 
 /*
@@ -441,7 +428,7 @@ void idCommonLocal::VPrintf( const char *fmt, va_list args ) {
 	// optionally put a timestamp at the beginning of each print,
 	// so we can see how long different init sections are taking
 	if ( com_timestampPrints.GetInteger() ) {
-		int	t = Sys_Milliseconds();
+		int	t = Core_Milliseconds();
 		if ( com_timestampPrints.GetInteger() == 1 ) {
 			t /= 1000;
 		}
@@ -741,7 +728,7 @@ void idCommonLocal::Error( const char *fmt, ... ) {
 	}
 
 	// if we are getting a solid stream of ERP_DROP, do an ERP_FATAL
-	currentTime = Sys_Milliseconds();
+	currentTime = Core_Milliseconds();
 	if ( currentTime - lastErrorTime < 100 ) {
 		if ( ++errorCount > 3 ) {
 			code = ERP_FATAL;
@@ -2503,8 +2490,6 @@ void idCommonLocal::Frame( void ) {
 	try {
 		// DG: update tic number here for ticNumAtStart (used below to decide whether to sleep before next frame)
 		Com_UpdateTicNumber();
-		int ticNumAtStart = com_ticNumber;
-
 		// pump all the events
 		Sys_GenerateEvents();
 
@@ -2545,7 +2530,7 @@ void idCommonLocal::Frame( void ) {
 		// report timing information
 		if ( com_speeds.GetBool() ) {
 			static int	lastTime;
-			int		nowTime = Sys_Milliseconds();
+			int		nowTime = Core_Milliseconds();
 			int		com_frameMsec = nowTime - lastTime;
 			lastTime = nowTime;
 			Printf( "frame:%i all:%3i gfr:%3i rf:%3i bk:%3i\n", com_frameNumber, com_frameMsec, time_gameFrame, time_frontend, time_backend );
@@ -2558,30 +2543,7 @@ void idCommonLocal::Frame( void ) {
 		// set idLib frame number for frame based memory dumps
 		idLib::frameNumber = com_frameNumber;
 
-#if defined(_WIN32) && defined(ID_ALLOW_TOOLS)
-		// DG: when Radiant is open (unsure about other editors), sleeping here until
-		//   the next frame start somehow makes camera updates (in 2D and 3D windows) crawl?!
-		//   Doesn't *really* make sense (the editor updates run before common->Frame()),
-		//   but what can you do.. maybe MFC just doesn't like sleeping, maybe too many events pile up?
-		if ( com_editors == 0 )
-#endif
-		{
-			if ( com_timescale.GetFloat() == 1.0f && GLimp_GetSwapInterval() != 0
-				&& fabsf(60.0f - GLimp_GetDisplayRefresh()) < 1.0f ) {
-				// if we're using vsync and the display is running at about 60Hz, start next tic
-				// immediately so our internal tic time and vsync don't drift apart
-				double now = Sys_MillisecondsPrecise();
-				if ( nextTicTime > now ) {
-					nextTicTime = now;
-				} // else a new tic is started anyway (which often means that this frame was too long)
-			}
-			else if ( com_ticNumber == ticNumAtStart ) {
-				Com_WaitForNextTicStart();
-			}
-			// else the com_ticNumber has already been updated and it's past time to start the next frame
-		}
-
-		D3P_FRAMEMARK // tell profiler (tracy) that this is the end of a frame
+D3P_FRAMEMARK // tell profiler (tracy) that this is the end of a frame
 	}
 
 	catch( idException & ) {

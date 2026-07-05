@@ -45,6 +45,7 @@ extern "C" {
 #include <fcntl.h>
 
 #include "sys/platform.h"
+#include "framework/Common.h"
 #include "framework/Licensee.h"
 #include "framework/FileSystem.h"
 #include "framework/KeyInput.h"
@@ -309,6 +310,10 @@ static void update_variables(bool startup)
 			framerate = 30;
 		else if (framerate > 240)
 			framerate = 240;
+
+		/* feed the deterministic clock and the exact tic schedule */
+		Core_SetFramerate(framerate);
+		Com_SetFrameSchedule(framerate);
 	}
 	
 	var.key = "doom_resolution";
@@ -1276,15 +1281,17 @@ void retro_set_controller_port_device(unsigned port, unsigned device)
    }
 }
 
-extern double libretro_time_ms; // deterministic clock, see stubs.cpp
+
 
 void retro_run(void)
 {
-   /* Advance the deterministic clock by exactly one frame period. All engine
-    * timing (game tics, com_frameTime, sound sample time) derives from this,
-    * so core behavior is a pure function of the retro_run() call count and
-    * polled input - independent of host speed, fast-forward or frame stepping. */
-   libretro_time_ms += 1000.0 / (double)framerate;
+   /* Advance the deterministic clock by exactly one frame. All engine
+    * timing (game tic schedule, com_frameTime, the render-side tic
+    * fraction, sound sample time) derives from the frame COUNT - never
+    * from a wall clock - so core behavior is a pure function of the
+    * retro_run() call count and polled input, independent of host speed,
+    * fast-forward or frame stepping. */
+   Core_AdvanceFrame();
 
    if (!libretro_shared_context)
       glsm_ctl(GLSM_CTL_STATE_BIND, NULL);

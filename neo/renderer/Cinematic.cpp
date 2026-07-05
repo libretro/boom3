@@ -322,7 +322,7 @@ bool idCinematicLocal::InitFromFile( const char *qpath, bool amilooping ) {
 	CIN_HEIGHT = DEFAULT_CIN_HEIGHT;
 	CIN_WIDTH  =  DEFAULT_CIN_WIDTH;
 	samplesPerPixel = 4;
-	startTime = 0;	//Sys_Milliseconds();
+	startTime = 0;	//Core_Milliseconds();
 	buf = NULL;
 
 	iFile->Read( file, 16 );

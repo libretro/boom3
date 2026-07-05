@@ -650,7 +650,7 @@ bool idAASBuild::Build( const idStr &fileName, const idAASSettings *settings ) {
 	idAASCluster cluster;
 	idStrList entityClassNames;
 
-	startTime = Sys_Milliseconds();
+	startTime = Core_Milliseconds();
 
 	Shutdown();
 
@@ -783,7 +783,7 @@ bool idAASBuild::Build( const idStr &fileName, const idAASSettings *settings ) {
 	// delete the map file
 	delete mapFile;
 
-	common->Printf( "%6d seconds to create AAS\n", (Sys_Milliseconds() - startTime) / 1000 );
+	common->Printf( "%6d seconds to create AAS\n", (Core_Milliseconds() - startTime) / 1000 );
 
 	return true;
 }
@@ -800,7 +800,7 @@ bool idAASBuild::BuildReachability( const idStr &fileName, const idAASSettings *
 	idAASReach reach;
 	idAASCluster cluster;
 
-	startTime = Sys_Milliseconds();
+	startTime = Core_Milliseconds();
 
 	aasSettings = settings;
 
@@ -837,7 +837,7 @@ bool idAASBuild::BuildReachability( const idStr &fileName, const idAASSettings *
 	// delete the map file
 	delete mapFile;
 
-	common->Printf( "%6d seconds to calculate reachability\n", (Sys_Milliseconds() - startTime) / 1000 );
+	common->Printf( "%6d seconds to calculate reachability\n", (Core_Milliseconds() - startTime) / 1000 );
 
 	return true;
 }

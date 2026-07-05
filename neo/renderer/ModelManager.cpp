@@ -519,7 +519,7 @@ idRenderModelManagerLocal::EndLevelLoad
 void idRenderModelManagerLocal::EndLevelLoad() {
 	common->Printf( "----- idRenderModelManagerLocal::EndLevelLoad -----\n" );
 
-	int start = Sys_Milliseconds();
+	int start = Core_Milliseconds();
 
 	insideLevelLoad = false;
 	int	purgeCount = 0;
@@ -567,7 +567,7 @@ void idRenderModelManagerLocal::EndLevelLoad() {
 	}
 
 	// _D3XP added this
-	int	end = Sys_Milliseconds();
+	int	end = Core_Milliseconds();
 	common->Printf( "%5i models purged from previous level, ", purgeCount );
 	common->Printf( "%5i models kept.\n", keepCount );
 	if ( loadCount ) {

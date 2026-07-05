@@ -499,7 +499,7 @@ void idSessionLocal::StartWipe( const char *_wipeMaterial, bool hold ) {
 
 	wipeMaterial = declManager->FindMaterial( _wipeMaterial, false );
 
-	wipeStartTime = Sys_Milliseconds();
+	wipeStartTime = Core_Milliseconds();
 	wipeStopTime = wipeStartTime + com_wipeSeconds.GetFloat() * 1000.0f;
 	wipeHold = hold;
 }
@@ -516,7 +516,7 @@ void idSessionLocal::CompleteWipe() {
 		UpdateScreen( true );
 		return;
 	}
-	// libretro: Sys_Milliseconds() is frame-quantized and does not advance
+	// libretro: Core_Milliseconds() is frame-quantized and does not advance
 	// within retro_run(), so a wall-time wait would never terminate. The
 	// wipe is purely cosmetic; finish it immediately with a single update.
 	wipeStopTime = 0;
@@ -834,7 +834,7 @@ void idSessionLocal::StopPlayingRenderDemo() {
 	}
 
 	// Record the stop time before doing anything that could be time consuming
-	int timeDemoStopTime = Sys_Milliseconds();
+	int timeDemoStopTime = Core_Milliseconds();
 
 
 	readDemo->Close();
@@ -934,7 +934,7 @@ void idSessionLocal::StartPlayingRenderDemo( idStr demoName ) {
 	numDemoFrames = 1;
 
 	lastDemoTic = -1;
-	timeDemoStartTime = Sys_Milliseconds();
+	timeDemoStartTime = Core_Milliseconds();
 }
 
 /*
@@ -1268,7 +1268,7 @@ void idSessionLocal::TimeCmdDemo( const char *demoName ) {
 	ClearWipe();
 	UpdateScreen();
 
-	int		startTime = Sys_Milliseconds();
+	int		startTime = Core_Milliseconds();
 	int		count = 0;
 	int		minuteStart, minuteEnd;
 	float	sec;
@@ -1281,7 +1281,7 @@ void idSessionLocal::TimeCmdDemo( const char *demoName ) {
 		count++;
 
 		if ( count / 3600 != ( count - 1 ) / 3600 ) {
-			minuteEnd = Sys_Milliseconds();
+			minuteEnd = Core_Milliseconds();
 			sec = ( minuteEnd - minuteStart ) / 1000.0;
 			minuteStart = minuteEnd;
 			common->Printf( "minute %i took %3.1f seconds\n", count / 3600, sec );
@@ -1289,7 +1289,7 @@ void idSessionLocal::TimeCmdDemo( const char *demoName ) {
 		}
 	}
 
-	int		endTime = Sys_Milliseconds();
+	int		endTime = Core_Milliseconds();
 	sec = ( endTime - startTime ) / 1000.0;
 	common->Printf( "%i seconds of game, replayed in %5.1f seconds\n", count / 60, sec );
 }
@@ -1503,7 +1503,7 @@ void idSessionLocal::ExecuteMapChange( bool noFadeWipe ) {
 		numClients = 1;
 	}
 
-	int start = Sys_Milliseconds();
+	int start = Core_Milliseconds();
 
 	common->Printf( "----- Map Initialization -----\n" );
 	common->Printf( "Map: %s\n", mapString.c_str() );
@@ -1535,11 +1535,11 @@ void idSessionLocal::ExecuteMapChange( bool noFadeWipe ) {
 			common->Warning( "WARNING: Loading savegame failed, will restart the map with the player persistent data!" );
 
 			game->SetServerInfo( mapSpawnData.serverInfo );
-			game->InitFromNewMap( fullMapName + ".map", rw, sw, idAsyncNetwork::server.IsActive(), idAsyncNetwork::client.IsActive(), Sys_Milliseconds() );
+			game->InitFromNewMap( fullMapName + ".map", rw, sw, idAsyncNetwork::server.IsActive(), idAsyncNetwork::client.IsActive(), Core_Milliseconds() );
 		}
 	} else {
 		game->SetServerInfo( mapSpawnData.serverInfo );
-		game->InitFromNewMap( fullMapName + ".map", rw, sw, idAsyncNetwork::server.IsActive(), idAsyncNetwork::client.IsActive(), Sys_Milliseconds() );
+		game->InitFromNewMap( fullMapName + ".map", rw, sw, idAsyncNetwork::server.IsActive(), idAsyncNetwork::client.IsActive(), Core_Milliseconds() );
 	}
 
 	if ( !idAsyncNetwork::IsActive() && !loadingSaveGame ) {
@@ -1565,7 +1565,7 @@ void idSessionLocal::ExecuteMapChange( bool noFadeWipe ) {
 		}
 	}
 
-	int	msec = Sys_Milliseconds() - start;
+	int	msec = Core_Milliseconds() - start;
 	common->Printf( "%6d msec to load %s\n", msec, mapString.c_str() );
 
 	// let the renderSystem generate interactions now that everything is spawned
@@ -2231,7 +2231,7 @@ Draw the fade material over everything that has been drawn
 ===============
 */
 void	idSessionLocal::DrawWipeModel() {
-	unsigned now = Sys_Milliseconds();
+	unsigned now = Core_Milliseconds();
 
 	if (  wipeStartTime >= wipeStopTime ) {
 		return;
@@ -2420,9 +2420,9 @@ void idSessionLocal::Draw() {
 		// normal drawing for both single and multi player
 		if ( !com_skipGameDraw.GetBool() && GetLocalClientNum() >= 0 ) {
 			// draw the game view
-			int	start = Sys_Milliseconds();
+			int	start = Core_Milliseconds();
 			gameDraw = game->Draw( GetLocalClientNum() );
-			int end = Sys_Milliseconds();
+			int end = Core_Milliseconds();
 			time_gameDraw += ( end - start );	// note time used for com_speeds
 		}
 		if ( !gameDraw ) {
@@ -2588,7 +2588,7 @@ void idSessionLocal::Frame() {
 		minTic = latchedTicNumber;
 	}
 
-	// libretro: NEVER block here. Sys_MillisecondsPrecise() is frame-quantized
+	// libretro: NEVER block here. Core_MillisecondsPrecise() is frame-quantized
 	// and only advances between retro_run() calls, so spinning until
 	// com_ticNumber reaches minTic can never make progress within a frame -
 	// this hung engine init, where ShowLoadingGui() pumps session->Frame()
@@ -2604,7 +2604,7 @@ void idSessionLocal::Frame() {
 
 	if ( authEmitTimeout ) {
 		// waiting for a game auth
-		if ( Sys_Milliseconds() > authEmitTimeout ) {
+		if ( Core_Milliseconds() > authEmitTimeout ) {
 			// expired with no reply
 			// means that if a firewall is blocking the master, we will let through
 			common->DPrintf( "no reply from auth\n" );
@@ -2762,10 +2762,10 @@ void idSessionLocal::RunGameTic() {
 	}
 
 	// run the game logic every player move
-	int	start = Sys_Milliseconds();
+	int	start = Core_Milliseconds();
 	gameReturn_t	ret = game->RunFrame( &cmd );
 
-	int end = Sys_Milliseconds();
+	int end = Core_Milliseconds();
 	time_gameFrame += end - start;	// note time used for com_speeds
 
 	// check for constency failure from a recorded command
@@ -3086,7 +3086,7 @@ void idSessionLocal::EmitGameAuth( void ) {
 	// make sure the auth reply is empty, we use it to indicate an auth reply
 	authMsg.Empty();
 	if ( idAsyncNetwork::client.SendAuthCheck( cdkey_state == CDKEY_CHECKING ? cdkey : NULL, xpkey_state == CDKEY_CHECKING ? xpkey : NULL ) ) {
-		authEmitTimeout = Sys_Milliseconds() + CDKEY_AUTH_TIMEOUT;
+		authEmitTimeout = Core_Milliseconds() + CDKEY_AUTH_TIMEOUT;
 		common->DPrintf( "authing with the master..\n" );
 	} else {
 		// net is not available

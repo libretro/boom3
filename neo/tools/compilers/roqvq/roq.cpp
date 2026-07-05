@@ -851,9 +851,9 @@ void RoQFileEncode_f( const idCmdArgs &args ) {
 		return;
 	}
 	theRoQ = new roq;
-	int		startMsec = Sys_Milliseconds();
+	int		startMsec = Core_Milliseconds();
 	theRoQ->EncodeStream( args.Argv( 1 ) );
-	int		stopMsec = Sys_Milliseconds();
+	int		stopMsec = Core_Milliseconds();
 	common->Printf( "total encoding time: %i second\n", ( stopMsec - startMsec ) / 1000 );
 
 }

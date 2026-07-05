@@ -414,7 +414,7 @@ int idSoundSystemLocal::GetCurrent44kHzTime( void ) const {
 	// CurrentSoundTime is the master 44kHz sample clock, advanced only by
 	// MixFrame(). Before the sound system is initialized nothing has been
 	// mixed, so the clock is simply 0 - the old fallback derived a value
-	// from Sys_Milliseconds()*176.4 (wall clock, and 4x the real sample
+	// from Core_Milliseconds()*176.4 (wall clock, and 4x the real sample
 	// rate at that), which was both nondeterministic and in wrong units.
 	return CurrentSoundTime;
 }
@@ -510,7 +510,7 @@ cinData_t idSoundSystemLocal::ImageForTime( const int milliseconds, const bool w
 	}
 	memset( graph, 0, 256*128 * 4 );
 	float *accum = finalMixBuffer;	// unfortunately, these are already clamped
-	int time = Sys_Milliseconds();
+	int time = Core_Milliseconds();
 
 	int numSpeakers = s_numberOfSpeakers.GetInteger();
 

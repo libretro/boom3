@@ -1421,7 +1421,7 @@ void idUsercmdGenLocal::GetPendingViewDelta( float &deltaYaw, float &deltaPitch 
 
 usercmd_t idUsercmdGenLocal::GetDirectUsercmd( void ) {
 
-	pollTime = Sys_Milliseconds();
+	pollTime = Core_Milliseconds();
 	if ( pollTime - lastPollTime > 100 ) {
 		lastPollTime = pollTime - 100;
 	}

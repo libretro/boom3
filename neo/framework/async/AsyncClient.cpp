@@ -202,7 +202,7 @@ void idAsyncClient::ConnectToServer( const netadr_t adr ) {
 	Clear();
 
 	// get a pseudo random client id, but don't use the id which is reserved for connectionless packets
-	clientId = Sys_Milliseconds() & CONNECTIONLESS_MESSAGE_ID_MASK;
+	clientId = Core_Milliseconds() & CONNECTIONLESS_MESSAGE_ID_MASK;
 
 	// calculate a checksum on some of the essential data used
 	clientDataChecksum = declManager->GetChecksum();
@@ -1740,7 +1740,7 @@ idAsyncClient::UpdateTime
 int idAsyncClient::UpdateTime( int clamp ) {
 	int time, msec;
 
-	time = Sys_Milliseconds();
+	time = Core_Milliseconds();
 	msec = idMath::ClampInt( 0, clamp, time - realTime );
 	realTime = time;
 	clientTime += msec;
@@ -1884,7 +1884,7 @@ void idAsyncClient::PacifierUpdate( void ) {
 	if ( !IsActive() ) {
 		return;
 	}
-	realTime = Sys_Milliseconds();
+	realTime = Core_Milliseconds();
 	SendEmptyToServer( false, true );
 }
 
@@ -2307,7 +2307,7 @@ int idAsyncClient::GetDownloadRequest( const int checksums[ MAX_PURE_PAKS ], int
 
 		memcpy( dlChecksums, checksums, sizeof( int ) * MAX_PURE_PAKS );
 
-		newreq.SetSeed( Sys_Milliseconds() );
+		newreq.SetSeed( Core_Milliseconds() );
 		dlRequest = newreq.RandomInt();
 		dlCount = count;
 		return dlRequest;

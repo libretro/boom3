@@ -63,7 +63,7 @@ public:
 	int				RunEventLoop( bool commandExecution = true );
 
 					// Gets the current time in a way that will be journaled properly,
-					// as opposed to Sys_Milliseconds(), which always reads a real timer.
+					// as opposed to Core_Milliseconds(), which always reads a real timer.
 	int				Milliseconds( void );
 
 					// Returns the journal level, 1 = record, 2 = play back.

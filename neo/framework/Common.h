@@ -288,5 +288,6 @@ extern idCommon *		common;
 
 // render-side sub-tic fraction from the deterministic clock (see Common.cpp)
 float Com_GetTicFraction( void );
+void Com_SetFrameSchedule( int framerateHz );
 
 #endif /* !__COMMON_H__ */

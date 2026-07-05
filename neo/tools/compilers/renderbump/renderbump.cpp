@@ -1183,7 +1183,7 @@ void RenderBump_f( const idCmdArgs &args ) {
 
 	common->Printf( "----- Renderbump %s -----\n", args.Argv( 1 ) );
 
-	startTime = Sys_Milliseconds();
+	startTime = Core_Milliseconds();
 
 	// get the lowPoly model
 	source = args.Argv( 1 );
@@ -1317,7 +1317,7 @@ void RenderBump_f( const idCmdArgs &args ) {
 
 	R_StaticFree( renderBumps );
 
-	endTime = Sys_Milliseconds();
+	endTime = Core_Milliseconds();
 	common->Printf( "%5.2f seconds for renderBump\n", ( endTime - startTime ) / 1000.0 );
 	common->Printf( "---------- RenderBump Completed ----------\n" );
 

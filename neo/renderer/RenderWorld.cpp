@@ -713,7 +713,7 @@ void idRenderWorldLocal::RenderScene( const renderView_t *renderView ) {
 	tr.guiModel->EmitFullScreen();
 	tr.guiModel->Clear();
 
-	int startTime = Sys_Milliseconds();
+	int startTime = Core_Milliseconds();
 
 	// setup view parms for the initial view
 	//
@@ -813,7 +813,7 @@ void idRenderWorldLocal::RenderScene( const renderView_t *renderView ) {
 	}
 #endif
 
-	int endTime = Sys_Milliseconds();
+	int endTime = Core_Milliseconds();
 
 	tr.pc.frontEndMsec += endTime - startTime;
 
@@ -1489,7 +1489,7 @@ void idRenderWorldLocal::GenerateAllInteractions() {
 		return;
 	}
 
-	int start = Sys_Milliseconds();
+	int start = Core_Milliseconds();
 
 	generateAllInteractionsCalled = false;
 
@@ -1508,7 +1508,7 @@ void idRenderWorldLocal::GenerateAllInteractions() {
 		this->CreateLightDefInteractions( ldef );
 	}
 
-	int end = Sys_Milliseconds();
+	int end = Core_Milliseconds();
 	int	msec = end - start;
 
 	common->Printf( "idRenderWorld::GenerateAllInteractions, msec = %i, staticAllocCount = %i.\n", msec, tr.staticAllocCount );

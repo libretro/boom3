@@ -493,7 +493,7 @@ void RB_ShowImages( void ) {
 
 	qglFinish();
 
-	start = Sys_Milliseconds();
+	start = Core_Milliseconds();
 
 	for ( i = 0 ; i < globalImages->images.Num() ; i++ ) {
 		image = globalImages->images[i];
@@ -528,7 +528,7 @@ void RB_ShowImages( void ) {
 
 	qglFinish();
 
-	end = Sys_Milliseconds();
+	end = Core_Milliseconds();
 	common->Printf( "%i msec to draw all images\n", end - start );
 }
 
@@ -661,7 +661,7 @@ void RB_ExecuteBackEndCommands( const emptyCommand_t *cmds ) {
 		return;
 	}
 
-	backEndStartTime = Sys_Milliseconds();
+	backEndStartTime = Core_Milliseconds();
 
 	// needed for editor rendering
 	RB_SetDefaultGLState();
@@ -705,7 +705,7 @@ void RB_ExecuteBackEndCommands( const emptyCommand_t *cmds ) {
 	backEnd.glState.tmu[0].current2DMap = -1;
 
 	// stop rendering on this thread
-	backEndFinishTime = Sys_Milliseconds();
+	backEndFinishTime = Core_Milliseconds();
 	backEnd.pc.msec = backEndFinishTime - backEndStartTime;
 
 	if ( r_debugRenderToTexture.GetInteger() == 1 ) {

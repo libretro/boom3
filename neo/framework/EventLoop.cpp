@@ -204,7 +204,7 @@ idEventLoop::Init
 */
 void idEventLoop::Init( void ) {
 
-	initialTimeOffset = Sys_Milliseconds();
+	initialTimeOffset = Core_Milliseconds();
 
 	common->StartupVariable( "journal", false );
 
@@ -251,7 +251,7 @@ Can be used for profiling, but will be journaled accurately
 */
 int idEventLoop::Milliseconds( void ) {
 #if 1	// FIXME!
-	return Sys_Milliseconds() - initialTimeOffset;
+	return Core_Milliseconds() - initialTimeOffset;
 #else
 	sysEvent_t	ev;
 

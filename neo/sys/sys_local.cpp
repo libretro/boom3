@@ -54,7 +54,7 @@ void idSysLocal::DebugVPrintf( const char *fmt, va_list arg ) {
 }
 
 unsigned int idSysLocal::GetMilliseconds( void ) {
-	return Sys_Milliseconds();
+	return Core_Milliseconds();
 }
 
 int idSysLocal::GetProcessorId( void ) {

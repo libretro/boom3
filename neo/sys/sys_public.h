@@ -160,18 +160,17 @@ void			Sys_DebugVPrintf( const char *fmt, va_list arg );
 // NOTE: due to SDL_TIMESLICE this is very bad portability karma, and should be completely removed
 void			Sys_Sleep( int msec );
 
-// like Sys_Milliseconds(), but with higher precision
-double			Sys_MillisecondsPrecise( void );
+// The deterministic core clock (milliseconds of core time, derived from
+// the retro_run() frame count - NOT a wall clock; see sys/libretro/stubs.cpp)
+double			Core_MillisecondsPrecise( void );
+uint64_t		Core_FrameCount( void );
+void			Core_AdvanceFrame( void );
+void			Core_SetFramerate( int fps );
 
-// Sys_Milliseconds should only be used for profiling purposes,
-// any game related timing information should come from event timestamps
-ID_INLINE unsigned int Sys_Milliseconds( void ) {
-	return (unsigned int)Sys_MillisecondsPrecise();
+ID_INLINE unsigned int Core_Milliseconds( void ) {
+	return (unsigned int)Core_MillisecondsPrecise();
 }
 
-// sleep until Sys_MillisecondsPrecise() returns >= targetTimeMS
-// aims for about 0.01ms precision (but might busy wait for the last 1.5ms or so)
-void Sys_SleepUntilPrecise( double targetTimeMS );
 
 // returns a selection of the CPUID_* flags
 int				Sys_GetProcessorId( void );

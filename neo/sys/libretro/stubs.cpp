@@ -17,37 +17,41 @@ extern retro_perf_get_time_usec_t perf_get_time_usec;
 // A libretro core must not derive game state from wall-clock time: the
 // frontend controls pacing (fast-forward, slow motion, frame stepping,
 // runahead), so all timing has to be a pure function of how many times
-// retro_run() has been called. libretro_time_ms is advanced by exactly
-// (1000 / framerate) once per retro_run() in libretro.cpp.
+// The deterministic core clock. It advances by exactly one frame per
+// retro_run() call; the millisecond value is DERIVED with a single
+// multiply (never accumulated), so it carries no floating-point drift
+// regardless of session length. Nothing in this core reads a wall
+// clock: core behavior is a pure function of the retro_run() call
+// count and polled input.
 //
-// It starts slightly above 0 (like dhewm3's Posix_InitTime offset) so that
-// Sys_Milliseconds()/Sys_MillisecondsPrecise() never return 0 or negative
-// values, which parts of the engine treat as "uninitialized".
-double libretro_time_ms = 16.0;
+// The base offset keeps the clock strictly positive (parts of the
+// engine treat 0/negative time as "uninitialized"), and framerate
+// changes fold elapsed time into the base so the clock stays monotonic.
+static uint64_t core_frame_count = 0;
+static double   core_ms_base     = 16.0;
+static int      core_fps         = 60;
 
-double Sys_MillisecondsPrecise() {
-    return libretro_time_ms;
+void Core_AdvanceFrame( void ) {
+	core_frame_count++;
 }
 
-void Sys_SleepUntilPrecise(double targetTime) {
-#if 0
-    double now;
-    do {
-        if (perf_get_time_usec)
-            now = perf_get_time_usec() / 1000.0;
-        else {
-            struct timespec ts;
-            clock_gettime(CLOCK_MONOTONIC, &ts);
-            now = (ts.tv_sec * 1000.0) + (ts.tv_nsec / 1000000.0);
-        }
-        if (now < targetTime) {
-            // spin or short sleep
-            struct timespec req = { 0, 100000 }; // 0.1ms
-            nanosleep(&req, NULL);
-        }
-    } while (now < targetTime);
-#endif
-    (void)targetTime;
+uint64_t Core_FrameCount( void ) {
+	return core_frame_count;
+}
+
+void Core_SetFramerate( int fps ) {
+	if ( fps < 1 ) {
+		fps = 60;
+	}
+	if ( fps != core_fps ) {
+		core_ms_base    += (double)core_frame_count * 1000.0 / (double)core_fps;
+		core_frame_count = 0;
+		core_fps         = fps;
+	}
+}
+
+double Core_MillisecondsPrecise( void ) {
+	return core_ms_base + (double)core_frame_count * 1000.0 / (double)core_fps;
 }
 
 // ---- Debugger server ----

@@ -2116,7 +2116,7 @@ preload low mip levels, background load remainder on demand
 ====================
 */
 void idImageManager::EndLevelLoad() {
-	int			start = Sys_Milliseconds();
+	int			start = Core_Milliseconds();
 
 	insideLevelLoad = false;
 	if ( idAsyncNetwork::serverDedicated.GetInteger() ) {
@@ -2164,7 +2164,7 @@ void idImageManager::EndLevelLoad() {
 		}
 	}
 
-	int	end = Sys_Milliseconds();
+	int	end = Core_Milliseconds();
 	common->Printf( "%5i purged from previous\n", purgeCount );
 	common->Printf( "%5i kept from previous\n", keepCount );
 	common->Printf( "%5i new loaded\n", loadCount );

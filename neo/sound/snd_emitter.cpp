@@ -228,7 +228,7 @@ void idSoundChannel::GatherChannelSamples( int sampleOffset44k, int sampleCount4
 	float	*dest_p = dest;
 	int		len;
 
-//Sys_DebugPrintf( "msec:%i sample:%i : %i : %i\n", Sys_Milliseconds(), soundSystemLocal.GetCurrent44kHzTime(), sampleOffset44k, sampleCount44k );	//!@#
+//Sys_DebugPrintf( "msec:%i sample:%i : %i : %i\n", Core_Milliseconds(), soundSystemLocal.GetCurrent44kHzTime(), sampleOffset44k, sampleCount44k );	//!@#
 
 	// negative offset times will just zero fill
 	if ( sampleOffset44k < 0 ) {
@@ -760,9 +760,9 @@ int idSoundEmitterLocal::StartSound( const idSoundShader *shader, const s_channe
 
 	// if the sample is onDemand (voice mails, etc), load it now
 	if ( chan->leadinSample->purged ) {
-		int		start = Sys_Milliseconds();
+		int		start = Core_Milliseconds();
 		chan->leadinSample->Load();
-		int		end = Sys_Milliseconds();
+		int		end = Core_Milliseconds();
 		session->TimeHitch( end - start );
 		// note: with the deterministic clock, on-demand loading consumes no
 		// sample time within the frame, so start44kHz needs no recalculation

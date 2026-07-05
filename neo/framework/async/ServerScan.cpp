@@ -121,7 +121,7 @@ void idServerScan::SetupLANScan( ) {
 	GUIUpdateSelected();
 	scan_state = LAN_SCAN;
 	challenge++;
-	lan_pingtime = Sys_Milliseconds();
+	lan_pingtime = Core_Milliseconds();
 	common->DPrintf( "SetupLANScan with challenge %d\n", challenge );
 }
 
@@ -151,10 +151,10 @@ int idServerScan::InfoResponse( networkServer_t &server ) {
 		int id = atoi( info->GetValue() );
 		net_info.Delete( serv.c_str() );
 		inServer_t iserv = net_servers[ id ];
-		server.ping = Sys_Milliseconds() - iserv.time;
+		server.ping = Core_Milliseconds() - iserv.time;
 		server.id = iserv.id;
 	} else {
-		server.ping = Sys_Milliseconds() - lan_pingtime;
+		server.ping = Core_Milliseconds() - lan_pingtime;
 		server.id = 0;
 
 		// check for duplicate servers
@@ -198,7 +198,7 @@ void idServerScan::AddServer( int id, const char *srv ) {
 	inServer_t s;
 
 	incoming_net = true;
-	incoming_lastTime = Sys_Milliseconds() + INCOMING_TIMEOUT;
+	incoming_lastTime = Core_Milliseconds() + INCOMING_TIMEOUT;
 	s.id = id;
 
 	// using IPs, not hosts
@@ -233,7 +233,7 @@ idServerScan::StartServers
 void idServerScan::StartServers( bool timeout ) {
 	incoming_net = true;
 	incoming_useTimeout = timeout;
-	incoming_lastTime = Sys_Milliseconds() + REFRESH_START;
+	incoming_lastTime = Core_Milliseconds() + REFRESH_START;
 }
 
 /*
@@ -266,7 +266,7 @@ void idServerScan::NetScan( ) {
 		idAsyncNetwork::client.InitPort();
 		// start the scan one second from now...
 		scan_state = WAIT_ON_INIT;
-		endWaitTime = Sys_Milliseconds() + 1000;
+		endWaitTime = Core_Milliseconds() + 1000;
 		return;
 	}
 
@@ -287,7 +287,7 @@ void idServerScan::NetScan( ) {
 	while ( cur_info < Min( net_servers.Num(), MAX_PINGREQUESTS ) ) {
 		netadr_t serv = net_servers[ cur_info ].adr;
 		EmitGetInfo( serv );
-		net_servers[ cur_info ].time = Sys_Milliseconds();
+		net_servers[ cur_info ].time = Core_Milliseconds();
 		net_info.SetInt( Sys_NetAdrToString( serv ), cur_info );
 		cur_info++;
 	}
@@ -304,14 +304,14 @@ void idServerScan::RunFrame( ) {
 	}
 
 	if ( scan_state == WAIT_ON_INIT ) {
-		if ( Sys_Milliseconds() >= endWaitTime ) {
+		if ( Core_Milliseconds() >= endWaitTime ) {
 				scan_state = IDLE;
 				NetScan();
 			}
 		return;
 	}
 
-	int timeout_limit = Sys_Milliseconds() - REPLY_TIMEOUT;
+	int timeout_limit = Core_Milliseconds() - REPLY_TIMEOUT;
 
 	if ( scan_state == LAN_SCAN ) {
 		if ( timeout_limit > lan_pingtime ) {
@@ -338,13 +338,13 @@ void idServerScan::RunFrame( ) {
 	while ( cur_info < net_servers.Num() && net_info.GetNumKeyVals() < MAX_PINGREQUESTS ) {
 		netadr_t serv = net_servers[ cur_info ].adr;
 		EmitGetInfo( serv );
-		net_servers[ cur_info ].time = Sys_Milliseconds();
+		net_servers[ cur_info ].time = Core_Milliseconds();
 		net_info.SetInt( Sys_NetAdrToString( serv ), cur_info );
 		cur_info++;
 	}
 
 	// update state
-	if ( ( !incoming_net || ( incoming_useTimeout && Sys_Milliseconds() > incoming_lastTime ) ) && net_info.GetNumKeyVals() == 0 ) {
+	if ( ( !incoming_net || ( incoming_useTimeout && Core_Milliseconds() > incoming_lastTime ) ) && net_info.GetNumKeyVals() == 0 ) {
 		EndServers();
 		// the list is complete, we are no longer waiting for any getInfo replies
 		common->Printf( "Scanned %d servers.\n", cur_info );

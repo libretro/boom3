@@ -1458,7 +1458,7 @@ byte *idataA, *idataB;
 }
 
 void codec::VQ( const int numEntries, const int dimension, const unsigned char *vectors, float *import, VQDATA **codebook, const bool optimize ) {
-	int		startMsec = Sys_Milliseconds();
+	int		startMsec = Core_Milliseconds();
 
 	if (numEntries <= 256) {
 		//
@@ -1694,6 +1694,6 @@ void codec::VQ( const int numEntries, const int dimension, const unsigned char *
 		}
 	}
 
-	int		endMsec = Sys_Milliseconds();
+	int		endMsec = Core_Milliseconds();
 	common->Printf( "VQ took %i msec\n", endMsec - startMsec );
 }

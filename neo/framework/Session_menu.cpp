@@ -1411,7 +1411,7 @@ idSessionLocal::DownloadProgressBox
 */
 void idSessionLocal::DownloadProgressBox( backgroundDownload_t *bgl, const char *title, int progress_start, int progress_end ) {
 	int dlnow = 0, dltotal = 0;
-	int startTime = Sys_Milliseconds();
+	int startTime = Core_Milliseconds();
 	int lapsed;
 	idStr sNow, sTotal, sBW, sETA, sMsg;
 
@@ -1447,7 +1447,7 @@ void idSessionLocal::DownloadProgressBox( backgroundDownload_t *bgl, const char 
 			} else if ( bgl->url.dltotal != dltotal || bgl->url.dlnow != dlnow ) {
 				dltotal = bgl->url.dltotal;
 				dlnow = bgl->url.dlnow;
-				lapsed = Sys_Milliseconds() - startTime;
+				lapsed = Core_Milliseconds() - startTime;
 				sNow.BestUnit( "%.2f", dlnow, MEASURE_SIZE );
 				if ( lapsed > 2000 ) {
 					sBW.BestUnit( "%.1f", ( 1000.0f * dlnow ) / lapsed, MEASURE_BANDWIDTH );
