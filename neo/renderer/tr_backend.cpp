@@ -26,7 +26,6 @@ If you have questions concerning this license or the applicable additional terms
 ===========================================================================
 */
 #include "sys/platform.h"
-#include "sys/sys_imgui.h"
 
 #include "renderer/tr_local.h"
 
@@ -546,7 +545,6 @@ const void	RB_SwapBuffers( const void *data ) {
 		RB_ShowImages();
 	}
 
-	D3::ImGuiHooks::EndFrame();
 
 	int fillAlpha = r_fillWindowAlphaChan.GetInteger();
 	if ( fillAlpha == 1 || (fillAlpha == -1 && glConfig.shouldFillWindowAlpha) )

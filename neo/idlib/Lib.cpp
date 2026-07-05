@@ -35,39 +35,12 @@ If you have questions concerning this license or the applicable additional terms
 #include <unistd.h>
 #endif
 
-#ifdef HAVE_SDL
-#ifdef D3_SDL3
-  #include <SDL3/SDL_endian.h>
-  // some defines for backwards-compat with SDL2
-  #define SDL_SwapBE16(X)  SDL_Swap16BE(X)
-  #define SDL_SwapLE16(X)  SDL_Swap16LE(X)
-  #define SDL_SwapBE32(X)  SDL_Swap32BE(X)
-  #define SDL_SwapLE32(X)  SDL_Swap32LE(X)
-#else // SDL1.2 or SDL2
-  #include <SDL_endian.h>
-#endif
-#endif // HAVE_SDL
 
-#ifndef D3_IS_BIG_ENDIAN
-  #error "D3_IS_BIG_ENDIAN should be defined by the build system (CMake)!"
-#endif
+/* MSB_FIRST (libretro convention) is defined by the build system on
+ * big-endian targets and absent on little-endian ones. */
 
-#ifdef HAVE_SDL
-#if SDL_BYTEORDER == SDL_BIG_ENDIAN
-  #if D3_IS_BIG_ENDIAN != 1
-    #error "CMake (which sets D3_IS_BIG_ENDIAN) and SDL disagree about the endianess! CMake says little, SDL says big"
-  #endif
-#elif SDL_BYTEORDER == SDL_LIL_ENDIAN
-  #if D3_IS_BIG_ENDIAN != 0
-    #error "CMake (which sets D3_IS_BIG_ENDIAN) and SDL disagree about the endianess! CMake says big, SDL says little"
-  #endif
-#else
-  #error "According to SDL, endianess is neither Big nor Little - dhewm3 doesn't support other byteorders!"
-#endif
-#endif // HAVE_SDL
 
-// When building without SDL, provide swap macros using compiler builtins or manual implementation
-#ifndef HAVE_SDL
+// swap macros using compiler builtins (or a portable fallback)
 #ifdef _MSC_VER
   #include <stdlib.h>
   #define D3_Swap16(x)  _byteswap_ushort(x)
@@ -80,26 +53,25 @@ If you have questions concerning this license or the applicable additional terms
   #define D3_Swap16(x)  ((unsigned short)(((x) >> 8) | ((x) << 8)))
   #define D3_Swap32(x)  ((unsigned int)(((x) >> 24) | (((x) >> 8) & 0xff00) | (((x) << 8) & 0xff0000) | ((x) << 24)))
 #endif
-#if D3_IS_BIG_ENDIAN
-  #define SDL_SwapBE16(x)  (x)
-  #define SDL_SwapLE16(x)  D3_Swap16(x)
-  #define SDL_SwapBE32(x)  (x)
-  #define SDL_SwapLE32(x)  D3_Swap32(x)
-  #define SDL_Swap32(x)    D3_Swap32(x)
+#ifdef MSB_FIRST
+  #define D3_SwapBE16(x)  (x)
+  #define D3_SwapLE16(x)  D3_Swap16(x)
+  #define D3_SwapBE32(x)  (x)
+  #define D3_SwapLE32(x)  D3_Swap32(x)
+  #define D3_SwapU32(x)    D3_Swap32(x)
   #define SDL_BYTEORDER    4321
   #define SDL_BIG_ENDIAN   4321
   #define SDL_LIL_ENDIAN   1234
 #else
-  #define SDL_SwapBE16(x)  D3_Swap16(x)
-  #define SDL_SwapLE16(x)  (x)
-  #define SDL_SwapBE32(x)  D3_Swap32(x)
-  #define SDL_SwapLE32(x)  (x)
-  #define SDL_Swap32(x)    D3_Swap32(x)
+  #define D3_SwapBE16(x)  D3_Swap16(x)
+  #define D3_SwapLE16(x)  (x)
+  #define D3_SwapBE32(x)  D3_Swap32(x)
+  #define D3_SwapLE32(x)  (x)
+  #define D3_SwapU32(x)    D3_Swap32(x)
   #define SDL_BYTEORDER    1234
   #define SDL_BIG_ENDIAN   4321
   #define SDL_LIL_ENDIAN   1234
 #endif
-#endif // !HAVE_SDL
 
 #include "sys/platform.h"
 #include "idlib/math/Vector.h"
@@ -342,7 +314,7 @@ ID_INLINE static float FloatSwap( float f ) {
 	} id_attribute((may_alias)) dat;
 
 	dat.f = f;
-	dat.u = SDL_Swap32(dat.u);
+	dat.u = D3_SwapU32(dat.u);
 
 	return dat.f;
 }
@@ -495,19 +467,19 @@ bool Swap_IsBigEndian( void ) {
 }
 
 short	BigShort( short l ) {
-	return SDL_SwapBE16(l);
+	return D3_SwapBE16(l);
 }
 
 short	LittleShort( short l ) {
-	return SDL_SwapLE16(l);
+	return D3_SwapLE16(l);
 }
 
 int		BigInt( int l ) {
-	return SDL_SwapBE32(l);
+	return D3_SwapBE32(l);
 }
 
 int		LittleInt( int l ) {
-	return SDL_SwapLE32(l);
+	return D3_SwapLE32(l);
 }
 
 float	BigFloat( float l ) {

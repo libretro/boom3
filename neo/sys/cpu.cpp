@@ -28,13 +28,7 @@ If you have questions concerning this license or the applicable additional terms
 
 #include <float.h>
 
-#ifdef HAVE_SDL
-#ifdef D3_SDL3
-  #include <SDL3/SDL_cpuinfo.h>
-#else // SDL1.2 or SDL2
-  #include <SDL_cpuinfo.h>
-#endif
-#endif
+#include <features/features_cpu.h>	// libretro-common CPU feature detection
 
 // MSVC header intrin.h uses strcmp and errors out when not set
 #define IDSTR_NO_REDIRECT
@@ -205,31 +199,20 @@ Sys_GetProcessorId
 int Sys_GetProcessorId( void ) {
 	int flags = CPUID_GENERIC;
 
-#ifdef HAVE_SDL
-	if (SDL_HasMMX())
-		flags |= CPUID_MMX;
+	// libretro-common feature detection (features_cpu.c is already part of
+	// this core's build). MMX and 3DNow! are gone: every SIMD path in this
+	// codebase requires at least SSE, and the last processors where
+	// MMX/3DNow mattered cannot run Doom 3 anyway.
+	uint64_t f = cpu_features_get();
 
-	// SDL3 doesn't support detecting 3DNow, and current CPUs (even from AMD) don't support it either
-#ifndef D3_SDL3
-	if (SDL_Has3DNow())
-		flags |= CPUID_3DNOW;
-#endif
-
-	if (SDL_HasSSE())
+	if (f & RETRO_SIMD_SSE)
 		flags |= CPUID_SSE;
-
-	if (SDL_HasSSE2())
+	if (f & RETRO_SIMD_SSE2)
 		flags |= CPUID_SSE2;
-
-	if (SDL_HasAltiVec())
-		flags |= CPUID_ALTIVEC;
-#endif
-
-#ifndef NO_CPUID
-	// there is no SDL_HasSSE3() in SDL 1.2
-	if (HasSSE3())
+	if (f & RETRO_SIMD_SSE3)
 		flags |= CPUID_SSE3;
-#endif
+	if (f & RETRO_SIMD_VMX)
+		flags |= CPUID_ALTIVEC;
 
 	return flags;
 }

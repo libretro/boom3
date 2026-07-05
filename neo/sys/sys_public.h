@@ -35,8 +35,6 @@ typedef enum {
 	CPUID_NONE							= 0x00000,
 	CPUID_UNSUPPORTED					= 0x00001,	// unsupported (386/486)
 	CPUID_GENERIC						= 0x00002,	// unrecognized processor
-	CPUID_MMX							= 0x00010,	// Multi Media Extensions
-	CPUID_3DNOW							= 0x00020,	// 3DNow!
 	CPUID_SSE							= 0x00040,	// Streaming SIMD Extensions
 	CPUID_SSE2							= 0x00080,	// Streaming SIMD Extensions 2
 	CPUID_SSE3							= 0x00100,	// Streaming SIMD Extentions 3 aka Prescott's New Instructions
@@ -376,24 +374,13 @@ void			Sys_ShutdownNetworking( void );
 ==============================================================
 */
 
-struct SDL_Thread;
 
 typedef int (*xthread_t)( void * );
 
 typedef struct {
 	const char		*name;
-#ifdef HAVE_SDL
-	struct SDL_Thread	*threadHandle;
-#elif defined(_WIN32)
-	void			*threadHandle;  // HANDLE
-#else
 	unsigned long	threadHandle;   // pthread_t
-#endif
-#ifdef D3_SDL3
-	uint64_t		threadId;
-#else
 	unsigned long	threadId;
-#endif
 } xthreadInfo;
 
 void				Sys_CreateThread( xthread_t function, void *parms, xthreadInfo &info, const char *name );

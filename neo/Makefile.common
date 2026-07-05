@@ -220,8 +220,6 @@ SRC_IDLIB	:=\
 	$(CORE_DIR)/idlib/math/Simd.cpp \
 	$(CORE_DIR)/idlib/math/Simd_Generic.cpp \
 	$(CORE_DIR)/idlib/math/Simd_AltiVec.cpp \
-	$(CORE_DIR)/idlib/math/Simd_MMX.cpp \
-	$(CORE_DIR)/idlib/math/Simd_3DNow.cpp \
 	$(CORE_DIR)/idlib/math/Simd_SSE.cpp \
 	$(CORE_DIR)/idlib/math/Simd_SSE2.cpp \
 	$(CORE_DIR)/idlib/math/Simd_SSE3.cpp \

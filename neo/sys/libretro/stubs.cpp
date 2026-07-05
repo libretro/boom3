@@ -50,14 +50,6 @@ void Sys_SleepUntilPrecise(double targetTime) {
     (void)targetTime;
 }
 
-// ---- ImGui hooks ----
-namespace D3 {
-namespace ImGuiHooks {
-    void NewFrame() {}
-    void EndFrame() {}
-    void Shutdown() {}
-}}
-
 // ---- Debugger server ----
 void DebuggerServerInit() {}
 void DebuggerServerShutdown() {}

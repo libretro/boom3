@@ -212,37 +212,37 @@ D3_SIZEOFPTR := 8
 
 ifeq ($(COMPILE_ARCH),powerpc)
     D3_ARCH := ppc
-    D3_IS_BIG_ENDIAN := 1
+    MSB_FIRST := 1
     D3_SIZEOFPTR := 4
 else ifeq ($(COMPILE_ARCH),powerpc64)
     D3_ARCH := ppc64
-    D3_IS_BIG_ENDIAN := 1
+    MSB_FIRST := 1
 else ifeq ($(COMPILE_ARCH),aarch64)
     D3_ARCH := aarch64
-    D3_IS_BIG_ENDIAN := 0
+    MSB_FIRST := 0
 else ifeq ($(COMPILE_ARCH),arm64)
     D3_ARCH := aarch64
-    D3_IS_BIG_ENDIAN := 0
+    MSB_FIRST := 0
 else ifeq ($(COMPILE_ARCH),x86_64)
     D3_ARCH := x86_64
-    D3_IS_BIG_ENDIAN := 0
+    MSB_FIRST := 0
 else ifeq ($(COMPILE_ARCH),x86)
     D3_ARCH := x86
-    D3_IS_BIG_ENDIAN := 0
+    MSB_FIRST := 0
     D3_SIZEOFPTR := 4
 else ifneq (,$(findstring arm,$(COMPILE_ARCH)))
     D3_ARCH := arm
-    D3_IS_BIG_ENDIAN := 0
+    MSB_FIRST := 0
     D3_SIZEOFPTR := 4
 else ifneq (,$(findstring mips,$(COMPILE_ARCH)))
     D3_ARCH := mips
-    D3_IS_BIG_ENDIAN := 0
+    MSB_FIRST := 0
 else ifneq (,$(findstring sparc,$(COMPILE_ARCH)))
     D3_ARCH := sparc
-    D3_IS_BIG_ENDIAN := 1
+    MSB_FIRST := 1
 else
     D3_ARCH := $(COMPILE_ARCH)
-    D3_IS_BIG_ENDIAN := 0
+    MSB_FIRST := 0
 endif
 
 # Equivalent of CMake's D3_OSTYPE and D3_SIZEOFPTR
@@ -261,7 +261,11 @@ else
 endif
 
 CFLAGS += -DD3_OSTYPE=\"$(D3_OSTYPE)\" -DD3_SIZEOFPTR=$(D3_SIZEOFPTR) -DD3_ARCH=\"$(D3_ARCH)\"
-CFLAGS += -DD3_IS_BIG_ENDIAN=$(D3_IS_BIG_ENDIAN)
+# libretro convention: MSB_FIRST is defined (with no value) only on
+# big-endian targets
+ifeq ($(MSB_FIRST), 1)
+CFLAGS += -DMSB_FIRST
+endif
 
 # webOS
 ifneq (,$(or $(findstring webos,$(CROSS_COMPILE)),$(findstring starfish,$(CROSS_COMPILE))))
@@ -293,15 +297,6 @@ OBJECTS := $(filter-out %.c %.cpp,$(OBJECTS))
 
 TOPDIR ?= $(CURDIR)
 
-ifeq ($(SDL_VER),2)
-    SDL2 := -DSDL2=ON -DHAVE_SDL
-else ifeq ($(SDL_VER),3)
-    SDL2 := -DD3_SDL3 -DHAVE_SDL
-endif
-
-# ImGui is not part of the libretro core
-CFLAGS   += -DIMGUI_DISABLE
-CXXFLAGS += -DIMGUI_DISABLE
 
 
 CFLAGS   += -Wall $(fpic) $(CORE) $(SDL2) -DBASE=ON -DUSE_FILE32API -ffast-math \

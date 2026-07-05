@@ -26,7 +26,7 @@ If you have questions concerning this license or the applicable additional terms
 ===========================================================================
 */
 
-#if D3_IS_BIG_ENDIAN
+#ifdef MSB_FIRST
   #define STB_VORBIS_BIG_ENDIAN
 #endif
 #define STB_VORBIS_NO_STDIO

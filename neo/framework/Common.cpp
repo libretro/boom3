@@ -26,15 +26,6 @@ If you have questions concerning this license or the applicable additional terms
 ===========================================================================
 */
 
-#include "sys/sys_sdl.h"
-
-#ifdef HAVE_SDL
-#if SDL_VERSION_ATLEAST(3, 0, 0)
-  // DG: compat with SDL2
-  #define SDL_setenv SDL_setenv_unsafe
-#endif
-#endif
-
 #include "sys/platform.h"
 #include "idlib/containers/HashTable.h"
 #include "idlib/LangDict.h"
@@ -58,7 +49,6 @@ If you have questions concerning this license or the applicable additional terms
 #include "tools/compilers/aas/AASFileManager.h"
 #include "tools/edit_public.h"
 
-#include "sys/sys_imgui.h"
 
 #include "framework/Common.h"
 
@@ -2536,9 +2526,6 @@ void idCommonLocal::Frame( void ) {
 
 		eventLoop->RunEventLoop();
 
-		// DG: prepare new ImGui frame - I guess this is a good place, as all new events should be available?
-		D3::ImGuiHooks::NewFrame();
-
 		Com_UpdateFrameTime(); // DG: put updating com_frameTime into a function
 
 		idAsyncNetwork::RunFrame();
@@ -2987,27 +2974,6 @@ void idCommonLocal::Init( int argc, char **argv ) {
 
 	Sys_InitThreads();
 
-#ifdef HAVE_SDL
-#if SDL_VERSION_ATLEAST(2, 0, 0)
-	/* Force the window to minimize when focus is lost. This was the
-	 * default behavior until SDL 2.0.12 and changed with 2.0.14.
-	 * The windows staying maximized has some odd implications for
-	 * window ordering under Windows and some X11 window managers
-	 * like kwin. See:
-	 *  * https://github.com/libsdl-org/SDL/issues/4039
-	 *  * https://github.com/libsdl-org/SDL/issues/3656 */
-	SDL_SetHint( SDL_HINT_VIDEO_MINIMIZE_ON_FOCUS_LOSS, "1" );
-  #ifdef SDL_HINT_ENABLE_SCREEN_KEYBOARD
-	SDL_SetHint( SDL_HINT_ENABLE_SCREEN_KEYBOARD, "0" );
-  #else
-	// fallback for older SDL2 versions, maybe at least the runtime version is new enough
-	// for this hint if the compile time SDL2 version wasn't (and if not this won't hurt)
-	if (SDL_getenv("SDL_ENABLE_SCREEN_KEYBOARD") == NULL) {
-		SDL_setenv("SDL_ENABLE_SCREEN_KEYBOARD", "0", 0);
-	}
-  #endif
-#endif
-#endif
 
 	try {
 
@@ -3039,28 +3005,6 @@ void idCommonLocal::Init( int argc, char **argv ) {
 		idCVar::RegisterStaticVars();
 
 		// print engine version
-#ifdef HAVE_SDL
-#if SDL_VERSION_ATLEAST(3, 0, 0)
-		int sdlv = SDL_GetVersion();
-		int sdlvmaj = SDL_VERSIONNUM_MAJOR(sdlv);
-		int sdlvmin = SDL_VERSIONNUM_MINOR(sdlv);
-		int sdlvmicro = SDL_VERSIONNUM_MICRO(sdlv);
-		Printf( "%s using SDL v%d.%d.%d\n", version.string, sdlvmaj, sdlvmin, sdlvmicro );
-#else
-  #if SDL_VERSION_ATLEAST(2, 0, 0)
-		SDL_version sdlv;
-		SDL_GetVersion(&sdlv);
-  #else
-		SDL_version sdlv = *SDL_Linked_Version();
-  #endif
-		Printf( "%s using SDL v%u.%u.%u\n",
-				version.string, sdlv.major, sdlv.minor, sdlv.patch );
-#endif
-
-#if SDL_VERSION_ATLEAST(2, 0, 0)
-		Printf( "SDL video driver: %s\n", SDL_GetCurrentVideoDriver() );
-#endif
-#endif
 
 		// initialize key input/binding, done early so bind command exists
 		idKeyInput::Init();
@@ -3179,9 +3123,6 @@ void idCommonLocal::Shutdown( void ) {
 
 	Sys_ShutdownThreads();
 
-#ifdef HAVE_SDL
-	SDL_Quit();
-#endif
 }
 
 /*

@@ -29,7 +29,7 @@ If you have questions concerning this license or the applicable additional terms
 #ifndef __MATH_SIMD_SSE_H__
 #define __MATH_SIMD_SSE_H__
 
-#include "idlib/math/Simd_MMX.h"
+#include "idlib/math/Simd_Generic.h"
 
 /*
 ===============================================================================
@@ -39,11 +39,11 @@ If you have questions concerning this license or the applicable additional terms
 ===============================================================================
 */
 
-class idSIMD_SSE : public idSIMD_MMX {
+class idSIMD_SSE : public idSIMD_Generic {
 public:
 #if defined(__GNUC__) && defined(__SSE__)
-	using idSIMD_MMX::Dot;
-	using idSIMD_MMX::MinMax;
+	using idSIMD_Generic::Dot;
+	using idSIMD_Generic::MinMax;
 
 	virtual const char * VPCALL GetName( void ) const;
 	virtual void VPCALL Dot( float *dst,			const idPlane &constant,const idDrawVert *src,	const int count );

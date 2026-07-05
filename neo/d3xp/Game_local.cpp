@@ -531,7 +531,7 @@ void idGameLocal::SaveGame( idFile *f ) {
 	savegame.WriteString( D3_ARCH ); // CPU architecture (e.g. "x86" or "x86_64") - from CMake
 	savegame.WriteString( ENGINE_VERSION );
 	savegame.WriteShort( (short)sizeof(void*) ); // tells us if it's from a 32bit (4) or 64bit system (8)
-#if D3_IS_BIG_ENDIAN
+#ifdef MSB_FIRST
 	const short byteOrder = 4321; // SDL_BIG_ENDIAN
 #else
 	const short byteOrder = 1234; // SDL_LIL_ENDIAN
