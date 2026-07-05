@@ -422,7 +422,7 @@ viewEntity_t *R_SetEntityDefViewEntity( idRenderEntityLocal *def ) {
 	// happened on the current tic (entities at rest, teleports, and first
 	// presents all snap). A distance guard catches respawn-style jumps that
 	// happen to land on consecutive tics.
-	if ( tr_ticFraction > 0.0f
+	if ( tr_ticFraction > 0.0f && tr_ticFraction < 1.0f
 	     && def->curTransformTic == com_ticNumber
 	     && def->curTransformTic - def->prevTransformTic == 1 ) {
 		idVec3 delta = def->parms.origin - def->prevTransformOrigin;
@@ -554,7 +554,7 @@ viewLight_t *R_SetLightDefViewLight( idRenderLightLocal *light ) {
 		extern volatile int com_ticNumber;
 		bool interpolated = false;
 
-		if ( tr_ticFraction > 0.0f
+		if ( tr_ticFraction > 0.0f && tr_ticFraction < 1.0f
 		     && light->curTransformTic == com_ticNumber
 		     && light->curTransformTic - light->prevTransformTic == 1 ) {
 			idVec3 delta = light->parms.origin - light->prevTransformOrigin;

@@ -8754,7 +8754,9 @@ void idPlayer::CalculateRenderView( void ) {
 		// set the sub-tic presentation time BEFORE the camera-POV branch so
 		// cutscene cameras (GetViewParms) sample at the interpolated time.
 		// Time-group correct: presentation follows the player's (slow) clock.
-		renderView->time = gameLocal.slow.time + (int)( Com_GetTicFraction() * USERCMD_MSEC );
+		// frac is in (0,1]: 1 = exactly at the current tic (zero offset),
+		// <1 = up to one tic in the past; monotone at every framerate
+		renderView->time = gameLocal.slow.time - (int)( ( 1.0f - Com_GetTicFraction() ) * USERCMD_MSEC );
 	}
 #endif
 
@@ -8812,7 +8814,7 @@ void idPlayer::CalculateRenderView( void ) {
 
 		if ( g_frameInterpolation.GetBool() ) {
 			const float frac = Com_GetTicFraction();
-			renderView->time = gameLocal.slow.time + (int)( frac * USERCMD_MSEC );
+			renderView->time = gameLocal.slow.time - (int)( ( 1.0f - frac ) * USERCMD_MSEC );
 
 			// stage 2: publish the fraction so the renderer interpolates all
 			// entity transforms (movers, characters, projectiles, and the
@@ -8826,7 +8828,7 @@ void idPlayer::CalculateRenderView( void ) {
 				// the previous and current tic (guarded against teleports and
 				// stale states); rotation stays fresh via the sub-tic mouse
 				// preview below, so look latency is unchanged
-				if ( frac > 0.0f
+				if ( frac < 1.0f
 				     && firstPersonViewTic == com_ticNumber
 				     && firstPersonViewTic - prevFirstPersonViewTic == 1 ) {
 					idVec3 delta = firstPersonViewOrigin - prevFirstPersonViewOrigin;

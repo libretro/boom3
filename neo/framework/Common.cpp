@@ -253,10 +253,28 @@ idCommon *		common = &commonLocal;
 // render frames, in 10-bit fixed point (so com_timescale keeps working).
 // No clocks and no accumulated floating-point error - the tic cadence and
 // the render-side tic fraction are pure functions of the frame count,
-// bit-exact and periodic. At 60 fps the fraction is exactly 0 on every
-// frame (interpolation provably inert); at 120 fps it alternates 0, 0.5.
+// bit-exact and periodic.
+//
+// CEILING semantics: a tic runs on the FIRST frame of the interval it
+// covers, and Com_GetTicFraction() returns the rendered frame's position
+// within (currentTic-1, currentTic] as a fraction in (0, 1]:
+//
+//   frac == 1  -> render exactly AT the current tic (the entire 60 fps
+//                 case, and the tic-coincident frames at higher rates):
+//                 interpolation is inert and latency unchanged.
+//   frac  < 1  -> render between the previous and current tic.
+//
+// This makes the rendered time STRICTLY MONOTONE at every rate. (A
+// floor-style schedule with frac in [0,1) renders "cur" on tic frames but
+// "between prev and cur" on the frames after them - time zigzags half a
+// tic backwards at 120 fps, which is visible as stair-stepping on
+// anything that moves, most obviously shadow sweeps.)
+//   60 fps:  tics 1,1,1,...  frac 1, 1, 1, ...
+//  120 fps:  tics 1,0,1,0,.. frac 0.5, 1, 0.5, 1, ...
+//   90 fps:  tics 1,1,0,...  frac 2/3, 1/3 -> see below - positions
+//            advance by exactly 60/framerate tics per frame.
 static int com_frameHz  = 60;
-static int com_ticAccum = 0;	// remainder, in 1/(com_frameHz*1024) tic units
+static int com_ticAccum = 0;	// in 1/(com_frameHz*1024) tic units, range (-denom, 0]
 
 void Com_SetFrameSchedule( int framerateHz ) {
 	if ( framerateHz < 1 ) {
@@ -285,11 +303,25 @@ void Com_UpdateTicNumber() {
 	const int denom = com_frameHz * 1024;
 	while ( n-- ) {
 		com_ticAccum += inc;
-		while ( com_ticAccum >= denom ) {
+		while ( com_ticAccum > 0 ) {	// ceiling: run the tic that COVERS this frame
 			com_ticAccum -= denom;
 			com_ticNumber++;
 		}
 	}
+}
+
+/*
+==================
+Com_GetTicFraction
+
+Position of the rendered frame within (currentTic-1, currentTic], as a
+fraction in (0, 1]. 1 means "exactly at the current tic". Presentation
+only - drives render-side interpolation.
+==================
+*/
+float Com_GetTicFraction( void ) {
+	const int denom = com_frameHz * 1024;
+	return (float)( denom + com_ticAccum ) / (float)denom;
 }
 
 // DG: updates com_frameTime based on the current tic number (which is also updated if necessary)
@@ -301,17 +333,6 @@ void Com_UpdateFrameTime() {
 	com_frameTime = idMath::Rint( com_preciseFrameTimeMS );
 }
 
-/*
-==================
-Com_GetTicFraction
-
-Fraction of the current game tic the NEXT rendered frame represents,
-in [0,1). Presentation only - drives render-side interpolation.
-==================
-*/
-float Com_GetTicFraction( void ) {
-	return (float)com_ticAccum / (float)( com_frameHz * 1024 );
-}
 
 /*
 ==================

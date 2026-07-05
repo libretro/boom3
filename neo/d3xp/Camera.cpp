@@ -646,8 +646,8 @@ void idCameraAnim::GetViewParms( renderView_t *view ) {
 	// and the resampled frame is clamped so camFrame[1] stays in range and
 	// the decision boundary is never crossed from the render path.
 	{
-		int subMs = view->time - gameLocal.time;
-		if ( subMs > 0 ) {
+		int subMs = view->time - gameLocal.time;	// in [-USERCMD_MSEC, 0]
+		if ( subMs < 0 ) {
 			int sFrameTime, sFrame;
 			float sLerp;
 			if ( frameRate == USERCMD_HZ ) {
@@ -663,7 +663,21 @@ void idCameraAnim::GetViewParms( renderView_t *view ) {
 				sFrame = camera.Num() - 2;
 				sLerp  = 1.0f;
 			}
-			if ( sFrame >= frame ) {	// never move backwards past a cut
+			if ( sFrame < 0 ) {
+				sFrame = 0;
+				sLerp  = 0.0f;
+			}
+			bool crossesCut = false;
+			if ( sFrame < frame ) {
+				// adopting an earlier sample must not cross a camera cut
+				for ( int c = 0; c < cameraCuts.Num(); c++ ) {
+					if ( cameraCuts[ c ] > sFrame && cameraCuts[ c ] <= frame ) {
+						crossesCut = true;
+						break;
+					}
+				}
+			}
+			if ( !crossesCut ) {
 				frame = sFrame;
 				lerp  = sLerp;
 			}
