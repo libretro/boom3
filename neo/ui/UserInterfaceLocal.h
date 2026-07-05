@@ -58,6 +58,7 @@ public:
 	virtual float				GetStateFloat( const char *varName, const char* defaultString = "0" ) const;
 
 	virtual void				StateChanged( int time, bool redraw );
+	virtual void				SetChildWinVarVal( const char *winName, const char *varName, const char *value );
 	virtual const char *		Activate( bool activate, int time );
 	virtual void				Trigger( int time );
 	virtual void				ReadFromDemoFile( class idDemoFile *f );

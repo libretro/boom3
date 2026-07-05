@@ -2398,85 +2398,6 @@ void idCommonLocal::SetMachineSpec( void ) {
 
 
 
-#ifdef _WIN32
-#include "../sys/win32/win_local.h" // for Conbuf_AppendText()
-#endif // _WIN32
-
-static bool checkForHelp(int argc, char **argv)
-{
-	const char* helpArgs[] = { "--help", "-h", "-help", "-?", "/?" };
-	const int numHelpArgs = sizeof(helpArgs)/sizeof(helpArgs[0]);
-
-	for (int i=0; i<argc; ++i)
-	{
-		const char* arg = argv[i];
-		for (int h=0; h<numHelpArgs; ++h)
-		{
-			if (idStr::Icmp(arg, helpArgs[h]) == 0)
-			{
-#ifdef _WIN32
-				// write it to the Windows-only console window
-				#define WriteString(s) Conbuf_AppendText(s)
-#else // not windows
-				// write it to stdout
-				#define WriteString(s) fputs(s, stdout);
-#endif // _WIN32
-				WriteString(ENGINE_VERSION " - http://dhewm3.org\n");
-				WriteString("Commandline arguments:\n");
-				WriteString("-h or --help: Show this help\n");
-				WriteString("+<command> [command arguments]\n");
-				WriteString("  executes a command (with optional arguments)\n");
-
-				WriteString("\nSome interesting commands:\n");
-				WriteString("+map <map>\n");
-				WriteString("  directly loads the given level, e.g. +map game/hell1\n");
-				WriteString("+exec <config>\n");
-				WriteString("  execute the given config (mainly relevant for dedicated servers)\n");
-				WriteString("+disconnect\n");
-				WriteString("  starts the game, goes directly into main menu without showing\n  logo video\n");
-				WriteString("+connect <host>[:port]\n");
-				WriteString("  directly connect to multiplayer server at given host/port\n");
-				WriteString("  e.g. +connect d3.example.com\n");
-				WriteString("  e.g. +connect d3.example.com:27667\n");
-				WriteString("  e.g. +connect 192.168.0.42:27666\n");
-				WriteString("+set <cvarname> <value>\n");
-				WriteString("  Set the given cvar to the given value, e.g. +set r_fullscreen 0\n");
-				WriteString("+seta <cvarname> <value>\n");
-				WriteString("  like +set, but also makes sure the changed cvar is saved (\"archived\")\n  in a cfg\n");
-
-				WriteString("\nSome interesting cvars:\n");
-				WriteString("+set fs_basepath <gamedata path>\n");
-				WriteString("  set path to your Doom3 game data (the directory base/ is in)\n");
-				WriteString("+set fs_game <modname>\n");
-				WriteString("  start the given addon/mod, e.g. +set fs_game d3xp\n");
-				WriteString("+set fs_game_base <base-modname>\n");
-				WriteString("  some mods are based on other mods, usually d3xp.\n");
-				WriteString("  This specifies the base mod e.g. +set fs_game d3le +set fs_game_base d3xp\n");
-				WriteString("+set fs_gameDllPath <additional game lib path>");
-				WriteString("  sets a path to look for game/mod libs (.dll/.so/.dylib) in.");
-				WriteString("  It's searched before all the other default paths (like next to the executable");
-				WriteString("  Especially useful when developing/testing/debugging a mod DLL");
-#ifndef ID_DEDICATED
-				WriteString("  start game in windowed (0) or fullscreen (1) mode\n");
-				WriteString("+set r_mode <modenumber>\n");
-				WriteString("  start game in resolution belonging to <modenumber>,\n");
-				WriteString("  use -1 for custom resolutions:\n");
-				WriteString("+set r_customWidth  <size in pixels>\n");
-				WriteString("+set r_customHeight <size in pixels>\n");
-				WriteString("  if r_mode is set to -1, these cvars allow you to specify the\n");
-				WriteString("  width/height of your custom resolution\n");
-#endif // !ID_DEDICATED
-				WriteString("\nSee https://modwiki.dhewm3.org/CVars_%28Doom_3%29 for more cvars\n");
-				WriteString("See https://modwiki.dhewm3.org/Commands_%28Doom_3%29 for more commands\n");
-
-				#undef WriteString
-
-				return true;
-			}
-		}
-	}
-	return false;
-}
 
 #ifdef UINTPTR_MAX // DG: make sure D3_SIZEOFPTR is consistent with reality
 
@@ -2509,16 +2430,6 @@ void idCommonLocal::Init( int argc, char **argv ) {
 		           (int)D3_SIZEOFPTR, (int)sizeof(void*) );
 	}
 
-	if(checkForHelp(argc, argv))
-	{
-		// game has been started with --help (or similar), usage message has been shown => quit
-#ifdef _WIN32
-		// this enforces that the console window is shown until the user closes it
-		// => checkForHelp() writes to the console window on Windows
-		Sys_Error(".");
-#endif // _WIN32
-		exit(1);
-	}
 
 #ifdef ID_DEDICATED
 	// we want to use the SDL event queue for dedicated servers. That

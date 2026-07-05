@@ -568,6 +568,12 @@ void idUserInterfaceLocal::SetStateString( const char *varName, const char *valu
 	state.Set( varName, value );
 }
 
+void idUserInterfaceLocal::SetChildWinVarVal( const char *winName, const char *varName, const char *value ) {
+	if ( desktop ) {
+		desktop->SetChildWinVarVal( winName, varName, value );
+	}
+}
+
 void idUserInterfaceLocal::SetStateBool( const char *varName, const bool value ) {
 	state.SetBool( varName, value );
 }

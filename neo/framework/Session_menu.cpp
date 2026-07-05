@@ -319,6 +319,12 @@ void idSessionLocal::SetMainMenuGuiVars( void ) {
 	guiMainMenu->SetStateString( "nightmare", cvarSystem->GetCVarBool( "g_nightmare" ) ? "1" : "0" );
 	guiMainMenu->SetStateString( "browser_levelshot", "guis/assets/splash/pdtempa" );
 
+	// The libretro frontend owns the window, so the retail "Fullscreen"
+	// system-options row (windowDef OS3 in mainmenu.gui, bound to the
+	// since-removed r_fullscreen cvar) is meaningless here - hide the whole
+	// row. Done in the loaded window tree so no game data is modified.
+	guiMainMenu->SetChildWinVarVal( "OS3", "visible", "0" );
+
 	SetMainMenuSkin();
 	// Mods Menu
 	SetModsMenuGuiVars();

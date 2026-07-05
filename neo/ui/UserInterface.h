@@ -98,6 +98,9 @@ public:
 								// The state has changed and the gui needs to update from the state idDict.
 	virtual void				StateChanged( int time, bool redraw = false ) = 0;
 
+								// Sets a window variable by window name (walks the desktop tree).
+	virtual void				SetChildWinVarVal( const char *winName, const char *varName, const char *value ) = 0;
+
 								// Activated the gui.
 	virtual const char *		Activate( bool activate, int time ) = 0;
 
