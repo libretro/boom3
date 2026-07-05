@@ -61,9 +61,6 @@ idCVar r_inhibitFragmentProgram( "r_inhibitFragmentProgram", "0", CVAR_RENDERER 
 idCVar r_useLightPortalFlow( "r_useLightPortalFlow", "1", CVAR_RENDERER | CVAR_BOOL, "use a more precise area reference determination" );
 idCVar r_multiSamples( "r_multiSamples", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "number of antialiasing samples" );
 idCVar r_mode( "r_mode", "5", CVAR_ARCHIVE | CVAR_RENDERER | CVAR_INTEGER, "video mode number" );
-idCVar r_displayRefresh( "r_displayRefresh", "0", CVAR_RENDERER | CVAR_INTEGER | CVAR_NOCHEAT, "optional display refresh rate option for vid mode", 0.0f, 200.0f );
-idCVar r_fullscreen( "r_fullscreen", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "0 = windowed, 1 = full screen" );
-idCVar r_fullscreenDesktop( "r_fullscreenDesktop", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "0: 'real' fullscreen mode 1: keep resolution 'desktop' fullscreen mode" );
 idCVar r_customWidth( "r_customWidth", "720", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "custom screen width. set r_mode to -1 to activate" );
 idCVar r_customHeight( "r_customHeight", "486", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "custom screen height. set r_mode to -1 to activate" );
 idCVar r_singleTriangle( "r_singleTriangle", "0", CVAR_RENDERER | CVAR_BOOL, "only draw a single triangle per primitive" );
@@ -805,8 +802,6 @@ void R_InitOpenGL( void ) {
 		r_customWidth.SetInteger( 1920 );
 		r_customHeight.SetInteger( 1080 );
 		r_mode.SetInteger( 3 );
-		r_fullscreen.SetInteger( 0 );
-		r_displayRefresh.SetInteger( 0 );
 		r_multiSamples.SetInteger( 0 );
 	}
 
@@ -2033,16 +2028,6 @@ GfxInfo_f
 ================
 */
 static void GfxInfo_f( const idCmdArgs &args ) {
-	const char *fsstrings[] =
-	{
-		"windowed",
-		"fullscreen"
-	};
-
-	const char* fsmode = fsstrings[r_fullscreen.GetBool()];
-	if ( r_fullscreen.GetBool() && r_fullscreenDesktop.GetBool() )
-		fsmode = "desktop-fullscreen";
-
 	common->Printf( "\nGL_VENDOR: %s\n", glConfig.vendor_string );
 	common->Printf( "GL_RENDERER: %s\n", glConfig.renderer_string );
 	common->Printf( "GL_VERSION: %s\n", glConfig.version_string );
@@ -2052,7 +2037,6 @@ static void GfxInfo_f( const idCmdArgs &args ) {
 	common->Printf( "GL_MAX_TEXTURE_COORDS_ARB: %d\n", glConfig.maxTextureCoords );
 	common->Printf( "GL_MAX_TEXTURE_IMAGE_UNITS_ARB: %d\n", glConfig.maxTextureImageUnits );
 	common->Printf( "\nPIXELFORMAT: color(%d-bits) Z(%d-bit) stencil(%d-bits)\n", glConfig.colorBits, glConfig.depthBits, glConfig.stencilBits );
-	common->Printf( "MODE: %d, %d x %d %s hz:", r_mode.GetInteger(), glConfig.vidWidth, glConfig.vidHeight, fsmode );
 
 	common->Printf( "Logical Window size: %g x %g\n", glConfig.winWidth, glConfig.winHeight );
 
@@ -2100,55 +2084,9 @@ void R_VidRestart_f( const idCmdArgs &args ) {
 		return;
 	}
 
-	bool full = true;
-	bool forceWindow = false;
-	for ( int i = 1 ; i < args.Argc() ; i++ ) {
-		if ( idStr::Icmp( args.Argv( i ), "partial" ) == 0 ) {
-			full = false;
-			continue;
-		}
-		if ( idStr::Icmp( args.Argv( i ), "windowed" ) == 0 ) {
-			forceWindow = true;
-			continue;
-		}
-	}
-
-	// DG: allow enforcing full vid restarts (when vid_restart is called from the menu or whatever)
-	//     to let users work around driver bugs or whatever, like
-	//     https://github.com/dhewm/dhewm3/issues/587#issuecomment-2206937752
-	if ( r_vidRestartAlwaysFull.GetBool() ) {
-		full = true;
-	}
-
-	// DG: in partial mode, try to just resize the window (and make it fullscreen or windowed)
-	//     instead of doing a full vid_restart. Still falls back to a full vid_restart
-	//     in case this doesn't work (for example because MSAA settings have changed)
-	if ( !full ) {
-		int wantedWidth=0, wantedHeight=0;
-		if ( !R_GetModeInfo( &wantedWidth, &wantedHeight, r_mode.GetInteger() ) ) {
-			common->Warning( "vid_restart: R_GetModeInfo() failed?!\n" );
-		} else {
-			glimpParms_t	parms;
-			parms.width = wantedWidth;
-			parms.height = wantedHeight;
-
-			// "vid_restart partial windowed" is used in case of errors to return to windowed mode
-			// before things explode more. in that case just keep whatever MSAA setting is active
-			parms.multiSamples = forceWindow ? -1 : r_multiSamples.GetInteger();
-			parms.stereo = false;
-
-			if ( GLimp_SetScreenParms( parms ) ) {
-				common->Printf( "'vid_restart partial' succeeded in changing resolution and/or fullscreen mode\n" );
-				return;
-			}
-		}
-	}
-
 	// DG: notify the game DLL about the reloadImages and (non-partial) vid_restart commands
 	if(gameCallbacks.reloadImagesCB != NULL)
-	{
 		gameCallbacks.reloadImagesCB(gameCallbacks.reloadImagesUserArg, args);
-	}
 
 	// this could take a while, so give them the cursor back ASAP
 	Sys_GrabMouseCursor( false );
@@ -2177,12 +2115,7 @@ void R_VidRestart_f( const idCmdArgs &args ) {
 	glConfig.isInitialized = false;
 
 	// create the new context and vertex cache
-	bool latch = cvarSystem->GetCVarBool( "r_fullscreen" );
-	if ( forceWindow ) {
-		cvarSystem->SetCVarBool( "r_fullscreen", false );
-	}
 	R_InitOpenGL();
-	cvarSystem->SetCVarBool( "r_fullscreen", latch );
 
 	// regenerate all images
 	globalImages->ReloadAllImages();
@@ -2277,15 +2210,6 @@ void R_TouchGui_f( const idCmdArgs &args ) {
 
 /*
 =================
-R_InitCvars
-=================
-*/
-void R_InitCvars( void ) {
-	// update latched cvars here
-}
-
-/*
-=================
 R_InitCommands
 =================
 */
@@ -2375,8 +2299,6 @@ void idRenderSystemLocal::Init( void ) {
 	ambientLightVector[3] = 1.0f;
 
 	memset( &backEnd, 0, sizeof( backEnd ) );
-
-	R_InitCvars();
 
 	R_InitCommands();
 

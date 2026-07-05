@@ -208,7 +208,6 @@ private:
 	void						ParseCommandLine( int argc, char **argv );
 	void						ClearCommandLine( void );
 	bool						SafeMode( void );
-	void						CheckToolMode( void );
 	void						WriteConfiguration( void );
 	void						DumpWarnings( void );
 	void						PrintLoadingMessage( const char *msg );
@@ -773,10 +772,6 @@ void idCommonLocal::Error( const char *fmt, ... ) {
 		Printf( "********************\nERROR: %s\n********************\n", errorMessage );
 	}
 
-	if ( cvarSystem->GetCVarBool( "r_fullscreen" ) ) {
-		cmdSystem->BufferCommandText( CMD_EXEC_NOW, "vid_restart partial windowed\n" );
-	}
-
 	Shutdown();
 
 	Sys_Error( "%s", errorMessage );
@@ -818,10 +813,6 @@ void idCommonLocal::FatalError( const char *fmt, ... ) {
 	idStr::vsnPrintf( errorMessage, sizeof(errorMessage), fmt, argptr );
 	va_end( argptr );
 	errorMessage[sizeof(errorMessage)-1] = '\0';
-
-	if ( cvarSystem->GetCVarBool( "r_fullscreen" ) ) {
-		cmdSystem->BufferCommandText( CMD_EXEC_NOW, "vid_restart partial windowed\n" );
-	}
 
 	Sys_Printf( "shutting down: %s\n", errorMessage );
 
@@ -915,45 +906,6 @@ bool idCommonLocal::SafeMode( void ) {
 		}
 	}
 	return false;
-}
-
-/*
-==================
-idCommonLocal::CheckToolMode
-
-Check for "renderbump", "dmap", or "editor" on the command line,
-and force fullscreen off in those cases
-==================
-*/
-void idCommonLocal::CheckToolMode( void ) {
-	int			i;
-
-	for ( i = 0 ; i < com_numConsoleLines ; i++ ) {
-		if ( !idStr::Icmp( com_consoleLines[ i ].Argv(0), "guieditor" ) ) {
-			com_editors |= EDITOR_GUI;
-		}
-		else if ( !idStr::Icmp( com_consoleLines[ i ].Argv(0), "debugger" ) ) {
-			com_editors |= EDITOR_DEBUGGER;
-		}
-		else if ( !idStr::Icmp( com_consoleLines[ i ].Argv(0), "editor" ) ) {
-			com_editors |= EDITOR_RADIANT;
-		}
-		// Nerve: Add support for the material editor
-		else if ( !idStr::Icmp( com_consoleLines[ i ].Argv(0), "materialEditor" ) ) {
-			com_editors |= EDITOR_MATERIAL;
-		}
-
-		if ( !idStr::Icmp( com_consoleLines[ i ].Argv(0), "renderbump" )
-			|| !idStr::Icmp( com_consoleLines[ i ].Argv(0), "editor" )
-			|| !idStr::Icmp( com_consoleLines[ i ].Argv(0), "guieditor" )
-			|| !idStr::Icmp( com_consoleLines[ i ].Argv(0), "debugger" )
-			|| !idStr::Icmp( com_consoleLines[ i ].Argv(0), "dmap" )
-			|| !idStr::Icmp( com_consoleLines[ i ].Argv(0), "materialEditor" )
-			) {
-			cvarSystem->SetCVarBool( "r_fullscreen", false );
-			return;
-		}
-	}
 }
 
 /*
@@ -2505,7 +2457,6 @@ static bool checkForHelp(int argc, char **argv)
 				WriteString("  It's searched before all the other default paths (like next to the executable");
 				WriteString("  Especially useful when developing/testing/debugging a mod DLL");
 #ifndef ID_DEDICATED
-				WriteString("+set r_fullscreen <0 or 1>\n");
 				WriteString("  start game in windowed (0) or fullscreen (1) mode\n");
 				WriteString("+set r_mode <modenumber>\n");
 				WriteString("  start game in resolution belonging to <modenumber>,\n");
@@ -2748,9 +2699,6 @@ void idCommonLocal::InitGame( void ) {
 
 	// initialize the declaration manager
 	declManager->Init();
-
-	// force r_fullscreen 0 if running a tool
-	CheckToolMode();
 
 	idFile *file = fileSystem->OpenExplicitFileRead( fileSystem->RelativePathToOSPath( CONFIG_SPEC, "fs_configpath" ) );
 	bool sysDetect = ( file == NULL );
