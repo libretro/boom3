@@ -534,8 +534,6 @@ viewLight_t *R_SetLightDefViewLight( idRenderLightLocal *light ) {
 	}
 
 	// see if the light center is in view, which will allow us to cull invisible shadows
-	vLight->viewSeesGlobalLightOrigin = R_PointInFrustum( light->globalLightOrigin, tr.viewDef->frustum, 4 );
-
 	// copy data used by backend
 	//
 	// framerate independence: if the light's transform changed on
@@ -613,6 +611,9 @@ viewLight_t *R_SetLightDefViewLight( idRenderLightLocal *light ) {
 			vLight->lightProject[3] = light->lightProject[3];
 		}
 	}
+
+	// tested against the (possibly interpolated) origin the backend uses
+	vLight->viewSeesGlobalLightOrigin = R_PointInFrustum( vLight->globalLightOrigin, tr.viewDef->frustum, 4 );
 	vLight->fogPlane = light->frustum[5];
 	vLight->frustumTris = light->frustumTris;
 	vLight->falloffImage = light->falloffImage;
@@ -813,7 +814,7 @@ void R_LinkLightSurf( const drawSurf_t **link, const srfTriangles_t *tri, const 
 
 		// calculate the specular coordinates if we aren't using vertex programs
 		if ( !tr.backEndRendererHasVertexPrograms && !r_skipSpecular.GetBool() ) {
-			R_SpecularTexGen( drawSurf, light->globalLightOrigin, tr.viewDef->renderView.vieworg );
+			R_SpecularTexGen( drawSurf, light->viewLight ? light->viewLight->globalLightOrigin : light->globalLightOrigin, tr.viewDef->renderView.vieworg );
 			// if we failed to allocate space for the specular calculations, drop the surface
 			if ( !drawSurf->dynamicTexCoords ) {
 				return;

@@ -777,7 +777,11 @@ bool idInteraction::CullInteractionByViewFrustum( const idFrustum &viewFrustum )
 
 	if ( frustumState == idInteraction::FRUSTUM_UNINITIALIZED ) {
 
-		frustum.FromProjection( idBox( entityDef->referenceBounds, entityDef->parms.origin, entityDef->parms.axis ), lightDef->globalLightOrigin, MAX_WORLD_SIZE );
+		// same coherence rule as AddActiveInteraction: per-view culling must
+		// use the origin the backend renders with (interpolated for moving
+		// lights), or borderline interactions pop in and out
+		frustum.FromProjection( idBox( entityDef->referenceBounds, entityDef->parms.origin, entityDef->parms.axis ),
+			lightDef->viewLight ? lightDef->viewLight->globalLightOrigin : lightDef->globalLightOrigin, MAX_WORLD_SIZE );
 
 		if ( !frustum.IsValid() ) {
 			frustumState = idInteraction::FRUSTUM_INVALID;
@@ -1083,7 +1087,13 @@ void idInteraction::AddActiveInteraction( void ) {
 		CreateInteraction( model );
 	}
 
-	R_GlobalPointToLocal( vEntity->modelMatrix, lightDef->globalLightOrigin, localLightOrigin );
+	// use the viewLight's (possibly interpolated) light origin, NOT the
+	// lightDef's tic origin: the backend projects the shadow volume from
+	// vLight->globalLightOrigin (RB_T_Shadow), and the zpass/zfail
+	// "view inside shadow" decision below must test the SAME volume.
+	// Disagreement here makes entire shadow volumes flood or vanish for
+	// the frames where the two origins straddle the boundary.
+	R_GlobalPointToLocal( vEntity->modelMatrix, vLight->globalLightOrigin, localLightOrigin );
 	R_GlobalPointToLocal( vEntity->modelMatrix, tr.viewDef->renderView.vieworg, localViewOrigin );
 
 	// calculate the scissor as the intersection of the light and model rects
