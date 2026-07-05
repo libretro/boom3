@@ -635,14 +635,6 @@ enum STBVorbisError
 #error "Value of STB_VORBIS_FAST_HUFFMAN_LENGTH outside of allowed range"
 #endif
 
-
-#if 0
-#include <crtdbg.h>
-#define CHECK(f)   _CrtIsValidHeapPointer(f->channel_buffers[1])
-#else
-#define CHECK(f)   do {} while(0)
-#endif
-
 #define MAX_BLOCKSIZE_LOG  13   // from specification
 #define MAX_BLOCKSIZE      (1 << MAX_BLOCKSIZE_LOG)
 
@@ -2168,8 +2160,6 @@ static void decode_residue(vorb *f, float *residue_buffers[], int ch, int n, int
    int **classifications = (int **) temp_block_array(f,f->channels, part_read * sizeof(**classifications));
    #endif
 
-   CHECK(f);
-
    for (i=0; i < ch; ++i)
       if (!do_not_decode[i])
          memset(residue_buffers[i], 0, sizeof(float) * n);
@@ -2273,7 +2263,6 @@ static void decode_residue(vorb *f, float *residue_buffers[], int ch, int n, int
       }
       goto done;
    }
-   CHECK(f);
 
    for (pass=0; pass < 8; ++pass) {
       int pcount = 0, class_set=0;
@@ -2322,7 +2311,6 @@ static void decode_residue(vorb *f, float *residue_buffers[], int ch, int n, int
       }
    }
   done:
-   CHECK(f);
    #ifndef STB_VORBIS_DIVIDES_IN_RESIDUE
    temp_free(f,part_classdata);
    #else
@@ -2330,84 +2318,6 @@ static void decode_residue(vorb *f, float *residue_buffers[], int ch, int n, int
    #endif
    temp_alloc_restore(f,temp_alloc_point);
 }
-
-
-#if 0
-// slow way for debugging
-void inverse_mdct_slow(float *buffer, int n)
-{
-   int i,j;
-   int n2 = n >> 1;
-   float *x = (float *) malloc(sizeof(*x) * n2);
-   memcpy(x, buffer, sizeof(*x) * n2);
-   for (i=0; i < n; ++i) {
-      float acc = 0;
-      for (j=0; j < n2; ++j)
-         // formula from paper:
-         //acc += n/4.0f * x[j] * (float) cos(M_PI / 2 / n * (2 * i + 1 + n/2.0)*(2*j+1));
-         // formula from wikipedia
-         //acc += 2.0f / n2 * x[j] * (float) cos(M_PI/n2 * (i + 0.5 + n2/2)*(j + 0.5));
-         // these are equivalent, except the formula from the paper inverts the multiplier!
-         // however, what actually works is NO MULTIPLIER!?!
-         //acc += 64 * 2.0f / n2 * x[j] * (float) cos(M_PI/n2 * (i + 0.5 + n2/2)*(j + 0.5));
-         acc += x[j] * (float) cos(M_PI / 2 / n * (2 * i + 1 + n/2.0)*(2*j+1));
-      buffer[i] = acc;
-   }
-   free(x);
-}
-#elif 0
-// same as above, but just barely able to run in real time on modern machines
-void inverse_mdct_slow(float *buffer, int n, vorb *f, int blocktype)
-{
-   float mcos[16384];
-   int i,j;
-   int n2 = n >> 1, nmask = (n << 2) -1;
-   float *x = (float *) malloc(sizeof(*x) * n2);
-   memcpy(x, buffer, sizeof(*x) * n2);
-   for (i=0; i < 4*n; ++i)
-      mcos[i] = (float) cos(M_PI / 2 * i / n);
-
-   for (i=0; i < n; ++i) {
-      float acc = 0;
-      for (j=0; j < n2; ++j)
-         acc += x[j] * mcos[(2 * i + 1 + n2)*(2*j+1) & nmask];
-      buffer[i] = acc;
-   }
-   free(x);
-}
-#elif 0
-// transform to use a slow dct-iv; this is STILL basically trivial,
-// but only requires half as many ops
-void dct_iv_slow(float *buffer, int n)
-{
-   float mcos[16384];
-   float x[2048];
-   int i,j;
-   int n2 = n >> 1, nmask = (n << 3) - 1;
-   memcpy(x, buffer, sizeof(*x) * n);
-   for (i=0; i < 8*n; ++i)
-      mcos[i] = (float) cos(M_PI / 4 * i / n);
-   for (i=0; i < n; ++i) {
-      float acc = 0;
-      for (j=0; j < n; ++j)
-         acc += x[j] * mcos[((2 * i + 1)*(2*j+1)) & nmask];
-      buffer[i] = acc;
-   }
-}
-
-void inverse_mdct_slow(float *buffer, int n, vorb *f, int blocktype)
-{
-   int i, n4 = n >> 2, n2 = n >> 1, n3_4 = n - n4;
-   float temp[4096];
-
-   memcpy(temp, buffer, n2 * sizeof(float));
-   dct_iv_slow(temp, n2);  // returns -c'-d, a-b'
-
-   for (i=0; i < n4  ; ++i) buffer[i] = temp[i+n4];            // a-b'
-   for (   ; i < n3_4; ++i) buffer[i] = -temp[n3_4 - i - 1];   // b-a', c+d'
-   for (   ; i < n   ; ++i) buffer[i] = -temp[i - n3_4];       // c'+d
-}
-#endif
 
 #ifndef LIBVORBIS_MDCT
 #define LIBVORBIS_MDCT 0
@@ -2976,134 +2886,6 @@ static void inverse_mdct(float *buffer, int n, vorb *f, int blocktype)
    temp_alloc_restore(f,save_point);
 }
 
-#if 0
-// this is the original version of the above code, if you want to optimize it from scratch
-void inverse_mdct_naive(float *buffer, int n)
-{
-   float s;
-   float A[1 << 12], B[1 << 12], C[1 << 11];
-   int i,k,k2,k4, n2 = n >> 1, n4 = n >> 2, n8 = n >> 3, l;
-   int n3_4 = n - n4, ld;
-   // how can they claim this only uses N words?!
-   // oh, because they're only used sparsely, whoops
-   float u[1 << 13], X[1 << 13], v[1 << 13], w[1 << 13];
-   // set up twiddle factors
-
-   for (k=k2=0; k < n4; ++k,k2+=2) {
-      A[k2  ] = (float)  cos(4*k*M_PI/n);
-      A[k2+1] = (float) -sin(4*k*M_PI/n);
-      B[k2  ] = (float)  cos((k2+1)*M_PI/n/2);
-      B[k2+1] = (float)  sin((k2+1)*M_PI/n/2);
-   }
-   for (k=k2=0; k < n8; ++k,k2+=2) {
-      C[k2  ] = (float)  cos(2*(k2+1)*M_PI/n);
-      C[k2+1] = (float) -sin(2*(k2+1)*M_PI/n);
-   }
-
-   // IMDCT algorithm from "The use of multirate filter banks for coding of high quality digital audio"
-   // Note there are bugs in that pseudocode, presumably due to them attempting
-   // to rename the arrays nicely rather than representing the way their actual
-   // implementation bounces buffers back and forth. As a result, even in the
-   // "some formulars corrected" version, a direct implementation fails. These
-   // are noted below as "paper bug".
-
-   // copy and reflect spectral data
-   for (k=0; k < n2; ++k) u[k] = buffer[k];
-   for (   ; k < n ; ++k) u[k] = -buffer[n - k - 1];
-   // kernel from paper
-   // step 1
-   for (k=k2=k4=0; k < n4; k+=1, k2+=2, k4+=4) {
-      v[n-k4-1] = (u[k4] - u[n-k4-1]) * A[k2]   - (u[k4+2] - u[n-k4-3])*A[k2+1];
-      v[n-k4-3] = (u[k4] - u[n-k4-1]) * A[k2+1] + (u[k4+2] - u[n-k4-3])*A[k2];
-   }
-   // step 2
-   for (k=k4=0; k < n8; k+=1, k4+=4) {
-      w[n2+3+k4] = v[n2+3+k4] + v[k4+3];
-      w[n2+1+k4] = v[n2+1+k4] + v[k4+1];
-      w[k4+3]    = (v[n2+3+k4] - v[k4+3])*A[n2-4-k4] - (v[n2+1+k4]-v[k4+1])*A[n2-3-k4];
-      w[k4+1]    = (v[n2+1+k4] - v[k4+1])*A[n2-4-k4] + (v[n2+3+k4]-v[k4+3])*A[n2-3-k4];
-   }
-   // step 3
-   ld = ilog(n) - 1; // ilog is off-by-one from normal definitions
-   for (l=0; l < ld-3; ++l) {
-      int k0 = n >> (l+2), k1 = 1 << (l+3);
-      int rlim = n >> (l+4), r4, r;
-      int s2lim = 1 << (l+2), s2;
-      for (r=r4=0; r < rlim; r4+=4,++r) {
-         for (s2=0; s2 < s2lim; s2+=2) {
-            u[n-1-k0*s2-r4] = w[n-1-k0*s2-r4] + w[n-1-k0*(s2+1)-r4];
-            u[n-3-k0*s2-r4] = w[n-3-k0*s2-r4] + w[n-3-k0*(s2+1)-r4];
-            u[n-1-k0*(s2+1)-r4] = (w[n-1-k0*s2-r4] - w[n-1-k0*(s2+1)-r4]) * A[r*k1]
-                                - (w[n-3-k0*s2-r4] - w[n-3-k0*(s2+1)-r4]) * A[r*k1+1];
-            u[n-3-k0*(s2+1)-r4] = (w[n-3-k0*s2-r4] - w[n-3-k0*(s2+1)-r4]) * A[r*k1]
-                                + (w[n-1-k0*s2-r4] - w[n-1-k0*(s2+1)-r4]) * A[r*k1+1];
-         }
-      }
-      if (l+1 < ld-3) {
-         // paper bug: ping-ponging of u&w here is omitted
-         memcpy(w, u, sizeof(u));
-      }
-   }
-
-   // step 4
-   for (i=0; i < n8; ++i) {
-      int j = bit_reverse(i) >> (32-ld+3);
-      assert(j < n8);
-      if (i == j) {
-         // paper bug: original code probably swapped in place; if copying,
-         //            need to directly copy in this case
-         int i8 = i << 3;
-         v[i8+1] = u[i8+1];
-         v[i8+3] = u[i8+3];
-         v[i8+5] = u[i8+5];
-         v[i8+7] = u[i8+7];
-      } else if (i < j) {
-         int i8 = i << 3, j8 = j << 3;
-         v[j8+1] = u[i8+1], v[i8+1] = u[j8 + 1];
-         v[j8+3] = u[i8+3], v[i8+3] = u[j8 + 3];
-         v[j8+5] = u[i8+5], v[i8+5] = u[j8 + 5];
-         v[j8+7] = u[i8+7], v[i8+7] = u[j8 + 7];
-      }
-   }
-   // step 5
-   for (k=0; k < n2; ++k) {
-      w[k] = v[k*2+1];
-   }
-   // step 6
-   for (k=k2=k4=0; k < n8; ++k, k2 += 2, k4 += 4) {
-      u[n-1-k2] = w[k4];
-      u[n-2-k2] = w[k4+1];
-      u[n3_4 - 1 - k2] = w[k4+2];
-      u[n3_4 - 2 - k2] = w[k4+3];
-   }
-   // step 7
-   for (k=k2=0; k < n8; ++k, k2 += 2) {
-      v[n2 + k2 ] = ( u[n2 + k2] + u[n-2-k2] + C[k2+1]*(u[n2+k2]-u[n-2-k2]) + C[k2]*(u[n2+k2+1]+u[n-2-k2+1]))/2;
-      v[n-2 - k2] = ( u[n2 + k2] + u[n-2-k2] - C[k2+1]*(u[n2+k2]-u[n-2-k2]) - C[k2]*(u[n2+k2+1]+u[n-2-k2+1]))/2;
-      v[n2+1+ k2] = ( u[n2+1+k2] - u[n-1-k2] + C[k2+1]*(u[n2+1+k2]+u[n-1-k2]) - C[k2]*(u[n2+k2]-u[n-2-k2]))/2;
-      v[n-1 - k2] = (-u[n2+1+k2] + u[n-1-k2] + C[k2+1]*(u[n2+1+k2]+u[n-1-k2]) - C[k2]*(u[n2+k2]-u[n-2-k2]))/2;
-   }
-   // step 8
-   for (k=k2=0; k < n4; ++k,k2 += 2) {
-      X[k]      = v[k2+n2]*B[k2  ] + v[k2+1+n2]*B[k2+1];
-      X[n2-1-k] = v[k2+n2]*B[k2+1] - v[k2+1+n2]*B[k2  ];
-   }
-
-   // decode kernel to output
-   // determined the following value experimentally
-   // (by first figuring out what made inverse_mdct_slow work); then matching that here
-   // (probably vorbis encoder premultiplies by n or n/2, to save it on the decoder?)
-   s = 0.5; // theoretically would be n4
-
-   // [[[ note! the s value of 0.5 is compensated for by the B[] in the current code,
-   //     so it needs to use the "old" B values to behave correctly, or else
-   //     set s to 1.0 ]]]
-   for (i=0; i < n4  ; ++i) buffer[i] = s * X[i+n4];
-   for (   ; i < n3_4; ++i) buffer[i] = -s * X[n3_4 - i - 1];
-   for (   ; i < n   ; ++i) buffer[i] = -s * X[i - n3_4];
-}
-#endif
-
 static float *get_window(vorb *f, int len)
 {
    len <<= 1;
@@ -3141,7 +2923,6 @@ static int do_floor(vorb *f, Mapping *map, int i, int n, float *target, YTYPE *f
             int hx = g->Xlist[j];
             if (lx != hx)
                draw_line(target, lx,ly, hx,hy, n2);
-            CHECK(f);
             lx = hx, ly = hy;
          }
       }
@@ -3149,7 +2930,6 @@ static int do_floor(vorb *f, Mapping *map, int i, int n, float *target, YTYPE *f
          // optimization of: draw_line(target, lx,ly, n,ly, n2);
          for (j=lx; j < n2; ++j)
             LINE_OP(target[j], inverse_db_table[ly]);
-         CHECK(f);
       }
    }
    return TRUE;
@@ -3240,8 +3020,6 @@ static int vorbis_decode_packet_rest(vorb *f, int *len, Mode *m, int left_start,
 
 // FLOORS
    n2 = n >> 1;
-
-   CHECK(f);
 
    for (i=0; i < f->channels; ++i) {
       int s = map->chan[i].mux, floor;
@@ -3334,7 +3112,6 @@ static int vorbis_decode_packet_rest(vorb *f, int *len, Mode *m, int left_start,
          // at this point we've decoded the floor into buffer
       }
    }
-   CHECK(f);
    // at this point we've decoded all floors
 
    if (f->alloc.alloc_buffer)
@@ -3347,7 +3124,6 @@ static int vorbis_decode_packet_rest(vorb *f, int *len, Mode *m, int left_start,
          zero_channel[map->chan[i].magnitude] = zero_channel[map->chan[i].angle] = FALSE;
       }
 
-   CHECK(f);
 // RESIDUE DECODE
    for (i=0; i < map->submaps; ++i) {
       float *residue_buffers[STB_VORBIS_MAX_CHANNELS];
@@ -3372,7 +3148,6 @@ static int vorbis_decode_packet_rest(vorb *f, int *len, Mode *m, int left_start,
 
    if (f->alloc.alloc_buffer)
       assert(f->alloc.alloc_buffer_length_in_bytes == f->temp_offset);
-   CHECK(f);
 
 // INVERSE COUPLING
    for (i = map->coupling_steps-1; i >= 0; --i) {
@@ -3395,7 +3170,6 @@ static int vorbis_decode_packet_rest(vorb *f, int *len, Mode *m, int left_start,
          a[j] = a2;
       }
    }
-   CHECK(f);
 
    // finish decoding the floors
 #ifndef STB_VORBIS_NO_DEFER_FLOOR
@@ -3417,11 +3191,9 @@ static int vorbis_decode_packet_rest(vorb *f, int *len, Mode *m, int left_start,
    }
 #endif
 
-// INVERSE MDCT
-   CHECK(f);
+   // INVERSE MDCT
    for (i=0; i < f->channels; ++i)
       inverse_mdct(f->channel_buffers[i], n, f, m->blockflag);
-   CHECK(f);
 
    // this shouldn't be necessary, unless we exited on an error
    // and want to flush to get to the next packet
@@ -3489,7 +3261,6 @@ static int vorbis_decode_packet_rest(vorb *f, int *len, Mode *m, int left_start,
    if (f->alloc.alloc_buffer)
       assert(f->alloc.alloc_buffer_length_in_bytes == f->temp_offset);
    *len = right_end;  // ignore samples after the window goes to 0
-   CHECK(f);
 
    return TRUE;
 }
@@ -3783,7 +3554,6 @@ static int start_decoder(vorb *f)
       int total=0;
       uint8 *lengths;
       Codebook *c = f->codebooks+i;
-      CHECK(f);
       x = get_bits(f, 8); if (x != 0x42)            return error(f, VORBIS_invalid_setup);
       x = get_bits(f, 8); if (x != 0x43)            return error(f, VORBIS_invalid_setup);
       x = get_bits(f, 8); if (x != 0x56)            return error(f, VORBIS_invalid_setup);
@@ -3861,7 +3631,6 @@ static int start_decoder(vorb *f)
       c->sorted_entries = sorted_count;
       values = NULL;
 
-      CHECK(f);
       if (!c->sparse) {
          c->codewords = (uint32 *) setup_malloc(f, sizeof(c->codewords[0]) * c->entries);
          if (!c->codewords)                  return error(f, VORBIS_outofmem);
@@ -3908,7 +3677,6 @@ static int start_decoder(vorb *f)
 
       compute_accelerated_huffman(c);
 
-      CHECK(f);
       c->lookup_type = get_bits(f, 4);
       if (c->lookup_type > 2) return error(f, VORBIS_invalid_setup);
       if (c->lookup_type > 0) {
@@ -3971,7 +3739,6 @@ static int start_decoder(vorb *f)
 #endif
          {
             float last=0;
-            CHECK(f);
             c->multiplicands = (codetype *) setup_malloc(f, sizeof(c->multiplicands[0]) * c->lookup_values);
             if (c->multiplicands == NULL) return error(f, VORBIS_outofmem);
             for (j=0; j < (int) c->lookup_values; ++j) {
@@ -3986,9 +3753,7 @@ static int start_decoder(vorb *f)
 #endif
          setup_temp_free(f, &f->temp_mults, sizeof(mults[0])*c->lookup_values);
 
-         CHECK(f);
       }
-      CHECK(f);
    }
 
    // time domain transfers (notused)
@@ -4310,7 +4075,6 @@ static void vorbis_deinit(stb_vorbis *p)
    }
 
    if (p->codebooks) {
-      CHECK(p);
       for (i=0; i < p->codebook_count; ++i) {
          Codebook *c = p->codebooks + i;
          setup_free(p, c->codeword_lengths);
@@ -4330,7 +4094,6 @@ static void vorbis_deinit(stb_vorbis *p)
          setup_free(p, p->mapping[i].chan);
       setup_free(p, p->mapping);
    }
-   CHECK(p);
    for (i=0; i < p->channels && i < STB_VORBIS_MAX_CHANNELS; ++i) {
       setup_free(p, p->channel_buffers[i]);
       setup_free(p, p->previous_window[i]);

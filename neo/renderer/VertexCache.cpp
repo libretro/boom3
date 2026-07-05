@@ -75,11 +75,6 @@ void idVertexCache::ActuallyFree( vertCache_t *block ) {
 		staticCountTotal--;
 
 		if ( block->vbo ) {
-#if 0		// this isn't really necessary, it will be reused soon enough
-			// filling with zero length data is the equivalent of freeing
-			qglBindBufferARB(GL_ARRAY_BUFFER_ARB, block->vbo);
-			qglBufferDataARB(GL_ARRAY_BUFFER_ARB, 0, 0, GL_DYNAMIC_DRAW_ARB);
-#endif
 		} else if ( block->virtMem ) {
 			Mem_Free( block->virtMem );
 			block->virtMem = NULL;
@@ -91,15 +86,9 @@ void idVertexCache::ActuallyFree( vertCache_t *block ) {
 	block->next->prev = block->prev;
 	block->prev->next = block->next;
 
-#if 1
 	// stick it on the front of the free list so it will be reused immediately
 	block->next = freeStaticHeaders.next;
 	block->prev = &freeStaticHeaders;
-#else
-	// stick it on the back of the free list so it won't be reused soon (just for debugging)
-	block->next = &freeStaticHeaders;
-	block->prev = freeStaticHeaders.prev;
-#endif
 
 	block->next->prev = block;
 	block->prev->next = block;
@@ -459,14 +448,6 @@ void idVertexCache::EndFrame() {
 			staticUseCount, staticUseSize/1024,
 			staticCountTotal, staticAllocTotal/1024 );
 	}
-
-#if 0
-	// if our total static count is above our working memory limit, start purging things
-	while ( staticAllocTotal > r_vertexBufferMegs.GetInteger() * 1024 * 1024 ) {
-		// free the least recently used
-
-	}
-#endif
 
 	if( !virtualMemory ) {
 		// unbind vertex buffers so normal virtual memory will be used in case

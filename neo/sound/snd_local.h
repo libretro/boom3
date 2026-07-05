@@ -51,8 +51,8 @@ typedef enum {
 const int SOUND_MAX_CHANNELS		= 8;
 const int SOUND_DECODER_FREE_DELAY	= 1000 * MIXBUFFER_SAMPLES / USERCMD_MSEC;		// four seconds
 
-const int PRIMARYFREQ				= 44100;			// samples per second
-const float SND_EPSILON				= 1.0f / 32768.0f;	// if volume is below this, it will always multiply to zero
+const int PRIMARYFREQ			= 44100;		// samples per second
+const float SND_EPSILON			= 1.0f / 32768.0f;	// if volume is below this, it will always multiply to zero
 
 const int ROOM_SLICES_IN_BUFFER		= 10;
 
@@ -712,11 +712,8 @@ public:
 
 
 	// DG: for CheckDeviceAndRecoverIfNeeded()
-	int						resetRetryCount;
-	unsigned int			lastCheckTime;
+	int				resetRetryCount;
 
-	static idCVar			s_noSound;
-	static idCVar			s_device;
 	static idCVar			s_quadraticFalloff;
 	static idCVar			s_drawSounds;
 	static idCVar			s_minVolume6;
@@ -740,7 +737,6 @@ public:
 	static idCVar			s_numberOfSpeakers;
 	static idCVar			s_force22kHz;
 	static idCVar			s_clipVolumes;
-	static idCVar			s_realTimeDecoding;
 	static idCVar			s_useEAXReverb;
 	static idCVar			s_decompressionLimit;
 
@@ -761,8 +757,6 @@ public:
 	static idCVar			s_reverbFeedback;
 	static idCVar			s_enviroSuitVolumeScale;
 	static idCVar			s_skipHelltimeFX;
-    static idCVar           s_useOpenAL;
-    static bool             useOpenAL;
 };
 
 extern	idSoundSystemLocal	soundSystemLocal;

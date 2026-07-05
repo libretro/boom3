@@ -34,18 +34,6 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "idlib/Str.h"
 
-// DG: idDynamicBlockAlloc isn't thread-safe and idStr is used both in the main thread
-//     and the async thread! For some reason this seems to cause lots of problems on
-//     newer Linux distros if dhewm3 is built with GCC9 or newer (see #391).
-//     No idea why it apparently didn't cause that (noticeable) issues before..
-#if 0 // !defined( ID_REDIRECT_NEWDELETE ) && !defined( MACOS_X )
-	#define USE_STRING_DATA_ALLOCATOR
-#endif
-
-#ifdef USE_STRING_DATA_ALLOCATOR
-static idDynamicBlockAlloc<char, 1<<18, 128>	stringDataAllocator;
-#endif
-
 idVec4	g_color_table[16] =
 {
 	idVec4(0.0f, 0.0f, 0.0f, 1.0f),
@@ -103,32 +91,19 @@ void idStr::ReAllocate( int amount, bool keepold ) {
 	}
 	alloced = newsize;
 
-#ifdef USE_STRING_DATA_ALLOCATOR
-	newbuffer = stringDataAllocator.Alloc( alloced );
-	if ( keepold && data ) {
-		data[ len ] = '\0';
-		strcpy( newbuffer, data );
-	}
-
-	if ( data && data != baseBuffer ) {
-		stringDataAllocator.Free( data );
-	}
-
-	data = newbuffer;
-#else
-	if ( data && data != baseBuffer ) {
+	if ( data && data != baseBuffer )
 		data = (char *)realloc( data, newsize );
-	} else {
+	else
+	{
 		newbuffer = (char *)malloc( newsize );
 		if ( data && keepold ) {
 			memcpy( newbuffer, data, len );
 			newbuffer[ len ] = '\0';
-		} else {
-			newbuffer[ 0 ] = '\0';
 		}
+		else
+			newbuffer[ 0 ] = '\0';
 		data = newbuffer;
 	}
-#endif
 }
 
 /*
@@ -138,11 +113,7 @@ idStr::FreeData
 */
 void idStr::FreeData( void ) {
 	if ( data && data != baseBuffer ) {
-#ifdef USE_STRING_DATA_ALLOCATOR
-		stringDataAllocator.Free( data );
-#else
 		free( data );
-#endif
 		data = baseBuffer;
 	}
 }
@@ -1280,12 +1251,6 @@ idStr::IcmpPath
 */
 int idStr::IcmpPath( const char *s1, const char *s2 ) {
 	int c1, c2, d;
-
-#if 0
-//#if !defined( _WIN32 )
-	idLib::common->Printf( "WARNING: IcmpPath used on a case-sensitive filesystem?\n" );
-#endif
-
 	do {
 		c1 = *s1++;
 		c2 = *s2++;
@@ -1349,12 +1314,6 @@ idStr::IcmpnPath
 */
 int idStr::IcmpnPath( const char *s1, const char *s2, int n ) {
 	int c1, c2, d;
-
-#if 0
-//#if !defined( _WIN32 )
-	idLib::common->Printf( "WARNING: IcmpPath used on a case-sensitive filesystem?\n" );
-#endif
-
 	assert( n >= 0 );
 
 	do {
@@ -1662,46 +1621,28 @@ void idStr::SetUnit( const char *format, float value, int unit, Measure_t measur
 idStr::InitMemory
 ================
 */
-void idStr::InitMemory( void ) {
-#ifdef USE_STRING_DATA_ALLOCATOR
-	stringDataAllocator.Init();
-#endif
-}
+void idStr::InitMemory( void ) { }
 
 /*
 ================
 idStr::ShutdownMemory
 ================
 */
-void idStr::ShutdownMemory( void ) {
-#ifdef USE_STRING_DATA_ALLOCATOR
-	stringDataAllocator.Shutdown();
-#endif
-}
+void idStr::ShutdownMemory( void ) { }
 
 /*
 ================
 idStr::PurgeMemory
 ================
 */
-void idStr::PurgeMemory( void ) {
-#ifdef USE_STRING_DATA_ALLOCATOR
-	stringDataAllocator.FreeEmptyBaseBlocks();
-#endif
-}
+void idStr::PurgeMemory( void ) { }
 
 /*
 ================
 idStr::ShowMemoryUsage_f
 ================
 */
-void idStr::ShowMemoryUsage_f( const idCmdArgs &args ) {
-#ifdef USE_STRING_DATA_ALLOCATOR
-	idLib::common->Printf( "%6d KB string memory (%d KB free in %d blocks, %d empty base blocks)\n",
-		stringDataAllocator.GetBaseBlockMemory() >> 10, stringDataAllocator.GetFreeBlockMemory() >> 10,
-			stringDataAllocator.GetNumFreeBlocks(), stringDataAllocator.GetNumEmptyBaseBlocks() );
-#endif
-}
+void idStr::ShowMemoryUsage_f( const idCmdArgs &args ) { }
 
 /*
 ================

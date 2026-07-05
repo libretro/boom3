@@ -859,55 +859,11 @@ Writes the facePlanes values, overwriting existing ones if present
 void R_DeriveFacePlanes( srfTriangles_t *tri ) {
 	idPlane *	planes;
 
-	if ( !tri->facePlanes ) {
+	if ( !tri->facePlanes )
 		R_AllocStaticTriSurfPlanes( tri, tri->numIndexes );
-	}
 	planes = tri->facePlanes;
 
-#if 1
-
 	SIMDProcessor->DeriveTriPlanes( planes, tri->verts, tri->numVerts, tri->indexes, tri->numIndexes );
-
-#else
-
-	for ( int i = 0; i < tri->numIndexes; i+= 3, planes++ ) {
-		int		i1, i2, i3;
-		idVec3	d1, d2, normal;
-		idVec3	*v1, *v2, *v3;
-
-		i1 = tri->indexes[i + 0];
-		i2 = tri->indexes[i + 1];
-		i3 = tri->indexes[i + 2];
-
-		v1 = &tri->verts[i1].xyz;
-		v2 = &tri->verts[i2].xyz;
-		v3 = &tri->verts[i3].xyz;
-
-		d1[0] = v2->x - v1->x;
-		d1[1] = v2->y - v1->y;
-		d1[2] = v2->z - v1->z;
-
-		d2[0] = v3->x - v1->x;
-		d2[1] = v3->y - v1->y;
-		d2[2] = v3->z - v1->z;
-
-		normal[0] = d2.y * d1.z - d2.z * d1.y;
-		normal[1] = d2.z * d1.x - d2.x * d1.z;
-		normal[2] = d2.x * d1.y - d2.y * d1.x;
-
-		float sqrLength, invLength;
-
-		sqrLength = normal.x * normal.x + normal.y * normal.y + normal.z * normal.z;
-		invLength = idMath::RSqrt( sqrLength );
-
-		(*planes)[0] = normal[0] * invLength;
-		(*planes)[1] = normal[1] * invLength;
-		(*planes)[2] = normal[2] * invLength;
-
-		planes->FitThroughPoint( *v1 );
-	}
-
-#endif
 
 	tri->facePlanesCalculated = true;
 }
@@ -1446,24 +1402,6 @@ void R_DeriveTangentsWithoutNormals( srfTriangles_t *tri ) {
 		}
 	}
 
-#if 0
-	// sum up both sides of the mirrored verts
-	// so the S vectors exactly mirror, and the T vectors are equal
-	for ( i = 0 ; i < tri->numMirroredVerts ; i++ ) {
-		idDrawVert	*v1, *v2;
-
-		v1 = &tri->verts[ tri->numVerts - tri->numMirroredVerts + i ];
-		v2 = &tri->verts[ tri->mirroredVerts[i] ];
-
-		v1->tangents[0] -= v2->tangents[0];
-		v1->tangents[1] += v2->tangents[1];
-
-		v2->tangents[0] = vec3_origin - v1->tangents[0];
-		v2->tangents[1] = v1->tangents[1];
-	}
-#endif
-
-
 	// project the summed vectors onto the normal plane
 	// and normalize.  The tangent vectors will not necessarily
 	// be orthogonal to each other, but they will be orthogonal
@@ -1624,61 +1562,10 @@ Uses the single largest area triangle for each vertex, instead of smoothing over
 ====================
 */
 void R_DeriveUnsmoothedTangents( srfTriangles_t *tri ) {
-	if ( tri->tangentsCalculated ) {
+	if ( tri->tangentsCalculated )
 		return;
-	}
-
-#if 1
 
 	SIMDProcessor->DeriveUnsmoothedTangents( tri->verts, tri->dominantTris, tri->numVerts );
-
-#else
-
-	for ( int i = 0 ; i < tri->numVerts ; i++ ) {
-		idVec3		temp;
-		float		d0[5], d1[5];
-		idDrawVert	*a, *b, *c;
-		dominantTri_t	*dt = &tri->dominantTris[i];
-
-		a = tri->verts + i;
-		b = tri->verts + dt->v2;
-		c = tri->verts + dt->v3;
-
-		d0[0] = b->xyz[0] - a->xyz[0];
-		d0[1] = b->xyz[1] - a->xyz[1];
-		d0[2] = b->xyz[2] - a->xyz[2];
-		d0[3] = b->st[0] - a->st[0];
-		d0[4] = b->st[1] - a->st[1];
-
-		d1[0] = c->xyz[0] - a->xyz[0];
-		d1[1] = c->xyz[1] - a->xyz[1];
-		d1[2] = c->xyz[2] - a->xyz[2];
-		d1[3] = c->st[0] - a->st[0];
-		d1[4] = c->st[1] - a->st[1];
-
-		a->normal[0] = dt->normalizationScale[2] * ( d1[1] * d0[2] - d1[2] * d0[1] );
-		a->normal[1] = dt->normalizationScale[2] * ( d1[2] * d0[0] - d1[0] * d0[2] );
-		a->normal[2] = dt->normalizationScale[2] * ( d1[0] * d0[1] - d1[1] * d0[0] );
-
-		a->tangents[0][0] = dt->normalizationScale[0] * ( d0[0] * d1[4] - d0[4] * d1[0] );
-		a->tangents[0][1] = dt->normalizationScale[0] * ( d0[1] * d1[4] - d0[4] * d1[1] );
-		a->tangents[0][2] = dt->normalizationScale[0] * ( d0[2] * d1[4] - d0[4] * d1[2] );
-
-#ifdef DERIVE_UNSMOOTHED_BITANGENT
-		// derive the bitangent for a completely orthogonal axis,
-		// instead of using the texture T vector
-		a->tangents[1][0] = dt->normalizationScale[1] * ( a->normal[2] * a->tangents[0][1] - a->normal[1] * a->tangents[0][2] );
-		a->tangents[1][1] = dt->normalizationScale[1] * ( a->normal[0] * a->tangents[0][2] - a->normal[2] * a->tangents[0][0] );
-		a->tangents[1][2] = dt->normalizationScale[1] * ( a->normal[1] * a->tangents[0][0] - a->normal[0] * a->tangents[0][1] );
-#else
-		// calculate the bitangent from the texture T vector
-		a->tangents[1][0] = dt->normalizationScale[1] * ( d0[3] * d1[0] - d0[0] * d1[3] );
-		a->tangents[1][1] = dt->normalizationScale[1] * ( d0[3] * d1[1] - d0[1] * d1[3] );
-		a->tangents[1][2] = dt->normalizationScale[1] * ( d0[3] * d1[2] - d0[2] * d1[3] );
-#endif
-	}
-
-#endif
 
 	tri->tangentsCalculated = true;
 }
@@ -1712,8 +1599,6 @@ void R_DeriveTangents( srfTriangles_t *tri, bool allocFacePlanes ) {
 	}
 	planes = tri->facePlanes;
 
-#if 1
-
 	// ok, this is also true if they're not on the stack but from tri->facePlanes
 	// (either way, Mem_FreeA() mustn't free() them)
 	bool planesOnStack = true;
@@ -1723,100 +1608,6 @@ void R_DeriveTangents( srfTriangles_t *tri, bool allocFacePlanes ) {
 	}
 
 	SIMDProcessor->DeriveTangents( planes, tri->verts, tri->numVerts, tri->indexes, tri->numIndexes );
-
-#else
-
-	for ( i = 0; i < tri->numVerts; i++ ) {
-		tri->verts[i].normal.Zero();
-		tri->verts[i].tangents[0].Zero();
-		tri->verts[i].tangents[1].Zero();
-	}
-
-	for ( i = 0; i < tri->numIndexes; i += 3 ) {
-		// make face tangents
-		float		d0[5], d1[5];
-		idDrawVert	*a, *b, *c;
-		idVec3		temp, normal, tangents[2];
-
-		a = tri->verts + tri->indexes[i + 0];
-		b = tri->verts + tri->indexes[i + 1];
-		c = tri->verts + tri->indexes[i + 2];
-
-		d0[0] = b->xyz[0] - a->xyz[0];
-		d0[1] = b->xyz[1] - a->xyz[1];
-		d0[2] = b->xyz[2] - a->xyz[2];
-		d0[3] = b->st[0] - a->st[0];
-		d0[4] = b->st[1] - a->st[1];
-
-		d1[0] = c->xyz[0] - a->xyz[0];
-		d1[1] = c->xyz[1] - a->xyz[1];
-		d1[2] = c->xyz[2] - a->xyz[2];
-		d1[3] = c->st[0] - a->st[0];
-		d1[4] = c->st[1] - a->st[1];
-
-		// normal
-		temp[0] = d1[1] * d0[2] - d1[2] * d0[1];
-		temp[1] = d1[2] * d0[0] - d1[0] * d0[2];
-		temp[2] = d1[0] * d0[1] - d1[1] * d0[0];
-		VectorNormalizeFast2( temp, normal );
-
-#ifdef USE_INVA
-		float area = d0[3] * d1[4] - d0[4] * d1[3];
-		float inva = area < 0.0f ? -1 : 1;		// was = 1.0f / area;
-
-		temp[0] = (d0[0] * d1[4] - d0[4] * d1[0]) * inva;
-		temp[1] = (d0[1] * d1[4] - d0[4] * d1[1]) * inva;
-		temp[2] = (d0[2] * d1[4] - d0[4] * d1[2]) * inva;
-		VectorNormalizeFast2( temp, tangents[0] );
-
-		temp[0] = (d0[3] * d1[0] - d0[0] * d1[3]) * inva;
-		temp[1] = (d0[3] * d1[1] - d0[1] * d1[3]) * inva;
-		temp[2] = (d0[3] * d1[2] - d0[2] * d1[3]) * inva;
-		VectorNormalizeFast2( temp, tangents[1] );
-#else
-		temp[0] = (d0[0] * d1[4] - d0[4] * d1[0]);
-		temp[1] = (d0[1] * d1[4] - d0[4] * d1[1]);
-		temp[2] = (d0[2] * d1[4] - d0[4] * d1[2]);
-		VectorNormalizeFast2( temp, tangents[0] );
-
-		temp[0] = (d0[3] * d1[0] - d0[0] * d1[3]);
-		temp[1] = (d0[3] * d1[1] - d0[1] * d1[3]);
-		temp[2] = (d0[3] * d1[2] - d0[2] * d1[3]);
-		VectorNormalizeFast2( temp, tangents[1] );
-#endif
-
-		// sum up the tangents and normals for each vertex on this face
-		for ( int j = 0 ; j < 3 ; j++ ) {
-			vert = &tri->verts[tri->indexes[i+j]];
-			vert->normal += normal;
-			vert->tangents[0] += tangents[0];
-			vert->tangents[1] += tangents[1];
-		}
-
-		if ( planes ) {
-			planes->Normal() = normal;
-			planes->FitThroughPoint( a->xyz );
-			planes++;
-		}
-	}
-
-#endif
-
-#if 0
-
-	if ( tri->silIndexes != NULL ) {
-		for ( i = 0; i < tri->numVerts; i++ ) {
-			tri->verts[i].normal.Zero();
-		}
-		for ( i = 0; i < tri->numIndexes; i++ ) {
-			tri->verts[tri->silIndexes[i]].normal += planes[i/3].Normal();
-		}
-		for ( i = 0 ; i < tri->numIndexes ; i++ ) {
-			tri->verts[tri->indexes[i]].normal = tri->verts[tri->silIndexes[i]].normal;
-		}
-	}
-
-#else
 
 	int *dupVerts = tri->dupVerts;
 	idDrawVert *verts = tri->verts;
@@ -1831,51 +1622,12 @@ void R_DeriveTangents( srfTriangles_t *tri, bool allocFacePlanes ) {
 		verts[dupVerts[i*2+1]].normal = verts[dupVerts[i*2+0]].normal;
 	}
 
-#endif
-
-#if 0
-	// sum up both sides of the mirrored verts
-	// so the S vectors exactly mirror, and the T vectors are equal
-	for ( i = 0 ; i < tri->numMirroredVerts ; i++ ) {
-		idDrawVert	*v1, *v2;
-
-		v1 = &tri->verts[ tri->numVerts - tri->numMirroredVerts + i ];
-		v2 = &tri->verts[ tri->mirroredVerts[i] ];
-
-		v1->tangents[0] -= v2->tangents[0];
-		v1->tangents[1] += v2->tangents[1];
-
-		v2->tangents[0] = vec3_origin - v1->tangents[0];
-		v2->tangents[1] = v1->tangents[1];
-	}
-#endif
-
 	// project the summed vectors onto the normal plane
 	// and normalize.  The tangent vectors will not necessarily
 	// be orthogonal to each other, but they will be orthogonal
 	// to the surface normal.
-#if 1
-
 	SIMDProcessor->NormalizeTangents( tri->verts, tri->numVerts );
 
-#else
-
-	for ( i = 0 ; i < tri->numVerts ; i++ ) {
-		idDrawVert *vert = &tri->verts[i];
-
-		VectorNormalizeFast2( vert->normal, vert->normal );
-
-		// project the tangent vectors
-		for ( int j = 0 ; j < 2 ; j++ ) {
-			float d;
-
-			d = vert->tangents[j] * vert->normal;
-			vert->tangents[j] = vert->tangents[j] - d * vert->normal;
-			VectorNormalizeFast2( vert->tangents[j], vert->tangents[j] );
-		}
-	}
-
-#endif
 
 	tri->tangentsCalculated = true;
 	tri->facePlanesCalculated = true;

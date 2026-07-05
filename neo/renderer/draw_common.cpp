@@ -626,29 +626,6 @@ void RB_SetProgramEnvironment( bool isPostProcess ) {
 		return;
 	}
 
-#if 0
-	// screen power of two correction factor, one pixel in so we don't get a bilerp
-	// of an uncopied pixel
-	int	 w = backEnd.viewDef->viewport.x2 - backEnd.viewDef->viewport.x1 + 1;
-	pot = globalImages->currentRenderImage->uploadWidth;
-	if ( w == pot ) {
-		parm[0] = 1.0;
-	} else {
-		parm[0] = (float)(w-1) / pot;
-	}
-
-	int	 h = backEnd.viewDef->viewport.y2 - backEnd.viewDef->viewport.y1 + 1;
-	pot = globalImages->currentRenderImage->uploadHeight;
-	if ( h == pot ) {
-		parm[1] = 1.0;
-	} else {
-		parm[1] = (float)(h-1) / pot;
-	}
-
-	parm[2] = 0;
-	parm[3] = 1;
-	qglProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, 0, parm );
-#else
 	// screen power of two correction factor, assuming the copy to _currentRender
 	// also copied an extra row and column for the bilerp
 	int	 w = backEnd.viewDef->viewport.x2 - backEnd.viewDef->viewport.x1 + 1;
@@ -662,7 +639,6 @@ void RB_SetProgramEnvironment( bool isPostProcess ) {
 	parm[2] = 0;
 	parm[3] = 1;
 	qglProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, 0, parm );
-#endif
 
 	qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 0, parm );
 
@@ -961,12 +937,6 @@ void RB_STD_T_RenderShaderPasses( const drawSurf_t *surf ) {
 				qglEnableClientState( GL_COLOR_ARRAY );
 			}
 
-#if 0 // debug stuff: render particles opaque so debug colors written in the shader are properly visible
-			int dsbits = pStage->drawStateBits | GLS_DEPTHFUNC_ALWAYS;
-			dsbits &= ~(GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS);
-			//dsbits |= GLS_SRCBLEND_ONE | GLS_DSTBLEND_ZERO; both values are 0, so this would be a noop
-			GL_State( dsbits );
-#endif
 			GL_State( pStage->drawStateBits | GLS_DEPTHFUNC_ALWAYS ); // Disable depth clipping. The fragment program will
 																	  // handle it to allow overdraw.
 
@@ -981,44 +951,6 @@ void RB_STD_T_RenderShaderPasses( const drawSurf_t *surf ) {
 
 			qglBindProgramARB( GL_FRAGMENT_PROGRAM_ARB, FPROG_SOFT_PARTICLE );
 			qglEnable( GL_FRAGMENT_PROGRAM_ARB );
-
-#if 0 // debug stuff
-			// Set up parameters for fragment program
-			const char* srcblendstr = "???";
-			if ( src_blend >= 0 && src_blend <= 9 ) {
-				const char* blendModes[] = {
-					"ONE",
-					"ZERO",
-					"!! INVALID !!",
-					"DST_COLOR",
-					"ONE_MINUS_DST_COLOR",
-					"SRC_ALPHA",
-					"ONE_MINUS_SRC_ALPHA",
-					"DST_ALPHA",
-					"ONE_MINUS_DST_ALPHA",
-					"ALPHA_SATURATE"
-				};
-				srcblendstr = blendModes[src_blend];
-			}
-			
-
-			int dst_blend = pStage->drawStateBits & GLS_DSTBLEND_BITS;
-			const char* dstblend = "???";
-			switch ( dst_blend ) {
-#define MY_CASE(X)  case GLS_DSTBLEND_ ##X : dstblend = #X; break;
-				MY_CASE(ZERO)
-				MY_CASE(ONE)
-				MY_CASE(SRC_COLOR)
-				MY_CASE(ONE_MINUS_SRC_COLOR)
-				MY_CASE(SRC_ALPHA)
-				MY_CASE(ONE_MINUS_SRC_ALPHA)
-				MY_CASE(DST_ALPHA)
-				MY_CASE(ONE_MINUS_DST_ALPHA)
-#undef MY_CASE
-			}
-
-			printf("XX mat: %s, src_blend = %s dest_blend = %s radius = %g\n", shader->GetName(), srcblendstr, dstblend, surf->particle_radius);
-#endif
 
 			// DG: some particle materials (at least the muzzle flash in dentonmod) set the
 			//     texture matrix (with scroll, translate, scale, centerScale, shear or rotate).
@@ -1853,31 +1785,6 @@ void RB_STD_FogAllLights( void ) {
 		if ( !vLight->lightShader->IsFogLight() && !vLight->lightShader->IsBlendLight() ) {
 			continue;
 		}
-
-#if 0 // _D3XP disabled that
-		if ( r_ignore.GetInteger() ) {
-			// we use the stencil buffer to guarantee that no pixels will be
-			// double fogged, which happens in some areas that are thousands of
-			// units from the origin
-			backEnd.currentScissor = vLight->scissorRect;
-			if ( r_useScissor.GetBool() ) {
-				qglScissor( backEnd.viewDef->viewport.x1 + backEnd.currentScissor.x1,
-					backEnd.viewDef->viewport.y1 + backEnd.currentScissor.y1,
-					backEnd.currentScissor.x2 + 1 - backEnd.currentScissor.x1,
-					backEnd.currentScissor.y2 + 1 - backEnd.currentScissor.y1 );
-			}
-			qglClear( GL_STENCIL_BUFFER_BIT );
-
-			qglEnable( GL_STENCIL_TEST );
-
-			// only pass on the cleared stencil values
-			qglStencilFunc( GL_EQUAL, 128, 255 );
-
-			// when we pass the stencil test and depth test and are going to draw,
-			// increment the stencil buffer so we don't ever draw on that pixel again
-			qglStencilOp( GL_KEEP, GL_KEEP, GL_INCR );
-		}
-#endif
 
 		if ( vLight->lightShader->IsFogLight() ) {
 			RB_FogPass( vLight->globalInteractions, vLight->localInteractions );

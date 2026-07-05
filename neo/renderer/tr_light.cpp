@@ -96,38 +96,9 @@ bool R_CreateLightingCache( const idRenderEntityLocal *ent, const idRenderLightL
 	int	size = tri->ambientSurface->numVerts * sizeof( lightingCache_t );
 	lightingCache_t *cache = (lightingCache_t *)_alloca16( size );
 
-#if 1
-
 	SIMDProcessor->CreateTextureSpaceLightVectors( &cache[0].localLightVector, localLightOrigin,
 												tri->ambientSurface->verts, tri->ambientSurface->numVerts, (const int*)tri->indexes, tri->numIndexes );
 
-#else
-
-	bool *used = (bool *)_alloca16( tri->ambientSurface->numVerts * sizeof( used[0] ) );
-	memset( used, 0, tri->ambientSurface->numVerts * sizeof( used[0] ) );
-
-	// because the interaction may be a very small subset of the full surface,
-	// it makes sense to only deal with the verts used
-	for ( int j = 0; j < tri->numIndexes; j++ ) {
-		int i = tri->indexes[j];
-		if ( used[i] ) {
-			continue;
-		}
-		used[i] = true;
-
-		idVec3 lightDir;
-		const idDrawVert *v;
-
-		v = &tri->ambientSurface->verts[i];
-
-		lightDir = localLightOrigin - v->xyz;
-
-		cache[i].localLightVector[0] = lightDir * v->tangents[0];
-		cache[i].localLightVector[1] = lightDir * v->tangents[1];
-		cache[i].localLightVector[2] = lightDir * v->normal;
-	}
-
-#endif
 
 	vertexCache.Alloc( cache, size, &tri->lightingCache );
 	if ( !tri->lightingCache ) {
@@ -168,27 +139,7 @@ void R_CreateVertexProgramShadowCache( srfTriangles_t *tri ) {
 	bool tempOnStack;
 	shadowCache_t *temp = (shadowCache_t *)Mem_MallocA( tri->numVerts * 2 * sizeof( shadowCache_t ), tempOnStack );
 
-#if 1
-
 	SIMDProcessor->CreateVertexProgramShadowCache( &temp->xyz, tri->verts, tri->numVerts );
-
-#else
-
-	int numVerts = tri->numVerts;
-	const idDrawVert *verts = tri->verts;
-	for ( int i = 0; i < numVerts; i++ ) {
-		const float *v = verts[i].xyz.ToFloatPtr();
-		temp[i*2+0].xyz[0] = v[0];
-		temp[i*2+1].xyz[0] = v[0];
-		temp[i*2+0].xyz[1] = v[1];
-		temp[i*2+1].xyz[1] = v[1];
-		temp[i*2+0].xyz[2] = v[2];
-		temp[i*2+1].xyz[2] = v[2];
-		temp[i*2+0].xyz[3] = 1.0f;		// on the model surface
-		temp[i*2+1].xyz[3] = 0.0f;		// will be projected to infinity
-	}
-
-#endif
 
 	vertexCache.Alloc( temp, tri->numVerts * 2 * sizeof( shadowCache_t ), &tri->shadowCache );
 	Mem_FreeA( temp, tempOnStack );
@@ -322,51 +273,8 @@ static void R_SpecularTexGen( drawSurf_t *surf, const idVec3 &globalLightOrigin,
 	int	size = tri->numVerts * sizeof( idVec4 );
 	idVec4 *texCoords = (idVec4 *) _alloca16( size );
 
-#if 1
-
 	SIMDProcessor->CreateSpecularTextureCoords( texCoords, localLightOrigin, localViewOrigin,
 											tri->verts, tri->numVerts, (const int*)tri->indexes, tri->numIndexes );
-
-#else
-
-	bool *used = (bool *)_alloca16( tri->numVerts * sizeof( used[0] ) );
-	memset( used, 0, tri->numVerts * sizeof( used[0] ) );
-
-	// because the interaction may be a very small subset of the full surface,
-	// it makes sense to only deal with the verts used
-	for ( int j = 0; j < tri->numIndexes; j++ ) {
-		int i = tri->indexes[j];
-		if ( used[i] ) {
-			continue;
-		}
-		used[i] = true;
-
-		float ilength;
-
-		const idDrawVert *v = &tri->verts[i];
-
-		idVec3 lightDir = localLightOrigin - v->xyz;
-		idVec3 viewDir = localViewOrigin - v->xyz;
-
-		ilength = idMath::RSqrt( lightDir * lightDir );
-		lightDir[0] *= ilength;
-		lightDir[1] *= ilength;
-		lightDir[2] *= ilength;
-
-		ilength = idMath::RSqrt( viewDir * viewDir );
-		viewDir[0] *= ilength;
-		viewDir[1] *= ilength;
-		viewDir[2] *= ilength;
-
-		lightDir += viewDir;
-
-		texCoords[i][0] = lightDir * v->tangents[0];
-		texCoords[i][1] = lightDir * v->tangents[1];
-		texCoords[i][2] = lightDir * v->normal;
-		texCoords[i][3] = 1;
-	}
-
-#endif
 
 	surf->dynamicTexCoords = vertexCache.AllocFrameTemp( texCoords, size );
 }
@@ -1090,15 +998,6 @@ void R_AddLightSurfaces( void ) {
 				R_ShowColoredScreenRect( vLight->scissorRect, light->index );
 			}
 		}
-
-#if 0
-		// this never happens, because CullLightByPortals() does a more precise job
-		if ( vLight->scissorRect.IsEmpty() ) {
-			// this light doesn't touch anything on screen, so remove it from the list
-			*ptr = vLight->next;
-			continue;
-		}
-#endif
 
 		// this one stays on the list
 		ptr = &vLight->next;

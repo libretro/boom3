@@ -34,12 +34,6 @@ If you have questions concerning this license or the applicable additional terms
 
 idCVar idSoundSystemLocal::s_useReverb( "s_useReverb", "1", CVAR_SOUND | CVAR_BOOL | CVAR_ARCHIVE, "environmental reverb from efxs/*.efx" );
 idCVar idSoundSystemLocal::s_reverbGain( "s_reverbGain", "0.5", CVAR_SOUND | CVAR_FLOAT | CVAR_ARCHIVE, "reverb wet gain", 0.0f, 1.0f );
-#ifdef ID_DEDICATED
-idCVar idSoundSystemLocal::s_noSound( "s_noSound", "1", CVAR_SOUND | CVAR_BOOL | CVAR_ROM, "" );
-#else
-idCVar idSoundSystemLocal::s_noSound( "s_noSound", "0", CVAR_SOUND | CVAR_BOOL | CVAR_NOCHEAT, "" );
-#endif
-idCVar idSoundSystemLocal::s_device( "s_device", "default", CVAR_SOUND | CVAR_NOCHEAT | CVAR_ARCHIVE, "the audio device to use ('default' for the default audio device)" );
 idCVar idSoundSystemLocal::s_quadraticFalloff( "s_quadraticFalloff", "1", CVAR_SOUND | CVAR_BOOL, "" );
 idCVar idSoundSystemLocal::s_drawSounds( "s_drawSounds", "0", CVAR_SOUND | CVAR_INTEGER, "", 0, 2, idCmdSystem::ArgCompletion_Integer<0,2> );
 idCVar idSoundSystemLocal::s_showStartSound( "s_showStartSound", "0", CVAR_SOUND | CVAR_BOOL, "" );
@@ -63,7 +57,6 @@ idCVar idSoundSystemLocal::s_singleEmitter( "s_singleEmitter", "0", CVAR_SOUND |
 idCVar idSoundSystemLocal::s_numberOfSpeakers( "s_numberOfSpeakers", "2", CVAR_SOUND | CVAR_ARCHIVE, "number of speakers" );
 idCVar idSoundSystemLocal::s_force22kHz( "s_force22kHz", "0", CVAR_SOUND | CVAR_BOOL, ""  );
 idCVar idSoundSystemLocal::s_clipVolumes( "s_clipVolumes", "1", CVAR_SOUND | CVAR_BOOL, ""  );
-idCVar idSoundSystemLocal::s_realTimeDecoding( "s_realTimeDecoding", "1", CVAR_SOUND | CVAR_BOOL | CVAR_INIT, "" );
 
 idCVar idSoundSystemLocal::s_slowAttenuate( "s_slowAttenuate", "1", CVAR_SOUND | CVAR_BOOL, "slowmo sounds attenuate over shorted distance" );
 idCVar idSoundSystemLocal::s_enviroSuitCutoffFreq( "s_enviroSuitCutoffFreq", "2000", CVAR_SOUND | CVAR_FLOAT, "" );
@@ -149,8 +142,7 @@ void ListSounds_f( const idCmdArgs &args ) {
 			totalSamples += sample->objectSize;
 			if ( info.wFormatTag != WAVE_FORMAT_TAG_OGG )
 				totalPCMMemory += sample->objectMemSize;
-			if ( 1 ) // all samples are software-mixed now
-				totalMemory += sample->objectMemSize;
+			totalMemory += sample->objectMemSize;
 		}
 		totalSounds++;
 	}
@@ -173,9 +165,8 @@ void ListSoundDecoders_f( const idCmdArgs &args ) {
 	for ( i = 0; i < sw->emitters.Num(); i++ ) {
 		idSoundEmitterLocal *sound = sw->emitters[i];
 
-		if ( !sound ) {
+		if ( !sound )
 			continue;
-		}
 
 		// run through all the channels
 		for ( j = 0; j < SOUND_MAX_CHANNELS; j++ ) {
@@ -225,11 +216,10 @@ void ListSoundDecoders_f( const idCmdArgs &args ) {
 			int sampleTime = sample->LengthIn44kHzSamples() * sample->objectInfo.nChannels;
 			int percent;
 			if ( localTime > sampleTime ) {
-				if ( chan->parms.soundShaderFlags & SSF_LOOPING ) {
+				if ( chan->parms.soundShaderFlags & SSF_LOOPING )
 					percent = ( localTime % sampleTime ) * 100 / sampleTime;
-				} else {
+				else
 					percent = 100;
-				}
 			} else {
 				percent = localTime * 100 / sampleTime;
 			}
@@ -321,10 +311,8 @@ void idSoundSystemLocal::Init() {
 	graph = NULL;
 
 
-	if ( !s_noSound.GetBool() ) {
-		idSampleDecoder::Init();
-		soundCache = new idSoundCache();
-	}
+	idSampleDecoder::Init();
+	soundCache = new idSoundCache();
 
 
 	cmdSystem->AddCommand( "listSounds", ListSounds_f, CMD_FL_SOUND, "lists all sounds" );
@@ -364,11 +352,6 @@ bool idSoundSystemLocal::InitHW() {
 
 
 	common->Printf("Initializing sound system\n");
-
-	if ( s_noSound.GetBool() ) {
-		return false;
-	}
-
 
 	// put the real number in there
 	s_numberOfSpeakers.SetInteger(numSpeakers);
@@ -543,16 +526,8 @@ cinData_t idSoundSystemLocal::ImageForTime( const int milliseconds, const bool w
 				for ( x = 0; x < xsize; x++ ) {
 					graph[(127-y)*256 + offset + x ] = color;
 				}
-#if 0
-				if ( y == 80 ) {
-					color = 0xff00ffff;
-				} else if ( y == 112 ) {
-					color = 0xff0000ff;
-				}
-#endif
-				if ( y > meter ) {
+				if ( y > meter )
 					break;
-				}
 			}
 
 			if ( meter > meterTops[j] ) {

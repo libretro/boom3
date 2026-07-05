@@ -787,9 +787,6 @@ void R_InitOpenGL( void ) {
 
 		parms.width = glConfig.vidWidth;
 		parms.height = glConfig.vidHeight;
-		parms.fullScreen = r_fullscreen.GetBool();
-		parms.fullScreenDesktop = r_fullscreenDesktop.GetBool();
-		parms.displayHz = r_displayRefresh.GetInteger();
 		parms.multiSamples = r_multiSamples.GetInteger();
 		parms.stereo = false;
 
@@ -1376,12 +1373,7 @@ void R_ReadTiledPixels( int width, int height, byte *buffer, renderView_t *ref =
 				h = height - yo;
 			}
 
-			if ( glConfig.isWayland ) {
-				// DG: Native Wayland (=> not XWayland) doesn't seem to support reading
-				//     from the front buffer - screenshot is black then..
-				//     So just read from the default (probably back-) buffer
-				qglReadPixels( 0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, temp );
-			} else {
+			{
 				// DG: It's probably better to restore the glReadBuffer mode after reading the pixels..
 				//     (at least with XWayland on GNOME changing resolutions is wonky when not doing this)
 #ifdef HAVE_OPENGLES
@@ -2061,11 +2053,6 @@ static void GfxInfo_f( const idCmdArgs &args ) {
 	common->Printf( "\nPIXELFORMAT: color(%d-bits) Z(%d-bit) stencil(%d-bits)\n", glConfig.colorBits, glConfig.depthBits, glConfig.stencilBits );
 	common->Printf( "MODE: %d, %d x %d %s hz:", r_mode.GetInteger(), glConfig.vidWidth, glConfig.vidHeight, fsmode );
 
-	if ( glConfig.displayFrequency ) {
-		common->Printf( "%d\n", glConfig.displayFrequency );
-	} else {
-		common->Printf( "N/A\n" );
-	}
 	common->Printf( "Logical Window size: %g x %g\n", glConfig.winWidth, glConfig.winHeight );
 
 	const char *active[2] = { "", " (ACTIVE)" };
@@ -2144,9 +2131,6 @@ void R_VidRestart_f( const idCmdArgs &args ) {
 			parms.width = wantedWidth;
 			parms.height = wantedHeight;
 
-			parms.fullScreen = ( forceWindow ) ? false : r_fullscreen.GetBool();
-			parms.fullScreenDesktop = r_fullscreenDesktop.GetBool();
-			parms.displayHz = r_displayRefresh.GetInteger();
 			// "vid_restart partial windowed" is used in case of errors to return to windowed mode
 			// before things explode more. in that case just keep whatever MSAA setting is active
 			parms.multiSamples = forceWindow ? -1 : r_multiSamples.GetInteger();
@@ -2547,19 +2531,9 @@ idRenderSystemLocal::IsOpenGLRunning
 ========================
 */
 bool idRenderSystemLocal::IsOpenGLRunning( void ) const {
-	if ( !glConfig.isInitialized ) {
+	if ( !glConfig.isInitialized )
 		return false;
-	}
 	return true;
-}
-
-/*
-========================
-idRenderSystemLocal::IsFullScreen
-========================
-*/
-bool idRenderSystemLocal::IsFullScreen( void ) const {
-	return glConfig.isFullscreen;
 }
 
 /*

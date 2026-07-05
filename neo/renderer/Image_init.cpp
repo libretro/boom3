@@ -174,9 +174,8 @@ static void R_SpecularTableImage( idImage *image ) {
 		// this is the behavior of the hacked up fragment programs that
 		// can't really do a power function
 		f = (f-0.75)*4;
-		if ( f < 0 ) {
+		if ( f < 0 )
 			f = 0;
-		}
 		f = f * f;
 #endif
 		int		b = (int)(f * 255);
@@ -224,32 +223,6 @@ static void R_Specular2DTableImage( idImage *image ) {
 
 	image->GenerateImage( (byte *)data, 256, 256, TF_LINEAR, false, TR_CLAMP, TD_HIGH_QUALITY );
 }
-
-
-
-/*
-================
-R_AlphaRampImage
-
-Creates a 0-255 ramp image
-================
-*/
-#if 0
-static void R_AlphaRampImage( idImage *image ) {
-	int		x;
-	byte	data[256][4];
-
-	for (x=0 ; x<256 ; x++) {
-		data[x][0] =
-		data[x][1] =
-		data[x][2] = 255;
-		data[x][3] = x;
-	}
-
-	image->GenerateImage( (byte *)data, 256, 1,
-		TF_NEAREST, false, TR_CLAMP, TD_HIGH_QUALITY );
-}
-#endif
 
 
 
@@ -410,21 +383,6 @@ static void R_DepthImage( idImage *image ) {
 		TF_NEAREST, false, TR_CLAMP, TD_HIGH_QUALITY );
 }
 
-#if 0
-static void R_RGB8Image( idImage *image ) {
-	byte	data[DEFAULT_SIZE][DEFAULT_SIZE][4];
-
-	memset( data, 0, sizeof( data ) );
-	data[0][0][0] = 16;
-	data[0][0][1] = 32;
-	data[0][0][2] = 48;
-	data[0][0][3] = 255;
-
-	image->GenerateImage( (byte *)data, DEFAULT_SIZE, DEFAULT_SIZE,
-		TF_DEFAULT, false, TR_REPEAT, TD_HIGH_QUALITY );
-}
-#endif
-
 static void R_AlphaNotchImage( idImage *image ) {
 	byte	data[2][4];
 
@@ -477,83 +435,6 @@ static void R_AmbientNormalImage( idImage *image ) {
 	image->GenerateCubeImage( pics, 2, TF_DEFAULT, true, TD_HIGH_QUALITY );
 }
 
-
-#if 0
-static void CreateSquareLight( void ) {
-	byte		*buffer;
-	int			x, y;
-	int			dx, dy;
-	int			d;
-	int			width, height;
-
-	width = height = 128;
-
-	buffer = (byte *)R_StaticAlloc( 128 * 128 * 4 );
-
-	for ( x = 0 ; x < 128 ; x++ ) {
-		if ( x < 32 ) {
-			dx = 32 - x;
-		} else if ( x > 96 ) {
-			dx = x - 96;
-		} else {
-			dx = 0;
-		}
-		for ( y = 0 ; y < 128 ; y++ ) {
-			if ( y < 32 ) {
-				dy = 32 - y;
-			} else if ( y > 96 ) {
-				dy = y - 96;
-			} else {
-				dy = 0;
-			}
-			d = (byte)idMath::Sqrt( dx * dx + dy * dy );
-			if ( d > 32 ) {
-				d = 32;
-			}
-			d = 255 - d * 8;
-			if ( d < 0 ) {
-				d = 0;
-			}
-			buffer[(y*128+x)*4+0] =
-			buffer[(y*128+x)*4+1] =
-			buffer[(y*128+x)*4+2] = d;
-			buffer[(y*128+x)*4+3] = 255;
-		}
-	}
-
-	R_WriteTGA( "lights/squarelight.tga", buffer, width, height );
-
-	R_StaticFree( buffer );
-}
-
-static void CreateFlashOff( void ) {
-	byte		*buffer;
-	int			x, y;
-	int			d;
-	int			width, height;
-
-	width = 256;
-	height = 4;
-
-	buffer = (byte *)R_StaticAlloc( width * height * 4 );
-
-	for ( x = 0 ; x < width ; x++ ) {
-		for ( y = 0 ; y < height ; y++ ) {
-			d = 255 - ( x * 256 / width );
-			buffer[(y*width+x)*4+0] =
-			buffer[(y*width+x)*4+1] =
-			buffer[(y*width+x)*4+2] = d;
-			buffer[(y*width+x)*4+3] = 255;
-		}
-	}
-
-	R_WriteTGA( "lights/flashoff.tga", buffer, width, height );
-
-	R_StaticFree( buffer );
-}
-#endif
-
-
 /*
 ===============
 CreatePitFogImage
@@ -565,19 +446,9 @@ void CreatePitFogImage( void ) {
 
 	memset( data, 0, sizeof( data ) );
 	for ( i = 0 ; i < 16 ; i++ ) {
-		int		a;
-
-#if 0
-		if ( i > 14 ) {
-			a = 0;
-		} else
-#endif
-		{
-			a = i * 255 / 15;
-			if ( a > 255 ) {
-				a = 255;
-			}
-		}
+		int a = i * 255 / 15;
+		if ( a > 255 )
+			a = 255;
 
 		for ( j = 0 ; j < 16 ; j++ ) {
 			data[j][i][0] =
@@ -1402,25 +1273,6 @@ void idImageManager::SetNormalPalette( void ) {
 		}
 	}
 
-#if 0
-	for ( i = 0; i < 16; i++ ) {
-		for ( j = 0 ; j < 16 ; j++ ) {
-
-			v[0] = ( i - 7.5 ) / 8;
-			v[1] = ( j - 7.5 ) / 8;
-
-			t = 1.0 - ( v[0]*v[0] + v[1]*v[1] );
-			if ( t < 0 ) {
-				t = 0;
-			}
-			v[2] = idMath::Sqrt( t );
-
-			temptable[(i*16+j)*3+0] = 128 + floor( 127 * v[0] + 0.5 );
-			temptable[(i*16+j)*3+1] = 128 + floor( 127 * v[1] );
-			temptable[(i*16+j)*3+2] = 128 + floor( 127 * v[2] );
-		}
-	}
-#else
 	for ( i = 0; i < 16; i++ ) {
 		for ( j = 0 ; j < 16 ; j++ ) {
 
@@ -1438,7 +1290,6 @@ void idImageManager::SetNormalPalette( void ) {
 			temptable[(i*16+j)*3+2] = (byte)(128 + floor( 127 * v[2] ));
 		}
 	}
-#endif
 
 	// color 255 will be the "nullnormal" color for no reflection
 	temptable[255*3+0] =

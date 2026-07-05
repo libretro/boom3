@@ -306,7 +306,6 @@ static void R_ProjectPointsToFarPlane( const idRenderEntityLocal *ent, const idR
 	R_GlobalPointToLocal( ent->modelMatrix, light->globalLightOrigin, lv );
 	R_LightProjectionMatrix( lv, lightPlaneLocal, mat );
 
-#if 1
 	// make a projected copy of the even verts into the odd spots
 	in = &shadowVerts[firstShadowVert];
 	for ( i = firstShadowVert ; i < numShadowVerts ; i+= 2, in += 2 ) {
@@ -326,20 +325,6 @@ static void R_ProjectPointsToFarPlane( const idRenderEntityLocal *ent, const idR
 		in[1].z = ( in->ToVec3() * mat[2].ToVec3() + mat[2][3] ) * oow;
 		in[1].w = 1;
 	}
-
-#else
-	// messing with W seems to cause some depth precision problems
-
-	// make a projected copy of the even verts into the odd spots
-	in = &shadowVerts[firstShadowVert];
-	for ( i = firstShadowVert ; i < numShadowVerts ; i+= 2, in += 2 ) {
-		in[0].w = 1;
-		in[1].x = *in * mat[0].ToVec3() + mat[0][3];
-		in[1].y = *in * mat[1].ToVec3() + mat[1][3];
-		in[1].z = *in * mat[2].ToVec3() + mat[2][3];
-		in[1].w = *in * mat[3].ToVec3() + mat[3][3];
-	}
-#endif
 }
 
 
@@ -564,17 +549,10 @@ static bool R_ClipLineToLight(	const idVec3 &a, const idVec3 &b, const idPlane f
 		}
 
 		// clip it, keeping the negative side
-		if ( d1 < 0 ) {
+		if ( d1 < 0 )
 			clip = p1.ToFloatPtr();
-		} else {
+		else
 			clip = p2.ToFloatPtr();
-		}
-
-#if 0
-		if ( idMath::Fabs(d1 - d2) < 0.001 ) {
-			d2 = d1 - 0.1;
-		}
-#endif
 
 		f = d1 / ( d1 - d2 );
 		clip[0] = p1[0] + f * ( p2[0] - p1[0] );
@@ -1032,38 +1010,6 @@ void R_MakeShadowFrustums( idRenderLightLocal *light ) {
 	int		i, j;
 
 	if ( light->parms.pointLight ) {
-#if 0
-		idVec3	adjustedRadius;
-
-		// increase the light radius to cover any origin offsets.
-		// this will cause some shadows to extend out of the exact light
-		// volume, but is simpler than adjusting all the frustums
-		adjustedRadius[0] = light->parms.lightRadius[0] + idMath::Fabs( light->parms.lightCenter[0] );
-		adjustedRadius[1] = light->parms.lightRadius[1] + idMath::Fabs( light->parms.lightCenter[1] );
-		adjustedRadius[2] = light->parms.lightRadius[2] + idMath::Fabs( light->parms.lightCenter[2] );
-
-		light->numShadowFrustums = 0;
-		// a point light has to project against six planes
-		for ( i = 0 ; i < 6 ; i++ ) {
-			shadowFrustum_t	*frust = &light->shadowFrustums[ light->numShadowFrustums ];
-
-			frust->numPlanes = 6;
-			frust->makeClippedPlanes = false;
-			for ( j = 0 ; j < 6 ; j++ ) {
-				idPlane &plane = frust->planes[j];
-				plane[0] = pointLightFrustums[i][j][0] / adjustedRadius[0];
-				plane[1] = pointLightFrustums[i][j][1] / adjustedRadius[1];
-				plane[2] = pointLightFrustums[i][j][2] / adjustedRadius[2];
-				plane.Normalize();
-				plane[3] = -( plane.Normal() * light->globalLightOrigin );
-				if ( j == 5 ) {
-					plane[3] += adjustedRadius[i>>1];
-				}
-			}
-
-			light->numShadowFrustums++;
-		}
-#else
 		// exact projection,taking into account asymetric frustums when
 		// globalLightOrigin isn't centered
 
@@ -1158,7 +1104,6 @@ void R_MakeShadowFrustums( idRenderLightLocal *light ) {
 			light->numShadowFrustums++;
 		}
 
-#endif
 		return;
 	}
 
@@ -1387,9 +1332,8 @@ srfTriangles_t *R_CreateShadowVolume( const idRenderEntityLocal *ent,
 	}
 
 #ifndef HAVE_OPENGLES
-	if ( optimize == SG_OFFLINE ) {
+	if ( optimize == SG_OFFLINE )
 		CleanupOptimizedShadowTris( newTri );
-	}
 #endif
 
 	return newTri;

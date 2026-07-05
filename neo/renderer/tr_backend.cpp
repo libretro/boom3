@@ -547,10 +547,11 @@ const void	RB_SwapBuffers( const void *data ) {
 
 
 	int fillAlpha = r_fillWindowAlphaChan.GetInteger();
-	if ( fillAlpha == 1 || (fillAlpha == -1 && glConfig.shouldFillWindowAlpha) )
+	if (fillAlpha == 1)
 	{
 		// make sure the whole alpha chan of the (default) framebuffer is opaque.
 		// at least Wayland needs this, see also the big comment in GLimp_Init()
+		// TODO/FIXME - is this obsolete now?
 
 		bool blendEnabled = qglIsEnabled( GL_BLEND );
 		if ( !blendEnabled )
@@ -586,9 +587,6 @@ const void	RB_SwapBuffers( const void *data ) {
 		// draw screen-sized quad with color (0.0, 0.0, 0.0, 1.0)
 		const float x=0, y=0, w=1, h=1;
 		qglColor4f( 0.0f, 0.0f, 0.0f, 1.0f );
-		// debug values:
-		//const float x = 0.1, y = 0.1, w = 0.8, h = 0.8;
-		//qglColor4f( 0.0f, 0.0f, 0.5f, 1.0f );
 
 		qglBegin( GL_QUADS );
 			qglVertex2f( x,   y   ); // ( 0,0 );

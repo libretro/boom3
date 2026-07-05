@@ -2660,17 +2660,6 @@ void idAI::CheckObstacleAvoidance( const idVec3 &goalPos, idVec3 &newPos ) {
 			// Blocked by wall
 			move.moveStatus = MOVE_STATUS_BLOCKED_BY_WALL;
 		}
-#if 0
-	} else if ( path.startPosObstacle ) {
-		// check if we're past where the our origin was pushed out of the obstacle
-		dir = goalPos - origin;
-		dir.Normalize();
-		dist = ( path.seekPos - origin ) * dir;
-		if ( dist < 1.0f ) {
-			AI_OBSTACLE_IN_PATH = true;
-			obstacle = path.startPosObstacle;
-		}
-#endif
 	} else if ( path.seekPosObstacle ) {
 		// if the AI is very close to the path.seekPos already and path.seekPosObstacle != NULL
 		// then we want to push the path.seekPosObstacle entity out of the way
@@ -5037,12 +5026,6 @@ bool idAI::UpdateAnimationControllers( void ) {
 	newLookAng.yaw = idMath::AngleNormalize180( dir.ToYaw() - orientationJointYaw );
 	newLookAng.roll = 0.0f;
 	newLookAng.pitch = 0.0f;
-
-#if 0
-	gameRenderWorld->DebugLine( colorRed, orientationJointPos, focusPos, gameLocal.msec );
-	gameRenderWorld->DebugLine( colorYellow, orientationJointPos, orientationJointPos + orientationJointAxis[ 0 ] * 32.0f, gameLocal.msec );
-	gameRenderWorld->DebugLine( colorGreen, orientationJointPos, orientationJointPos + newLookAng.ToForward() * 48.0f, gameLocal.msec );
-#endif
 
 	// determine pitch from joint position
 	dir = focusPos - eyepos;

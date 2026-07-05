@@ -728,7 +728,6 @@ public:
 	virtual void			InitOpenGL( void );
 	virtual void			ShutdownOpenGL( void );
 	virtual bool			IsOpenGLRunning( void ) const;
-	virtual bool			IsFullScreen( void ) const;
 	virtual int				GetScreenWidth( void ) const;
 	virtual int				GetScreenHeight( void ) const;
 	virtual idRenderWorld *	AllocRenderWorld( void );
@@ -1118,10 +1117,7 @@ IMPLEMENTATION SPECIFIC FUNCTIONS
 typedef struct {
 	int			width;
 	int			height;
-	bool		fullScreen;
-	bool		fullScreenDesktop;
 	bool		stereo;
-	int			displayHz; // TODO: SDL3 uses float
 	int			multiSamples;
 } glimpParms_t;
 

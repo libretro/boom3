@@ -2281,17 +2281,9 @@ void idCompiler::ParseFunctionDef( idTypeDef *returnType, const char *name ) {
 		}
 	}
 
-// Disabled code since it caused a function to fall through to the next function when last statement is in the form "if ( x ) { return; }"
-#if 0
-	// don't bother adding a return opcode if the "return" statement was used.
-	if ( ( func->firstStatement == gameLocal.program.NumStatements() ) || ( gameLocal.program.GetStatement( gameLocal.program.NumStatements() - 1 ).op != OP_RETURN ) ) {
-		// emit an end of statements opcode
-		EmitOpcode( OP_RETURN, 0, 0 );
-	}
-#else
+	// Disabled code since it caused a function to fall through to the next function when last statement is in the form "if ( x ) { return; }"
 	// always emit the return opcode
 	EmitOpcode( OP_RETURN, 0, 0 );
-#endif
 
 	// record the number of statements in the function
 	func->numStatements = gameLocal.program.NumStatements() - func->firstStatement;

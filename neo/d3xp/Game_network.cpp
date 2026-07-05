@@ -842,13 +842,6 @@ void idGameLocal::ServerProcessReliableMessage( int clientNum, const idBitMsg &m
 			mpGame.CastVote( clientNum, vote );
 			break;
 		}
-#if 0
-		// uncomment this if you want to track when players are in a menu
-		case GAME_RELIABLE_MESSAGE_MENU: {
-			bool menuUp = ( msg.ReadBits( 1 ) != 0 );
-			break;
-		}
-#endif
 		case GAME_RELIABLE_MESSAGE_EVENT: {
 			entityNetEvent_t *event;
 

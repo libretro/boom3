@@ -1341,25 +1341,6 @@ static int Ballistics( const idVec3 &start, const idVec3 &end, float speed, floa
 
 /*
 =====================
-HeightForTrajectory
-
-Returns the maximum height of a given trajectory
-=====================
-*/
-#if 0
-static float HeightForTrajectory( const idVec3 &start, float zVel, float gravity ) {
-	float maxHeight, t;
-
-	t = zVel / gravity;
-	// maximum height of projectile
-	maxHeight = start.z - 0.5f * gravity * ( t * t );
-
-	return maxHeight;
-}
-#endif
-
-/*
-=====================
 idAI::TestTrajectory
 =====================
 */

@@ -470,7 +470,6 @@ idCinematicLocal::move8_32
 ==============
 */
 void idCinematicLocal::move8_32( byte *src, byte *dst, int spl ) {
-#if 1
 	int *dsrc, *ddst;
 	int dspl;
 
@@ -549,30 +548,6 @@ void idCinematicLocal::move8_32( byte *src, byte *dst, int spl ) {
 	ddst[7*dspl+5] = dsrc[7*dspl+5];
 	ddst[7*dspl+6] = dsrc[7*dspl+6];
 	ddst[7*dspl+7] = dsrc[7*dspl+7];
-#else
-	double *dsrc, *ddst;
-	int dspl;
-
-	dsrc = (double *)src;
-	ddst = (double *)dst;
-	dspl = spl>>3;
-
-	ddst[0] = dsrc[0]; ddst[1] = dsrc[1]; ddst[2] = dsrc[2]; ddst[3] = dsrc[3];
-	dsrc += dspl; ddst += dspl;
-	ddst[0] = dsrc[0]; ddst[1] = dsrc[1]; ddst[2] = dsrc[2]; ddst[3] = dsrc[3];
-	dsrc += dspl; ddst += dspl;
-	ddst[0] = dsrc[0]; ddst[1] = dsrc[1]; ddst[2] = dsrc[2]; ddst[3] = dsrc[3];
-	dsrc += dspl; ddst += dspl;
-	ddst[0] = dsrc[0]; ddst[1] = dsrc[1]; ddst[2] = dsrc[2]; ddst[3] = dsrc[3];
-	dsrc += dspl; ddst += dspl;
-	ddst[0] = dsrc[0]; ddst[1] = dsrc[1]; ddst[2] = dsrc[2]; ddst[3] = dsrc[3];
-	dsrc += dspl; ddst += dspl;
-	ddst[0] = dsrc[0]; ddst[1] = dsrc[1]; ddst[2] = dsrc[2]; ddst[3] = dsrc[3];
-	dsrc += dspl; ddst += dspl;
-	ddst[0] = dsrc[0]; ddst[1] = dsrc[1]; ddst[2] = dsrc[2]; ddst[3] = dsrc[3];
-	dsrc += dspl; ddst += dspl;
-	ddst[0] = dsrc[0]; ddst[1] = dsrc[1]; ddst[2] = dsrc[2]; ddst[3] = dsrc[3];
-#endif
 }
 
 /*
@@ -581,13 +556,9 @@ idCinematicLocal::move4_32
 ==============
 */
 void idCinematicLocal::move4_32( byte *src, byte *dst, int spl  ) {
-#if 1
-	int *dsrc, *ddst;
-	int dspl;
-
-	dsrc = (int *)src;
-	ddst = (int *)dst;
-	dspl = spl>>2;
+	int *dsrc = (int *)src;
+	int *ddst = (int *)dst;
+	int dspl = spl>>2;
 
 	ddst[0*dspl+0] = dsrc[0*dspl+0];
 	ddst[0*dspl+1] = dsrc[0*dspl+1];
@@ -608,22 +579,6 @@ void idCinematicLocal::move4_32( byte *src, byte *dst, int spl  ) {
 	ddst[3*dspl+1] = dsrc[3*dspl+1];
 	ddst[3*dspl+2] = dsrc[3*dspl+2];
 	ddst[3*dspl+3] = dsrc[3*dspl+3];
-#else
-	double *dsrc, *ddst;
-	int dspl;
-
-	dsrc = (double *)src;
-	ddst = (double *)dst;
-	dspl = spl>>3;
-
-	ddst[0] = dsrc[0]; ddst[1] = dsrc[1];
-	dsrc += dspl; ddst += dspl;
-	ddst[0] = dsrc[0]; ddst[1] = dsrc[1];
-	dsrc += dspl; ddst += dspl;
-	ddst[0] = dsrc[0]; ddst[1] = dsrc[1];
-	dsrc += dspl; ddst += dspl;
-	ddst[0] = dsrc[0]; ddst[1] = dsrc[1];
-#endif
 }
 
 /*
@@ -632,7 +587,6 @@ idCinematicLocal::blit8_32
 ==============
 */
 void idCinematicLocal::blit8_32( byte *src, byte *dst, int spl  ) {
-#if 1
 	int *dsrc, *ddst;
 	int dspl;
 
@@ -711,30 +665,6 @@ void idCinematicLocal::blit8_32( byte *src, byte *dst, int spl  ) {
 	ddst[7*dspl+5] = dsrc[61];
 	ddst[7*dspl+6] = dsrc[62];
 	ddst[7*dspl+7] = dsrc[63];
-#else
-	double *dsrc, *ddst;
-	int dspl;
-
-	dsrc = (double *)src;
-	ddst = (double *)dst;
-	dspl = spl>>3;
-
-	ddst[0] = dsrc[0]; ddst[1] = dsrc[1]; ddst[2] = dsrc[2]; ddst[3] = dsrc[3];
-	dsrc += 4; ddst += dspl;
-	ddst[0] = dsrc[0]; ddst[1] = dsrc[1]; ddst[2] = dsrc[2]; ddst[3] = dsrc[3];
-	dsrc += 4; ddst += dspl;
-	ddst[0] = dsrc[0]; ddst[1] = dsrc[1]; ddst[2] = dsrc[2]; ddst[3] = dsrc[3];
-	dsrc += 4; ddst += dspl;
-	ddst[0] = dsrc[0]; ddst[1] = dsrc[1]; ddst[2] = dsrc[2]; ddst[3] = dsrc[3];
-	dsrc += 4; ddst += dspl;
-	ddst[0] = dsrc[0]; ddst[1] = dsrc[1]; ddst[2] = dsrc[2]; ddst[3] = dsrc[3];
-	dsrc += 4; ddst += dspl;
-	ddst[0] = dsrc[0]; ddst[1] = dsrc[1]; ddst[2] = dsrc[2]; ddst[3] = dsrc[3];
-	dsrc += 4; ddst += dspl;
-	ddst[0] = dsrc[0]; ddst[1] = dsrc[1]; ddst[2] = dsrc[2]; ddst[3] = dsrc[3];
-	dsrc += 4; ddst += dspl;
-	ddst[0] = dsrc[0]; ddst[1] = dsrc[1]; ddst[2] = dsrc[2]; ddst[3] = dsrc[3];
-#endif
 }
 
 /*
@@ -743,7 +673,6 @@ idCinematicLocal::blit4_32
 ==============
 */
 void idCinematicLocal::blit4_32( byte *src, byte *dst, int spl  ) {
-#if 1
 	int *dsrc, *ddst;
 	int dspl;
 
@@ -767,22 +696,6 @@ void idCinematicLocal::blit4_32( byte *src, byte *dst, int spl  ) {
 	ddst[3*dspl+1] = dsrc[13];
 	ddst[3*dspl+2] = dsrc[14];
 	ddst[3*dspl+3] = dsrc[15];
-#else
-	double *dsrc, *ddst;
-	int dspl;
-
-	dsrc = (double *)src;
-	ddst = (double *)dst;
-	dspl = spl>>3;
-
-	ddst[0] = dsrc[0]; ddst[1] = dsrc[1];
-	dsrc += 2; ddst += dspl;
-	ddst[0] = dsrc[0]; ddst[1] = dsrc[1];
-	dsrc += 2; ddst += dspl;
-	ddst[0] = dsrc[0]; ddst[1] = dsrc[1];
-	dsrc += 2; ddst += dspl;
-	ddst[0] = dsrc[0]; ddst[1] = dsrc[1];
-#endif
 }
 
 /*
@@ -791,29 +704,14 @@ idCinematicLocal::blit2_32
 ==============
 */
 void idCinematicLocal::blit2_32( byte *src, byte *dst, int spl  ) {
-#if 1
-	int *dsrc, *ddst;
-	int dspl;
-
-	dsrc = (int *)src;
-	ddst = (int *)dst;
-	dspl = spl>>2;
+	int *dsrc = (int *)src;
+	int *ddst = (int *)dst;
+	int dspl = spl>>2;
 
 	ddst[0*dspl+0] = dsrc[0];
 	ddst[0*dspl+1] = dsrc[1];
 	ddst[1*dspl+0] = dsrc[2];
 	ddst[1*dspl+1] = dsrc[3];
-#else
-	double *dsrc, *ddst;
-	int dspl;
-
-	dsrc = (double *)src;
-	ddst = (double *)dst;
-	dspl = spl>>3;
-
-	ddst[0] = dsrc[0];
-	ddst[dspl] = dsrc[1];
-#endif
 }
 
 /*

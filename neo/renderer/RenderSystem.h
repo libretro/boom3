@@ -84,18 +84,9 @@ typedef struct glconfig_s {
 	// GL framebuffer size, see also winWidth and winHeight
 	int					vidWidth, vidHeight;	// passed to R_BeginFrame
 
-	int					displayFrequency;
-
-	bool				isFullscreen;
-
 	bool				allowARB2Path;
 
 	bool				isInitialized;
-
-	// DG: current video backend is known to need opaque default framebuffer
-	//     used if r_fillWindowAlphaChan == -1
-	bool				shouldFillWindowAlpha;
-	bool				isWayland; // DG: for other wayland-specific hacks.. (does *not* detect XWayland!)
 
 	bool				haveDebugContext;
 
@@ -193,7 +184,6 @@ public:
 
 	virtual bool			IsOpenGLRunning( void ) const = 0;
 
-	virtual bool			IsFullScreen( void ) const = 0;
 	// NOTE: this is the physical width of the GL drawable (framebuffer) in pixels,
 	//      *not* the logical window size (in case of HighDPI that's not the same!)
 	virtual int				GetScreenWidth( void ) const = 0;

@@ -908,9 +908,4 @@ void idMegaTexture::MakeMegaTexture_f( const idCmdArgs &args ) {
 	delete file;
 
 	GenerateMegaPreview( outName.c_str() );
-#if 0
-	if ( (targa_header.attributes & (1<<5)) ) {			// image flp bit
-		R_VerticalFlip( *pic, *width, *height );
-	}
-#endif
 }

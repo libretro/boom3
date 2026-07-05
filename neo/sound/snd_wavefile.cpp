@@ -198,25 +198,10 @@ int idWaveFile::ReadMMIO( void ) {
 
 	// Allocate the waveformatex_t, but if its not pcm format, read the next
 	// word, and thats how many extra bytes to allocate.
-	if( pcmWaveFormat.wf.wFormatTag == WAVE_FORMAT_TAG_PCM ) {
-		mpwfx.Format.cbSize = 0;
-	} else {
-		return -1;	// we don't handle these (32 bit wavefiles, etc)
-#if 0
-		// Read in length of extra bytes.
-		word cbExtraBytes = 0L;
-		if( mhmmio->Read( (char*)&cbExtraBytes, sizeof(word) ) != sizeof(word) )
-			return -1;
+	if( pcmWaveFormat.wf.wFormatTag != WAVE_FORMAT_TAG_PCM )
+		return -1; /* We don't handle these (32bit wavefiles, etc) */
 
-		mpwfx.Format.cbSize = cbExtraBytes;
-
-		// Now, read those extra bytes into the structure, if cbExtraAlloc != 0.
-		if( mhmmio->Read( (char*)(((byte*)&(mpwfx.Format.cbSize))+sizeof(word)), cbExtraBytes ) != cbExtraBytes ) {
-			memset( &mpwfx, 0, sizeof( waveformatextensible_t ) );
-			return -1;
-		}
-#endif
-	}
+	mpwfx.Format.cbSize = 0;
 
 	return 0;
 }

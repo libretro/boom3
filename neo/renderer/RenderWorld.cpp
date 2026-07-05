@@ -811,20 +811,6 @@ void idRenderWorldLocal::RenderScene( const renderView_t *renderView ) {
 		WriteRenderView( renderView );
 	}
 
-#if 0
-	for ( int i = 0 ; i < entityDefs.Num() ; i++ ) {
-		idRenderEntityLocal	*def = entityDefs[i];
-		if ( !def ) {
-			continue;
-		}
-		if ( def->parms.callback ) {
-			continue;
-		}
-		if ( def->parms.hModel->IsDynamicModel() == DM_CONTINUOUS ) {
-		}
-	}
-#endif
-
 	int endTime = Core_Milliseconds();
 
 	tr.pc.frontEndMsec += endTime - startTime;
@@ -1251,7 +1237,7 @@ bool idRenderWorldLocal::Trace( modelTrace_t &trace, const idVec3 &start, const 
 					continue;
 				}
 
-#if 1	/* _D3XP addition. could use a cleaner approach */
+/* _D3XP addition. could use a cleaner approach */
 				if ( skipPlayer ) {
 					idStr name = model->Name();
 					const char *exclude;
@@ -1268,7 +1254,6 @@ bool idRenderWorldLocal::Trace( modelTrace_t &trace, const idVec3 &start, const 
 						continue;
 					}
 				}
-#endif
 
 				model = R_EntityDefDynamicModel( def );
 				if ( !model ) {
@@ -1294,7 +1279,7 @@ bool idRenderWorldLocal::Trace( modelTrace_t &trace, const idVec3 &start, const 
 					continue;
 				}
 
-#if 1 /* _D3XP addition. could use a cleaner approach */
+/* _D3XP addition. could use a cleaner approach */
 				if ( skipPlayer ) {
 					idStr name = shader->GetName();
 					const char *exclude;
@@ -1311,7 +1296,6 @@ bool idRenderWorldLocal::Trace( modelTrace_t &trace, const idVec3 &start, const 
 						continue;
 					}
 				}
-#endif
 
 				tri = surf->geometry;
 

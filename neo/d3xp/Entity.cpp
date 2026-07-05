@@ -552,18 +552,8 @@ void idEntity::Spawn( void ) {
 	cinematic = spawnArgs.GetBool( "cinematic", "0" );
 
 	networkSync = spawnArgs.FindKey( "networkSync" );
-	if ( networkSync ) {
+	if ( networkSync )
 		fl.networkSync = ( atoi( networkSync->GetValue() ) != 0 );
-	}
-
-#if 0
-	if ( !gameLocal.isClient ) {
-		// common->DPrintf( "NET: DBG %s - %s is synced: %s\n", spawnArgs.GetString( "classname", "" ), GetType()->classname, fl.networkSync ? "true" : "false" );
-		if ( spawnArgs.GetString( "classname", "" )[ 0 ] == '\0' && !fl.networkSync ) {
-			common->DPrintf( "NET: WRN %s entity, no classname, and no networkSync?\n", GetType()->classname );
-		}
-	}
-#endif
 
 	// every object will have a unique name
 	temp = spawnArgs.GetString( "name", va( "%s_%s_%d", GetClassname(), spawnArgs.GetString( "classname" ), entityNumber ) );

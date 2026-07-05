@@ -1688,19 +1688,12 @@ void idSessionLocal::TakeNotes( const char *p, bool extended ) {
 	if ( extended ) {
 		guiTakeNotes = uiManager->FindGui( "guis/takeNotes2.gui", true, false, true );
 
-#if 0
-		const char *people[] = {
-			"Nobody", "Adam", "Brandon", "David", "PHook", "Jay", "Jake",
-				"PatJ", "Brett", "Ted", "Darin", "Brian", "Sean"
-		};
-#else
 		const char *people[] = {
 			"Tim", "Kenneth", "Robert",
 			"Matt", "Mal", "Jerry", "Steve", "Pat",
 			"Xian", "Ed", "Fred", "James", "Eric", "Andy", "Seneca", "Patrick", "Kevin",
 			"MrElusive", "Jim", "Brian", "John", "Adrian", "Nobody"
 		};
-#endif
 		const int numPeople = sizeof( people ) / sizeof( people[0] );
 
 		idListGUI * guiList_people = uiManager->AllocListGUI();
@@ -2549,16 +2542,6 @@ void idSessionLocal::Frame() {
 	if ( com_editorActive && ( com_editors & ( EDITOR_RADIANT | EDITOR_GUI ) ) ) {
 		return;
 	}
-
-#if 0 // handled via Sys_GenerateEvents() -> handleMouseGrab()
-	// if the console is down, we don't need to hold
-	// the mouse cursor
-	if ( console->Active() || com_editorActive ) {
-		Sys_GrabMouseCursor( false );
-	} else {
-		Sys_GrabMouseCursor( true );
-	}
-#endif
 
 	// at startup, we may be backwards
 	if ( latchedTicNumber > com_ticNumber ) {

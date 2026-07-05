@@ -30,50 +30,6 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "renderer/tr_local.h"
 
-/*
-===============
-R_MeshCost
-===============
-*/
-#if 0
-#define	CACHE_SIZE	24
-#define	STALL_SIZE	8
-int	R_MeshCost( int numIndexes, glIndex_t *indexes ) {
-	int	inCache[CACHE_SIZE];
-	int	i, j, v;
-	int	c_stalls;
-	int	c_loads;
-	int	fifo;
-
-	for ( i = 0 ; i < CACHE_SIZE ; i++ ) {
-		inCache[i] = -1;
-	}
-
-	c_loads = 0;
-	c_stalls = 0;
-	fifo = 0;
-
-	for ( i = 0 ; i < numIndexes ; i++ ) {
-		v = indexes[i];
-		for ( j = 0 ; j < CACHE_SIZE ; j++ ) {
-			if ( inCache[ ( fifo + j ) % CACHE_SIZE ] == v ) {
-				break;
-			}
-		}
-		if ( j == CACHE_SIZE ) {
-			c_loads++;
-			inCache[ fifo % CACHE_SIZE ] = v;
-			fifo++;
-		} else if ( j < STALL_SIZE ) {
-			c_stalls++;
-		}
-	}
-
-	return c_loads;
-}
-#endif
-
-
 typedef struct vertRef_s {
 	struct vertRef_s	*next;
 	int			tri;

@@ -2301,13 +2301,6 @@ bool idWindow::Parse( idParser *src, bool rebuild) {
 
 	bool ret = true;
 
-	// attach a window wrapper to the window if the gui editor is running
-#ifdef ID_ALLOW_TOOLS
-	if ( com_editors & EDITOR_GUI ) {
-		new rvGEWindowWrapper ( this, rvGEWindowWrapper::WT_NORMAL );
-	}
-#endif
-
 	while( token != "}" ) {
 		// track what was parsed so we can maintain it for the guieditor
 		src->SetMarker ( );
@@ -2487,22 +2480,6 @@ bool idWindow::Parse( idParser *src, bool rebuild) {
 
 			// If we are in the gui editor then add the internal var to the
 			// the wrapper
-#ifdef ID_ALLOW_TOOLS
-			if ( com_editors & EDITOR_GUI ) {
-				idStr str;
-				idStr out;
-
-				// Grab the string from the last marker
-				src->GetStringFromMarker ( str, false );
-
-				// Parse it one more time to knock unwanted tabs out
-				idLexer src2( str, str.Length(), "", src->GetFlags() );
-				src2.ParseBracedSectionExact ( out, 1);
-
-				// Save the script
-				rvGEWindowWrapper::GetWrapper ( this )->GetScriptDict().Set ( va("onEvent %s", token.c_str()), out );
-			}
-#endif
 			namedEvents.Append(ev);
 		}
 		else if ( token == "onTime" ) {
@@ -2525,22 +2502,6 @@ bool idWindow::Parse( idParser *src, bool rebuild) {
 			// add the script to the wrappers script list
 			// If we are in the gui editor then add the internal var to the
 			// the wrapper
-#ifdef ID_ALLOW_TOOLS
-			if ( com_editors & EDITOR_GUI ) {
-				idStr str;
-				idStr out;
-
-				// Grab the string from the last marker
-				src->GetStringFromMarker ( str, false );
-
-				// Parse it one more time to knock unwanted tabs out
-				idLexer src2( str, str.Length(), "", src->GetFlags() );
-				src2.ParseBracedSectionExact ( out, 1);
-
-				// Save the script
-				rvGEWindowWrapper::GetWrapper ( this )->GetScriptDict().Set ( va("onTime %d", ev->time), out );
-			}
-#endif
 			// this is a timeline event
 			ev->pending = true;
 			timeLineEvents.Append(ev);
@@ -2561,15 +2522,6 @@ bool idWindow::Parse( idParser *src, bool rebuild) {
 			regList.AddReg(work, idRegister::FLOAT, src, this, varf);
 
 			// If we are in the gui editor then add the float to the defines
-#ifdef ID_ALLOW_TOOLS
-			if ( com_editors & EDITOR_GUI ) {
-				idStr str;
-
-				// Grab the string from the last marker and save it in the wrapper
-				src->GetStringFromMarker ( str, true );
-				rvGEWindowWrapper::GetWrapper ( this )->GetVariableDict().Set ( va("definefloat\t\"%s\"",token.c_str()), str );
-			}
-#endif
 		}
 		else if ( token == "definevec4" ) {
 			src->ReadToken(&token);
@@ -2590,15 +2542,6 @@ bool idWindow::Parse( idParser *src, bool rebuild) {
 
 			// store the original vec4 for the editor
 			// If we are in the gui editor then add the float to the defines
-#ifdef ID_ALLOW_TOOLS
-			if ( com_editors & EDITOR_GUI ) {
-				idStr str;
-
-				// Grab the string from the last marker and save it in the wrapper
-				src->GetStringFromMarker ( str, true );
-				rvGEWindowWrapper::GetWrapper ( this )->GetVariableDict().Set ( va("definevec4\t\"%s\"",token.c_str()), str );
-			}
-#endif
 		}
 		else if ( token == "float" ) {
 			src->ReadToken(&token);
@@ -2616,60 +2559,21 @@ bool idWindow::Parse( idParser *src, bool rebuild) {
 			regList.AddReg(work, idRegister::FLOAT, src, this, varf);
 
 			// If we are in the gui editor then add the float to the defines
-#ifdef ID_ALLOW_TOOLS
-			if ( com_editors & EDITOR_GUI ) {
-				idStr str;
-
-				// Grab the string from the last marker and save it in the wrapper
-				src->GetStringFromMarker ( str, true );
-				rvGEWindowWrapper::GetWrapper ( this )->GetVariableDict().Set ( va("float\t\"%s\"",token.c_str()), str );
-			}
-#endif
 		}
 		else if (ParseScriptEntry(token, src)) {
 			// add the script to the wrappers script list
 			// If we are in the gui editor then add the internal var to the
 			// the wrapper
-#ifdef ID_ALLOW_TOOLS
-			if ( com_editors & EDITOR_GUI ) {
-				idStr str;
-				idStr out;
-
-				// Grab the string from the last marker
-				src->GetStringFromMarker ( str, false );
-
-				// Parse it one more time to knock unwanted tabs out
-				idLexer src2( str, str.Length(), "", src->GetFlags() );
-				src2.ParseBracedSectionExact ( out, 1);
-
-				// Save the script
-				rvGEWindowWrapper::GetWrapper ( this )->GetScriptDict().Set ( token, out );
-			}
-#endif
 		} else if (ParseInternalVar(token, src)) {
 			// gui editor support
 			// If we are in the gui editor then add the internal var to the
 			// the wrapper
-#ifdef ID_ALLOW_TOOLS
-			if ( com_editors & EDITOR_GUI ) {
-				idStr str;
-				src->GetStringFromMarker ( str );
-				rvGEWindowWrapper::GetWrapper ( this )->SetStateKey ( token, str, false );
-			}
-#endif
 		}
 		else {
 			ParseRegEntry(token, src);
 			// hook into the main window parsing for the gui editor
 			// If we are in the gui editor then add the internal var to the
 			// the wrapper
-#ifdef ID_ALLOW_TOOLS
-			if ( com_editors & EDITOR_GUI ) {
-				idStr str;
-				src->GetStringFromMarker ( str );
-				rvGEWindowWrapper::GetWrapper ( this )->SetStateKey ( token, str, false );
-			}
-#endif
 		}
 		if ( !src->ReadToken( &token ) ) {
 			src->Error( "Unexpected end of file" );
@@ -2684,15 +2588,6 @@ bool idWindow::Parse( idParser *src, bool rebuild) {
 
 	SetupFromState();
 	PostParse();
-
-	// hook into the main window parsing for the gui editor
-	// If we are in the gui editor then add the internal var to the
-	// the wrapper
-#ifdef ID_ALLOW_TOOLS
-	if ( com_editors & EDITOR_GUI ) {
-		rvGEWindowWrapper::GetWrapper ( this )->Finish ( );
-	}
-#endif
 
 	return ret;
 }

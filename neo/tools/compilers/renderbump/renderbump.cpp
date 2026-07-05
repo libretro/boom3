@@ -118,65 +118,6 @@ static void SaveWindow( void ) {
 }
 
 /*
-===============
-ResizeWindow
-===============
-*/
-static void ResizeWindow( int width, int height ) {
-#if defined(WIN32) && defined(ID_ALLOW_TOOLS)
-	int	winWidth, winHeight;
-	if ( glConfig.isFullscreen ) {
-		winWidth = width;
-		winHeight = height;
-	} else {
-		RECT	r;
-
-		// adjust width and height for window border
-		r.bottom = height;
-		r.left = 0;
-		r.top = 0;
-		r.right = width;
-
-		AdjustWindowRect (&r, WINDOW_STYLE|WS_SYSMENU, FALSE);
-		winHeight = r.bottom - r.top;
-		winWidth = r.right - r.left;
-
-	}
-	SetWindowPos( win32.hWnd, HWND_TOP, 0, 0, winWidth, winHeight, SWP_SHOWWINDOW );
-
-	// FIXME: ??? qwglMakeCurrent( win32.hDC, win32.hGLRC );
-#endif
-}
-
-/*
-===============
-RestoreWindow
-===============
-*/
-static void RestoreWindow( void ) {
-#if defined(WIN32) && defined(ID_ALLOW_TOOLS)
-	int	winWidth, winHeight;
-	if ( glConfig.isFullscreen ) {
-		winWidth = oldWidth;
-		winHeight = oldHeight;
-	} else {
-		RECT	r;
-
-		// adjust width and height for window border
-		r.bottom = oldHeight;
-		r.left = 0;
-		r.top = 0;
-		r.right = oldWidth;
-
-		AdjustWindowRect (&r, WINDOW_STYLE|WS_SYSMENU, FALSE);
-		winHeight = r.bottom - r.top;
-		winWidth = r.right - r.left;
-	}
-	SetWindowPos( win32.hWnd, HWND_TOP, 0, 0, winWidth, winHeight, SWP_SHOWWINDOW );
-#endif
-}
-
-/*
 ================
 OutlineNormalMap
 
@@ -1413,7 +1354,6 @@ void RenderBumpFlat_f( const idCmdArgs &args ) {
 	bounds = mesh->bounds;
 
 	SaveWindow();
-	ResizeWindow( width, height );
 
 	// for small images, the viewport may be less than the minimum window
 	qglViewport( 0, 0, width, height );
@@ -1631,8 +1571,6 @@ void RenderBumpFlat_f( const idCmdArgs &args ) {
 	Mem_Free( buffer );
 	Mem_Free( sumBuffer );
 	Mem_Free( colorSumBuffer );
-
-	RestoreWindow();
 
 	// stop updating the screen as we print
 	common->SetRefreshOnPrint( false );

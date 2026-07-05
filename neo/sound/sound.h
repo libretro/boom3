@@ -67,8 +67,8 @@ typedef struct {
 	float					maxDistance;
 	float					volume;					// in dB, unfortunately.  Negative values get quieter
 	float					shakes;
-	int						soundShaderFlags;		// SSF_* bit flags
-	int						soundClass;				// for global fading of sounds
+	int					soundShaderFlags;		// SSF_* bit flags
+	int					soundClass;				// for global fading of sounds
 } soundShaderParms_t;
 
 
@@ -195,7 +195,7 @@ public:
 
 There can be multiple independent sound worlds, just as there can be multiple
 independent render worlds.  The prime example is the editor sound preview
-option existing simultaniously with a live game.
+option existing simultanously with a live game.
 ===============================================================================
 */
 

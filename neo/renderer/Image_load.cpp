@@ -417,16 +417,6 @@ GLenum idImage::SelectInternalFormat( const byte **dataPtrs, int numDataPtrs, in
 		return GL_INTENSITY8;	// single byte for all channels
 	}
 
-#if 0
-	// we don't support alpha textures any more, because there
-	// is a discrepancy in the definition of TEX_ENV_COMBINE that
-	// causes them to be treated as 0 0 0 A, instead of 1 1 1 A as
-	// normal texture modulation treats them
-	if ( rgbAnd == 255 ) {
-		return GL_ALPHA8;		// single byte, only alpha
-	}
-#endif
-
 	if ( minimumDepth == TD_HIGH_QUALITY ) {
 		return GL_RGBA8;	// four bytes
 	}
@@ -1561,16 +1551,6 @@ bool idImage::CheckPrecompressedImage( bool fullLoad ) {
 		return false;
 	}
 
-#if 0 // DG: no idea what this was exactly meant to achieve, but it's definitely a bad idea:
-	//     we might try to load the lower mipmap levels of the image, but we'd still have
-	//     to load the whole .dds file first.
-	//     What's even weirder: idImage::ShouldImageBePartiallyCached() returns false
-	//     if the file size is LESS THAN image_cacheMinK * 1024...
-	if ( !fullLoad && len > globalImages->image_cacheMinK.GetInteger() * 1024 ) {
-		len = globalImages->image_cacheMinK.GetInteger() * 1024;
-	}
-#endif
-
 	byte *data = (byte *)R_StaticAlloc( len );
 
 	f->Read( data, len );
@@ -2166,11 +2146,6 @@ void idImage::CopyFramebuffer( int x, int y, int imageWidth, int imageHeight, bo
 			// this might be a 16+ meg allocation, which could fail on _alloca
 			junk = (byte *)Mem_Alloc( potWidth * potHeight * 4 );
 			memset( junk, 0, potWidth * potHeight * 4 );		//!@#
-#if 0 // Disabling because it's unnecessary and introduces a green strip on edge of _currentRender
-			for ( int i = 0 ; i < potWidth * potHeight * 4 ; i+=4 ) {
-				junk[i+1] = 255;
-			}
-#endif
 			qglTexImage2D( GL_TEXTURE_2D, 0, GL_RGB, potWidth, potHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, junk );
 			Mem_Free( junk );
 

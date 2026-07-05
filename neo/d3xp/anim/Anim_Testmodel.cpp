@@ -540,23 +540,7 @@ void idTestModel::TestAnim( const idCmdArgs &args ) {
 	//newanim = NULL;
 
 	name = args.Argv( 1 );
-#if 0
-	if ( strstr( name, ".ma" ) || strstr( name, ".mb" ) ) {
-		const idMD5Anim	*md5anims[ ANIM_MaxSyncedAnims ];
-		idModelExport exporter;
-		exporter.ExportAnim( name );
-		name.SetFileExtension( MD5_ANIM_EXT );
-		md5anims[ 0 ] = animationLib.GetAnim( name );
-		if ( md5anims[ 0 ] ) {
-			customAnim.SetAnim( animator.ModelDef(), name, name, 1, md5anims );
-			newanim = &customAnim;
-		}
-	} else {
-		animNum = animator.GetAnim( name );
-	}
-#else
 	animNum = animator.GetAnim( name );
-#endif
 
 	if ( !animNum ) {
 		gameLocal.Printf( "Animation '%s' not found.\n", name.c_str() );

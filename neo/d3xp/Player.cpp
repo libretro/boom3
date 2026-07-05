@@ -8708,10 +8708,6 @@ void idPlayer::CalculateFirstPersonView( void ) {
 	} else {
 		// offset for local bobbing and kicks
 		GetViewPos( firstPersonViewOrigin, firstPersonViewAxis );
-#if 0
-		// shakefrom sound stuff only happens in first person
-		firstPersonViewAxis = firstPersonViewAxis * playerView.ShakeAxis();
-#endif
 	}
 }
 

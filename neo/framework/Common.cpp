@@ -488,16 +488,9 @@ void idCommonLocal::VPrintf( const char *fmt, va_list args ) {
 			// only echo to dedicated console and early console when debugger is not running so no 
 			// deadlocks occur if engine functions called from the debuggerthread trace stuff..
 			Sys_Printf( "%s", msg );
-	} else {
+	}
+	else
 		Sys_Printf( "%s", msg );
-	}
-#if 0	// !@#
-#if defined(_DEBUG) && defined(WIN32)
-	if ( strlen( msg ) < 512 ) {
-		TRACE( msg );
-	}
-#endif
-#endif
 
 	// don't trigger any updates if we are in the process of doing a fatal error
 	if ( com_errorEntered != ERP_FATAL ) {
@@ -855,19 +848,9 @@ idCommonLocal::Quit
 ==================
 */
 void idCommonLocal::Quit( void ) {
-
-#ifdef ID_ALLOW_TOOLS
-	if ( com_editors & EDITOR_RADIANT ) {
-		RadiantInit();
-		return;
-	}
-#endif
-
 	// don't try to shutdown if we are in a recursive error
-	if ( !com_errorEntered ) {
+	if ( !com_errorEntered )
 		Shutdown();
-	}
-
 	Sys_Quit();
 }
 
@@ -1065,17 +1048,6 @@ idCommonLocal::InitTool
 =================
 */
 void idCommonLocal::InitTool( const toolFlag_t tool, const idDict *dict ) {
-#ifdef ID_ALLOW_TOOLS
-	if ( tool & EDITOR_SOUND ) {
-		SoundEditorInit( dict );
-	} else if ( tool & EDITOR_LIGHT ) {
-		LightEditorInit( dict );
-	} else if ( tool & EDITOR_PARTICLE ) {
-		ParticleEditorInit( dict );
-	} else if ( tool & EDITOR_AF ) {
-		AFEditorInit( dict );
-	}
-#endif
 }
 
 /*
@@ -1215,60 +1187,6 @@ int	idCommonLocal::KeyState( int key ) {
 	return usercmdGen->KeyState(key);
 }
 
-//============================================================================
-
-#ifdef ID_ALLOW_TOOLS
-/*
-==================
-Com_Editor_f
-
-  we can start the editor dynamically, but we won't ever get back
-==================
-*/
-static void Com_Editor_f( const idCmdArgs &args ) {
-	RadiantInit();
-}
-
-/*
-=============
-Com_ScriptDebugger_f
-=============
-*/
-static void Com_ScriptDebugger_f( const idCmdArgs &args ) {
-	// Make sure it wasnt on the command line
-	if ( !( com_editors & EDITOR_DEBUGGER ) ) {
-		
-		//start debugger server if needed
-		if ( !com_enableDebuggerServer.GetBool() )
-			com_enableDebuggerServer.SetBool( true );
-
-		//start debugger client.
-		DebuggerClientLaunch();
-
-	}
-}
-
-/*
-=============
-Com_EditGUIs_f
-=============
-*/
-static void Com_EditGUIs_f( const idCmdArgs &args ) {
-	GUIEditorInit();
-}
-
-/*
-=============
-Com_MaterialEditor_f
-=============
-*/
-static void Com_MaterialEditor_f( const idCmdArgs &args ) {
-	// Turn off sounds
-	soundSystem->SetMute( true );
-	MaterialEditorInit();
-}
-#endif // ID_ALLOW_TOOLS
-
 /*
 ============
 idCmdSystemLocal::PrintMemInfo_f
@@ -1309,73 +1227,6 @@ static void PrintMemInfo_f( const idCmdArgs &args ) {
 
 	fileSystem->CloseFile( f );
 }
-
-#ifdef ID_ALLOW_TOOLS
-/*
-==================
-Com_EditLights_f
-==================
-*/
-static void Com_EditLights_f( const idCmdArgs &args ) {
-	LightEditorInit( NULL );
-	cvarSystem->SetCVarInteger( "g_editEntityMode", 1 );
-}
-
-/*
-==================
-Com_EditSounds_f
-==================
-*/
-static void Com_EditSounds_f( const idCmdArgs &args ) {
-	SoundEditorInit( NULL );
-	cvarSystem->SetCVarInteger( "g_editEntityMode", 2 );
-}
-
-/*
-==================
-Com_EditDecls_f
-==================
-*/
-static void Com_EditDecls_f( const idCmdArgs &args ) {
-	DeclBrowserInit( NULL );
-}
-
-/*
-==================
-Com_EditAFs_f
-==================
-*/
-static void Com_EditAFs_f( const idCmdArgs &args ) {
-	AFEditorInit( NULL );
-}
-
-/*
-==================
-Com_EditParticles_f
-==================
-*/
-static void Com_EditParticles_f( const idCmdArgs &args ) {
-	ParticleEditorInit( NULL );
-}
-
-/*
-==================
-Com_EditScripts_f
-==================
-*/
-static void Com_EditScripts_f( const idCmdArgs &args ) {
-	ScriptEditorInit( NULL );
-}
-
-/*
-==================
-Com_EditPDAs_f
-==================
-*/
-static void Com_EditPDAs_f( const idCmdArgs &args ) {
-	PDAEditorInit( NULL );
-}
-#endif // ID_ALLOW_TOOLS
 
 /*
 ==================
@@ -2415,23 +2266,6 @@ void idCommonLocal::InitCommands( void ) {
 	cmdSystem->AddCommand( "roq", RoQFileEncode_f, CMD_FL_TOOL, "encodes a roq file" );
 #endif
 
-#ifdef ID_ALLOW_TOOLS
-	// editors
-	cmdSystem->AddCommand( "editor", Com_Editor_f, CMD_FL_TOOL, "launches the level editor Radiant" );
-	cmdSystem->AddCommand( "editLights", Com_EditLights_f, CMD_FL_TOOL, "launches the in-game Light Editor" );
-	cmdSystem->AddCommand( "editSounds", Com_EditSounds_f, CMD_FL_TOOL, "launches the in-game Sound Editor" );
-	cmdSystem->AddCommand( "editDecls", Com_EditDecls_f, CMD_FL_TOOL, "launches the in-game Declaration Editor" );
-	cmdSystem->AddCommand( "editAFs", Com_EditAFs_f, CMD_FL_TOOL, "launches the in-game Articulated Figure Editor" );
-	cmdSystem->AddCommand( "editParticles", Com_EditParticles_f, CMD_FL_TOOL, "launches the in-game Particle Editor" );
-	cmdSystem->AddCommand( "editScripts", Com_EditScripts_f, CMD_FL_TOOL, "launches the in-game Script Editor" );
-	cmdSystem->AddCommand( "editGUIs", Com_EditGUIs_f, CMD_FL_TOOL, "launches the GUI Editor" );
-	cmdSystem->AddCommand( "editPDAs", Com_EditPDAs_f, CMD_FL_TOOL, "launches the in-game PDA Editor" );
-	cmdSystem->AddCommand( "debugger", Com_ScriptDebugger_f, CMD_FL_TOOL, "launches the Script Debugger" );
-
-	//BSM Nerve: Add support for the material editor
-	cmdSystem->AddCommand( "materialEditor", Com_MaterialEditor_f, CMD_FL_TOOL, "launches the Material Editor" );
-#endif
-
 	cmdSystem->AddCommand( "printMemInfo", PrintMemInfo_f, CMD_FL_SYSTEM, "prints memory debugging data" );
 
 	// idLib commands
@@ -3233,11 +3067,9 @@ void idCommonLocal::InitGame( void ) {
 
 #ifdef	ID_DEDICATED
 	idAsyncNetwork::server.InitPort();
-	cvarSystem->SetCVarBool( "s_noSound", true );
 #else
 	if ( idAsyncNetwork::serverDedicated.GetInteger() == 1 ) {
 		idAsyncNetwork::server.InitPort();
-		cvarSystem->SetCVarBool( "s_noSound", true );
 	} else {
 		// init OpenGL, which will open a window and connect sound and input hardware
 		PrintLoadingMessage( common->GetLanguageDict()->GetString( "#str_04348" ) );

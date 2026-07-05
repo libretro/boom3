@@ -402,50 +402,6 @@ void idCameraAnim::LoadAnim( void ) {
 		camera[ i ].fov = parser.ParseFloat();
 	}
 	parser.ExpectTokenString( "}" );
-
-#if 0
-	if ( !gameLocal.GetLocalPlayer() ) {
-		return;
-	}
-
-	idDebugGraph gGraph;
-	idDebugGraph tGraph;
-	idDebugGraph qGraph;
-	idDebugGraph dtGraph;
-	idDebugGraph dqGraph;
-	gGraph.SetNumSamples( numFrames );
-	tGraph.SetNumSamples( numFrames );
-	qGraph.SetNumSamples( numFrames );
-	dtGraph.SetNumSamples( numFrames );
-	dqGraph.SetNumSamples( numFrames );
-
-	gameLocal.Printf( "\n\ndelta vec:\n" );
-	float diff_t, last_t, t;
-	float diff_q, last_q, q;
-	diff_t = last_t = 0.0f;
-	diff_q = last_q = 0.0f;
-	for( i = 1; i < numFrames; i++ ) {
-		t = ( camera[ i ].t - camera[ i - 1 ].t ).Length();
-		q = ( camera[ i ].q.ToQuat() - camera[ i - 1 ].q.ToQuat() ).Length();
-		diff_t = t - last_t;
-		diff_q = q - last_q;
-		gGraph.AddValue( ( i % 10 ) == 0 );
-		tGraph.AddValue( t );
-		qGraph.AddValue( q );
-		dtGraph.AddValue( diff_t );
-		dqGraph.AddValue( diff_q );
-
-		gameLocal.Printf( "%d: %.8f  :  %.8f,     %.8f  :  %.8f\n", i, t, diff_t, q, diff_q  );
-		last_t = t;
-		last_q = q;
-	}
-
-	gGraph.Draw( colorBlue, 300.0f );
-	tGraph.Draw( colorOrange, 60.0f );
-	dtGraph.Draw( colorYellow, 6000.0f );
-	qGraph.Draw( colorGreen, 60.0f );
-	dqGraph.Draw( colorCyan, 6000.0f );
-#endif
 }
 
 /*
@@ -705,20 +661,6 @@ void idCameraAnim::GetViewParms( renderView_t *view ) {
 
 	// setup the pvs for this frame
 	UpdatePVSAreas( view->vieworg );
-
-#if 0
-	static int lastFrame = 0;
-	static idVec3 lastFrameVec( 0.0f, 0.0f, 0.0f );
-	if ( gameLocal.time != lastFrame ) {
-		gameRenderWorld->DebugBounds( colorCyan, idBounds( view->vieworg ).Expand( 16.0f ), vec3_origin, gameLocal.msec );
-		gameRenderWorld->DebugLine( colorRed, view->vieworg, view->vieworg + idVec3( 0.0f, 0.0f, 2.0f ), 10000, false );
-		gameRenderWorld->DebugLine( colorCyan, lastFrameVec, view->vieworg, 10000, false );
-		gameRenderWorld->DebugLine( colorYellow, view->vieworg + view->viewaxis[ 0 ] * 64.0f, view->vieworg + view->viewaxis[ 0 ] * 66.0f, 10000, false );
-		gameRenderWorld->DebugLine( colorOrange, view->vieworg + view->viewaxis[ 0 ] * 64.0f, view->vieworg + view->viewaxis[ 0 ] * 64.0f + idVec3( 0.0f, 0.0f, 2.0f ), 10000, false );
-		lastFrameVec = view->vieworg;
-		lastFrame = gameLocal.time;
-	}
-#endif
 
 	if ( g_showcamerainfo.GetBool() ) {
 		gameLocal.Printf( "^5Frame: ^7%d/%d\n\n\n", realFrame + 1, camera.Num() - cameraCuts.Num() );

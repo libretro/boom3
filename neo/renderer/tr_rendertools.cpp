@@ -502,25 +502,6 @@ void RB_ShowDepthBuffer( void ) {
 		memset( depthReadback, 0, glConfig.vidWidth * glConfig.vidHeight*4 );
 
 		qglReadPixels( 0, 0, glConfig.vidWidth, glConfig.vidHeight, GL_DEPTH_COMPONENT , GL_FLOAT, depthReadback );
-#if 0 // the following looks better, but is different from the !r_skipDepthCapture.GetBool() case above
-	  // (which draws the captured depth buffer unaltered, unless we add a shader)
-		for ( int i = 0, n=glConfig.vidWidth * glConfig.vidHeight; i < n ; i++ ) {
-			float& px = ((float *)depthReadback)[i];
-			float d = px;
-			// the following calculation is based on how the TDM soft particle shader translates the depth value to doom units
-
-			// 0.9995 is practically infinite distance, clamping to 0.9994 clamps to max 30k doom units,
-			// which is more than enough (and prevents a potential division by 0 below)
-			d = (d < 0.9994f) ? d : 0.9994f;
-
-			d = d - 0.9995f; // d is now negative, between -0.0001 and -0.9995
-			d = 1.0f / d;
-			// d *= -3.0f; // this would translate d to distance in doom units, doing it together with the next step
-
-			d *= (-3.0f / 3000.0f); // now 3000 units is 1.0, i.e. completely white (=> more details for closer distances)
-			px = d;
-		}
-#endif
 		qglDrawPixels( glConfig.vidWidth, glConfig.vidHeight, GL_LUMINANCE, GL_FLOAT, depthReadback );
 		R_StaticFree( depthReadback );
 	}
@@ -1264,86 +1245,6 @@ static void RB_ShowNormals( drawSurf_t **drawSurfs, int numDrawSurfs ) {
 
 	qglEnable( GL_STENCIL_TEST );
 }
-
-
-/*
-=====================
-RB_ShowNormals
-
-Debugging tool
-=====================
-*/
-#if 0
-static void RB_AltShowNormals( drawSurf_t **drawSurfs, int numDrawSurfs ) {
-	int			i, j, k;
-	drawSurf_t	*drawSurf;
-	idVec3		end;
-	const srfTriangles_t	*tri;
-
-	if ( r_showNormals.GetFloat() == 0.0f ) {
-		return;
-	}
-
-	GL_State( GLS_DEFAULT );
-	qglDisableClientState( GL_TEXTURE_COORD_ARRAY );
-
-	globalImages->BindNull();
-	qglDisable( GL_STENCIL_TEST );
-	qglDisable( GL_DEPTH_TEST );
-
-	for ( i = 0 ; i < numDrawSurfs ; i++ ) {
-		drawSurf = drawSurfs[i];
-
-		RB_SimpleSurfaceSetup( drawSurf );
-
-		tri = drawSurf->geo;
-		qglBegin( GL_LINES );
-		for ( j = 0 ; j < tri->numIndexes ; j += 3 ) {
-			const idDrawVert *v[3];
-			idVec3		mid;
-
-			v[0] = &tri->verts[tri->indexes[j+0]];
-			v[1] = &tri->verts[tri->indexes[j+1]];
-			v[2] = &tri->verts[tri->indexes[j+2]];
-
-			// make the midpoint slightly above the triangle
-			mid = ( v[0]->xyz + v[1]->xyz + v[2]->xyz ) * ( 1.0f / 3.0f );
-			mid += 0.1f * tri->facePlanes[ j / 3 ].Normal();
-
-			for ( k = 0 ; k < 3 ; k++ ) {
-				idVec3	pos;
-
-				pos = ( mid + v[k]->xyz * 3.0f ) * 0.25f;
-
-				qglColor3f( 0, 0, 1 );
-				qglVertex3fv( pos.ToFloatPtr() );
-				VectorMA( pos, r_showNormals.GetFloat(), v[k]->normal, end );
-				qglVertex3fv( end.ToFloatPtr() );
-
-				qglColor3f( 1, 0, 0 );
-				qglVertex3fv( pos.ToFloatPtr() );
-				VectorMA( pos, r_showNormals.GetFloat(), v[k]->tangents[0], end );
-				qglVertex3fv( end.ToFloatPtr() );
-
-				qglColor3f( 0, 1, 0 );
-				qglVertex3fv( pos.ToFloatPtr() );
-				VectorMA( pos, r_showNormals.GetFloat(), v[k]->tangents[1], end );
-				qglVertex3fv( end.ToFloatPtr() );
-
-				qglColor3f( 1, 1, 1 );
-				qglVertex3fv( pos.ToFloatPtr() );
-				qglVertex3fv( v[k]->xyz.ToFloatPtr() );
-			}
-		}
-		qglEnd();
-	}
-
-	qglEnable( GL_DEPTH_TEST );
-	qglEnable( GL_STENCIL_TEST );
-}
-#endif
-
-
 
 /*
 =====================

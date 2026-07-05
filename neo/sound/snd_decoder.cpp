@@ -53,40 +53,6 @@ idDynamicBlockAlloc<byte, 1<<20, 128>		decoderMemoryAllocator;
 
 const int MIN_OGGVORBIS_MEMORY				= 768 * 1024;
 
-// DG: this was only used with original Doom3's patched libvorbis
-// TODO: could use it in stb_vorbis setup_malloc() etc
-#if 0
-extern "C" {
-	void *_decoder_malloc( size_t size );
-	void *_decoder_calloc( size_t num, size_t size );
-	void *_decoder_realloc( void *memblock, size_t size );
-	void _decoder_free( void *memblock );
-}
-
-void *_decoder_malloc( size_t size ) {
-	void *ptr = decoderMemoryAllocator.Alloc( size );
-	assert( size == 0 || ptr != NULL );
-	return ptr;
-}
-
-void *_decoder_calloc( size_t num, size_t size ) {
-	void *ptr = decoderMemoryAllocator.Alloc( num * size );
-	assert( ( num * size ) == 0 || ptr != NULL );
-	memset( ptr, 0, num * size );
-	return ptr;
-}
-
-void *_decoder_realloc( void *memblock, size_t size ) {
-	void *ptr = decoderMemoryAllocator.Resize( (byte *)memblock, size );
-	assert( size == 0 || ptr != NULL );
-	return ptr;
-}
-
-void _decoder_free( void *memblock ) {
-	decoderMemoryAllocator.Free( (byte *)memblock );
-}
-#endif
-
 static const char* my_stbv_strerror(int stbVorbisError)
 {
 	switch(stbVorbisError)
@@ -188,8 +154,7 @@ int idWaveFile::OpenOGG( const char* strFileName, waveformatex_t *pwfx ) {
 	mdwSize = numSamples * stbvi.channels;	// pcm samples * num channels
 	mbIsReadingFromMemory = false;
 
-	if ( idSoundSystemLocal::s_realTimeDecoding.GetBool() ) {
-
+	{
 		stb_vorbis_close( ov );
 		fileSystem->CloseFile( mhmmio );
 		mhmmio = NULL;
@@ -199,13 +164,6 @@ int idWaveFile::OpenOGG( const char* strFileName, waveformatex_t *pwfx ) {
 		mhmmio = fileSystem->OpenFileRead( strFileName );
 		mMemSize = mhmmio->Length();
 
-	} else {
-
-		ogg = ov;
-		oggData = oggFileData;
-
-		mpwfx.Format.wFormatTag = WAVE_FORMAT_TAG_PCM;
-		mMemSize = mdwSize * sizeof( short );
 	}
 
 	memcpy( pwfx, &mpwfx, sizeof( waveformatex_t ) );
@@ -318,7 +276,7 @@ idSampleDecoder::Init
 void idSampleDecoder::Init( void ) {
 	decoderMemoryAllocator.Init();
 	decoderMemoryAllocator.SetLockMemory( true );
-	decoderMemoryAllocator.SetFixedBlocks( idSoundSystemLocal::s_realTimeDecoding.GetBool() ? 10 : 1 );
+	decoderMemoryAllocator.SetFixedBlocks( 10 );
 }
 
 /*
