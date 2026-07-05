@@ -925,12 +925,19 @@ void idInteraction::CreateInteraction( const idRenderModel *model ) {
 			// instead of popping once per game tic. Never engages at 60 fps
 			// (lightInterpolated requires a sub-tic fraction).
 			const viewLight_t *ivl = ( lightDef->viewCount == tr.viewCount ) ? lightDef->viewLight : NULL;
-			if ( r_perFrameShadowVolumes.GetBool() && ivl && ivl->lightInterpolated && sint->shadowTris ) {
-				R_FreeStaticTriSurf( sint->shadowTris );
-				sint->shadowTris = NULL;
-				R_FreeInteractionCullInfo( sint->cullInfo );
-			}
-			if ( r_perFrameShadowVolumes.GetBool() && ivl && ivl->lightInterpolated ) {
+			bool perFrameShadow = r_perFrameShadowVolumes.GetBool() && ivl && ivl->lightInterpolated;
+			srfCullInfo_t frameCullInfo;
+			if ( perFrameShadow ) {
+				if ( sint->shadowTris ) {
+					R_FreeStaticTriSurf( sint->shadowTris );
+					sint->shadowTris = NULL;
+				}
+				// the shadow rebuild must compute FACING for the interpolated
+				// origin, but the interaction's cullInfo also backs the
+				// surviving lightTris (built at the tic origin) - so give the
+				// rebuild its own temporary cullInfo instead of freeing the
+				// interaction's, keeping both consumers internally coherent
+				memset( &frameCullInfo, 0, sizeof( frameCullInfo ) );
 				r_shadowGenOriginOverride = &ivl->globalLightOrigin;
 			}
 
@@ -938,7 +945,12 @@ void idInteraction::CreateInteraction( const idRenderModel *model ) {
 			if ( lightDef->parms.prelightModel == NULL || !model->IsStaticWorldModel() || !r_useOptimizedShadows.GetBool() ) {
 
 				// this is the only place during gameplay (outside the utilities) that R_CreateShadowVolume() is called
-				sint->shadowTris = R_CreateShadowVolume( entityDef, tri, lightDef, shadowGen, sint->cullInfo );
+				sint->shadowTris = R_CreateShadowVolume( entityDef, tri, lightDef, shadowGen,
+					perFrameShadow ? frameCullInfo : sint->cullInfo );
+				if ( perFrameShadow ) {
+					R_FreeInteractionCullInfo( frameCullInfo );
+					r_shadowGenOriginOverride = NULL;
+				}
 				if ( sint->shadowTris ) {
 					if ( shader->Coverage() != MC_OPAQUE || ( !r_skipSuppress.GetBool() && entityDef->parms.suppressSurfaceInViewID ) ) {
 						// if any surface is a shadow-casting perforated or translucent surface, or the
