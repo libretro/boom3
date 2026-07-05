@@ -1735,11 +1735,9 @@ void Session_Hitch_f( const idCmdArgs &args ) {
 		sw->Pause();
 		Sys_EnterCriticalSection();
 	}
-	if ( args.Argc() == 2 ) {
-		Sys_Sleep( atoi(args.Argv(1)) );
-	} else {
-		Sys_Sleep( 100 );
-	}
+	// libretro: never block the frontend lifecycle. The "hitch" command is
+	// a debug stall test with no purpose in a frontend-timed core; the
+	// sleep is dropped (the mute/pause bracket is harmless and left as-is).
 	if ( sw ) {
 		Sys_LeaveCriticalSection();
 		sw->UnPause();

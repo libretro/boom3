@@ -1567,13 +1567,10 @@ void idSessionLocal::HandleNoteCommands( const char *menuCommand ) {
 	if ( idStr::Icmp( menuCommand,  "note" ) == 0 && mapSpawned ) {
 
 		idFile *file = NULL;
-		for ( int tries = 0; tries < 10; tries++ ) {
-			file = fileSystem->OpenExplicitFileRead( NOTEDATFILE );
-			if ( file != NULL ) {
-				break;
-			}
-			Sys_Sleep( 500 );
-		}
+		// libretro: no blocking sleeps. Dev-only viewnotes path; a single
+		// open attempt is sufficient (the retry+sleep never helped in
+		// practice and would stall the frontend).
+		file = fileSystem->OpenExplicitFileRead( NOTEDATFILE );
 		int noteNumber = 1000;
 		if ( file ) {
 			file->Read( &noteNumber, 4 );
@@ -1655,13 +1652,7 @@ void idSessionLocal::HandleNoteCommands( const char *menuCommand ) {
 		}
 		noteNumber++;
 
-		for ( int tries = 0; tries < 10; tries++ ) {
-			file = fileSystem->OpenExplicitFileWrite( "p:/viewnotes/notenumber.dat" );
-			if ( file != NULL ) {
-				break;
-			}
-			Sys_Sleep( 500 );
-		}
+		file = fileSystem->OpenExplicitFileWrite( "p:/viewnotes/notenumber.dat" );
 		if ( file ) {
 			file->Write( &noteNumber, 4 );
 			fileSystem->CloseFile( file );
