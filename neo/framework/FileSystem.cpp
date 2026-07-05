@@ -2928,11 +2928,23 @@ idFile_InZip * idFileSystemLocal::ReadFileFromZip( pack_t *pak, fileInPack_t *pa
 	// relativePath == pakFile->name according to FilenameCompare()
 	// pakFile->Pos is position of that file within the zip
 
+	// The offset is set on the pak's SHARED handle and then unzReOpen()
+	// clones a fresh, independent handle from it - so the SetOffset+ReOpen
+	// pair races if two threads read from the same pak at once (the async
+	// loader does exactly this). Serialize just that pair; the returned
+	// handle 'uf' is independent, so the slow inflate afterwards runs
+	// lock-free and concurrently. Single-threaded, this lock is always
+	// uncontended and changes nothing.
+	Sys_EnterCriticalSection( CRITICAL_SECTION_THREE );
+
 	// set position in pk4 file to the file (in the zip/pk4) we want a handle on
 	unzSetOffset64( pak->handle, pakFile->pos );
 
 	// clone handle and assign a new internal filestream to zip file to it
 	unzFile uf = unzReOpen( pak->pakFilename, pak->handle );
+
+	Sys_LeaveCriticalSection( CRITICAL_SECTION_THREE );
+
 	if ( uf == NULL ) {
 		common->FatalError( "Couldn't reopen %s", pak->pakFilename.c_str() );
 	}
