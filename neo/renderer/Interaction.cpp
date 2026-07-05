@@ -780,8 +780,12 @@ bool idInteraction::CullInteractionByViewFrustum( const idFrustum &viewFrustum )
 		// same coherence rule as AddActiveInteraction: per-view culling must
 		// use the origin the backend renders with (interpolated for moving
 		// lights), or borderline interactions pop in and out
+		// lightDef->viewLight points into per-frame memory and is only valid
+		// when the light is part of the CURRENT view - otherwise it dangles
+		// into a freed frame. Guard with viewCount before trusting it.
 		frustum.FromProjection( idBox( entityDef->referenceBounds, entityDef->parms.origin, entityDef->parms.axis ),
-			lightDef->viewLight ? lightDef->viewLight->globalLightOrigin : lightDef->globalLightOrigin, MAX_WORLD_SIZE );
+			( lightDef->viewCount == tr.viewCount && lightDef->viewLight )
+				? lightDef->viewLight->globalLightOrigin : lightDef->globalLightOrigin, MAX_WORLD_SIZE );
 
 		if ( !frustum.IsValid() ) {
 			frustumState = idInteraction::FRUSTUM_INVALID;

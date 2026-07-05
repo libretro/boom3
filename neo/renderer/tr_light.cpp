@@ -311,17 +311,6 @@ viewEntity_t *R_SetEntityDefViewEntity( idRenderEntityLocal *def ) {
 	vModel->modelDepthHack = def->parms.modelDepthHack;
 	vModel->weaponDepthHack = def->parms.weaponDepthHack;
 
-	// TEMP DIAG: trace the view weapon's interpolation inputs
-	if ( def->parms.weaponDepthHack ) {
-		extern volatile int com_ticNumber;
-		bool lerpActive = ( tr_ticFraction > 0.0f
-			&& def->curTransformTic == com_ticNumber
-			&& def->curTransformTic - def->prevTransformTic == 1 );
-		common->Printf( "WDIAG tic=%d frac=%.4f prevTic=%d curTic=%d act=%d prev=(%.2f %.2f %.2f) cur=(%.2f %.2f %.2f)\n",
-			com_ticNumber, tr_ticFraction, def->prevTransformTic, def->curTransformTic, (int)lerpActive,
-			def->prevTransformOrigin.x, def->prevTransformOrigin.y, def->prevTransformOrigin.z,
-			def->parms.origin.x, def->parms.origin.y, def->parms.origin.z );
-	}
 
 	// framerate independence stage 2: interpolate the render transform
 	// between the previous and current game tic by the sub-tic fraction.
@@ -722,7 +711,8 @@ void R_LinkLightSurf( const drawSurf_t **link, const srfTriangles_t *tri, const 
 
 		// calculate the specular coordinates if we aren't using vertex programs
 		if ( !tr.backEndRendererHasVertexPrograms && !r_skipSpecular.GetBool() ) {
-			R_SpecularTexGen( drawSurf, light->viewLight ? light->viewLight->globalLightOrigin : light->globalLightOrigin, tr.viewDef->renderView.vieworg );
+			R_SpecularTexGen( drawSurf, ( light->viewCount == tr.viewCount && light->viewLight )
+				? light->viewLight->globalLightOrigin : light->globalLightOrigin, tr.viewDef->renderView.vieworg );
 			// if we failed to allocate space for the specular calculations, drop the surface
 			if ( !drawSurf->dynamicTexCoords ) {
 				return;
