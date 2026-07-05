@@ -174,8 +174,6 @@ else
    GL_LIB := -lopengl32
    LDFLAGS += -lwsock32 -lws2_32
    LIBS :=
-   CFLAGS += -DAL_LIBTYPE_STATIC -DALC_LIBTYPE_STATIC
-   CXXFLAGS += -DAL_LIBTYPE_STATIC -DALC_LIBTYPE_STATIC
 endif
 
 # 1. If CROSS_COMPILE is a real prefix (contains a dash), derive COMPILE_ARCH from it
