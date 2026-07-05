@@ -325,6 +325,11 @@ void idSessionLocal::SetMainMenuGuiVars( void ) {
 	// row. Done in the loaded window tree so no game data is modified.
 	guiMainMenu->SetChildWinVarVal( "OS3", "visible", "0" );
 
+	// Likewise, vsync is the frontend's responsibility, not the core's, so
+	// the "Vertical Sync" row in Advanced Options (windowDef ADV5, bound to
+	// r_swapInterval) does nothing here - hide it too.
+	guiMainMenu->SetChildWinVarVal( "ADV5", "visible", "0" );
+
 	SetMainMenuSkin();
 	// Mods Menu
 	SetModsMenuGuiVars();
