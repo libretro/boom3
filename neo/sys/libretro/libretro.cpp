@@ -1042,6 +1042,45 @@ static void audio_upload_frame(void)
 	}
 }
 
+/* Upload one frame's worth of silence to the frontend without mixing the
+ * sound world (so the deterministic sound clock is NOT advanced) and
+ * without disturbing the in-game audio pacing accumulators. Used to keep
+ * the audio buffer fed during a synchronous map load so the frontend does
+ * not underrun. Independent accumulators mean the post-load audio stream
+ * is bit-identical to a build without this path. */
+static int load_rem_acc = 0;
+static int load_frame_carry = 0;
+static void audio_upload_silence(void)
+{
+	if (first_boot)
+		return;
+
+	unsigned fps = framerate > 0 ? framerate : 60;
+
+	load_rem_acc += SAMPLE_RATE;
+	int want = load_rem_acc / (int)fps;
+	load_rem_acc -= want * (int)fps;
+
+	want += load_frame_carry;
+	int frames = want & ~7;
+	load_frame_carry = want - frames;
+
+	if (frames <= 0)
+		return;
+	if (frames > MAX_FRAME_SAMPLES)
+		frames = MAX_FRAME_SAMPLES;
+
+	if (audio_output_float) {
+		static float zeroF[MAX_FRAME_SAMPLES * MAX_CHANNELS];
+		memset(zeroF, 0, frames * MAX_CHANNELS * sizeof(float));
+		audio_float_cb.batch(zeroF, frames);
+	} else {
+		static int16_t zeroS[MAX_FRAME_SAMPLES * MAX_CHANNELS];
+		memset(zeroS, 0, frames * MAX_CHANNELS * sizeof(int16_t));
+		audio_batch_cb(zeroS, frames);
+	}
+}
+
 static bool context_framebuffer_lock(void *data)
 {
     return false;
@@ -1333,6 +1372,26 @@ void GLimp_SwapBuffers() {
    if (!libretro_shared_context)
       glsm_ctl(GLSM_CTL_STATE_BIND, NULL);
 	glBindFramebuffer(RARCH_GL_FRAMEBUFFER, hw_render.get_current_framebuffer());
+
+	/* A map load runs synchronously inside a single retro_run(): the engine
+	 * pumps the loading screen through UpdateScreen()->GLimp_SwapBuffers()
+	 * many times before common->Frame() returns. Without help the frontend
+	 * receives no audio and no frame-time advance for that whole span, so it
+	 * sees one multi-second frame - an audio underrun and a large
+	 * frametime-deviation spike.
+	 *
+	 * Keep the frontend fed by uploading this displayed frame's worth of
+	 * SILENCE and advancing the frame clock. Crucially we do NOT mix the
+	 * sound world here: MixFrame* would advance the deterministic sound
+	 * clock for frames that are not game tics, desyncing audio once the map
+	 * starts. Silence keeps the buffer full without touching game state, so
+	 * the load stays deterministic (verified: post-load audio unchanged)
+	 * while the frontend lifecycle no longer stalls. Gated on the load flag
+	 * so normal in-game presentation is untouched. */
+	extern bool G_SessionInsideMapChange(void);
+	if (!first_boot && G_SessionInsideMapChange()) {
+		audio_upload_silence();
+	}
 }
 
 void retro_cheat_reset(void)

@@ -325,6 +325,11 @@ void idSessionLocal::SetMainMenuGuiVars( void ) {
 	// row. Done in the loaded window tree so no game data is modified.
 	guiMainMenu->SetChildWinVarVal( "OS3", "visible", "0" );
 
+	// OS3 (fullscreen) sat between OS2 (screen size, y=125) and OS4
+	// (brightness, y=175) in Video Settings. With OS3 hidden, move
+	// brightness up into the vacated slot (y 175 -> 150) so there is no gap.
+	guiMainMenu->SetChildWinVarVal( "OS4", "rect", "34 150 320 16" );
+
 	// Likewise, vsync is the frontend's responsibility, not the core's, so
 	// the "Vertical Sync" row in Advanced Options (windowDef ADV5) does 
         // nothing here - hide it too.

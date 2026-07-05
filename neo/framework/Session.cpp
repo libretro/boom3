@@ -3295,3 +3295,17 @@ idSessionLocal::GetAuthMsg
 const char *idSessionLocal::GetAuthMsg( void ) {
 	return authMsg.c_str();
 }
+
+/*
+===============
+G_SessionInsideMapChange
+
+libretro: exposes whether a synchronous map load is in progress, so the
+libretro layer can keep audio and the frame clock advancing while
+ExecuteMapChange() pumps the loading screen without returning from
+retro_run(). See GLimp_SwapBuffers().
+===============
+*/
+bool G_SessionInsideMapChange( void ) {
+	return sessLocal.insideExecuteMapChange;
+}
