@@ -52,6 +52,20 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "auto"
    },
 	{
+      "doom_shadow_smoothing",
+      "Smooth Shadows From Moving Lights",
+      NULL,
+      "Rebuild moving lights' shadow volumes every rendered frame at the interpolated light position. Removes per-tic shadow popping from rotating/swinging lights at output rates above 60 fps, at some CPU cost. No effect at 60 fps.",
+      NULL,
+      NULL,
+      {
+         { "disabled", NULL },
+         { "enabled",  NULL },
+         { NULL, NULL },
+      },
+      "disabled"
+   },
+	{
       "doom_framerate",
       "Frame rate (Restart Required)",
       NULL,

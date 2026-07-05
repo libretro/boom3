@@ -303,7 +303,7 @@ static void R_ProjectPointsToFarPlane( const idRenderEntityLocal *ent, const idR
 	int			i;
 	idVec4		*in;
 
-	R_GlobalPointToLocal( ent->modelMatrix, light->globalLightOrigin, lv );
+	R_GlobalPointToLocal( ent->modelMatrix, R_ShadowGenLightOrigin_ext( light ), lv );
 	R_LightProjectionMatrix( lv, lightPlaneLocal, mat );
 
 	// make a projected copy of the even verts into the odd spots
@@ -1132,6 +1132,8 @@ void R_MakeShadowFrustums( idRenderLightLocal *light ) {
 	// right on the planes must have a sil plane created for them
 }
 
+const idVec3 *r_shadowGenOriginOverride = NULL;
+
 /*
 =================
 R_CreateShadowVolume
@@ -1221,7 +1223,7 @@ srfTriangles_t *R_CreateShadowVolume( const idRenderEntityLocal *ent,
 	faceCastsShadow = (byte *)_alloca16( tri->numIndexes / 3 + 1 );	// + 1 for fake dangling edge face
 	remap = (int *)_alloca16( tri->numVerts * sizeof( remap[0] ) );
 
-	R_GlobalPointToLocal( ent->modelMatrix, light->globalLightOrigin, lightOrigin );
+	R_GlobalPointToLocal( ent->modelMatrix, R_ShadowGenLightOrigin_ext( light ), lightOrigin );
 
 	// run through all the shadow frustums, which is one for a projected light,
 	// and usually six for a point light, but point lights with centers outside

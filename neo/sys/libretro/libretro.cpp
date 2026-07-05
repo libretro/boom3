@@ -364,6 +364,11 @@ static void update_variables(bool startup)
 		mouse_sensitivity = (float)atof(var.value);
 
 	/* Quality preset override */
+	var.key = "doom_shadow_smoothing";
+	var.value = NULL;
+	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+		cvarSystem->SetCVarBool("r_perFrameShadowVolumes", strcmp(var.value, "enabled") == 0);
+
 	var.key = "doom_machine_spec";
 	var.value = NULL;
 

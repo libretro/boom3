@@ -338,6 +338,9 @@ typedef struct viewLight_s {
 	// true if globalLightOrigin is inside the view frustum, even if it may
 	// be obscured by geometry.  This allows us to skip shadows from non-visible objects
 	bool					viewSeesGlobalLightOrigin;
+	// true when globalLightOrigin/lightProject above are the interpolated
+	// (sub-tic) values of a moving light rather than the tic values
+	bool					lightInterpolated;
 
 	// if !viewInsideLight, the corresponding bit for each of the shadowFrustum
 	// projection planes that the view is on the negative side of will be set,
@@ -901,7 +904,8 @@ extern idCVar r_useEntityScissors;		// 1 = use custom scissor rectangle for each
 extern idCVar r_useInteractionCulling;	// 1 = cull interactions
 extern idCVar r_useInteractionScissors;	// 1 = use a custom scissor rectangle for each interaction
 extern idCVar r_useFrustumFarDistance;	// if != 0 force the view frustum far distance to this distance
-extern idCVar r_useShadowCulling;		// try to cull shadows from partially visible lights
+extern idCVar r_useShadowCulling;
+extern idCVar r_perFrameShadowVolumes;		// try to cull shadows from partially visible lights
 extern idCVar r_usePreciseTriangleInteractions;	// 1 = do winding clipping to determine if each ambiguous tri should be lit
 extern idCVar r_useTurboShadow;			// 1 = use the infinite projection with W technique for dynamic shadows
 extern idCVar r_useExternalShadows;		// 1 = skip drawing caps when outside the light volume
@@ -1535,6 +1539,14 @@ typedef enum {
 	SG_STATIC,		// clip to bounds
 	SG_OFFLINE		// perform very time consuming optimizations
 } shadowGen_t;
+
+// when non-NULL, shadow volume generation derives its light origin from
+// this instead of light->globalLightOrigin (see r_perFrameShadowVolumes)
+extern const idVec3 *r_shadowGenOriginOverride;
+
+ID_INLINE const idVec3 &R_ShadowGenLightOrigin_ext( const idRenderLightLocal *light ) {
+	return r_shadowGenOriginOverride ? *r_shadowGenOriginOverride : light->globalLightOrigin;
+}
 
 srfTriangles_t *R_CreateShadowVolume( const idRenderEntityLocal *ent,
 									 const srfTriangles_t *tri, const idRenderLightLocal *light,

@@ -91,7 +91,7 @@ bool R_CreateLightingCache( const idRenderEntityLocal *ent, const idRenderLightL
 		return true;
 	}
 
-	R_GlobalPointToLocal( ent->modelMatrix, light->globalLightOrigin, localLightOrigin );
+	R_GlobalPointToLocal( ent->modelMatrix, R_ShadowGenLightOrigin_ext( light ), localLightOrigin );
 
 	int	size = tri->ambientSurface->numVerts * sizeof( lightingCache_t );
 	lightingCache_t *cache = (lightingCache_t *)_alloca16( size );
@@ -497,6 +497,7 @@ viewLight_t *R_SetLightDefViewLight( idRenderLightLocal *light ) {
 					vLight->globalLightOrigin = iOrigin + iAxis * light->parms.lightCenter;
 				}
 				interpolated = true;
+				vLight->lightInterpolated = true;
 			}
 		}
 

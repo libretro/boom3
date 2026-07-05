@@ -61,7 +61,7 @@ void R_CalcInteractionFacing( const idRenderEntityLocal *ent, const srfTriangles
 		return;
 	}
 
-	R_GlobalPointToLocal( ent->modelMatrix, light->globalLightOrigin, localLightOrigin );
+	R_GlobalPointToLocal( ent->modelMatrix, R_ShadowGenLightOrigin_ext( light ), localLightOrigin );
 
 	int numFaces = tri->numIndexes / 3;
 
@@ -917,6 +917,23 @@ void idInteraction::CreateInteraction( const idRenderModel *model ) {
 		// if the interaction has shadows and this surface casts a shadow
 		if ( HasShadows() && shader->SurfaceCastsShadow() && tri->silEdges != NULL ) {
 
+			// per-frame shadow volumes for moving lights (r_perFrameShadowVolumes):
+			// on sub-tic frames of an interpolated light, throw the tic volume
+			// away and rebuild it below at the interpolated origin - the same
+			// origin the GPU projects from, so generation and projection are
+			// fully consistent and silhouette changes land at frame granularity
+			// instead of popping once per game tic. Never engages at 60 fps
+			// (lightInterpolated requires a sub-tic fraction).
+			const viewLight_t *ivl = ( lightDef->viewCount == tr.viewCount ) ? lightDef->viewLight : NULL;
+			if ( r_perFrameShadowVolumes.GetBool() && ivl && ivl->lightInterpolated && sint->shadowTris ) {
+				R_FreeStaticTriSurf( sint->shadowTris );
+				sint->shadowTris = NULL;
+				R_FreeInteractionCullInfo( sint->cullInfo );
+			}
+			if ( r_perFrameShadowVolumes.GetBool() && ivl && ivl->lightInterpolated ) {
+				r_shadowGenOriginOverride = &ivl->globalLightOrigin;
+			}
+
 			// if the light has an optimized shadow volume, don't create shadows for any models that are part of the base areas
 			if ( lightDef->parms.prelightModel == NULL || !model->IsStaticWorldModel() || !r_useOptimizedShadows.GetBool() ) {
 
@@ -1256,6 +1273,8 @@ void idInteraction::AddActiveInteraction( void ) {
 					shadowTris, vEntity, lightDef, NULL, shadowScissor, inside );
 			}
 		}
+
+		r_shadowGenOriginOverride = NULL;
 	}
 }
 
