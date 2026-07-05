@@ -107,9 +107,7 @@ The ARB_vertex_buffer_object will be bound
 */
 void *idVertexCache::Position( vertCache_t *buffer ) {
 	if ( !buffer || buffer->tag == TAG_FREE ) {
-		extern const char *rb_debugSurfContext;
-		common->FatalError( "idVertexCache::Position: bad vertCache_t (while drawing: %s)",
-			rb_debugSurfContext ? rb_debugSurfContext : "<unknown>" );
+		common->FatalError( "idVertexCache::Position: bad vertCache_t (while drawing: <unknown>)");
 	}
 
 	// the ARB vertex object just uses an offset

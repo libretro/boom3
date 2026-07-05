@@ -148,7 +148,6 @@ RB_ARB2_CreateDrawInteractions
 
 =============
 */
-const char *rb_debugSurfContext = NULL;
 static char rb_ctxBuf[256];
 
 void RB_ARB2_CreateDrawInteractions( const drawSurf_t *surf ) {
@@ -200,7 +199,6 @@ void RB_ARB2_CreateDrawInteractions( const drawSurf_t *surf ) {
 			surf->material ? surf->material->GetName() : "<nomat>",
 			( surf->space && surf->space->entityDef && surf->space->entityDef->parms.hModel )
 				? surf->space->entityDef->parms.hModel->Name() : "<nomodel>" );
-		rb_debugSurfContext = rb_ctxBuf;
 		// perform setup here that will not change over multiple interaction passes
 
 		// set the vertex pointers
