@@ -502,15 +502,11 @@ void R_FreeStaticTriSurf( srfTriangles_t *tri ) {
 		// command line utility, or rendering in editor preview mode ( force )
 		R_ReallyFreeStaticTriSurf( tri );
 	} else {
-#ifdef ID_DEBUG_MEMORY
-		R_CheckStaticTriSurfMemory( tri );
-#endif
 		tri->nextDeferredFree = NULL;
-		if ( frame->lastDeferredFreeTriSurf ) {
+		if ( frame->lastDeferredFreeTriSurf )
 			frame->lastDeferredFreeTriSurf->nextDeferredFree = tri;
-		} else {
+		else
 			frame->firstDeferredFreeTriSurf = tri;
-		}
 		frame->lastDeferredFreeTriSurf = tri;
 	}
 }

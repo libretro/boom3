@@ -51,9 +51,7 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "Game_local.h"
 
-#ifndef GAME_DLL
 #include "tools/compilers/aas/AASFileManager.h"
-#endif
 
 const int NUM_RENDER_PORTAL_BITS	= idMath::BitsForInteger( PS_BLOCK_ALL );
 
@@ -63,27 +61,6 @@ const idVec3 DEFAULT_GRAVITY_VEC3( 0, 0, -DEFAULT_GRAVITY );
 const int	CINEMATIC_SKIP_DELAY	= SEC2MS( 2.0f );
 
 const float USERCMD_MSEC_PRECISE = 1000.0f/60.0f;
-
-#ifdef GAME_DLL
-
-idSys *						sys = NULL;
-idCommon *					common = NULL;
-idCmdSystem *				cmdSystem = NULL;
-idCVarSystem *				cvarSystem = NULL;
-idFileSystem *				fileSystem = NULL;
-idNetworkSystem *			networkSystem = NULL;
-idRenderSystem *			renderSystem = NULL;
-idSoundSystem *				soundSystem = NULL;
-idRenderModelManager *		renderModelManager = NULL;
-idUserInterfaceManager *	uiManager = NULL;
-idDeclManager *				declManager = NULL;
-idAASFileManager *			AASFileManager = NULL;
-idCollisionModelManager *	collisionModelManager = NULL;
-idCVar *					idCVar::staticVars = NULL;
-
-idCVar com_forceGenericSIMD( "com_forceGenericSIMD", "0", CVAR_BOOL|CVAR_SYSTEM, "force generic platform independent SIMD" );
-
-#endif
 
 idRenderWorld *				gameRenderWorld = NULL;		// all drawing is done to this world
 idSoundWorld *				gameSoundWorld = NULL;		// all audio goes to this world
@@ -327,22 +304,7 @@ void idGameLocal::Init( void ) {
 	const idDict *dict;
 	idAAS *aas;
 
-#ifndef GAME_DLL
-
 	TestGameAPI();
-
-#else
-
-	// initialize idLib
-	idLib::Init();
-
-	// register static cvars declared in the game
-	idCVar::RegisterStaticVars();
-
-	// initialize processor specific SIMD
-	idSIMD::InitProcessor( "game", com_forceGenericSIMD.GetBool() );
-
-#endif
 
 	Printf( "----- Initializing Game -----\n" );
 	Printf( "gamename: %s\n", GAME_VERSION );
@@ -487,19 +449,6 @@ void idGameLocal::Shutdown( void ) {
 
 	// shut down the animation manager
 	animationLib.Shutdown();
-
-#ifdef GAME_DLL
-
-	// remove auto-completion function pointers pointing into this DLL
-	cvarSystem->RemoveFlaggedAutoCompletion( CVAR_GAME );
-
-	// enable leak test
-	Mem_EnableLeakTest( "game" );
-
-	// shutdown idLib
-	idLib::ShutDown();
-
-#endif
 }
 
 /*
@@ -2527,13 +2476,6 @@ gameReturn_t idGameLocal::RunFrame(const usercmd_t* clientCmds) {
 
 #ifdef _D3XP
 		slow.Set( time, previousTime, msec, framenum, realClientTime, msecPrecise );
-#endif
-
-#ifdef GAME_DLL
-		// allow changing SIMD usage on the fly
-		if ( com_forceGenericSIMD.IsModified() ) {
-			idSIMD::InitProcessor( "game", com_forceGenericSIMD.GetBool() );
-		}
 #endif
 
 		// make sure the random number counter is used each frame so random events

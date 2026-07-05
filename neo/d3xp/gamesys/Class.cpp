@@ -279,26 +279,6 @@ classSpawnFunc_t idClass::CallSpawnFunc( idTypeInfo *cls ) {
 
 /*
 ================
-idClass::FindUninitializedMemory
-================
-*/
-void idClass::FindUninitializedMemory( void ) {
-#ifdef ID_DEBUG_UNINITIALIZED_MEMORY
-	unsigned int *ptr = ( ( unsigned int * )this ) - 1;
-	int size = *ptr;
-	assert( ( size & 3 ) == 0 );
-	size >>= 2;
-	for ( int i = 0; i < size; i++ ) {
-		if ( ptr[i] == 0xcdcdcdcd ) {
-			const char *varName = GetTypeVariableName( GetClassname(), i << 2 );
-			gameLocal.Warning( "type '%s' has uninitialized variable %s (offset %d)", GetClassname(), varName, i << 2 );
-		}
-	}
-#endif
-}
-
-/*
-================
 idClass::Spawn
 ================
 */
@@ -439,10 +419,6 @@ void idClass::Shutdown( void ) {
 idClass::new
 ================
 */
-#ifdef ID_DEBUG_MEMORY
-#undef new
-#endif
-
 void * idClass::operator new( size_t s ) {
 	intptr_t *p;
 
@@ -451,17 +427,6 @@ void * idClass::operator new( size_t s ) {
 	*p = s;
 	memused += s;
 	numobjects++;
-
-#ifdef ID_DEBUG_UNINITIALIZED_MEMORY
-	unsigned int *ptr = (unsigned int *)p;
-	int size = s;
-	assert( ( size & (sizeof(intptr_t) - 1) ) == 0 );
-	size >>= 3;
-	for ( int i = 1; i < size; i++ ) {
-		ptr[i] = 0xcdcdcdcd;
-	}
-#endif
-
 	return p + 1;
 }
 
@@ -473,23 +438,8 @@ void * idClass::operator new( size_t s, int, int, char *, int ) {
 	*p = s;
 	memused += s;
 	numobjects++;
-
-#ifdef ID_DEBUG_UNINITIALIZED_MEMORY
-	unsigned int *ptr = (unsigned int *)p;
-	int size = s;
-	assert( ( size & (sizeof(intptr_t) - 1) ) == 0 );
-	size >>= 3;
-	for ( int i = 1; i < size; i++ ) {
-		ptr[i] = 0xcdcdcdcd;
-	}
-#endif
-
 	return p + 1;
 }
-
-#ifdef ID_DEBUG_MEMORY
-#define new ID_DEBUG_NEW
-#endif
 
 /*
 ================

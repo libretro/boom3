@@ -119,7 +119,6 @@ incorrect.  Use this on concrete classes only.
 	idClass *nameofclass::CreateInstance( void ) {													\
 		try {																						\
 			nameofclass *ptr = new nameofclass;														\
-			ptr->FindUninitializedMemory();															\
 			return ptr;																				\
 		}																							\
 		catch( idAllocError & ) {																	\
@@ -180,16 +179,10 @@ class idClass {
 public:
 	ABSTRACT_PROTOTYPE( idClass );
 
-#ifdef ID_REDIRECT_NEWDELETE
-#undef new
-#endif
 	void *						operator new( size_t );
 	void *						operator new( size_t s, int, int, char *, int );
 	void						operator delete( void * );
 	void						operator delete( void *, int, int, char *, int );
-#ifdef ID_REDIRECT_NEWDELETE
-#define new ID_DEBUG_NEW
-#endif
 
 	virtual						~idClass();
 
@@ -198,7 +191,6 @@ public:
 	bool						IsType( const idTypeInfo &c ) const;
 	const char *				GetClassname( void ) const;
 	const char *				GetSuperclass( void ) const;
-	void						FindUninitializedMemory( void );
 
 	void						Save( idSaveGame *savefile ) const {};
 	void						Restore( idRestoreGame *savefile ) {};

@@ -40,8 +40,6 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "renderer/tr_local.h"
 
-//#define WRITE_GUIS
-
 typedef struct {
 	int		version;
 	int		sizeofRenderEntity;
@@ -621,34 +619,12 @@ void	idRenderWorldLocal::WriteRenderEntity( qhandle_t handle, const renderEntity
 		}
 	}
 
-	/*
-	if ( ent->decals ) {
-		ent->decals->WriteToDemoFile( session->readDemo );
-	}
-	if ( ent->overlay ) {
-		ent->overlay->WriteToDemoFile( session->writeDemo );
-	}
-	*/
-
-#ifdef WRITE_GUIS
-	if ( ent->gui ) {
-		ent->gui->WriteToDemoFile( session->writeDemo );
-	}
-	if ( ent->gui2 ) {
-		ent->gui2->WriteToDemoFile( session->writeDemo );
-	}
-	if ( ent->gui3 ) {
-		ent->gui3->WriteToDemoFile( session->writeDemo );
-	}
-#endif
-
 	// RENDERDEMO_VERSION >= 2 ( Doom3 1.2 )
 	session->writeDemo->WriteInt( ent->timeGroup );
 	session->writeDemo->WriteInt( ent->xrayIndex );
 
-	if ( r_showDemo.GetBool() ) {
+	if ( r_showDemo.GetBool() )
 		common->Printf( "write DC_UPDATE_ENTITYDEF: %i = %s\n", handle, ent->hModel ? ent->hModel->Name() : "NULL" );
-	}
 }
 
 /*
@@ -746,14 +722,10 @@ void	idRenderWorldLocal::ReadRenderEntity() {
 	*/
 
 	for ( i = 0; i < MAX_RENDERENTITY_GUI; i++ ) {
-		if ( gui[ i ] ) {
+		if ( gui[ i ] )
 			ent.gui[ i ] = uiManager->Alloc();
-#ifdef WRITE_GUIS
-			ent.gui[ i ]->ReadFromDemoFile( session->readDemo );
-#endif
-		} else {
+		else
 			ent.gui[ i ] = NULL;
-		}
 	}
 
 	// >= Doom3 v1.2 only

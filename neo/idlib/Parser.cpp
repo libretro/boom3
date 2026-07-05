@@ -32,7 +32,6 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "idlib/Parser.h"
 
-//#define DEBUG_EVAL
 #define MAX_DEFINEPARMS				128
 #define DEFINEHASHSIZE				2048
 
@@ -801,18 +800,10 @@ int idParser::ExpandDefine( idToken *deftoken, define_t *define, idToken **first
 		return idParser::ExpandBuiltinDefine( deftoken, define, firsttoken, lasttoken );
 	}
 	// if the define has parameters
-	if ( define->numparms ) {
-		if ( !idParser::ReadDefineParms( define, parms, MAX_DEFINEPARMS ) ) {
+	if ( define->numparms )
+	{
+		if ( !idParser::ReadDefineParms( define, parms, MAX_DEFINEPARMS ) )
 			return false;
-		}
-#ifdef DEBUG_EVAL
-		for ( i = 0; i < define->numparms; i++ ) {
-			Log_Write("define parms %d:", i);
-			for ( pt = parms[i]; pt; pt = pt->next ) {
-				Log_Write( "%s", pt->c_str() );
-			}
-		}
-#endif //DEBUG_EVAL
 	}
 	// empty list at first
 	first = NULL;
@@ -1667,16 +1658,6 @@ int idParser::EvaluateTokens( idToken *tokens, int *intvalue, double *floatvalue
 		}
 		v1 = v;
 		v2 = v->next;
-#ifdef DEBUG_EVAL
-		if (integer) {
-			Log_Write("operator %s, value1 = %d", idParser::scriptstack->getPunctuationFromId(o->op), v1->intvalue);
-			if (v2) Log_Write("value2 = %d", v2->intvalue);
-		}
-		else {
-			Log_Write("operator %s, value1 = %f", idParser::scriptstack->getPunctuationFromId(o->op), v1->floatvalue);
-			if (v2) Log_Write("value2 = %f", v2->floatvalue);
-		}
-#endif //DEBUG_EVAL
 		switch(o->op) {
 			case P_LOGIC_NOT:		v1->intvalue = !v1->intvalue;
 									v1->floatvalue = !v1->floatvalue; break;
@@ -1760,10 +1741,6 @@ int idParser::EvaluateTokens( idToken *tokens, int *intvalue, double *floatvalue
 				break;
 			}
 		}
-#ifdef DEBUG_EVAL
-		if (integer) Log_Write("result value = %d", v1->intvalue);
-		else Log_Write("result value = %f", v1->floatvalue);
-#endif //DEBUG_EVAL
 		if (error)
 			break;
 		//if not an operator with arity 1
@@ -1887,20 +1864,10 @@ int idParser::Evaluate( int *intvalue, double *floatvalue, int integer ) {
 		return false;
 	}
 	//
-#ifdef DEBUG_EVAL
-	Log_Write("eval:");
-#endif //DEBUG_EVAL
 	for (t = firsttoken; t; t = nexttoken) {
-#ifdef DEBUG_EVAL
-		Log_Write(" %s", t->c_str());
-#endif //DEBUG_EVAL
 		nexttoken = t->next;
 		delete t;
 	} //end for
-#ifdef DEBUG_EVAL
-	if (integer) Log_Write("eval result: %d", *intvalue);
-	else Log_Write("eval result: %f", *floatvalue);
-#endif //DEBUG_EVAL
 	//
 	return true;
 }
@@ -1988,21 +1955,10 @@ int idParser::DollarEvaluate( int *intvalue, double *floatvalue, int integer) {
 		return false;
 	}
 	//
-#ifdef DEBUG_EVAL
-	Log_Write("$eval:");
-#endif //DEBUG_EVAL
 	for (t = firsttoken; t; t = nexttoken) {
-#ifdef DEBUG_EVAL
-		Log_Write(" %s", t->c_str());
-#endif //DEBUG_EVAL
 		nexttoken = t->next;
 		delete t;
 	} //end for
-#ifdef DEBUG_EVAL
-	if (integer) Log_Write("$eval result: %d", *intvalue);
-	else Log_Write("$eval result: %f", *floatvalue);
-#endif //DEBUG_EVAL
-	//
 	return true;
 }
 

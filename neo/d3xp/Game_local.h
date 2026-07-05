@@ -45,12 +45,6 @@ If you have questions concerning this license or the applicable additional terms
 #include "Pvs.h"
 #include "MultiplayerGame.h"
 
-#ifdef ID_DEBUG_UNINITIALIZED_MEMORY
-// This is real evil but allows the code to inspect arbitrary class variables.
-#define private		public
-#define protected	public
-#endif
-
 /*
 ===============================================================================
 

@@ -107,12 +107,6 @@ void idSaveGame::Close( void ) {
 	}
 
 	objects.Clear();
-
-#ifdef ID_DEBUG_MEMORY
-	idStr gameState = file->GetName();
-	gameState.StripFileExtension();
-	WriteGameState_f( idCmdArgs( va( "test %s_save", gameState.c_str() ), false ) );
-#endif
 }
 
 /*
@@ -819,10 +813,6 @@ void idRestoreGame::CreateObjects( void ) {
 			Error( "idRestoreGame::CreateObjects: Unknown class '%s'", classname.c_str() );
 		}
 		objects[ i ] = type->CreateInstance();
-
-#ifdef ID_DEBUG_MEMORY
-		InitTypeVariables( objects[i], type->classname, 0xce );
-#endif
 	}
 }
 
@@ -852,14 +842,6 @@ void idRestoreGame::RestoreObjects( void ) {
 			ent->Present();
 		}
 	}
-
-#ifdef ID_DEBUG_MEMORY
-	idStr gameState = file->GetName();
-	gameState.StripFileExtension();
-	WriteGameState_f( idCmdArgs( va( "test %s_restore", gameState.c_str() ), false ) );
-	//CompareGameState_f( idCmdArgs( va( "test %s_save", gameState.c_str() ) ) );
-	gameLocal.Error( "dumped game states" );
-#endif
 }
 
 /*

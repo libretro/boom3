@@ -13,7 +13,7 @@
 
 #include <afxwin.h>
 
-#if defined(_MFC_VER) && !defined(_D3SDK) && !defined(GAME_DLL)
+#if defined(_MFC_VER) && !defined(_D3SDK)
 #define _ATL_CSTRING_EXPLICIT_CONSTRUCTORS	// prevent auto literal to string conversion
 #include "tools/comafx/StdAfx.h"
 #endif

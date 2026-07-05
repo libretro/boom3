@@ -59,11 +59,7 @@ If you have questions concerning this license or the applicable additional terms
 #define _alloca						alloca
 #define _alloca16( x )				((void *)((((uintptr_t)alloca( (x)+15 )) + 15) & ~15))
 
-#ifdef GAME_DLL
-#define ID_GAME_API					__attribute__((visibility ("default")))
-#else
 #define ID_GAME_API
-#endif
 
 #define ALIGN16( x )				x __attribute__ ((aligned (16)))
 #define PACKED						__attribute__((packed))
@@ -98,11 +94,7 @@ If you have questions concerning this license or the applicable additional terms
 #define PATHSEPERATOR_CHAR			'\\'
 
 #ifdef _MSC_VER
-#ifdef GAME_DLL
-#define ID_GAME_API					__declspec(dllexport)
-#else
 #define ID_GAME_API
-#endif
 #define ALIGN16( x )				__declspec(align(16)) x
 #define PACKED
 #define ID_INLINE					__forceinline
@@ -112,11 +104,7 @@ If you have questions concerning this license or the applicable additional terms
 #define ID_STATIC_TEMPLATE			static
 #define assertmem( x, y )			assert( _CrtIsValidPointer( x, y, true ) )
 #else
-#ifdef GAME_DLL
-#define ID_GAME_API					__attribute__((visibility ("default")))
-#else
 #define ID_GAME_API
-#endif
 #define ALIGN16( x )				x __attribute__ ((aligned (16)))
 #define PACKED						__attribute__((packed))
 #define ID_INLINE					inline
@@ -159,11 +147,7 @@ If you have questions concerning this license or the applicable additional terms
 // Mac OSX
 #if defined(MACOS_X) || defined(__APPLE__)
 
-#ifdef GAME_DLL
-#define ID_GAME_API					__attribute__((visibility ("default")))
-#else
 #define ID_GAME_API
-#endif
 
 #define ALIGN16( x )				x __attribute__ ((aligned (16)))
 
@@ -198,11 +182,7 @@ If you have questions concerning this license or the applicable additional terms
   #define _alloca16( x )			(({assert( (x)<ID_MAX_ALLOCA_SIZE );}),((void *)((((uintptr_t)alloca( (x)+15 )) + 15) & ~15)))
 #endif
 
-#ifdef GAME_DLL
-#define ID_GAME_API					__attribute__((visibility ("default")))
-#else
 #define ID_GAME_API
-#endif
 
 #define ALIGN16( x )				x
 #define PACKED						__attribute__((packed))

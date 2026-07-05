@@ -34,36 +34,31 @@ If you have questions concerning this license or the applicable additional terms
 ===============================================================================
 */
 
-// memory debugging
-//#define ID_REDIRECT_NEWDELETE
-//#define ID_DEBUG_MEMORY
-//#define ID_DEBUG_UNINITIALIZED_MEMORY
-
 // if enabled, the console won't toggle upon ~, unless you start the binary with +set com_allowConsole 1
 // Ctrl+Alt+~ will always toggle the console no matter what
 #ifndef ID_CONSOLE_LOCK
-	#define ID_CONSOLE_LOCK 0
+#define ID_CONSOLE_LOCK 0
 #endif
 
 // useful for network debugging, turns off 'LAN' checks, all IPs are classified 'internet'
 #ifndef ID_NOLANADDRESS
-	#define ID_NOLANADDRESS 0
+#define ID_NOLANADDRESS 0
 #endif
 
 // let .dds be loaded from FS without altering pure state. only for developement.
 #ifndef ID_PURE_ALLOWDDS
-	#define ID_PURE_ALLOWDDS 0
+#define ID_PURE_ALLOWDDS 0
 #endif
 
 // build an exe with no CVAR_CHEAT controls
 #ifndef ID_ALLOW_CHEATS
-	#define ID_ALLOW_CHEATS 0
+#define ID_ALLOW_CHEATS 0
 #endif
 
 // verify checksums in clientinfo traffic
 // NOTE: this makes the network protocol incompatible
 #ifndef ID_CLIENTINFO_TAGS
-	#define ID_CLIENTINFO_TAGS 0
+#define ID_CLIENTINFO_TAGS 0
 #endif
 
 // for win32 this is defined in preprocessor settings so that MFC can be

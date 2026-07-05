@@ -351,9 +351,6 @@ ID_INLINE void idStr::Init( void ) {
 	alloced = STR_ALLOC_BASE;
 	data = baseBuffer;
 	data[ 0 ] = '\0';
-#ifdef ID_DEBUG_UNINITIALIZED_MEMORY
-	memset( baseBuffer, 0, sizeof( baseBuffer ) );
-#endif
 }
 
 ID_INLINE idStr::idStr( void ) {

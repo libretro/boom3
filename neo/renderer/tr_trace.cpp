@@ -34,8 +34,6 @@ If you have questions concerning this license or the applicable additional terms
 #include "renderer/gles_compat.h"
 #endif
 
-//#define TEST_TRACE
-
 /*
 =================
 R_LocalTrace
@@ -52,11 +50,6 @@ localTrace_t R_LocalTrace( const idVec3 &start, const idVec3 &end, const float r
 	idVec3		startDir;
 	byte		totalOr;
 	float		radiusSqr;
-
-#ifdef TEST_TRACE
-	idTimer		trace_timer;
-	trace_timer.Start();
-#endif
 
 	hit.fraction = 1.0f;
 
@@ -270,13 +263,6 @@ localTrace_t R_LocalTrace( const idVec3 &start, const idVec3 &end, const float r
 		hit.indexes[1] = tri->indexes[i+1];
 		hit.indexes[2] = tri->indexes[i+2];
 	}
-
-
-#ifdef TEST_TRACE
-	trace_timer.Stop();
-	common->Printf( "testVerts:%i c_testPlanes:%i c_testEdges:%i c_intersect:%i msec:%u\n",
-					tri->numVerts, c_testPlanes, c_testEdges, c_intersect, trace_timer.Milliseconds() );
-#endif
 
 	return hit;
 }

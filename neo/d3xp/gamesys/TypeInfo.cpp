@@ -42,17 +42,9 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "Entity.h"
 
-#ifdef ID_DEBUG_MEMORY
-#include "GameTypeInfo.h"				// Make sure this is up to date!
-#else
 #include "NoGameTypeInfo.h"
-#endif
 
 #include "TypeInfo.h"
-
-// disabled because it's adds about 64MB to state dumps and takes a really long time
-//#define DUMP_GAMELOCAL
-
 
 typedef void (*WriteVariableType_t)( const char *varName, const char *varType, const char *scope, const char *prefix, const char *postfix, const char *value, const void *varPtr, int varSize );
 
@@ -1201,14 +1193,6 @@ void idTypeInfoTools::WriteGameState( const char *fileName ) {
 	fp = file;
 	Write = WriteGameStateVariable; //WriteVariable;
 
-#ifdef DUMP_GAMELOCAL
-
-	file->WriteFloatString( "\ngameLocal {\n" );
-	WriteClass_r( (void *)&gameLocal, "", "idGameLocal", "idGameLocal", "", 0 );
-	file->WriteFloatString( "}\n" );
-
-#endif
-
 	for ( num = i = 0; i < gameLocal.num_entities; i++ ) {
 		idEntity *ent = gameLocal.entities[i];
 		if ( ent == NULL ) {
@@ -1247,31 +1231,11 @@ void idTypeInfoTools::CompareGameState( const char *fileName ) {
 	fp = NULL;
 	Write = VerifyVariable;
 
-#ifdef DUMP_GAMELOCAL
-
-	if ( !src->ExpectTokenString( "gameLocal" ) || !src->ExpectTokenString( "{" ) ) {
-		delete src;
-		src = NULL;
-		return;
-	}
-
-	WriteClass_r( (void *)&gameLocal, "", "idGameLocal", "idGameLocal", "", 0 );
-
-	if ( !src->ExpectTokenString( "}" ) ) {
-		delete src;
-		src = NULL;
-		return;
-	}
-
-#endif
-
 	while( src->ReadToken( &token ) ) {
-		if ( token != "entity" ) {
+		if ( token != "entity" )
 			break;
-		}
-		if ( !src->ExpectTokenType( TT_NUMBER, TT_INTEGER, &token ) ) {
+		if ( !src->ExpectTokenType( TT_NUMBER, TT_INTEGER, &token ) )
 			break;
-		}
 
 		entityNum = token.GetIntValue();
 
