@@ -266,15 +266,8 @@ static void R_CheckCvars( void ) {
 		}
 	}
 
-	if ( r_swapInterval.IsModified() ) {
-		GLimp_SetSwapInterval( r_swapInterval.GetInteger() );
-		r_swapInterval.ClearModified();
-	}
-
-	if ( r_windowResizable.IsModified() ) {
-		GLimp_SetWindowResizable( r_windowResizable.GetBool() );
+	if ( r_windowResizable.IsModified() )
 		r_windowResizable.ClearModified();
-	}
 }
 
 /*

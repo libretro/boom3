@@ -326,8 +326,8 @@ void idSessionLocal::SetMainMenuGuiVars( void ) {
 	guiMainMenu->SetChildWinVarVal( "OS3", "visible", "0" );
 
 	// Likewise, vsync is the frontend's responsibility, not the core's, so
-	// the "Vertical Sync" row in Advanced Options (windowDef ADV5, bound to
-	// r_swapInterval) does nothing here - hide it too.
+	// the "Vertical Sync" row in Advanced Options (windowDef ADV5) does 
+        // nothing here - hide it too.
 	guiMainMenu->SetChildWinVarVal( "ADV5", "visible", "0" );
 
 	// ADV5 (vsync) sat between ADV4 (bump maps, y=116) and ADV7

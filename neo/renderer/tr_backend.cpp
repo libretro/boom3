@@ -610,11 +610,6 @@ const void	RB_SwapBuffers( const void *data ) {
 			qglEnable( GL_SCISSOR_TEST );
 	}
 
-	// force a gl sync if requested
-	if ( r_finish.GetBool() ) {
-		qglFinish();
-	}
-
 	// don't flip if drawing to front buffer
 	if ( !r_frontBuffer.GetBool() ) {
 		GLimp_SwapBuffers();

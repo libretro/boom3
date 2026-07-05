@@ -254,11 +254,6 @@ int				Sys_PollJoystickInputEvents( int deviceNum );
 int				Sys_ReturnJoystickInputEvent( const int n, int &action, int &value );
 void			Sys_EndJoystickInputEvents();
 
-// when the console is down, or the game is about to perform a lengthy
-// operation like map loading, the system can release the mouse cursor
-// when in windowed mode
-void			Sys_GrabMouseCursor( bool grabIt );
-
 // DG: added this for an ungodly hack for gamepad support
 // active = true means "currently a GUI with a cursor is active/focused"
 // active = false means "that GUI is not active anymore"

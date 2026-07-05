@@ -244,22 +244,6 @@ unsigned char Sys_MapCharForKey(int key) {
 	return key & 0xff;
 }
 
-/*
-===============
-Sys_GrabMouseCursor
-===============
-*/
-void Sys_GrabMouseCursor(bool grabIt) {
-	int flags;
-
-	if (grabIt)
-		flags = GRAB_GRABMOUSE | GRAB_HIDECURSOR | GRAB_ENABLETEXTINPUT;
-	else
-		flags = GRAB_ENABLETEXTINPUT;
-
-	GLimp_GrabInput(flags);
-}
-
 extern void Sys_SetKeys();
 extern void Sys_SetMouse();
 struct simulated {

@@ -414,19 +414,16 @@ static void extract_directory(char *buf, const char *path, size_t size)
 
 static void context_reset(void)
 {
-	if (!first_boot) {
-		// full screen / window toggle
-        GLimp_UpdateWindowSize();
-        R_ReinitOpenGL();
-    }
+   if (!first_boot)
+      R_ReinitOpenGL();
 
-	glsm_ctl(GLSM_CTL_STATE_CONTEXT_RESET, NULL);
+   glsm_ctl(GLSM_CTL_STATE_CONTEXT_RESET, NULL);
 
    if (libretro_shared_context)
       return;
-	
-	if (!glsm_ctl(GLSM_CTL_STATE_SETUP, NULL))
-		return;
+
+   if (!glsm_ctl(GLSM_CTL_STATE_SETUP, NULL))
+      return;
 
 }
 
@@ -1336,10 +1333,6 @@ void GLimp_SwapBuffers() {
    if (!libretro_shared_context)
       glsm_ctl(GLSM_CTL_STATE_BIND, NULL);
 	glBindFramebuffer(RARCH_GL_FRAMEBUFFER, hw_render.get_current_framebuffer());
-}
-
-void GLimp_UpdateWindowSize()
-{
 }
 
 void retro_cheat_reset(void)

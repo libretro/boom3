@@ -861,9 +861,7 @@ extern idCVar r_ignore;					// used for random debugging without defining new va
 extern idCVar r_ignore2;				// used for random debugging without defining new vars
 extern idCVar r_znear;					// near Z clip plane
 
-extern idCVar r_finish;					// force a call to glFinish() every frame
 extern idCVar r_frontBuffer;			// draw to front buffer for debugging
-extern idCVar r_swapInterval;			// changes the GL swap interval
 extern idCVar r_offsetFactor;			// polygon offset parameter
 extern idCVar r_offsetUnits;			// polygon offset parameter
 extern idCVar r_singleTriangle;			// only draw a single triangle per primitive
@@ -1160,21 +1158,6 @@ void		GLimp_DeactivateContext( void );
 // most OpenGL implementations, this will result in all OpenGL calls
 // being immediate returns, which lets us guage how much time is
 // being spent inside OpenGL.
-
-const int GRAB_GRABMOUSE	= (1 << 0);
-const int GRAB_HIDECURSOR	= (1 << 1);
-const int GRAB_RELATIVEMOUSE = (1 << 2);
-const int GRAB_ENABLETEXTINPUT = (1 << 3); // to explicitly enable/disable textinput in SDL2/3
-
-void GLimp_GrabInput(int flags);
-
-bool GLimp_SetSwapInterval( int swapInterval );
-int GLimp_GetSwapInterval();
-bool GLimp_SetWindowResizable( bool enableResizable );
-void GLimp_UpdateWindowSize();
-
-glimpParms_t GLimp_GetCurState();
-float GLimp_GetDisplayRefresh();
 
 /*
 ====================================================================

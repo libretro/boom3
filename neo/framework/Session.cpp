@@ -1508,14 +1508,9 @@ void idSessionLocal::ExecuteMapChange( bool noFadeWipe ) {
 	// note any warning prints that happen during the load process
 	common->ClearWarnings( mapString );
 
-	// release the mouse cursor
-	// before we do this potentially long operation
-	Sys_GrabMouseCursor( false );
-
 	// if net play, we get the number of clients during mapSpawnInfo processing
-	if ( !idAsyncNetwork::IsActive() ) {
+	if ( !idAsyncNetwork::IsActive() )
 		numClients = 1;
-	}
 
 	int start = Core_Milliseconds();
 
@@ -2514,12 +2509,6 @@ void idSessionLocal::UpdateScreen( bool outOfSequence ) {
 	}
 
 	insideUpdateScreen = true;
-
-	// if this is a long-operation update and we are in windowed mode,
-	// release the mouse capture back to the desktop
-	if ( outOfSequence ) {
-		Sys_GrabMouseCursor( false );
-	}
 
 	D3P_BeginCPUSample(Render_BeginFrame);
 	renderSystem->BeginFrame( renderSystem->GetScreenWidth(), renderSystem->GetScreenHeight() );

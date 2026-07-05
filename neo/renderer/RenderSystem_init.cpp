@@ -92,8 +92,6 @@ idCVar r_useInfiniteFarZ( "r_useInfiniteFarZ", "1", CVAR_RENDERER | CVAR_BOOL, "
 idCVar r_znear( "r_znear", "3", CVAR_RENDERER | CVAR_FLOAT, "near Z clip plane distance", 0.001f, 200.0f );
 
 idCVar r_ignoreGLErrors( "r_ignoreGLErrors", "1", CVAR_RENDERER | CVAR_BOOL, "ignore GL errors" );
-idCVar r_finish( "r_finish", "0", CVAR_RENDERER | CVAR_BOOL, "force a call to glFinish() every frame" );
-idCVar r_swapInterval( "r_swapInterval", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "changes the GL swap interval" );
 
 idCVar r_gamma( "r_gamma", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "changes gamma tables", 0.5f, 3.0f );
 idCVar r_brightness( "r_brightness", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "changes gamma tables", 0.5f, 2.0f );
@@ -2048,12 +2046,6 @@ static void GfxInfo_f( const idCmdArgs &args ) {
 		common->Printf( "ARB2 path disabled\n" );
 	}
 
-	if ( r_finish.GetBool() ) {
-		common->Printf( "Forcing glFinish\n" );
-	} else {
-		common->Printf( "glFinish not forced\n" );
-	}
-
 	bool tss = glConfig.twoSidedStencilAvailable;
 
 	if ( !r_useTwoSidedStencil.GetBool() && tss ) {
@@ -2087,9 +2079,6 @@ void R_VidRestart_f( const idCmdArgs &args ) {
 	// DG: notify the game DLL about the reloadImages and (non-partial) vid_restart commands
 	if(gameCallbacks.reloadImagesCB != NULL)
 		gameCallbacks.reloadImagesCB(gameCallbacks.reloadImagesUserArg, args);
-
-	// this could take a while, so give them the cursor back ASAP
-	Sys_GrabMouseCursor( false );
 
 	// dump ambient caches
 	renderModelManager->FreeModelVertexCaches();

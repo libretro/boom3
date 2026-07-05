@@ -40,10 +40,10 @@ uint64_t Core_FrameCount( void ) {
 }
 
 void Core_SetFramerate( int fps ) {
-	if ( fps < 1 ) {
+	if ( fps < 1 )
 		fps = 60;
-	}
-	if ( fps != core_fps ) {
+	if ( fps != core_fps )
+	{
 		core_ms_base    += (double)core_frame_count * 1000.0 / (double)core_fps;
 		core_frame_count = 0;
 		core_fps         = fps;
@@ -99,38 +99,14 @@ void Com_Dhewm3Settings_f(const idCmdArgs &args) {}
 
 void GLimp_Shutdown() {}
 
-bool GLimp_Init(glimpParms_t parms) {
-    GLimp_UpdateWindowSize();
-    return true;
-}
-
-bool GLimp_SetScreenParms(glimpParms_t parms) {
-    return true;
-}
+bool GLimp_Init(glimpParms_t parms) { return true; }
+bool GLimp_SetScreenParms(glimpParms_t parms) { return true; }
 
 void GLimp_SetGamma(unsigned short red[256],
                     unsigned short green[256],
                     unsigned short blue[256]) {}
 
 void GLimp_ResetGamma() {}
-
-bool GLimp_SetWindowResizable(bool resizable) {
-    return true;
-}
-
-bool GLimp_SetSwapInterval(int interval) {
-    return true;
-}
-
-int GLimp_GetSwapInterval() {
-    return 0;
-}
-
-float GLimp_GetDisplayRefresh() {
-    return 60.0f; // libretro controls timing
-}
-
-void GLimp_GrabInput(int flags) {}
 
 // Context activation - libretro manages the GL context
 void GLimp_DeactivateContext() {}
