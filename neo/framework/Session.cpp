@@ -487,6 +487,20 @@ Draws and captures the current state, then starts a wipe with that image
 ================
 */
 void idSessionLocal::StartWipe( const char *_wipeMaterial, bool hold ) {
+	// libretro: when a savestate restore is running synchronously inside
+	// retro_unserialize(), no rendering may happen - we are mid-frontend-
+	// call with all screen updates suppressed, so the Draw()+capture below
+	// would execute the backend against suppressed frame state and leave
+	// the wipe holding stale vertex-cache handles (observed as a
+	// 'bad vertCache_t' fatal on models/wipes/* right after restoring
+	// from the main menu). The wipe is purely cosmetic; skip it.
+	extern bool retro_savestate_active;
+	if ( retro_savestate_active ) {
+		wipeStopTime = 0;
+		wipeHold = false;
+		return;
+	}
+
 	console->Close();
 
 	// render the current screen into a texture for the wipe model
