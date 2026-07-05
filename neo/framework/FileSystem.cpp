@@ -27,12 +27,15 @@ If you have questions concerning this license or the applicable additional terms
 */
 
 #ifdef WIN32
-	#include <io.h>	// for _read
+#include <io.h>	// for _read
 #else
 	#include <sys/types.h>
 	#include <sys/stat.h>
 	#include <unistd.h>
 #endif
+
+#include <streams/file_stream.h>
+#include <libretro.h>
 
 #include "sys/platform.h"
 
@@ -438,9 +441,9 @@ private:
 	void					ReplaceSeparators( idStr &path, char sep = PATHSEPERATOR_CHAR );
 	int						HashFileName( const char *fname ) const;
 	int						ListOSFiles( const char *directory, const char *extension, idStrList &list );
-	FILE *					OpenOSFile( const char *name, const char *mode, idStr *caseSensitiveName = NULL );
-	FILE *					OpenOSFileCorrectName( idStr &path, const char *mode );
-	int						DirectFileLength( FILE *o );
+	RFILE *					OpenOSFile( const char *name, const char *mode, idStr *caseSensitiveName = NULL );
+	RFILE *					OpenOSFileCorrectName( idStr &path, const char *mode );
+	int						DirectFileLength( RFILE *o );
 	void					CopyFile( idFile *src, const char *toOSPath );
 	int						AddUnique( const char *name, idStrList &list, idHashIndex &hashIndex ) const;
 	void					GetExtensionList( const char *extension, idStrList &extensionList ) const;
@@ -578,13 +581,46 @@ bool idFileSystemLocal::FilenameCompare( const char *s1, const char *s2 ) const 
 
 /*
 ================
+FS_VfsModeFromString
+
+Translate an fopen-style mode string ("rb", "wb", "ab", "r+b", ...) to
+libretro-common VFS access flags.
+================
+*/
+static unsigned FS_VfsModeFromString( const char *mode ) {
+	bool r = strchr( mode, 'r' ) != NULL;
+	bool w = strchr( mode, 'w' ) != NULL;
+	bool a = strchr( mode, 'a' ) != NULL;
+	bool plus = strchr( mode, '+' ) != NULL;
+
+	unsigned flags = 0;
+	if ( a ) {
+		// append: write, keep existing content
+		flags = RETRO_VFS_FILE_ACCESS_WRITE | RETRO_VFS_FILE_ACCESS_UPDATE_EXISTING;
+		if ( plus ) flags |= RETRO_VFS_FILE_ACCESS_READ;
+	} else if ( w ) {
+		// truncate/create for writing
+		flags = RETRO_VFS_FILE_ACCESS_WRITE;
+		if ( plus ) flags |= RETRO_VFS_FILE_ACCESS_READ;
+	} else {
+		// read (default)
+		flags = RETRO_VFS_FILE_ACCESS_READ;
+		if ( plus ) flags |= RETRO_VFS_FILE_ACCESS_WRITE | RETRO_VFS_FILE_ACCESS_UPDATE_EXISTING;
+	}
+	(void)r;
+	return flags;
+}
+
+/*
+================
 idFileSystemLocal::OpenOSFile
 optional caseSensitiveName is set to case sensitive file name as found on disc (fs_caseSensitiveOS only)
 ================
 */
-FILE *idFileSystemLocal::OpenOSFile( const char *fileName, const char *mode, idStr *caseSensitiveName ) {
+RFILE *idFileSystemLocal::OpenOSFile( const char *fileName, const char *mode, idStr *caseSensitiveName ) {
 	int i;
-	FILE *fp;
+	RFILE *fp;
+	unsigned vfsFlags = FS_VfsModeFromString( mode );
 	idStr fpath, entry;
 	idStrList list;
 
@@ -595,7 +631,7 @@ FILE *idFileSystemLocal::OpenOSFile( const char *fileName, const char *mode, idS
 		return NULL;
 	}
 #endif
-	fp = fopen( fileName, mode );
+	fp = filestream_open( fileName, vfsFlags, RETRO_VFS_FILE_ACCESS_HINT_NONE );
 	if ( !fp && fs_caseSensitiveOS.GetBool() ) {
 		fpath = fileName;
 		fpath.StripFilename();
@@ -607,7 +643,7 @@ FILE *idFileSystemLocal::OpenOSFile( const char *fileName, const char *mode, idS
 		for ( i = 0; i < list.Num(); i++ ) {
 			entry = fpath + PATHSEPERATOR_CHAR + list[i];
 			if ( !entry.Icmp( fileName ) ) {
-				fp = fopen( entry, mode );
+				fp = filestream_open( entry, vfsFlags, RETRO_VFS_FILE_ACCESS_HINT_NONE );
 				if ( fp ) {
 					if ( caseSensitiveName ) {
 						*caseSensitiveName = entry;
@@ -635,9 +671,9 @@ FILE *idFileSystemLocal::OpenOSFile( const char *fileName, const char *mode, idS
 idFileSystemLocal::OpenOSFileCorrectName
 ================
 */
-FILE *idFileSystemLocal::OpenOSFileCorrectName( idStr &path, const char *mode ) {
+RFILE *idFileSystemLocal::OpenOSFileCorrectName( idStr &path, const char *mode ) {
 	idStr caseName;
-	FILE *f = OpenOSFile( path.c_str(), mode, &caseName );
+	RFILE *f = OpenOSFile( path.c_str(), mode, &caseName );
 	if ( f ) {
 		path.StripFilename();
 		path += PATHSEPERATOR_STR;
@@ -651,15 +687,8 @@ FILE *idFileSystemLocal::OpenOSFileCorrectName( idStr &path, const char *mode ) 
 idFileSystemLocal::DirectFileLength
 ================
 */
-int idFileSystemLocal::DirectFileLength( FILE *o ) {
-	int		pos;
-	int		end;
-
-	pos = ftell( o );
-	fseek( o, 0, SEEK_END );
-	end = ftell( o );
-	fseek( o, pos, SEEK_SET );
-	return end;
+int idFileSystemLocal::DirectFileLength( RFILE *o ) {
+	return (int)filestream_get_size( o );
 }
 
 /*
@@ -700,7 +729,7 @@ Copy a fully specified file from one place to another
 =================
 */
 void idFileSystemLocal::CopyFile( const char *fromOSPath, const char *toOSPath ) {
-	FILE	*f;
+	RFILE	*f;
 	int		len;
 	byte	*buf;
 
@@ -709,15 +738,13 @@ void idFileSystemLocal::CopyFile( const char *fromOSPath, const char *toOSPath )
 	if ( !f ) {
 		return;
 	}
-	fseek( f, 0, SEEK_END );
-	len = ftell( f );
-	fseek( f, 0, SEEK_SET );
+	len = (int)filestream_get_size( f );
 
 	buf = (byte *)Mem_Alloc( len );
-	if ( fread( buf, 1, len, f ) != (unsigned int)len ) {
+	if ( filestream_read( f, buf, len ) != len ) {
 		common->FatalError( "short read in idFileSystemLocal::CopyFile()\n" );
 	}
-	fclose( f );
+	filestream_close( f );
 
 	CreateOSPath( toOSPath );
 	f = OpenOSFile( toOSPath, "wb" );
@@ -726,10 +753,10 @@ void idFileSystemLocal::CopyFile( const char *fromOSPath, const char *toOSPath )
 		Mem_Free( buf );
 		return;
 	}
-	if ( fwrite( buf, 1, len, f ) != (unsigned int)len ) {
+	if ( filestream_write( f, buf, len ) != len ) {
 		common->FatalError( "short write in idFileSystemLocal::CopyFile()\n" );
 	}
-	fclose( f );
+	filestream_close( f );
 	Mem_Free( buf );
 }
 
@@ -739,7 +766,7 @@ idFileSystemLocal::CopyFile
 =================
 */
 void idFileSystemLocal::CopyFile( idFile *src, const char *toOSPath ) {
-	FILE	*f;
+	RFILE	*f;
 	int		len;
 	byte	*buf;
 
@@ -760,10 +787,10 @@ void idFileSystemLocal::CopyFile( idFile *src, const char *toOSPath ) {
 		Mem_Free( buf );
 		return;
 	}
-	if ( fwrite( buf, 1, len, f ) != (unsigned int)len ) {
+	if ( filestream_write( f, buf, len ) != len ) {
 		common->FatalError( "Short write in idFileSystemLocal::CopyFile()\n" );
 	}
-	fclose( f );
+	filestream_close( f );
 	Mem_Free( buf );
 }
 
@@ -1287,7 +1314,7 @@ pack_t *idFileSystemLocal::LoadZipFile( const char *zipfile ) {
 	int				hash;
 	int				fs_numHeaderLongs;
 	int *			fs_headerLongs;
-	FILE			*f;
+	RFILE			*f;
 	int				len;
 	int				confHash;
 	fileInPack_t	*pakFile;
@@ -1296,9 +1323,8 @@ pack_t *idFileSystemLocal::LoadZipFile( const char *zipfile ) {
 	if ( !f ) {
 		return NULL;
 	}
-	fseek( f, 0, SEEK_END );
-	len = ftell( f );
-	fclose( f );
+	len = (int)filestream_get_size( f );
+	filestream_close( f );
 
 	fs_numHeaderLongs = 0;
 
@@ -1762,15 +1788,15 @@ idModList *idFileSystemLocal::ListMods( void ) {
 		for ( isearch = 0; isearch < 4; isearch++ ) {
 
 			idStr descfile = BuildOSPath( search[ isearch ], list->mods[ i ], "description.txt" );
-			FILE *f = OpenOSFile( descfile, "r" );
+			RFILE *f = OpenOSFile( descfile, "r" );
 			if ( f ) {
-				if ( fgets( desc, MAX_DESCRIPTION, f ) ) {
+				if ( filestream_gets( f, desc, MAX_DESCRIPTION ) ) {
 					list->descriptions.Append( desc );
-					fclose( f );
+					filestream_close( f );
 					break;
 				} else {
 					common->DWarning( "Error reading %s", descfile.c_str() );
-					fclose( f );
+					filestream_close( f );
 					continue;
 				}
 			}
@@ -2985,7 +3011,7 @@ idFile *idFileSystemLocal::OpenFileReadFlags( const char *relativePath, int sear
 	fileInPack_t *	pakFile;
 	directory_t *	dir;
 	int				hash;
-	FILE *			fp;
+	RFILE *			fp;
 
 	if ( !searchPaths ) {
 		common->FatalError( "Filesystem call made without initialization\n" );
@@ -3101,14 +3127,14 @@ idFile *idFileSystemLocal::OpenFileReadFlags( const char *relativePath, int sear
 						} else if ( isFromSavePath || isFromBasePath ) {
 							idStr sourcepath;
 							sourcepath = BuildOSPath( fs_cdpath.GetString(), dir->gamedir, relativePath );
-							FILE *f1 = OpenOSFile( sourcepath, "r" );
+							RFILE *f1 = OpenOSFile( sourcepath, "r" );
 							if ( f1 ) {
-								ID_TIME_T t1 = Sys_FileTimeStamp( f1 );
-								fclose( f1 );
-								FILE *f2 = OpenOSFile( copypath, "r" );
+								ID_TIME_T t1 = Sys_FileTimeStampPath( sourcepath );
+								filestream_close( f1 );
+								RFILE *f2 = OpenOSFile( copypath, "r" );
 								if ( f2 ) {
-									ID_TIME_T t2 = Sys_FileTimeStamp( f2 );
-									fclose( f2 );
+									ID_TIME_T t2 = Sys_FileTimeStampPath( copypath );
+									filestream_close( f2 );
 									if ( t1 > t2 ) {
 										CopyFile( sourcepath, copypath );
 									}
@@ -3414,11 +3440,7 @@ size_t idFileSystemLocal::CurlWriteFunction( void *ptr, size_t size, size_t nmem
 	if ( !bgl->f ) {
 		return size * nmemb;
 	}
-	#ifdef _WIN32
-		return _write( _fileno(static_cast<idFile_Permanent*>(bgl->f)->GetFilePtr()), ptr, size * nmemb );
-	#else
-		return fwrite( ptr, size, nmemb, static_cast<idFile_Permanent*>(bgl->f)->GetFilePtr() );
-	#endif
+		return (size_t)filestream_write( static_cast<idFile_Permanent*>(bgl->f)->GetFilePtr(), ptr, size * nmemb );
 }
 
 /*
@@ -3462,11 +3484,7 @@ int BackgroundDownloadThread( void *pexit ) {
 
 		if ( bgl->opcode == DLTYPE_FILE ) {
 			// use the low level read function, because fread may allocate memory
-			#if defined(WIN32)
-				_read( _fileno(static_cast<idFile_Permanent*>(bgl->f)->GetFilePtr()), bgl->file.buffer, bgl->file.length );
-			#else
-				fread(  bgl->file.buffer, bgl->file.length, 1, static_cast<idFile_Permanent*>(bgl->f)->GetFilePtr() );
-			#endif
+				filestream_read( static_cast<idFile_Permanent*>(bgl->f)->GetFilePtr(), bgl->file.buffer, bgl->file.length );
 			bgl->completed = true;
 		} else {
 #ifdef ID_ENABLE_CURL
@@ -3797,7 +3815,14 @@ idFileSystemLocal::MakeTemporaryFile
 ===============
 */
 idFile * idFileSystemLocal::MakeTemporaryFile( void ) {
-	FILE *f = tmpfile();
+	// libretro-common has no tmpfile() analog; create a uniquely-named
+	// scratch file under the save path and open it read/write.
+	idStr tmpPath = fs_savepath.GetString();
+	tmpPath += PATHSEPERATOR_STR;
+	tmpPath += va( "d3tmp_%u.tmp", (unsigned)Core_Milliseconds() ^ (unsigned)(uintptr_t)&tmpPath );
+	RFILE *f = filestream_open( tmpPath.c_str(),
+		RETRO_VFS_FILE_ACCESS_READ_WRITE,
+		RETRO_VFS_FILE_ACCESS_HINT_NONE );
 	if ( !f ) {
 		common->Warning( "idFileSystem::MakeTemporaryFile failed: %s", strerror( errno ) );
 		return NULL;
@@ -3805,7 +3830,7 @@ idFile * idFileSystemLocal::MakeTemporaryFile( void ) {
 	idFile_Permanent *file = new idFile_Permanent();
 	file->o = f;
 	file->name = "<tempfile>";
-	file->fullPath = "<tempfile>";
+	file->fullPath = tmpPath;
 	file->mode = ( 1 << FS_READ ) + ( 1 << FS_WRITE );
 	file->fileSize = 0;
 	return file;

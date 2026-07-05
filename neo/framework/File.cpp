@@ -27,6 +27,8 @@ If you have questions concerning this license or the applicable additional terms
 */
 
 #include "sys/platform.h"
+#include <streams/file_stream.h>
+#include <libretro.h>
 #include "framework/Unzip.h"
 #include "framework/FileSystem.h"
 
@@ -1033,7 +1035,7 @@ idFile_Permanent::~idFile_Permanent
 */
 idFile_Permanent::~idFile_Permanent( void ) {
 	if ( o ) {
-		fclose( o );
+		filestream_close( o );
 	}
 }
 
@@ -1065,7 +1067,7 @@ int idFile_Permanent::Read( void *buffer, int len ) {
 	tries = 0;
 	while( remaining ) {
 		block = remaining;
-		read = fread( buf, 1, block, o );
+		read = (int)filestream_read( o, buf, block );
 		if ( read == 0 ) {
 			// we might have been trying to read from a CD, which
 			// sometimes returns a 0 read on windows
@@ -1117,7 +1119,7 @@ int idFile_Permanent::Write( const void *buffer, int len ) {
 	tries = 0;
 	while( remaining ) {
 		block = remaining;
-		written = fwrite( buf, 1, block, o );
+		written = (int)filestream_write( o, buf, block );
 		if ( written == 0 ) {
 			if ( !tries ) {
 				tries = 1;
@@ -1138,7 +1140,7 @@ int idFile_Permanent::Write( const void *buffer, int len ) {
 		fileSize += written;
 	}
 	if ( handleSync ) {
-		fflush( o );
+		filestream_flush( o );
 	}
 	return len;
 }
@@ -1149,7 +1151,7 @@ idFile_Permanent::ForceFlush
 =================
 */
 void idFile_Permanent::ForceFlush( void ) {
-	setvbuf( o, NULL, _IONBF, 0 );
+	filestream_flush( o );
 }
 
 /*
@@ -1158,7 +1160,7 @@ idFile_Permanent::Flush
 =================
 */
 void idFile_Permanent::Flush( void ) {
-	fflush( o );
+	filestream_flush( o );
 }
 
 /*
@@ -1167,7 +1169,7 @@ idFile_Permanent::Tell
 =================
 */
 int idFile_Permanent::Tell( void ) {
-	return ftell( o );
+	return (int)filestream_tell( o );
 }
 
 /*
@@ -1185,7 +1187,7 @@ idFile_Permanent::Timestamp
 ================
 */
 ID_TIME_T idFile_Permanent::Timestamp( void ) {
-	return Sys_FileTimeStamp( o );
+	return Sys_FileTimeStampPath( filestream_get_path( o ) );
 }
 
 /*
@@ -1200,25 +1202,25 @@ int idFile_Permanent::Seek( long offset, fsOrigin_t origin ) {
 
 	switch( origin ) {
 		case FS_SEEK_CUR: {
-			_origin = SEEK_CUR;
+			_origin = RETRO_VFS_SEEK_POSITION_CURRENT;
 			break;
 		}
 		case FS_SEEK_END: {
-			_origin = SEEK_END;
+			_origin = RETRO_VFS_SEEK_POSITION_END;
 			break;
 		}
 		case FS_SEEK_SET: {
-			_origin = SEEK_SET;
+			_origin = RETRO_VFS_SEEK_POSITION_START;
 			break;
 		}
 		default: {
-			_origin = SEEK_CUR;
+			_origin = RETRO_VFS_SEEK_POSITION_CURRENT;
 			common->FatalError( "idFile_Permanent::Seek: bad origin for %s\n", name.c_str() );
 			break;
 		}
 	}
 
-	return fseek( o, offset, _origin );
+	return ( filestream_seek( o, offset, _origin ) < 0 ) ? -1 : 0;
 }
 
 

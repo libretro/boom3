@@ -32,6 +32,9 @@ If you have questions concerning this license or the applicable additional terms
 #include "idlib/math/Vector.h"
 #include "idlib/BitMsg.h"
 
+// libretro-common file stream (VFS-backed); full API in streams/file_stream.h
+typedef struct RFILE RFILE;
+
 //#include "framework/Unzip.h"
 
 /*
@@ -206,15 +209,15 @@ public:
 	virtual void			Flush( void );
 	virtual int				Seek( long offset, fsOrigin_t origin );
 
-	// returns file pointer
-	FILE *					GetFilePtr( void ) { return o; }
+	// returns the underlying libretro-common file stream
+	RFILE *					GetFilePtr( void ) { return o; }
 
 private:
 	idStr					name;			// relative path of the file - relative path
 	idStr					fullPath;		// full file path - OS path
 	int						mode;			// open mode
 	int						fileSize;		// size of the file
-	FILE *					o;				// file handle
+	RFILE *					o;				// libretro-common file stream (VFS-backed)
 	bool					handleSync;		// true if written data is immediately flushed
 };
 

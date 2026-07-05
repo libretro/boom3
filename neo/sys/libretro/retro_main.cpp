@@ -291,6 +291,15 @@ ID_TIME_T Sys_FileTimeStamp(FILE * fp) {
 	return st.st_mtime;
 }
 
+ID_TIME_T Sys_FileTimeStampPath(const char *path) {
+	if (!path)
+		return 0;
+	struct stat st;
+	if (stat(path, &st) != 0)
+		return 0;
+	return st.st_mtime;
+}
+
 char *Sys_GetClipboardData(void) {
 	Sys_Printf( "TODO: Sys_GetClipboardData\n" );
 	return NULL;
