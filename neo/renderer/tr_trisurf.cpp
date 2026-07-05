@@ -110,9 +110,6 @@ is highly uneven.
 ==============================================================================
 */
 
-// this shouldn't change anything, but previously renderbumped models seem to need it
-#define USE_INVA
-
 // instead of using the texture T vector, cross the normal and S vector for an orthogonal axis
 #define DERIVE_UNSMOOTHED_BITANGENT
 
@@ -126,7 +123,6 @@ static int			numPlanes;
 
 static idBlockAlloc<srfTriangles_t, 1<<8>				srfTrianglesAllocator;
 
-#ifdef USE_TRI_DATA_ALLOCATOR
 static idDynamicBlockAlloc<idDrawVert, 1<<20, 1<<10>	triVertexAllocator;
 static idDynamicBlockAlloc<glIndex_t, 1<<18, 1<<10>		triIndexAllocator;
 static idDynamicBlockAlloc<shadowCache_t, 1<<18, 1<<10>	triShadowVertexAllocator;
@@ -136,18 +132,6 @@ static idDynamicBlockAlloc<silEdge_t, 1<<17, 1<<10>		triSilEdgeAllocator;
 static idDynamicBlockAlloc<dominantTri_t, 1<<16, 1<<10>	triDominantTrisAllocator;
 static idDynamicBlockAlloc<int, 1<<16, 1<<10>			triMirroredVertAllocator;
 static idDynamicBlockAlloc<int, 1<<16, 1<<10>			triDupVertAllocator;
-#else
-static idDynamicAlloc<idDrawVert, 1<<20, 1<<10>			triVertexAllocator;
-static idDynamicAlloc<glIndex_t, 1<<18, 1<<10>			triIndexAllocator;
-static idDynamicAlloc<shadowCache_t, 1<<18, 1<<10>		triShadowVertexAllocator;
-static idDynamicAlloc<idPlane, 1<<17, 1<<10>			triPlaneAllocator;
-static idDynamicAlloc<glIndex_t, 1<<17, 1<<10>			triSilIndexAllocator;
-static idDynamicAlloc<silEdge_t, 1<<17, 1<<10>			triSilEdgeAllocator;
-static idDynamicAlloc<dominantTri_t, 1<<16, 1<<10>		triDominantTrisAllocator;
-static idDynamicAlloc<int, 1<<16, 1<<10>				triMirroredVertAllocator;
-static idDynamicAlloc<int, 1<<16, 1<<10>				triDupVertAllocator;
-#endif
-
 
 /*
 ===============
@@ -591,11 +575,7 @@ R_ResizeStaticTriSurfVerts
 =================
 */
 void R_ResizeStaticTriSurfVerts( srfTriangles_t *tri, int numVerts ) {
-#ifdef USE_TRI_DATA_ALLOCATOR
 	tri->verts = triVertexAllocator.Resize( tri->verts, numVerts );
-#else
-	assert( false );
-#endif
 }
 
 /*
@@ -604,11 +584,7 @@ R_ResizeStaticTriSurfIndexes
 =================
 */
 void R_ResizeStaticTriSurfIndexes( srfTriangles_t *tri, int numIndexes ) {
-#ifdef USE_TRI_DATA_ALLOCATOR
 	tri->indexes = triIndexAllocator.Resize( tri->indexes, numIndexes );
-#else
-	assert( false );
-#endif
 }
 
 /*
@@ -617,11 +593,7 @@ R_ResizeStaticTriSurfShadowVerts
 =================
 */
 void R_ResizeStaticTriSurfShadowVerts( srfTriangles_t *tri, int numVerts ) {
-#ifdef USE_TRI_DATA_ALLOCATOR
 	tri->shadowVertexes = triShadowVertexAllocator.Resize( tri->shadowVertexes, numVerts );
-#else
-	assert( false );
-#endif
 }
 
 /*
@@ -1198,7 +1170,6 @@ static void	R_DeriveFaceTangents( const srfTriangles_t *tri, faceTangents_t *fac
 		}
 		ft->degenerate = false;
 
-#ifdef USE_INVA
 		float inva = area < 0.0f ? -1 : 1;		// was = 1.0f / area;
 
 		temp[0] = (d0[0] * d1[4] - d0[4] * d1[0]) * inva;
@@ -1212,19 +1183,6 @@ static void	R_DeriveFaceTangents( const srfTriangles_t *tri, faceTangents_t *fac
 		temp[2] = (d0[3] * d1[2] - d0[2] * d1[3]) * inva;
 		temp.Normalize();
 		ft->tangents[1] = temp;
-#else
-		temp[0] = (d0[0] * d1[4] - d0[4] * d1[0]);
-		temp[1] = (d0[1] * d1[4] - d0[4] * d1[1]);
-		temp[2] = (d0[2] * d1[4] - d0[4] * d1[2]);
-		temp.Normalize();
-		ft->tangents[0] = temp;
-
-		temp[0] = (d0[3] * d1[0] - d0[0] * d1[3]);
-		temp[1] = (d0[3] * d1[1] - d0[1] * d1[3]);
-		temp[2] = (d0[3] * d1[2] - d0[2] * d1[3]);
-		temp.Normalize();
-		ft->tangents[1] = temp;
-#endif
 	}
 }
 
@@ -1298,14 +1256,7 @@ static void	R_DuplicateMirroredVertexes( srfTriangles_t *tri ) {
 
 	tri->mirroredVerts = triMirroredVertAllocator.Alloc( tri->numMirroredVerts );
 
-#ifdef USE_TRI_DATA_ALLOCATOR
 	tri->verts = triVertexAllocator.Resize( tri->verts, totalVerts );
-#else
-	idDrawVert *oldVerts = tri->verts;
-	R_AllocStaticTriSurfVerts( tri, totalVerts );
-	memcpy( tri->verts, oldVerts, tri->numVerts * sizeof( tri->verts[0] ) );
-	triVertexAllocator.Free( oldVerts );
-#endif
 
 	// create the duplicates
 	numMirror = 0;

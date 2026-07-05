@@ -101,7 +101,6 @@ void idCollisionModelManagerLocal::TraceTrmThroughNode( cm_traceWork_t *tw, cm_n
 idCollisionModelManagerLocal::TraceThroughAxialBSPTree_r
 ================
 */
-//#define NO_SPATIAL_SUBDIVISION
 
 void idCollisionModelManagerLocal::TraceThroughAxialBSPTree_r( cm_traceWork_t *tw, cm_node_t *node, float p1f, float p2f, idVec3 &p1, idVec3 &p2) {
 	float		t1, t2, offset;
@@ -133,14 +132,8 @@ void idCollisionModelManagerLocal::TraceThroughAxialBSPTree_r( cm_traceWork_t *t
 		return;
 	}
 	// if this is a leaf node
-	if ( node->planeType == -1 ) {
+	if ( node->planeType == -1 )
 		return;
-	}
-#ifdef NO_SPATIAL_SUBDIVISION
-	idCollisionModelManagerLocal::TraceThroughAxialBSPTree_r( tw, node->children[0], p1f, p2f, p1, p2 );
-	idCollisionModelManagerLocal::TraceThroughAxialBSPTree_r( tw, node->children[1], p1f, p2f, p1, p2 );
-	return;
-#endif
 	// distance from plane for trace start and end
 	t1 = p1[node->planeType] - node->planeDist;
 	t2 = p2[node->planeType] - node->planeDist;

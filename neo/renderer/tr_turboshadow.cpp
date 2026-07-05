@@ -98,14 +98,9 @@ srfTriangles_t *R_CreateVertexProgramTurboShadowVolume( const idRenderEntityLoca
 	newTri->numVerts = tri->numVerts * 2;
 
 	// alloc the max possible size
-#ifdef USE_TRI_DATA_ALLOCATOR
 	R_AllocStaticTriSurfIndexes( newTri, ( numShadowingFaces + tri->numSilEdges ) * 6 );
 	glIndex_t *tempIndexes = newTri->indexes;
 	glIndex_t *shadowIndexes = newTri->indexes;
-#else
-	glIndex_t *tempIndexes = (glIndex_t *)_alloca16( tri->numSilEdges * 6 * sizeof( tempIndexes[0] ) );
-	glIndex_t *shadowIndexes = tempIndexes;
-#endif
 
 	// create new triangles along sil planes
 	for ( sil = tri->silEdges, i = tri->numSilEdges; i > 0; i--, sil++ ) {
@@ -140,15 +135,8 @@ srfTriangles_t *R_CreateVertexProgramTurboShadowVolume( const idRenderEntityLoca
 	newTri->numShadowIndexesNoCaps = numShadowIndexes;
 	newTri->shadowCapPlaneBits = SHADOW_CAP_INFINITE;
 
-#ifdef USE_TRI_DATA_ALLOCATOR
 	// decrease the size of the memory block to only store the used indexes
 	R_ResizeStaticTriSurfIndexes( newTri, newTri->numIndexes );
-#else
-	// allocate memory for the indexes
-	R_AllocStaticTriSurfIndexes( newTri, newTri->numIndexes );
-	// copy the indexes we created for the sil planes
-	SIMDProcessor->Memcpy( newTri->indexes, tempIndexes, numShadowIndexes * sizeof( tempIndexes[0] ) );
-#endif
 
 	// these have no effect, because they extend to infinity
 	newTri->bounds.Clear();
@@ -237,12 +225,8 @@ srfTriangles_t *R_CreateTurboShadowVolume( const idRenderEntityLocal *ent,
 
 	newTri = R_AllocStaticTriSurf();
 
-#ifdef USE_TRI_DATA_ALLOCATOR
 	R_AllocStaticTriSurfShadowVerts( newTri, tri->numVerts * 2 );
 	shadowCache_t *shadowVerts = newTri->shadowVertexes;
-#else
-	shadowCache_t *shadowVerts = (shadowCache_t *)_alloca16( tri->numVerts * 2 * sizeof( shadowVerts[0] ) );
-#endif
 
 	R_GlobalPointToLocal( ent->modelMatrix, light->globalLightOrigin, localLightOrigin );
 
@@ -266,22 +250,12 @@ srfTriangles_t *R_CreateTurboShadowVolume( const idRenderEntityLocal *ent,
 	c_turboUsedVerts += newTri->numVerts;
 	c_turboUnusedVerts += tri->numVerts * 2 - newTri->numVerts;
 
-#ifdef USE_TRI_DATA_ALLOCATOR
 	R_ResizeStaticTriSurfShadowVerts( newTri, newTri->numVerts );
-#else
-	R_AllocStaticTriSurfShadowVerts( newTri, newTri->numVerts );
-	SIMDProcessor->Memcpy( newTri->shadowVertexes, shadowVerts, newTri->numVerts * sizeof( shadowVerts[0] ) );
-#endif
 
 	// alloc the max possible size
-#ifdef USE_TRI_DATA_ALLOCATOR
 	R_AllocStaticTriSurfIndexes( newTri, ( numShadowingFaces + tri->numSilEdges ) * 6 );
 	glIndex_t *tempIndexes = newTri->indexes;
 	glIndex_t *shadowIndexes = newTri->indexes;
-#else
-	glIndex_t *tempIndexes = (glIndex_t *)_alloca16( tri->numSilEdges * 6 * sizeof( tempIndexes[0] ) );
-	glIndex_t *shadowIndexes = tempIndexes;
-#endif
 
 	// create new triangles along sil planes
 	for ( sil = tri->silEdges, i = tri->numSilEdges; i > 0; i--, sil++ ) {
@@ -316,15 +290,8 @@ srfTriangles_t *R_CreateTurboShadowVolume( const idRenderEntityLocal *ent,
 	newTri->numShadowIndexesNoCaps = numShadowIndexes;
 	newTri->shadowCapPlaneBits = SHADOW_CAP_INFINITE;
 
-#ifdef USE_TRI_DATA_ALLOCATOR
 	// decrease the size of the memory block to only store the used indexes
 	R_ResizeStaticTriSurfIndexes( newTri, newTri->numIndexes );
-#else
-	// allocate memory for the indexes
-	R_AllocStaticTriSurfIndexes( newTri, newTri->numIndexes );
-	// copy the indexes we created for the sil planes
-	SIMDProcessor->Memcpy( newTri->indexes, tempIndexes, numShadowIndexes * sizeof( tempIndexes[0] ) );
-#endif
 
 	// these have no effect, because they extend to infinity
 	newTri->bounds.Clear();

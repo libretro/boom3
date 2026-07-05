@@ -1610,8 +1610,6 @@ TRISURF
 ============================================================
 */
 
-#define USE_TRI_DATA_ALLOCATOR
-
 void				R_InitTriSurfData( void );
 void				R_ShutdownTriSurfData( void );
 void				R_PurgeTriSurfData( frameData_t *frame );

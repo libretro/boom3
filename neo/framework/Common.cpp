@@ -134,11 +134,6 @@ bool			com_outputMsg = false;
 unsigned int	com_msgID = -1;
 #endif
 
-#ifdef __DOOM_DLL__
-idGame *		game = NULL;
-idGameEdit *	gameEdit = NULL;
-#endif
-
 // writes si_version to the config file - in a kinda obfuscated way
 //#define ID_WRITE_VERSION
 
@@ -216,9 +211,6 @@ private:
 	void						CheckToolMode( void );
 	void						WriteConfiguration( void );
 	void						DumpWarnings( void );
-	void						LoadGameDLL( void );
-	void						LoadGameDLLbyName( const char *dll, idStr& s );
-	void						UnloadGameDLL( void );
 	void						PrintLoadingMessage( const char *msg );
 	void						FilterLangList( idStrList* list, idStr lang );
 
@@ -235,8 +227,6 @@ private:
 	idStr						warningCaption;
 	idStrList					warningList;
 	idStrList					errorList;
-
-	uintptr_t					gameDLL;
 
 	idLangDict					languageDict;
 
@@ -350,8 +340,6 @@ idCommonLocal::idCommonLocal( void ) {
 	rd_buffer = NULL;
 	rd_buffersize = 0;
 	rd_flush = NULL;
-
-	gameDLL = 0;
 
 #ifdef ID_WRITE_VERSION
 	config_compressor = NULL;
@@ -2424,199 +2412,6 @@ void idCommonLocal::GUIFrame( bool execCmd, bool network ) {
 
 /*
 =================
-idCommonLocal::LoadGameDLLbyName
-
-Helper for LoadGameDLL() to make it less painful to try different dll names.
-=================
-*/
-void idCommonLocal::LoadGameDLLbyName( const char *dll, idStr& s ) {
-	// try fs_dllpath first, if set
-	const char* dllpath = cvarSystem->GetCVarString("fs_gameDllPath");
-	if (dllpath != NULL && dllpath[0] != '\0') {
-		s = dllpath;
-		s.AppendPath(dll);
-		gameDLL = sys->DLL_Load(s);
-	}
-
-	#if defined(__AROS__)
-	if (!gameDLL) {
-		s.CapLength(0);
-		// check in the launch (mod) directory first on AROS
-		if (Sys_GetPath(PATH_LAUNCH, s)) {
-			s.AppendPath(dll);
-			gameDLL = sys->DLL_Load(s);
-			if (gameDLL)
-				return;
-		}
-	}
-	#endif
-
-	// try next to the binary second (build tree)
-	if (!gameDLL && Sys_GetPath(PATH_EXE, s)) {
-		// "s = " seems superfluous, but works around g++ 4.7 bug else StripFilename()
-		// (and possibly even CapLength()) seems to be "optimized" away and the string contains garbage
-		s = s.StripFilename();
-		s.AppendPath(dll);
-		gameDLL = sys->DLL_Load(s);
-	}
-
-	#if defined(_WIN32)
-		// then the lib/ dir relative to the binary on windows
-		if (!gameDLL && Sys_GetPath(PATH_EXE, s)) {
-			s.StripFilename();
-			s.AppendPath("lib");
-			s.AppendPath(dll);
-			gameDLL = sys->DLL_Load(s);
-		}
-	#elif defined(MACOS_X)
-		// then the binary dir in the bundle on osx
-		if (!gameDLL && Sys_GetPath(PATH_EXE, s)) {
-			s.StripFilename();
-			s.AppendPath(dll);
-			gameDLL = sys->DLL_Load(s);
-		}
-
-		// if not found in the bundle's directory, try in the bundle itself
-		if (!gameDLL && Sys_GetPath(PATH_EXE, s)) {
-			s.AppendPath("Contents/MacOS/base");
-			s.AppendPath(dll);
-			gameDLL = sys->DLL_Load(s);
-		}
-	#elif !defined(__AROS__)
-		// then the install folder on *nix
-		if (!gameDLL) {
-			s = BUILD_LIBDIR;
-			s.AppendPath(dll);
-			gameDLL = sys->DLL_Load(s);
-		}
-	#endif
-}
-
-/*
-=================
-idCommonLocal::LoadGameDLL
-=================
-*/
-void idCommonLocal::LoadGameDLL( void ) {
-#ifdef __DOOM_DLL__
-	const char		*fs_game;
-	char			dll[MAX_OSPATH];
-	idStr			s;
-
-	gameImport_t	gameImport;
-	gameExport_t	gameExport;
-	GetGameAPI_t	GetGameAPI;
-
-	fs_game = cvarSystem->GetCVarString("fs_game");
-	if (!fs_game || !fs_game[0])
-		fs_game = BASE_GAMEDIR;
-
-	gameDLL = 0;
-
-	sys->DLL_GetFileName(fs_game, dll, sizeof(dll));
-	LoadGameDLLbyName(dll, s);
-
-	// there was no gamelib for this mod, use default one from base game
-	if (!gameDLL) {
-		common->Printf( "\n" );
-
-		const char *fs_base = cvarSystem->GetCVarString("fs_game_base");
-		if (fs_base && fs_base[0]) {
-			common->Warning( "couldn't load mod-specific %s, defaulting to library of fs_game_base (%s)!\n", dll, fs_base);
-			sys->DLL_GetFileName(fs_base, dll, sizeof(dll));
-			LoadGameDLLbyName(dll, s);
-			if ( !gameDLL ) {
-				common->Warning( "couldn't load fs_game_base lib %s either, defaulting to base game's library!\n", dll);
-			}
-		} else {
-			common->Warning( "couldn't load mod-specific %s, defaulting to base game's library!\n", dll );
-		}
-
-		if ( !gameDLL ) {
-			sys->DLL_GetFileName(BASE_GAMEDIR, dll, sizeof(dll));
-			LoadGameDLLbyName(dll, s);
-		}
-	}
-
-	if ( !gameDLL ) {
-		common->FatalError( "couldn't load game dynamic library '%s'", dll );
-		return;
-	}
-
-	common->Printf("loaded game library '%s'.\n", s.c_str());
-
-	GetGameAPI = (GetGameAPI_t) Sys_DLL_GetProcAddress( gameDLL, "GetGameAPI" );
-	if ( !GetGameAPI ) {
-		Sys_DLL_Unload( gameDLL );
-		gameDLL = 0;
-		common->FatalError( "couldn't find game DLL API" );
-		return;
-	}
-
-	gameImport.version					= GAME_API_VERSION;
-	gameImport.sys						= ::sys;
-	gameImport.common					= ::common;
-	gameImport.cmdSystem				= ::cmdSystem;
-	gameImport.cvarSystem				= ::cvarSystem;
-	gameImport.fileSystem				= ::fileSystem;
-	gameImport.networkSystem			= ::networkSystem;
-	gameImport.renderSystem				= ::renderSystem;
-	gameImport.soundSystem				= ::soundSystem;
-	gameImport.renderModelManager		= ::renderModelManager;
-	gameImport.uiManager				= ::uiManager;
-	gameImport.declManager				= ::declManager;
-	gameImport.AASFileManager			= ::AASFileManager;
-	gameImport.collisionModelManager	= ::collisionModelManager;
-
-	gameExport							= *GetGameAPI( &gameImport);
-
-	if ( gameExport.version != GAME_API_VERSION ) {
-		Sys_DLL_Unload( gameDLL );
-		gameDLL = 0;
-		common->FatalError( "wrong game DLL API version" );
-		return;
-	}
-
-	game								= gameExport.game;
-	gameEdit							= gameExport.gameEdit;
-
-#endif
-
-	// initialize the game object
-	if ( game != NULL ) {
-		game->Init();
-	}
-}
-
-/*
-=================
-idCommonLocal::UnloadGameDLL
-=================
-*/
-void idCommonLocal::UnloadGameDLL( void ) {
-
-	// shut down the game object
-	if ( game != NULL ) {
-		game->Shutdown();
-	}
-
-#ifdef __DOOM_DLL__
-
-	if ( gameDLL ) {
-		Sys_DLL_Unload( gameDLL );
-		gameDLL = 0;
-	}
-	game = NULL;
-	gameEdit = NULL;
-
-#endif
-
-	com_debuggerSupported = false; // HvG: Reset debugger availability.
-	gameCallbacks.Reset(); // DG: these callbacks are invalid now because DLL has been unloaded
-}
-
-/*
-=================
 idCommonLocal::IsInitialized
 =================
 */
@@ -3084,8 +2879,9 @@ void idCommonLocal::InitGame( void ) {
 
 	PrintLoadingMessage( common->GetLanguageDict()->GetString( "#str_04350" ) );
 
-	// load the game dll
-	LoadGameDLL();
+	// initialize the game object
+	if ( game != NULL )
+		game->Init();
 
 	// startup the script debugger
 	if ( com_enableDebuggerServer.GetBool( ) )
@@ -3151,8 +2947,12 @@ void idCommonLocal::ShutdownGame( bool reloading ) {
 	// shutdown the decl manager
 	declManager->Shutdown();
 
-	// unload the game dll
-	UnloadGameDLL();
+	// shut down the game object
+	if ( game != NULL )
+		game->Shutdown();
+
+	com_debuggerSupported = false; // HvG: Reset debugger availability.
+	gameCallbacks.Reset(); // DG: these callbacks are invalid now because DLL has been unloaded
 
 	// dump warnings to "warnings.txt"
 #ifdef DEBUG
