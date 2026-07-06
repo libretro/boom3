@@ -199,6 +199,32 @@ public:
 												// screen on prints
 	int					bytesNeededForMapLoad;	//
 
+	// libretro: incremental (non-blocking) map load. ExecuteMapChange() is
+	// split into phases driven one-per-frame from Frame() so retro_run()
+	// returns every frame during a load instead of blocking for the whole
+	// thing. This is the default for normal map transitions (MoveToNewMap);
+	// LoadGame()/savestate restores still use the synchronous back-to-back
+	// ExecuteMapChange() path.
+	enum mapLoadPhase_t {
+		LOAD_IDLE = 0,
+		LOAD_BEGIN,
+		LOAD_GEOMETRY,
+		LOAD_SPAWN,
+		LOAD_MEDIA,
+		LOAD_WARMUP,
+		LOAD_DONE
+	};
+	mapLoadPhase_t		mapLoadPhase;			// LOAD_IDLE = not loading
+	bool				mapLoadNoFadeWipe;		// saved arg across phases
+	idStr				mapLoadMapString;		// locals threaded across phases
+	idStr				mapLoadFullMapName;
+	bool				mapLoadReloadingSameMap;
+	int					mapLoadStartTime;
+	// deferred post-load action for the async path (MoveToNewMap's autosave):
+	bool				mapLoadPendingAutosave;
+	bool				mapLoadInsidePhase;	// re-entrancy guard: true while a phase runs
+	idStr				mapLoadAutosaveMapName;
+
 	// we don't want to redraw the loading screen for every single
 	// console print that happens
 	int					lastPacifierTime;
@@ -309,6 +335,24 @@ public:
 	void				SetBytesNeededForMapLoad( const char *mapName, int bytesNeeded );
 
 	void				ExecuteMapChange( bool noFadeWipe = false );
+
+	// libretro incremental load: kick off a deferred (non-blocking) map
+	// change, and advance it one phase per frame. AdvanceMapLoad returns
+	// true while a load is still in progress.
+	void				BeginMapChangeAsync( bool noFadeWipe = false );
+	bool				AdvanceMapLoad();
+	bool				MapLoadInProgress() const { return mapLoadPhase != LOAD_IDLE; }
+	// drive the incremental load from Frame(); returns true if a load was in
+	// progress this frame (caller should skip normal game tics and just draw
+	// the loading gui). Runs the deferred post-load action on completion.
+	bool				DriveAsyncMapLoad();
+	void				FinishAsyncMapLoad();
+	void				MapLoad_Begin();
+	void				MapLoad_Geometry();
+	void				MapLoad_Spawn();
+	void				MapLoad_Media();
+	void				MapLoad_Warmup();
+	void				MapLoad_Done();
 	void				UnloadMap();
 
 	// return true if we actually waiting on an auth reply

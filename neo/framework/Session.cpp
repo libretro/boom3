@@ -316,6 +316,13 @@ void idSessionLocal::Clear() {
 	insideUpdateScreen = false;
 	insideExecuteMapChange = false;
 
+	mapLoadPhase = LOAD_IDLE;
+	mapLoadNoFadeWipe = false;
+	mapLoadReloadingSameMap = false;
+	mapLoadStartTime = 0;
+	mapLoadPendingAutosave = false;
+	mapLoadInsidePhase = false;
+
 	loadingSaveGame = false;
 	savegameFile = NULL;
 	savegameVersion = 0;
@@ -1118,21 +1125,15 @@ Leaves the existing userinfo and serverinfo
 void idSessionLocal::MoveToNewMap( const char *mapName ) {
 	mapSpawnData.serverInfo.Set( "si_map", mapName );
 
-	ExecuteMapChange();
-
-	if ( !com_disableAutoSaves.GetBool() && !mapSpawnData.serverInfo.GetBool("devmap") ) {
-		// Autosave at the beginning of the level - DG: unless disabled with "com_disableAutoSaves 1"
-
-		// DG: set an explicit savename to avoid problems with autosave names
-		//     (they were translated which caused problems like all alpha labs parts
-		//      getting the same filename in spanish, probably because the strings contained
-		//      dots and everything behind them was cut off as "file extension".. see #305)
-		idStr saveFileName = "Autosave_";
-		saveFileName += mapName;
-		SaveGame( GetAutoSaveName( mapName ), true, saveFileName );
-	}
-
-	SetGUI( NULL, NULL );
+	// Incremental (non-blocking) load: kick off the phased load and return.
+	// The load runs one phase per frame from Frame() so retro_run() returns
+	// every frame during the load instead of blocking for the whole thing.
+	// The beginning-of-level autosave and SetGUI are deferred to load
+	// completion - Frame() runs them via FinishAsyncMapLoad() when
+	// AdvanceMapLoad() finishes.
+	mapLoadPendingAutosave = ( !com_disableAutoSaves.GetBool() && !mapSpawnData.serverInfo.GetBool("devmap") );
+	mapLoadAutosaveMapName = mapName;
+	BeginMapChangeAsync();
 }
 
 /*
@@ -1416,8 +1417,138 @@ Exits with mapSpawned = true
 ===============
 */
 void idSessionLocal::ExecuteMapChange( bool noFadeWipe ) {
-	int		i;
-	bool	reloadingSameMap;
+	// Classic synchronous path: run every phase back-to-back. Behavior is
+	// identical to before the phase split - this still blocks retro_run for
+	// the whole load. The incremental (non-blocking) path is
+	// BeginMapChangeAsync()/AdvanceMapLoad(), which runs one phase per frame.
+	mapLoadNoFadeWipe = noFadeWipe;
+	MapLoad_Begin();
+	MapLoad_Geometry();
+	MapLoad_Spawn();
+	MapLoad_Media();
+	MapLoad_Warmup();
+	MapLoad_Done();
+}
+
+/*
+===============
+idSessionLocal::BeginMapChangeAsync
+
+libretro: start a deferred, non-blocking map change. Sets up the first
+phase; AdvanceMapLoad() runs one phase per frame so retro_run() returns
+every frame during the load.
+===============
+*/
+void idSessionLocal::BeginMapChangeAsync( bool noFadeWipe ) {
+	mapLoadNoFadeWipe = noFadeWipe;
+	mapLoadPhase = LOAD_BEGIN;
+}
+
+/*
+===============
+idSessionLocal::AdvanceMapLoad
+
+Runs the current load phase and advances to the next. Returns true while a
+load is still in progress (call again next frame), false when finished.
+===============
+*/
+bool idSessionLocal::AdvanceMapLoad() {
+	switch ( mapLoadPhase ) {
+	case LOAD_IDLE:
+		return false;
+	case LOAD_BEGIN:
+		MapLoad_Begin();
+		mapLoadPhase = LOAD_GEOMETRY;
+		return true;
+	case LOAD_GEOMETRY:
+		MapLoad_Geometry();
+		mapLoadPhase = LOAD_SPAWN;
+		return true;
+	case LOAD_SPAWN:
+		MapLoad_Spawn();
+		mapLoadPhase = LOAD_MEDIA;
+		return true;
+	case LOAD_MEDIA:
+		MapLoad_Media();
+		mapLoadPhase = LOAD_WARMUP;
+		return true;
+	case LOAD_WARMUP:
+		MapLoad_Warmup();
+		mapLoadPhase = LOAD_DONE;
+		return true;
+	case LOAD_DONE:
+		MapLoad_Done();
+		mapLoadPhase = LOAD_IDLE;
+		return false;
+	}
+	return false;
+}
+
+/*
+===============
+idSessionLocal::DriveAsyncMapLoad
+
+Called once per Frame() while a load is in progress. Runs one load phase and
+returns true (caller should skip game tics and just draw the loading gui). On
+the frame the load finishes, runs the deferred post-load action and returns
+false so normal gameplay resumes next frame.
+===============
+*/
+bool idSessionLocal::DriveAsyncMapLoad() {
+	if ( !MapLoadInProgress() ) {
+		return false;
+	}
+
+	// Re-entrancy guard: several load phases call session->Frame() internally
+	// (ShowLoadingGui()'s spin loop, the warmup screen-updates). Those nested
+	// Frame() calls must NOT drive another phase, or the whole load would run
+	// recursively inside one phase and defeat the incremental design. When
+	// already inside a phase, just report "loading" so the caller draws the
+	// gui and returns, without advancing.
+	if ( mapLoadInsidePhase ) {
+		return true;
+	}
+
+	mapLoadInsidePhase = true;
+	// run exactly one phase this frame
+	bool stillLoading = AdvanceMapLoad();
+	mapLoadInsidePhase = false;
+
+	if ( !stillLoading ) {
+		// load just completed (MapLoad_Done ran); do the deferred post-load work
+		FinishAsyncMapLoad();
+		return false;
+	}
+	return true;
+}
+
+/*
+===============
+idSessionLocal::FinishAsyncMapLoad
+
+Runs the work that MoveToNewMap() would have done right after a synchronous
+ExecuteMapChange(): the beginning-of-level autosave and clearing the gui.
+===============
+*/
+void idSessionLocal::FinishAsyncMapLoad() {
+	if ( mapLoadPendingAutosave ) {
+		mapLoadPendingAutosave = false;
+		idStr saveFileName = "Autosave_";
+		saveFileName += mapLoadAutosaveMapName;
+		SaveGame( GetAutoSaveName( mapLoadAutosaveMapName.c_str() ), true, saveFileName );
+	}
+
+	SetGUI( NULL, NULL );
+}
+
+/*
+===============
+idSessionLocal::MapLoad_Begin
+Phase 1: shut down the old map, begin level load, bring up the loading GUI.
+===============
+*/
+void idSessionLocal::MapLoad_Begin() {
+	bool noFadeWipe = mapLoadNoFadeWipe;
 
 	// close console and remove any prints from the notify lines
 	console->Close();
@@ -1450,25 +1581,25 @@ void idSessionLocal::ExecuteMapChange( bool noFadeWipe ) {
 	}
 
 	// extract the map name from serverinfo
-	idStr mapString = mapSpawnData.serverInfo.GetString( "si_map" );
+	mapLoadMapString = mapSpawnData.serverInfo.GetString( "si_map" );
 
-	idStr fullMapName = "maps/";
-	fullMapName += mapString;
-	fullMapName.StripFileExtension();
+	mapLoadFullMapName = "maps/";
+	mapLoadFullMapName += mapLoadMapString;
+	mapLoadFullMapName.StripFileExtension();
 
 	// shut down the existing game if it is running
 	UnloadMap();
 
 	// don't do the deferred caching if we are reloading the same map
-	if ( fullMapName == currentMapName ) {
-		reloadingSameMap = true;
+	if ( mapLoadFullMapName == currentMapName ) {
+		mapLoadReloadingSameMap = true;
 	} else {
-		reloadingSameMap = false;
-		currentMapName = fullMapName;
+		mapLoadReloadingSameMap = false;
+		currentMapName = mapLoadFullMapName;
 	}
 
 	// note which media we are going to need to load
-	if ( !reloadingSameMap ) {
+	if ( !mapLoadReloadingSameMap ) {
 		declManager->BeginLevelLoad();
 		renderSystem->BeginLevelLoad();
 		soundSystem->BeginLevelLoad();
@@ -1478,7 +1609,7 @@ void idSessionLocal::ExecuteMapChange( bool noFadeWipe ) {
 	uiManager->Reload( true );
 
 	// set the loading gui that we will wipe to
-	LoadLoadingGui( mapString );
+	LoadLoadingGui( mapLoadMapString );
 
 	// cause prints to force screen updates as a pacifier,
 	// and draw the loading gui instead of game draws
@@ -1487,8 +1618,8 @@ void idSessionLocal::ExecuteMapChange( bool noFadeWipe ) {
 	// if this works out we will probably want all the sizes in a def file although this solution will
 	// work for new maps etc. after the first load. we can also drop the sizes into the default.cfg
 	fileSystem->ResetReadCount();
-	if ( !reloadingSameMap  ) {
-		bytesNeededForMapLoad = GetBytesNeededForMapLoad( mapString.c_str() );
+	if ( !mapLoadReloadingSameMap  ) {
+		bytesNeededForMapLoad = GetBytesNeededForMapLoad( mapLoadMapString.c_str() );
 	} else {
 		bytesNeededForMapLoad = 30 * 1024 * 1024;
 	}
@@ -1499,21 +1630,39 @@ void idSessionLocal::ExecuteMapChange( bool noFadeWipe ) {
 	ShowLoadingGui();
 
 	// note any warning prints that happen during the load process
-	common->ClearWarnings( mapString );
+	common->ClearWarnings( mapLoadMapString );
 
 	// if net play, we get the number of clients during mapSpawnInfo processing
 	if ( !idAsyncNetwork::IsActive() )
 		numClients = 1;
 
-	int start = Core_Milliseconds();
+	mapLoadStartTime = Core_Milliseconds();
 
 	common->Printf( "----- Map Initialization -----\n" );
-	common->Printf( "Map: %s\n", mapString.c_str() );
+	common->Printf( "Map: %s\n", mapLoadMapString.c_str() );
+}
 
+/*
+===============
+idSessionLocal::MapLoad_Geometry
+Phase 2: load all the map geometry.
+===============
+*/
+void idSessionLocal::MapLoad_Geometry() {
 	// let the renderSystem load all the geometry
-	if ( !rw->InitFromMap( fullMapName ) ) {
-		common->Error( "couldn't load %s", fullMapName.c_str() );
+	if ( !rw->InitFromMap( mapLoadFullMapName ) ) {
+		common->Error( "couldn't load %s", mapLoadFullMapName.c_str() );
 	}
+}
+
+/*
+===============
+idSessionLocal::MapLoad_Spawn
+Phase 3: spawn all entities (from a savegame or a new map) and the players.
+===============
+*/
+void idSessionLocal::MapLoad_Spawn() {
+	int i;
 
 	// for the synchronous networking we needed to roll the angles over from
 	// level to level, but now we can just clear everything
@@ -1528,7 +1677,7 @@ void idSessionLocal::ExecuteMapChange( bool noFadeWipe ) {
 
 	// load and spawn all other entities ( from a savegame possibly )
 	if ( loadingSaveGame && savegameFile ) {
-		if ( game->InitFromSaveGame( fullMapName + ".map", rw, sw, savegameFile ) == false ) {
+		if ( game->InitFromSaveGame( mapLoadFullMapName + ".map", rw, sw, savegameFile ) == false ) {
 			// If the loadgame failed, restart the map with the player persistent data
 			loadingSaveGame = false;
 			fileSystem->CloseFile( savegameFile );
@@ -1537,11 +1686,11 @@ void idSessionLocal::ExecuteMapChange( bool noFadeWipe ) {
 			common->Warning( "WARNING: Loading savegame failed, will restart the map with the player persistent data!" );
 
 			game->SetServerInfo( mapSpawnData.serverInfo );
-			game->InitFromNewMap( fullMapName + ".map", rw, sw, idAsyncNetwork::server.IsActive(), idAsyncNetwork::client.IsActive(), Core_Milliseconds() );
+			game->InitFromNewMap( mapLoadFullMapName + ".map", rw, sw, idAsyncNetwork::server.IsActive(), idAsyncNetwork::client.IsActive(), Core_Milliseconds() );
 		}
 	} else {
 		game->SetServerInfo( mapSpawnData.serverInfo );
-		game->InitFromNewMap( fullMapName + ".map", rw, sw, idAsyncNetwork::server.IsActive(), idAsyncNetwork::client.IsActive(), Core_Milliseconds() );
+		game->InitFromNewMap( mapLoadFullMapName + ".map", rw, sw, idAsyncNetwork::server.IsActive(), idAsyncNetwork::client.IsActive(), Core_Milliseconds() );
 	}
 
 	if ( !idAsyncNetwork::IsActive() && !loadingSaveGame ) {
@@ -1550,15 +1699,33 @@ void idSessionLocal::ExecuteMapChange( bool noFadeWipe ) {
 			game->SpawnPlayer( i );
 		}
 	}
+}
 
+/*
+===============
+idSessionLocal::MapLoad_Media
+Phase 4: purge/load the media (images, sounds, decls).
+===============
+*/
+void idSessionLocal::MapLoad_Media() {
 	// actually purge/load the media
-	if ( !reloadingSameMap ) {
+	if ( !mapLoadReloadingSameMap ) {
 		renderSystem->EndLevelLoad();
-		soundSystem->EndLevelLoad( mapString.c_str() );
+		soundSystem->EndLevelLoad( mapLoadMapString.c_str() );
 		declManager->EndLevelLoad();
-		SetBytesNeededForMapLoad( mapString.c_str(), fileSystem->GetReadCount() );
+		SetBytesNeededForMapLoad( mapLoadMapString.c_str(), fileSystem->GetReadCount() );
 	}
 	uiManager->EndLevelLoad();
+}
+
+/*
+===============
+idSessionLocal::MapLoad_Warmup
+Phase 5: run a few frames to settle, generate interactions, spin the gui.
+===============
+*/
+void idSessionLocal::MapLoad_Warmup() {
+	int i;
 
 	if ( !idAsyncNetwork::IsActive() && !loadingSaveGame ) {
 		// run a few frames to allow everything to settle
@@ -1567,8 +1734,8 @@ void idSessionLocal::ExecuteMapChange( bool noFadeWipe ) {
 		}
 	}
 
-	int	msec = Core_Milliseconds() - start;
-	common->Printf( "%6d msec to load %s\n", msec, mapString.c_str() );
+	int	msec = Core_Milliseconds() - mapLoadStartTime;
+	common->Printf( "%6d msec to load %s\n", msec, mapLoadMapString.c_str() );
 
 	// let the renderSystem generate interactions now that everything is spawned
 	rw->GenerateAllInteractions();
@@ -1588,7 +1755,15 @@ void idSessionLocal::ExecuteMapChange( bool noFadeWipe ) {
 			pct += 0.05f;
 		}
 	}
+}
 
+/*
+===============
+idSessionLocal::MapLoad_Done
+Phase 6: finish the wipe, reset timing, hand off to gameplay.
+===============
+*/
+void idSessionLocal::MapLoad_Done() {
 	// capture the current screen and start a wipe
 	StartWipe( "wipe2Material" );
 
@@ -2531,6 +2706,16 @@ void idSessionLocal::Frame() {
 	// libretro: all sound mixing happens per-frame in retro_run via
 	// MixFrameFloat/MixFrameS16; there is no async update, no wall clock
 	// and no device to babysit.
+
+	// libretro incremental map load: if a phased load is in progress, run one
+	// phase this frame and bail out - we don't run game tics while loading, we
+	// just let retro_run() return so the frontend pulse keeps ticking and the
+	// loading gui (drawn by UpdateScreen/Draw) animates. Normal gameplay
+	// resumes on the frame after the load finishes.
+	if ( MapLoadInProgress() ) {
+		DriveAsyncMapLoad();
+		return;
+	}
 
 	// Editors that completely take over the game
 	if ( com_editorActive && ( com_editors & ( EDITOR_RADIANT | EDITOR_GUI ) ) ) {
