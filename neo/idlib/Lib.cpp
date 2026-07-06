@@ -480,7 +480,7 @@ void	BigRevBytes( void *bp, int elsize, int elcount ) {
 }
 
 void	LittleRevBytes( void *bp, int elsize, int elcount ){
-#ifndef MSB_FIRST
+#ifdef MSB_FIRST
 	RevBytesSwap(bp, elsize, elcount);
 #endif
 }
