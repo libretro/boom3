@@ -385,9 +385,7 @@ ID_TIME_T idSoundSample::GetNewTimeStamp( void ) const {
 // filter has correct context across the entire sample and the mixer's
 // per-block path becomes a trivial 1:1 copy. The int16 sinc is documented
 // as deterministic and bit-identical across compilers/architectures, so
-// this stays byte-reproducible. Default off (cvar) until proven out.
-idCVar s_resampleOnLoad( "s_resampleOnLoad", "0", CVAR_SOUND | CVAR_BOOL | CVAR_ARCHIVE,
-	"resample PCM sounds to 44kHz once at load with a sinc filter (vs per-block duplication)" );
+// this stays byte-reproducible.
 
 /*
 ===================
@@ -463,9 +461,7 @@ static short *ResamplePCMTo44k( const short *src, int srcFrames, int channels, i
 // the whole file, decodes straight to int16 with audio_transfer_read_s16
 // (the cache is int16, so this is the no-round-trip target format), and
 // fills *info + *outData (soundCacheAllocator'd) + *outBytes. Returns true on
-// success. Gated by s_useAudioTransfer; falls back to idWaveFile otherwise.
-idCVar s_useAudioTransfer( "s_useAudioTransfer", "0", CVAR_SOUND | CVAR_BOOL | CVAR_ARCHIVE,
-	"decode WAV sounds via libretro-common audio_transfer instead of the built-in loader" );
+// success; falls back to idWaveFile otherwise.
 
 static bool LoadWAV_transfer( const char *name, waveformatex_t *info, byte **outData, int *outBytes, int *outSamples ) {
 	void *fileBuf = NULL;
@@ -566,7 +562,7 @@ void idSoundSample::Load( void ) {
 	// fails for any reason we fall through to the built-in loader below.
 	idStr ext;
 	idStr( name ).ExtractFileExtension( ext );
-	if ( s_useAudioTransfer.GetBool() && ext.Icmp( "wav" ) == 0 ) {
+	if ( ext.Icmp( "wav" ) == 0 ) {
 		byte *atData = NULL;
 		int atBytes = 0, atSamples = 0;
 		if ( LoadWAV_transfer( name, &info, &atData, &atBytes, &atSamples ) ) {
@@ -624,8 +620,7 @@ haveData:
 	// filter - so the mixer never has to upsample per-block. OGG is left
 	// alone (it stays encoded and streams; resampling it here would force a
 	// full decode into memory). objectInfo.wFormatTag is PCM for .wav.
-	if ( s_resampleOnLoad.GetBool()
-			&& objectInfo.wFormatTag == WAVE_FORMAT_TAG_PCM
+	if ( objectInfo.wFormatTag == WAVE_FORMAT_TAG_PCM
 			&& objectInfo.nSamplesPerSec < 44100
 			&& objectSize > 0 ) {
 		int srcFrames = objectSize / objectInfo.nChannels;

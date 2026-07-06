@@ -29,16 +29,11 @@ If you have questions concerning this license or the applicable additional terms
 #ifdef MSB_FIRST
   #define STB_VORBIS_BIG_ENDIAN
 #endif
-#define STB_VORBIS_NO_STDIO
-#define STB_VORBIS_NO_PUSHDATA_API // we're using the pulldata API
-#define STB_VORBIS_HEADER_ONLY
-#include "stb_vorbis.h"
 
 #include "sys/platform.h"
 #include "framework/FileSystem.h"
 
-// libretro-common audio_transfer: optional OGG decode path (rvorbis) selectable
-// via s_useAudioTransfer, in parallel with the built-in stb_vorbis path.
+// libretro-common audio_transfer: WAV/OGG decode (rwav/rvorbis).
 #include <formats/audio.h>
 
 #include "sound/snd_local.h"
@@ -57,49 +52,6 @@ idDynamicBlockAlloc<byte, 1<<20, 128>		decoderMemoryAllocator;
 
 const int MIN_OGGVORBIS_MEMORY				= 768 * 1024;
 
-static const char* my_stbv_strerror(int stbVorbisError)
-{
-	switch(stbVorbisError)
-	{
-		case VORBIS__no_error: return "No Error";
-#define ERRCASE(X) \
-		case VORBIS_ ## X : return #X;
-
-		ERRCASE( need_more_data )    // not a real error
-
-		ERRCASE( invalid_api_mixing )           // can't mix API modes
-		ERRCASE( outofmem )                     // not enough memory
-		ERRCASE( feature_not_supported )        // uses floor 0
-		ERRCASE( too_many_channels )            // STB_VORBIS_MAX_CHANNELS is too small
-		ERRCASE( file_open_failure )            // fopen() failed
-		ERRCASE( seek_without_length )          // can't seek in unknown-length file
-
-		ERRCASE( unexpected_eof )               // file is truncated?
-		ERRCASE( seek_invalid )                 // seek past EOF
-
-		// decoding errors (corrupt/invalid stream) -- you probably
-		// don't care about the exact details of these
-
-		// vorbis errors:
-		ERRCASE( invalid_setup )
-		ERRCASE( invalid_stream )
-
-		// ogg errors:
-		ERRCASE( missing_capture_pattern )
-		ERRCASE( invalid_stream_structure_version )
-		ERRCASE( continued_packet_flag_invalid )
-		ERRCASE( incorrect_stream_serial_number )
-		ERRCASE( invalid_first_page )
-		ERRCASE( bad_packet_type )
-		ERRCASE( cant_find_last_page )
-		ERRCASE( seek_failed )
-		ERRCASE( ogg_skeleton_not_supported )
-
-#undef ERRCASE
-	}
-	assert(0 && "unknown stb_vorbis errorcode!");
-	return "Unknown Error!";
-}
 
 
 /*
@@ -131,12 +83,23 @@ int idWaveFile::OpenOGG( const char* strFileName, waveformatex_t *pwfx ) {
 
 	mhmmio->Read( oggFileData, fileSize );
 
-	int stbverr = 0;
-	stb_vorbis *ov = stb_vorbis_open_memory( oggFileData, fileSize, &stbverr, NULL );
-	if( ov == NULL ) {
+	// Probe format and length via libretro-common audio_transfer (rvorbis).
+	void *at = audio_transfer_new( AUDIO_TYPE_VORBIS );
+	if ( at == NULL ) {
 		Mem_Free( oggFileData );
 		Sys_LeaveCriticalSection( CRITICAL_SECTION_ONE );
-		common->Warning( "Opening OGG file '%s' with stb_vorbis failed: %s\n", strFileName, my_stbv_strerror(stbverr) );
+		common->Warning( "Opening OGG file '%s' with audio_transfer failed\n", strFileName );
+		fileSystem->CloseFile( mhmmio );
+		mhmmio = NULL;
+		return -1;
+	}
+	audio_transfer_set_buffer_ptr( at, AUDIO_TYPE_VORBIS, oggFileData, fileSize );
+	if ( !audio_transfer_start( at, AUDIO_TYPE_VORBIS )
+			|| !audio_transfer_is_valid( at, AUDIO_TYPE_VORBIS ) ) {
+		audio_transfer_free( at, AUDIO_TYPE_VORBIS );
+		Mem_Free( oggFileData );
+		Sys_LeaveCriticalSection( CRITICAL_SECTION_ONE );
+		common->Warning( "Opening OGG file '%s' with audio_transfer failed\n", strFileName );
 		fileSystem->CloseFile( mhmmio );
 		mhmmio = NULL;
 		return -1;
@@ -144,22 +107,23 @@ int idWaveFile::OpenOGG( const char* strFileName, waveformatex_t *pwfx ) {
 
 	mfileTime = mhmmio->Timestamp();
 
-	stb_vorbis_info stbvi = stb_vorbis_get_info( ov );
-	int numSamples = stb_vorbis_stream_length_in_samples( ov );
-	if(numSamples == 0) {
-		stbverr = stb_vorbis_get_error( ov );
-		common->Warning( "Couldn't get sound length of '%s' with stb_vorbis: %s\n", strFileName, my_stbv_strerror(stbverr) );
+	unsigned channels = 0, rate = 0;
+	uint64_t totalFrames = 0;
+	audio_transfer_info( at, AUDIO_TYPE_VORBIS, &channels, &rate, &totalFrames );
+	int numSamples = (int)totalFrames;
+	if ( numSamples == 0 ) {
+		common->Warning( "Couldn't get sound length of '%s' with audio_transfer\n", strFileName );
 		// TODO:  return -1 etc?
 	}
 
-	mpwfx.Format.nSamplesPerSec = stbvi.sample_rate;
-	mpwfx.Format.nChannels = stbvi.channels;
+	mpwfx.Format.nSamplesPerSec = rate;
+	mpwfx.Format.nChannels = channels;
 	mpwfx.Format.wBitsPerSample = sizeof(short) * 8;
-	mdwSize = numSamples * stbvi.channels;	// pcm samples * num channels
+	mdwSize = numSamples * channels;	// pcm samples * num channels
 	mbIsReadingFromMemory = false;
 
 	{
-		stb_vorbis_close( ov );
+		audio_transfer_free( at, AUDIO_TYPE_VORBIS );
 		fileSystem->CloseFile( mhmmio );
 		mhmmio = NULL;
 		Mem_Free( oggFileData );
@@ -185,38 +149,15 @@ idWaveFile::ReadOGG
 ====================
 */
 int idWaveFile::ReadOGG( byte* pBuffer, int dwSizeToRead, int *pdwSizeRead ) {
-	// DG: Note that stb_vorbis_get_samples_short_interleaved() operates on shorts,
-	//     while VorbisFile's ov_read() operates on bytes, so some numbers are different
-	int total = dwSizeToRead/sizeof(short);
-	short *bufferPtr = (short *)pBuffer;
-	stb_vorbis *ov = (stb_vorbis *) ogg;
-
-	do {
-		int numShorts = total; // total >= 2048 ? 2048 : total; - I think stb_vorbis doesn't mind decoding all of it
-		int ret = stb_vorbis_get_samples_short_interleaved( ov, mpwfx.Format.nChannels, bufferPtr, numShorts );
-		if ( ret == 0 ) {
-			break;
-		}
-		if ( ret < 0 ) {
-			int stbverr = stb_vorbis_get_error( ov );
-			common->Warning( "idWaveFile::ReadOGG() stb_vorbis_get_samples_short_interleaved() %d shorts failed: %s\n", numShorts, my_stbv_strerror(stbverr) );
-			return -1;
-		}
-		// for some reason, stb_vorbis_get_samples_short_interleaved() takes the absolute
-		// number of shorts to read as a function argument, but returns the number of samples
-		// that were read PER CHANNEL
-		ret *= mpwfx.Format.nChannels;
-		bufferPtr += ret;
-		total -= ret;
-	} while( total > 0 );
-
-	dwSizeToRead = (byte *)bufferPtr - pBuffer;
-
+	// Dead path: OpenOGG() stores the encoded OGG and decodes on demand via
+	// the sample decoder (audio_transfer/rvorbis); it never leaves an open
+	// streaming handle here, so 'ogg' is always NULL. Kept as a stub so the
+	// idWaveFile::Read() dispatch stays well-formed.
+	(void)pBuffer; (void)dwSizeToRead;
 	if ( pdwSizeRead != NULL ) {
-		*pdwSizeRead = dwSizeToRead;
+		*pdwSizeRead = 0;
 	}
-
-	return dwSizeToRead;
+	return -1;
 }
 
 /*
@@ -225,18 +166,8 @@ idWaveFile::CloseOGG
 ====================
 */
 int idWaveFile::CloseOGG( void ) {
-	stb_vorbis* ov = (stb_vorbis *)ogg;
-	if ( ov != NULL ) {
-		Sys_EnterCriticalSection( CRITICAL_SECTION_ONE );
-		stb_vorbis_close( ov );
-		Sys_LeaveCriticalSection( CRITICAL_SECTION_ONE );
-		fileSystem->CloseFile( mhmmio );
-		mhmmio = NULL;
-		ogg = NULL;
-		Mem_Free( oggData );
-		oggData = NULL;
-		return 0;
-	}
+	// Dead path (see ReadOGG): 'ogg' is never set, so there's nothing to
+	// close. Kept as a stub for the idWaveFile::Close() dispatch.
 	return -1;
 }
 
@@ -259,7 +190,6 @@ public:
 	void					Clear( void );
 	int						DecodePCM( idSoundSample *sample, int sampleOffset44k, int sampleCount44k, float *dest );
 	int						DecodeOGG( idSoundSample *sample, int sampleOffset44k, int sampleCount44k, float *dest );
-	int						DecodeOGG_transfer( idSoundSample *sample, int sampleOffset44k, int sampleCount44k, float *dest );
 
 private:
 	bool					failed;				// set if decoding failed
@@ -268,8 +198,7 @@ private:
 	int						lastSampleOffset;	// last offset into the decoded sample
 	int						lastDecodeTime;		// last time decoding sound
 
-	stb_vorbis*				stbv;				// stb_vorbis (Ogg) handle, using lastSample->nonCacheData
-	void *					atHandle;			// libretro-common audio_transfer OGG handle (s_useAudioTransfer path)
+	void *					atHandle;			// libretro-common audio_transfer OGG handle
 };
 
 idBlockAlloc<idSampleDecoderLocal, 64>		sampleDecoderAllocator;
@@ -346,7 +275,6 @@ void idSampleDecoderLocal::Clear( void ) {
 	lastSample = NULL;
 	lastSampleOffset = 0;
 	lastDecodeTime = 0;
-	stbv = NULL;
 	atHandle = NULL;
 }
 
@@ -363,10 +291,6 @@ void idSampleDecoderLocal::ClearDecoder( void ) {
 			break;
 		}
 		case WAVE_FORMAT_TAG_OGG: {
-			if ( stbv != NULL ) {
-				stb_vorbis_close( stbv );
-				stbv = NULL;
-			}
 			if ( atHandle != NULL ) {
 				audio_transfer_free( atHandle, AUDIO_TYPE_VORBIS );
 				atHandle = NULL;
@@ -488,141 +412,18 @@ int idSampleDecoderLocal::DecodePCM( idSoundSample *sample, int sampleOffset44k,
 idSampleDecoderLocal::DecodeOGG
 ====================
 */
-int idSampleDecoderLocal::DecodeOGG( idSoundSample *sample, int sampleOffset44k, int sampleCount44k, float *dest ) {
-	extern idCVar s_useAudioTransfer;
-	if ( s_useAudioTransfer.GetBool() ) {
-		return DecodeOGG_transfer( sample, sampleOffset44k, sampleCount44k, dest );
-	}
-
-	int readSamples, totalSamples;
-
-	int shift = 22050 / sample->objectInfo.nSamplesPerSec;
-	int sampleOffset = sampleOffset44k >> shift;
-	int sampleCount = sampleCount44k >> shift;
-
-	// open OGG file if not yet opened
-	if ( lastSample == NULL ) {
-		// make sure there is enough space for another decoder
-		if ( decoderMemoryAllocator.GetFreeBlockMemory() < MIN_OGGVORBIS_MEMORY ) {
-			return 0;
-		}
-		if ( sample->nonCacheData == NULL ) {
-			//assert( false );	// this should never happen
-			/* DG: turned this assertion into a warning, because this can happen, at least with
-			 * the Classic Doom3 mod (when starting a new game). There idSoundCache::EndLevelLoad()
-			 * purges (with idSoundSample::PurgeSoundSample()) sound/music/cdoomtheme.ogg
-			 * (the music running in the main menu), which free()s nonCacheData.
-			 * But afterwards (still during loading) idSoundSystemLocal::currentSoundWorld
-			 * is set back to menuSoundWorld, which still tries to play that sample,
-			 * which brings us here. Shortly afterwards the sound world is set to
-			 * the game soundworld (sw) and that sample is not referenced anymore
-			 * (until opening the menu again, when that sample is apparently properly reloaded)
-			 * see also https://github.com/dhewm/dhewm3/issues/461 */
-			common->Warning( "Called idSampleDecoderLocal::DecodeOGG() on idSoundSample '%s' without nonCacheData\n", sample->name.c_str() );
-			failed = true;
-			return 0;
-		}
-		assert(stbv == NULL);
-		int stbVorbErr = 0;
-		stbv = stb_vorbis_open_memory( sample->nonCacheData, sample->objectMemSize, &stbVorbErr, NULL );
-		if ( stbv == NULL ) {
-			common->Warning( "idSampleDecoderLocal::DecodeOGG() stb_vorbis_open_memory() for %s failed: %s\n",
-							 sample->name.c_str(), my_stbv_strerror(stbVorbErr) );
-			failed = true;
-			return 0;
-		}
-		lastFormat = WAVE_FORMAT_TAG_OGG;
-		lastSample = sample;
-	}
-
-	if( sample->objectInfo.nChannels > 2 ) {
-		assert( 0 && ">2 channels currently not supported (samplesBuf expects 1 or 2)" );
-		common->Warning( "Ogg Vorbis files with >2 channels are not supported!\n" );
-		// no idea if other parts of the engine support more than stereo;
-		// pretty sure though the standard gamedata doesn't use it (positional sounds must be mono anyway)
-		failed = true;
-		return 0;
-	}
-
-	// seek to the right offset if necessary
-	if ( sampleOffset != lastSampleOffset ) {
-		if ( stb_vorbis_seek( stbv, sampleOffset / sample->objectInfo.nChannels ) == 0 ) {
-			int stbVorbErr = stb_vorbis_get_error( stbv );
-			int offset = sampleOffset / sample->objectInfo.nChannels;
-			common->Warning( "idSampleDecoderLocal::DecodeOGG() stb_vorbis_seek(%d) for %s failed: %s\n",
-			                 offset, sample->name.c_str(), my_stbv_strerror( stbVorbErr ) );
-			failed = true;
-			return 0;
-		}
-	}
-
-	lastSampleOffset = sampleOffset;
-
-	// decode OGG samples
-	totalSamples = sampleCount;
-	readSamples = 0;
-	do {
-		// DG: in contrast to libvorbisfile's ov_read_float(), stb_vorbis_get_samples_float() expects you to
-		//     pass a buffer to store the decoded samples in, so limit it to 4096 samples/channel per iteration
-		float samplesBuf[2][MIXBUFFER_SAMPLES];
-		float* samples[2] = { samplesBuf[0], samplesBuf[1] };
-		int reqSamples = Min( MIXBUFFER_SAMPLES, totalSamples / sample->objectInfo.nChannels );
-		int ret = stb_vorbis_get_samples_float( stbv, sample->objectInfo.nChannels, samples, reqSamples );
-		if ( reqSamples == 0 ) {
-			// DG: it happened that sampleCount was an odd number in a *stereo* sound file
-			//  and eventually totalSamples was 1 and thus reqSamples = totalSamples/2 was 0
-			//  so this turned into an endless loop.. it shouldn't happen anymore due to changes
-			//  in idSoundWorldLocal::ReadFromSaveGame(), but better safe than sorry..
-			common->DPrintf( "idSampleDecoderLocal::DecodeOGG() reqSamples == 0\n  for %s ?!\n", sample->name.c_str() );
-			readSamples += totalSamples;
-			totalSamples = 0;
-			break;
-		}
-		if ( ret == 0 ) {
-			int stbVorbErr = stb_vorbis_get_error( stbv );
-			if ( stbVorbErr == VORBIS__no_error && reqSamples < 5 ) {
-				// DG: it sometimes happens that 0 is returned when reqSamples was 1 and there is no error.
-				// don't really know why; I'll just (arbitrarily) accept up to 5 "dropped" samples
-				ret = reqSamples; // pretend decoding went ok
-				common->DPrintf( "idSampleDecoderLocal::DecodeOGG() IGNORING stb_vorbis_get_samples_float() dropping %d (%d) samples\n  for %s\n",
-					reqSamples, totalSamples, sample->name.c_str() );
-			} else {
-				common->Warning( "idSampleDecoderLocal::DecodeOGG() stb_vorbis_get_samples_float() %d (%d) samples\n  for %s failed: %s\n",
-					reqSamples, totalSamples, sample->name.c_str(), my_stbv_strerror( stbVorbErr ) );
-				failed = true;
-				break;
-			}
-		}
-		if ( ret < 0 ) {
-			failed = true;
-			return 0;
-		}
-		ret *= sample->objectInfo.nChannels;
-
-		SIMDProcessor->UpSampleOGGTo44kHz( dest + ( readSamples << shift ), samples, ret, sample->objectInfo.nSamplesPerSec, sample->objectInfo.nChannels );
-
-		readSamples += ret;
-		totalSamples -= ret;
-	} while( totalSamples > 0 );
-
-	lastSampleOffset += readSamples;
-
-	return ( readSamples << shift );
-}
 
 /*
 ====================
-idSampleDecoderLocal::DecodeOGG_transfer
+idSampleDecoderLocal::DecodeOGG
 
-Ogg decode via libretro-common audio_transfer (rvorbis) instead of the
-built-in stb_vorbis. Selected by s_useAudioTransfer. Mirrors DecodeOGG():
-open-once, seek on offset change, decode in <=MIXBUFFER_SAMPLES chunks with
+Ogg Vorbis decode via libretro-common audio_transfer (rvorbis): open-once,
+seek on offset change, decode in <=MIXBUFFER_SAMPLES chunks with
 audio_transfer_read_f32 (the float path - no int<->float round-trip), then
-UpSampleOGGTo44kHz to 44.1kHz. rvorbis is stb_vorbis-derived, so its float
-output matches the built-in decoder's [-1,1] range.
+UpSampleOGGTo44kHz to 44.1kHz.
 ====================
 */
-int idSampleDecoderLocal::DecodeOGG_transfer( idSoundSample *sample, int sampleOffset44k, int sampleCount44k, float *dest ) {
+int idSampleDecoderLocal::DecodeOGG( idSoundSample *sample, int sampleOffset44k, int sampleCount44k, float *dest ) {
 	int readSamples, totalSamples;
 
 	int shift = 22050 / sample->objectInfo.nSamplesPerSec;
@@ -632,7 +433,7 @@ int idSampleDecoderLocal::DecodeOGG_transfer( idSoundSample *sample, int sampleO
 	// open OGG if not yet opened
 	if ( lastSample == NULL ) {
 		if ( sample->nonCacheData == NULL ) {
-			common->Warning( "Called idSampleDecoderLocal::DecodeOGG_transfer() on idSoundSample '%s' without nonCacheData\n", sample->name.c_str() );
+			common->Warning( "Called idSampleDecoderLocal::DecodeOGG() on idSoundSample '%s' without nonCacheData\n", sample->name.c_str() );
 			failed = true;
 			return 0;
 		}
@@ -645,7 +446,7 @@ int idSampleDecoderLocal::DecodeOGG_transfer( idSoundSample *sample, int sampleO
 		audio_transfer_set_buffer_ptr( atHandle, AUDIO_TYPE_VORBIS, sample->nonCacheData, sample->objectMemSize );
 		if ( !audio_transfer_start( atHandle, AUDIO_TYPE_VORBIS )
 				|| !audio_transfer_is_valid( atHandle, AUDIO_TYPE_VORBIS ) ) {
-			common->Warning( "idSampleDecoderLocal::DecodeOGG_transfer() audio_transfer_start() for %s failed\n", sample->name.c_str() );
+			common->Warning( "idSampleDecoderLocal::DecodeOGG() audio_transfer_start() for %s failed\n", sample->name.c_str() );
 			audio_transfer_free( atHandle, AUDIO_TYPE_VORBIS );
 			atHandle = NULL;
 			failed = true;
@@ -665,7 +466,7 @@ int idSampleDecoderLocal::DecodeOGG_transfer( idSoundSample *sample, int sampleO
 	// per-channel frames (sampleOffset counts interleaved samples).
 	if ( sampleOffset != lastSampleOffset ) {
 		if ( !audio_transfer_seek( atHandle, AUDIO_TYPE_VORBIS, (uint64_t)( sampleOffset / sample->objectInfo.nChannels ) ) ) {
-			common->Warning( "idSampleDecoderLocal::DecodeOGG_transfer() seek(%d) for %s failed\n",
+			common->Warning( "idSampleDecoderLocal::DecodeOGG() seek(%d) for %s failed\n",
 					sampleOffset / sample->objectInfo.nChannels, sample->name.c_str() );
 			failed = true;
 			return 0;
