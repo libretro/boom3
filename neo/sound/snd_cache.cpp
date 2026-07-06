@@ -29,6 +29,11 @@ If you have questions concerning this license or the applicable additional terms
 #include "sys/platform.h"
 #include "framework/FileSystem.h"
 
+// libretro-common integer sinc resampler: used to resample PCM samples to
+// 44.1kHz once at load time (instead of the per-block duplicating upsampler
+// in the mixer). Include before snd_local.h / idlib string macros.
+#include <audio/sinc_resampler_int16.h>
+
 #include "sound/snd_local.h"
 
 #define USE_SOUND_CACHE_ALLOCATOR
@@ -373,6 +378,86 @@ ID_TIME_T idSoundSample::GetNewTimeStamp( void ) const {
 	return timestamp;
 }
 
+// Resample PCM sample data to 44.1kHz once, at load time, using the
+// libretro-common integer sinc resampler. Doing it here on the whole,
+// contiguous sample (rather than per-block in the mixer) means the sinc
+// filter has correct context across the entire sample and the mixer's
+// per-block path becomes a trivial 1:1 copy. The int16 sinc is documented
+// as deterministic and bit-identical across compilers/architectures, so
+// this stays byte-reproducible. Default off (cvar) until proven out.
+idCVar s_resampleOnLoad( "s_resampleOnLoad", "0", CVAR_SOUND | CVAR_BOOL | CVAR_ARCHIVE,
+	"resample PCM sounds to 44kHz once at load with a sinc filter (vs per-block duplication)" );
+
+/*
+===================
+ResamplePCMTo44k
+
+Resamples interleaved 16-bit PCM from srcRate to 44100 Hz. Returns a newly
+soundCacheAllocator'd buffer and writes the output sample-count (per channel)
+to *outFrames. Returns NULL on failure (caller keeps the native-rate data).
+===================
+*/
+static short *ResamplePCMTo44k( const short *src, int srcFrames, int channels, int srcRate, int *outFrames ) {
+	if ( srcRate >= 44100 || srcFrames <= 0 ) {
+		return NULL;	// nothing to do
+	}
+
+	double ratio = 44100.0 / (double)srcRate;
+
+	// the int16 sinc resampler works on interleaved stereo; feed it 2ch.
+	// For mono we duplicate to stereo, resample, then take one channel back.
+	const short *in = src;
+	short *tmpStereo = NULL;
+	if ( channels == 1 ) {
+		tmpStereo = (short *)Mem_Alloc( srcFrames * 2 * sizeof( short ) );
+		for ( int i = 0; i < srcFrames; i++ ) {
+			tmpStereo[i*2+0] = tmpStereo[i*2+1] = src[i];
+		}
+		in = tmpStereo;
+	}
+
+	int outCap = (int)( srcFrames * ratio ) + 64;
+	short *outStereo = (short *)Mem_Alloc( outCap * 2 * sizeof( short ) );
+
+	void *re = sinc_resampler_int16_init( 1.0, SINC_INT16_QUALITY_HIGHER );
+	if ( !re ) {
+		Mem_Free( outStereo );
+		if ( tmpStereo ) {
+			Mem_Free( tmpStereo );
+		}
+		return NULL;
+	}
+
+	struct resampler_data_int16 d;
+	memset( &d, 0, sizeof( d ) );
+	d.data_in = in;
+	d.data_out = outStereo;
+	d.input_frames = srcFrames;
+	d.ratio = ratio;
+	sinc_resampler_int16_process( re, &d );
+	sinc_resampler_int16_free( re );
+
+	int producedFrames = (int)d.output_frames;
+
+	// pack into a cache buffer at the sample's channel count
+	short *result = (short *)soundCacheAllocator.Alloc( producedFrames * channels * sizeof( short ) );
+	if ( channels == 1 ) {
+		for ( int i = 0; i < producedFrames; i++ ) {
+			result[i] = outStereo[i*2+0];
+		}
+	} else {
+		memcpy( result, outStereo, producedFrames * 2 * sizeof( short ) );
+	}
+
+	Mem_Free( outStereo );
+	if ( tmpStereo ) {
+		Mem_Free( tmpStereo );
+	}
+
+	*outFrames = producedFrames;
+	return result;
+}
+
 /*
 ===================
 idSoundSample::Load
@@ -432,6 +517,28 @@ void idSoundSample::Load( void ) {
 
 	// note: the old OpenAL "hardware buffer" upload used to happen here; the
 	// libretro core mixes everything in software from nonCacheData
+
+	// Optionally resample sub-44kHz PCM up to 44.1kHz once, here, with a sinc
+	// filter - so the mixer never has to upsample per-block. OGG is left
+	// alone (it stays encoded and streams; resampling it here would force a
+	// full decode into memory). objectInfo.wFormatTag is PCM for .wav.
+	if ( s_resampleOnLoad.GetBool()
+			&& objectInfo.wFormatTag == WAVE_FORMAT_TAG_PCM
+			&& objectInfo.nSamplesPerSec < 44100
+			&& objectSize > 0 ) {
+		int srcFrames = objectSize / objectInfo.nChannels;
+		int outFrames = 0;
+		short *resampled = ResamplePCMTo44k( (const short *)nonCacheData, srcFrames,
+				objectInfo.nChannels, objectInfo.nSamplesPerSec, &outFrames );
+		if ( resampled != NULL ) {
+			soundCacheAllocator.Free( nonCacheData );
+			nonCacheData = (byte *)resampled;
+			objectSize = outFrames * objectInfo.nChannels;
+			objectMemSize = objectSize * sizeof( short );
+			objectInfo.nSamplesPerSec = 44100;
+			objectInfo.nAvgBytesPerSec = 44100 * objectInfo.nChannels * sizeof( short );
+		}
+	}
 
 	fh.Close();
 }
