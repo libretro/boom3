@@ -1355,9 +1355,12 @@ pack_t *idFileSystemLocal::LoadZipFile( const char *zipfile ) {
 		if ( err != UNZ_OK ) {
 			break;
 		}
-		if ( file_info.uncompressed_size > 0 ) {
-			fs_headerLongs[fs_numHeaderLongs++] = LittleInt( file_info.crc );
-		}
+		if ( file_info.uncompressed_size > 0 )
+#ifdef MSB_FIRST
+			fs_headerLongs[fs_numHeaderLongs++] = D3_Swap32( file_info.crc );
+#else
+			fs_headerLongs[fs_numHeaderLongs++] = ( file_info.crc );
+#endif
 		hash = HashFileName( filename_inzip );
 		buildBuffer[i].name = filename_inzip;
 		buildBuffer[i].name.ToLower();
@@ -1407,7 +1410,9 @@ pack_t *idFileSystemLocal::LoadZipFile( const char *zipfile ) {
 	}
 
 	pack->checksum = MD4_BlockChecksum( fs_headerLongs, 4 * fs_numHeaderLongs );
-	pack->checksum = LittleInt( pack->checksum );
+#ifdef MSB_FIRST
+	pack->checksum = D3_Swap32( pack->checksum );
+#endif
 
 	Mem_Free( fs_headerLongs );
 

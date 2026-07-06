@@ -37,18 +37,6 @@ If you have questions concerning this license or the applicable additional terms
 
 /*
 ================
-usercmd_t::ByteSwap
-================
-*/
-void usercmd_t::ByteSwap( void ) {
-	angles[0] = LittleShort( angles[0] );
-	angles[1] = LittleShort( angles[1] );
-	angles[2] = LittleShort( angles[2] );
-	sequence = LittleInt( sequence );
-}
-
-/*
-================
 usercmd_t::operator==
 ================
 */

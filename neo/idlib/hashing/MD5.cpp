@@ -246,8 +246,13 @@ void MD5_Final( MD5_CTX *ctx, unsigned char digest[16] ) {
 	unsigned int val0 = ctx->bits[0];
 	unsigned int val1 = ctx->bits[1];
 
-	((unsigned int *) ctx->in)[14] = LittleInt( val0 );
-	((unsigned int *) ctx->in)[15] = LittleInt( val1 );
+#ifdef MSB_FIRST
+	((unsigned int *) ctx->in)[14] = D3_Swap32( val0 );
+	((unsigned int *) ctx->in)[15] = D3_Swap32( val1 );
+#else
+	((unsigned int *) ctx->in)[14] = ( val0 );
+	((unsigned int *) ctx->in)[15] = ( val1 );
+#endif
 
 	MD5_Transform( ctx->state, (unsigned int *) ctx->in );
 	memcpy( digest, ctx->state, 16 );

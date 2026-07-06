@@ -566,7 +566,11 @@ idDict::WriteToFileHandle
 ================
 */
 void idDict::WriteToFileHandle( idFile *f ) const {
-	int c = LittleInt( args.Num() );
+#ifdef MSB_FIRST
+	int c = D3_Swap32( args.Num() );
+#else
+	int c = args.Num();
+#endif
 	f->Write( &c, sizeof( c ) );
 	for ( int i = 0; i < args.Num(); i++ ) {	// don't loop on the swapped count use the original
 		WriteString( args[i].GetKey().c_str(), f );
@@ -608,7 +612,9 @@ void idDict::ReadFromFileHandle( idFile *f ) {
 	Clear();
 
 	f->Read( &c, sizeof( c ) );
-	c = LittleInt( c );
+#ifdef MSB_FIRST
+	c = D3_Swap32( c );
+#endif
 	for ( int i = 0; i < c; i++ ) {
 		key = ReadString( f );
 		val = ReadString( f );

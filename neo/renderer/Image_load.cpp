@@ -1557,10 +1557,19 @@ bool idImage::CheckPrecompressedImage( bool fullLoad ) {
 
 	fileSystem->CloseFile( f );
 
-	unsigned int magic = LittleInt( *(unsigned int *)data );
+#ifdef MSB_FIRST
+	unsigned int magic = D3_Swap32( *(unsigned int *)data );
+#else
+	unsigned int magic = ( *(unsigned int *)data );
+#endif
 	ddsFileHeader_t	*_header = (ddsFileHeader_t *)(data + 4);
-	int ddspf_dwFlags = LittleInt( _header->ddspf.dwFlags );
-	unsigned int ddspf_dwFourCC = LittleInt( _header->ddspf.dwFourCC );
+#ifdef MSB_FIRST
+	int ddspf_dwFlags = D3_Swap32( _header->ddspf.dwFlags );
+	unsigned int ddspf_dwFourCC = D3_Swap32( _header->ddspf.dwFourCC );
+#else
+	int ddspf_dwFlags =  _header->ddspf.dwFlags;
+	unsigned int ddspf_dwFourCC = _header->ddspf.dwFourCC;
+#endif
 
 	if ( magic != DDS_MAKEFOURCC('D', 'D', 'S', ' ')) {
 		common->Printf( "CheckPrecompressedImage( %s ): magic != 'DDS '\n", imgName.c_str() );
@@ -1580,10 +1589,15 @@ bool idImage::CheckPrecompressedImage( bool fullLoad ) {
 	bool isBC7 = false;
 	if ( ddspf_dwFourCC == DDS_MAKEFOURCC( 'D', 'X', '1', '0' ) ) {
 		ddsDXT10addHeader_t *dx10Header = (ddsDXT10addHeader_t *)( data + 4 + sizeof(ddsFileHeader_t) );
-		unsigned int dxgiFormat = LittleInt( dx10Header->dxgiFormat );
-		if ( dxgiFormat == 98 ) {
+#ifdef MSB_FIRST
+		unsigned int dxgiFormat = D3_Swap32( dx10Header->dxgiFormat );
+#else
+		unsigned int dxgiFormat = dx10Header->dxgiFormat;
+#endif
+		if ( dxgiFormat == 98 )
 			isBC7 = true;
-		} else {
+		else
+		{
 			common->Warning( "Image file '%s' has unsupported dxgiFormat %d - dhewm3 only supports DXGI_FORMAT_BC7_UNORM (98)!",
 			                 filename, dxgiFormat);
 			R_StaticFree( data );
@@ -1630,24 +1644,26 @@ void idImage::UploadPrecompressedImage( byte *data, int len ) {
 	ddsFileHeader_t	*header = (ddsFileHeader_t *)(data + 4);
 
 	// ( not byte swapping dwReserved1 dwReserved2 )
-	header->dwSize = LittleInt( header->dwSize );
-	header->dwFlags = LittleInt( header->dwFlags );
-	header->dwHeight = LittleInt( header->dwHeight );
-	header->dwWidth = LittleInt( header->dwWidth );
-	header->dwPitchOrLinearSize = LittleInt( header->dwPitchOrLinearSize );
-	header->dwDepth = LittleInt( header->dwDepth );
-	header->dwMipMapCount = LittleInt( header->dwMipMapCount );
-	header->dwCaps1 = LittleInt( header->dwCaps1 );
-	header->dwCaps2 = LittleInt( header->dwCaps2 );
+#ifdef MSB_FIRST
+	header->dwSize = D3_Swap32( header->dwSize );
+	header->dwFlags = D3_Swap32( header->dwFlags );
+	header->dwHeight = D3_Swap32( header->dwHeight );
+	header->dwWidth = D3_Swap32( header->dwWidth );
+	header->dwPitchOrLinearSize = D3_Swap32( header->dwPitchOrLinearSize );
+	header->dwDepth = D3_Swap32( header->dwDepth );
+	header->dwMipMapCount = D3_Swap32( header->dwMipMapCount );
+	header->dwCaps1 = D3_Swap32( header->dwCaps1 );
+	header->dwCaps2 = D3_Swap32( header->dwCaps2 );
 
-	header->ddspf.dwSize = LittleInt( header->ddspf.dwSize );
-	header->ddspf.dwFlags = LittleInt( header->ddspf.dwFlags );
-	header->ddspf.dwFourCC = LittleInt( header->ddspf.dwFourCC );
-	header->ddspf.dwRGBBitCount = LittleInt( header->ddspf.dwRGBBitCount );
-	header->ddspf.dwRBitMask = LittleInt( header->ddspf.dwRBitMask );
-	header->ddspf.dwGBitMask = LittleInt( header->ddspf.dwGBitMask );
-	header->ddspf.dwBBitMask = LittleInt( header->ddspf.dwBBitMask );
-	header->ddspf.dwABitMask = LittleInt( header->ddspf.dwABitMask );
+	header->ddspf.dwSize = D3_Swap32( header->ddspf.dwSize );
+	header->ddspf.dwFlags = D3_Swap32( header->ddspf.dwFlags );
+	header->ddspf.dwFourCC = D3_Swap32( header->ddspf.dwFourCC );
+	header->ddspf.dwRGBBitCount = D3_Swap32( header->ddspf.dwRGBBitCount );
+	header->ddspf.dwRBitMask = D3_Swap32( header->ddspf.dwRBitMask );
+	header->ddspf.dwGBitMask = D3_Swap32( header->ddspf.dwGBitMask );
+	header->ddspf.dwBBitMask = D3_Swap32( header->ddspf.dwBBitMask );
+	header->ddspf.dwABitMask = D3_Swap32( header->ddspf.dwABitMask );
+#endif
 
 	// generate the texture number
 	qglGenTextures( 1, &texnum );

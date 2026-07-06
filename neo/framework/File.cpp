@@ -312,7 +312,9 @@ int idFile::WriteFloatString( const char *fmt, ... ) {
  */
 int idFile::ReadInt( int &value ) {
 	int result = Read( &value, sizeof( value ) );
-	value = LittleInt(value);
+#ifdef MSB_FIRST
+	value = D3_Swap32(value);
+#endif
 	return result;
 }
 
@@ -323,7 +325,9 @@ int idFile::ReadInt( int &value ) {
  */
 int idFile::ReadUnsignedInt( unsigned int &value ) {
 	int result = Read( &value, sizeof( value ) );
-	value = LittleInt(value);
+#ifdef MSB_FIRST
+	value = D3_Swap32(value);
+#endif
 	return result;
 }
 
@@ -334,7 +338,9 @@ int idFile::ReadUnsignedInt( unsigned int &value ) {
  */
 int idFile::ReadShort( short &value ) {
 	int result = Read( &value, sizeof( value ) );
-	value = LittleShort(value);
+#ifdef MSB_FIRST
+	value = D3_Swap16(value);
+#endif
 	return result;
 }
 
@@ -345,7 +351,9 @@ int idFile::ReadShort( short &value ) {
  */
 int idFile::ReadUnsignedShort( unsigned short &value ) {
 	int result = Read( &value, sizeof( value ) );
-	value = LittleShort(value);
+#ifdef MSB_FIRST
+	value = D3_Swap16(value);
+#endif
 	return result;
 }
 
@@ -374,7 +382,9 @@ int idFile::ReadUnsignedChar( unsigned char &value ) {
  */
 int idFile::ReadFloat( float &value ) {
 	int result = Read( &value, sizeof( value ) );
-	value = LittleFloat(value);
+#ifdef MSB_FIRST
+	value = FloatSwap(value);
+#endif
 	return result;
 }
 
@@ -478,7 +488,11 @@ int idFile::ReadMat3( idMat3 &mat ) {
  =================
  */
 int idFile::WriteInt( const int value ) {
-	int v = LittleInt(value);
+#ifdef MSB_FIRST
+	int v = D3_Swap32(value);
+#else
+	int v = value;
+#endif
 	return Write( &v, sizeof( v ) );
 }
 
@@ -488,7 +502,11 @@ int idFile::WriteInt( const int value ) {
  =================
  */
 int idFile::WriteUnsignedInt( const unsigned int value ) {
-	unsigned int v = LittleInt(value);
+#ifdef MSB_FIRST
+	unsigned int v = D3_Swap32(value);
+#else
+	unsigned int v = (value);
+#endif
 	return Write( &v, sizeof( v ) );
 }
 
@@ -498,7 +516,11 @@ int idFile::WriteUnsignedInt( const unsigned int value ) {
  =================
  */
 int idFile::WriteShort( const short value ) {
-	short v = LittleShort(value);
+#ifdef MSB_FIRST
+	short v = D3_Swap16(value);
+#else
+	short v = value;
+#endif
 	return Write( &v, sizeof( v ) );
 }
 
@@ -508,7 +530,11 @@ int idFile::WriteShort( const short value ) {
  =================
  */
 int idFile::WriteUnsignedShort( const unsigned short value ) {
-	unsigned short v = LittleShort(value);
+#ifdef MSB_FIRST
+	unsigned short v = D3_Swap16(value);
+#else
+	unsigned short v = value;
+#endif
 	return Write( &v, sizeof( v ) );
 }
 
@@ -536,7 +562,11 @@ int idFile::WriteUnsignedChar( const unsigned char value ) {
  =================
  */
 int idFile::WriteFloat( const float value ) {
-	float v = LittleFloat(value);
+#ifdef MSB_FIRST
+	float v = FloatSwap(value);
+#else
+	float v = (value);
+#endif
 	return Write( &v, sizeof( v ) );
 }
 

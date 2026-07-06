@@ -1957,18 +1957,18 @@ bool idRenderModelStatic::LoadFLT( const char *fileName ) {
 	// bound the altitudes
 	float min = 9999999;
 	float max = -9999999;
-	for ( int i = 0 ; i < len/4 ; i++ ) {
-	data[i] = BigFloat( data[i] );
-	if ( data[i] == -9999 ) {
-		data[i] = 0;		// unscanned areas
-	}
+	for ( int i = 0 ; i < len/4 ; i++ )
+	{
+#ifndef MSB_FIRST
+		data[i] = FloatSwap( data[i] );
+#endif
+		if ( data[i] == -9999 )
+			data[i] = 0;		// unscanned areas
 
-		if ( data[i] < min ) {
+		if ( data[i] < min )
 			min = data[i];
-		}
-		if ( data[i] > max ) {
+		if ( data[i] > max )
 			max = data[i];
-		}
 	}
 	// write out a gray scale height map
 	byte	*image = (byte *)R_StaticAlloc( len );

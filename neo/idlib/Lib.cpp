@@ -38,32 +38,6 @@ If you have questions concerning this license or the applicable additional terms
 /* MSB_FIRST (libretro convention) is defined by the build system on
  * big-endian targets and absent on little-endian ones. */
 
-// swap macros using compiler builtins (or a portable fallback)
-#ifdef _MSC_VER
-  #include <stdlib.h>
-  #define D3_Swap16(x)  _byteswap_ushort(x)
-  #define D3_Swap32(x)  _byteswap_ulong(x)
-#elif defined(__GNUC__) || defined(__clang__)
-  #define D3_Swap16(x)  __builtin_bswap16(x)
-  #define D3_Swap32(x)  __builtin_bswap32(x)
-#else
-  // portable fallback
-  #define D3_Swap16(x)  ((unsigned short)(((x) >> 8) | ((x) << 8)))
-  #define D3_Swap32(x)  ((unsigned int)(((x) >> 24) | (((x) >> 8) & 0xff00) | (((x) << 8) & 0xff0000) | ((x) << 24)))
-#endif
-#ifdef MSB_FIRST
-  #define D3_SwapBE16(x)  (x)
-  #define D3_SwapLE16(x)  D3_Swap16(x)
-  #define D3_SwapBE32(x)  (x)
-  #define D3_SwapLE32(x)  D3_Swap32(x)
-  #define D3_SwapU32(x)    D3_Swap32(x)
-#else
-  #define D3_SwapBE16(x)  D3_Swap16(x)
-  #define D3_SwapLE16(x)  (x)
-  #define D3_SwapBE32(x)  D3_Swap32(x)
-  #define D3_SwapLE32(x)  (x)
-  #define D3_SwapU32(x)    D3_Swap32(x)
-#endif
 
 #include "sys/platform.h"
 #include "idlib/math/Vector.h"
@@ -293,7 +267,8 @@ void idLib::Warning( const char *fmt, ... ) {
 FloatSwap
 ================
 */
-ID_INLINE static float FloatSwap( float f ) {
+float FloatSwap( float f )
+{
 	union {
 		float	f;
 		unsigned int u;
@@ -466,10 +441,6 @@ ID_INLINE static int IntForSixtetsBig( byte *in ) {
 	return ret;
 }
 
-short	BigShort( short l ) {
-	return D3_SwapBE16(l);
-}
-
 short	LittleShort( short l ) {
 	return D3_SwapLE16(l);
 }
@@ -480,14 +451,6 @@ int		BigInt( int l ) {
 
 int		LittleInt( int l ) {
 	return D3_SwapLE32(l);
-}
-
-float	BigFloat( float l ) {
-#ifdef MSB_FIRST
-	return l;
-#else
-	return FloatSwap(l);
-#endif
 }
 
 float	LittleFloat( float l ) {

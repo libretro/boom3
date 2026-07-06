@@ -2725,9 +2725,14 @@ void idSessionLocal::RunGameTic() {
 			// the impulse and chat character toggles may not be correct, and the view
 			// angle will definitely be wrong
 		} else {
-			cmd = logCmd.cmd;
-			cmd.ByteSwap();
-			logCmd.consistencyHash = LittleInt( logCmd.consistencyHash );
+			cmd                    = logCmd.cmd;
+#ifdef MSB_FIRST
+			cmd.angles[0]          = D3_Swap16( cmd.angles[0] );
+			cmd.angles[1]          = D3_Swap16( cmd.angles[1] );
+			cmd.angles[2]          = D3_Swap16( cmd.angles[2] );
+			cmd.sequence           = D3_Swap32( cmd.sequence );
+			logCmd.consistencyHash = D3_Swap32( logCmd.consistencyHash );
+#endif
 		}
 	}
 

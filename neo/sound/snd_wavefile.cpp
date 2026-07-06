@@ -151,9 +151,11 @@ int idWaveFile::ReadMMIO( void ) {
 
 	mhmmio->Read( &mckRiff, 12 );
 	assert( !isOgg );
-	mckRiff.ckid = LittleInt( mckRiff.ckid );
-	mckRiff.cksize = LittleInt( mckRiff.cksize );
-	mckRiff.fccType = LittleInt( mckRiff.fccType );
+#ifdef MSB_FIRST
+	mckRiff.ckid    = D3_Swap32( mckRiff.ckid );
+	mckRiff.cksize  = D3_Swap32( mckRiff.cksize );
+	mckRiff.fccType = D3_Swap32( mckRiff.fccType );
+#endif
 	mckRiff.dwDataOffset = 12;
 
 	// Check to make sure this is a valid wave file
@@ -166,8 +168,10 @@ int idWaveFile::ReadMMIO( void ) {
 		if (8 != mhmmio->Read( &ckIn, 8 ) )
 			return -1;
 		assert( !isOgg );
-		ckIn.ckid = LittleInt( ckIn.ckid );
-		ckIn.cksize = LittleInt( ckIn.cksize );
+#ifdef MSB_FIRST
+		ckIn.ckid   = D3_Swap32( ckIn.ckid );
+		ckIn.cksize = D3_Swap32( ckIn.cksize );
+#endif
 		ckIn.dwDataOffset += ckIn.cksize-8;
 	} while (ckIn.ckid != mmioFOURCC('f', 'm', 't', ' '));
 
@@ -180,12 +184,14 @@ int idWaveFile::ReadMMIO( void ) {
 	if( mhmmio->Read( &pcmWaveFormat, sizeof(pcmWaveFormat) ) != sizeof(pcmWaveFormat) )
 		return -1;
 	assert( !isOgg );
-	pcmWaveFormat.wf.wFormatTag = LittleShort( pcmWaveFormat.wf.wFormatTag );
-	pcmWaveFormat.wf.nChannels = LittleShort( pcmWaveFormat.wf.nChannels );
-	pcmWaveFormat.wf.nSamplesPerSec = LittleInt( pcmWaveFormat.wf.nSamplesPerSec );
-	pcmWaveFormat.wf.nAvgBytesPerSec = LittleInt( pcmWaveFormat.wf.nAvgBytesPerSec );
-	pcmWaveFormat.wf.nBlockAlign = LittleShort( pcmWaveFormat.wf.nBlockAlign );
-	pcmWaveFormat.wBitsPerSample = LittleShort( pcmWaveFormat.wBitsPerSample );
+#ifdef MSB_FIRST
+	pcmWaveFormat.wf.wFormatTag = D3_Swap16( pcmWaveFormat.wf.wFormatTag );
+	pcmWaveFormat.wf.nChannels = D3_Swap16( pcmWaveFormat.wf.nChannels );
+	pcmWaveFormat.wf.nSamplesPerSec = D3_Swap32( pcmWaveFormat.wf.nSamplesPerSec );
+	pcmWaveFormat.wf.nAvgBytesPerSec = D3_Swap32( pcmWaveFormat.wf.nAvgBytesPerSec );
+	pcmWaveFormat.wf.nBlockAlign = D3_Swap16( pcmWaveFormat.wf.nBlockAlign );
+	pcmWaveFormat.wBitsPerSample = D3_Swap16( pcmWaveFormat.wBitsPerSample );
+#endif
 
 	// Copy the bytes from the pcm structure to the waveformatex_t structure
 	memcpy( &mpwfx, &pcmWaveFormat, sizeof(pcmWaveFormat) );
@@ -229,7 +235,9 @@ int idWaveFile::ResetFile( void )
 
 		mhmmio->Read( &mck.cksize, 4 );
 		assert( !isOgg );
-		mck.cksize = LittleInt( mck.cksize );
+#ifdef MSB_FIRST
+		mck.cksize = D3_Swap32( mck.cksize );
+#endif
 		mseekBase = mhmmio->Tell();
 	}
 

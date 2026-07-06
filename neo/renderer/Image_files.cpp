@@ -240,33 +240,89 @@ static void LoadBMP( const char *name, byte **pic, int *width, int *height, ID_T
 
 	bmpHeader.id[0] = *buf_p++;
 	bmpHeader.id[1] = *buf_p++;
-	bmpHeader.fileSize = LittleInt( * ( int * ) buf_p );
+#ifdef MSB_FIRST
+	bmpHeader.fileSize = D3_Swap32( * ( int * ) buf_p );
+#else
+	bmpHeader.fileSize = ( * ( int * ) buf_p );
+#endif
 	buf_p += 4;
-	bmpHeader.reserved0 = LittleInt( * ( int * ) buf_p );
+#ifdef MSB_FIRST
+	bmpHeader.reserved0 = D3_Swap32( * ( int * ) buf_p );
+#else
+	bmpHeader.reserved0 = ( * ( int * ) buf_p );
+#endif
 	buf_p += 4;
-	bmpHeader.bitmapDataOffset = LittleInt( * ( int * ) buf_p );
+#ifdef MSB_FIRST
+	bmpHeader.bitmapDataOffset = D3_Swap32( * ( int * ) buf_p );
+#else
+	bmpHeader.bitmapDataOffset = ( * ( int * ) buf_p );
+#endif
 	buf_p += 4;
-	bmpHeader.bitmapHeaderSize = LittleInt( * ( int * ) buf_p );
+#ifdef MSB_FIRST
+	bmpHeader.bitmapHeaderSize = D3_Swap32( * ( int * ) buf_p );
+#else
+	bmpHeader.bitmapHeaderSize = ( * ( int * ) buf_p );
+#endif
 	buf_p += 4;
-	bmpHeader.width = LittleInt( * ( int * ) buf_p );
+#ifdef MSB_FIRST
+	bmpHeader.width = D3_Swap32( * ( int * ) buf_p );
+#else
+	bmpHeader.width = ( * ( int * ) buf_p );
+#endif
 	buf_p += 4;
-	bmpHeader.height = LittleInt( * ( int * ) buf_p );
+#ifdef MSB_FIRST
+	bmpHeader.height = D3_Swap32( * ( int * ) buf_p );
+#else
+	bmpHeader.height = ( * ( int * ) buf_p );
+#endif
 	buf_p += 4;
-	bmpHeader.planes = LittleShort( * ( short * ) buf_p );
+#ifdef MSB_FIRST
+	bmpHeader.planes = D3_Swap16( * ( short * ) buf_p );
+#else
+	bmpHeader.planes = ( * ( short * ) buf_p );
+#endif
 	buf_p += 2;
-	bmpHeader.bitsPerPixel = LittleShort( * ( short * ) buf_p );
+#ifdef MSB_FIRST
+	bmpHeader.bitsPerPixel = D3_Swap16( * ( short * ) buf_p );
+#else
+	bmpHeader.bitsPerPixel = ( * ( short * ) buf_p );
+#endif
 	buf_p += 2;
-	bmpHeader.compression = LittleInt( * ( int * ) buf_p );
+#ifdef MSB_FIRST
+	bmpHeader.compression = D3_Swap32( * ( int * ) buf_p );
+#else
+	bmpHeader.compression = ( * ( int * ) buf_p );
+#endif
 	buf_p += 4;
-	bmpHeader.bitmapDataSize = LittleInt( * ( int * ) buf_p );
+#ifdef MSB_FIRST
+	bmpHeader.bitmapDataSize = D3_Swap32( * ( int * ) buf_p );
+#else
+	bmpHeader.bitmapDataSize = ( * ( int * ) buf_p );
+#endif
 	buf_p += 4;
-	bmpHeader.hRes = LittleInt( * ( int * ) buf_p );
+#ifdef MSB_FIRST
+	bmpHeader.hRes = D3_Swap32( * ( int * ) buf_p );
+#else
+	bmpHeader.hRes = ( * ( int * ) buf_p );
+#endif
 	buf_p += 4;
-	bmpHeader.vRes = LittleInt( * ( int * ) buf_p );
+#ifdef MSB_FIRST
+	bmpHeader.vRes = D3_Swap32( * ( int * ) buf_p );
+#else
+	bmpHeader.vRes = ( * ( int * ) buf_p );
+#endif
 	buf_p += 4;
-	bmpHeader.colors = LittleInt( * ( int * ) buf_p );
+#ifdef MSB_FIRST
+	bmpHeader.colors = D3_Swap32( * ( int * ) buf_p );
+#else
+	bmpHeader.colors = ( * ( int * ) buf_p );
+#endif
 	buf_p += 4;
-	bmpHeader.importantColors = LittleInt( * ( int * ) buf_p );
+#ifdef MSB_FIRST
+	bmpHeader.importantColors = D3_Swap32( * ( int * ) buf_p );
+#else
+	bmpHeader.importantColors = ( * ( int * ) buf_p );
+#endif
 	buf_p += 4;
 
 	memcpy( bmpHeader.palette, buf_p, sizeof( bmpHeader.palette ) );
@@ -275,21 +331,13 @@ static void LoadBMP( const char *name, byte **pic, int *width, int *height, ID_T
 		buf_p += 1024;
 
 	if ( bmpHeader.id[0] != 'B' && bmpHeader.id[1] != 'M' )
-	{
 		common->Error( "LoadBMP: only Windows-style BMP files supported (%s)\n", name );
-	}
 	if ( bmpHeader.fileSize != length )
-	{
 		common->Error( "LoadBMP: header size does not match file size (%u vs. %d) (%s)\n", bmpHeader.fileSize, length, name );
-	}
 	if ( bmpHeader.compression != 0 )
-	{
 		common->Error( "LoadBMP: only uncompressed BMP files supported (%s)\n", name );
-	}
 	if ( bmpHeader.bitsPerPixel < 8 )
-	{
 		common->Error( "LoadBMP: monochrome and 4-bit BMP files not supported (%s)\n", name );
-	}
 
 	columns = bmpHeader.width;
 	rows = bmpHeader.height;
@@ -379,8 +427,7 @@ PCX LOADING
 LoadPCX
 ==============
 */
-static void LoadPCX ( const char *filename, byte **pic, byte **palette, int *width, int *height,
-					 ID_TIME_T *timestamp ) {
+static void LoadPCX ( const char *filename, byte **pic, byte **palette, int *width, int *height, ID_TIME_T *timestamp ) {
 	byte	*raw;
 	pcx_t	*pcx;
 	int		x, y;
@@ -411,8 +458,13 @@ static void LoadPCX ( const char *filename, byte **pic, byte **palette, int *wid
 	pcx = (pcx_t *)raw;
 	raw = &pcx->data;
 
-	xmax = LittleShort(pcx->xmax);
-	ymax = LittleShort(pcx->ymax);
+#ifdef MSB_FIRST
+	xmax = D3_Swap16(pcx->xmax);
+	ymax = D3_Swap16(pcx->ymax);
+#else
+	xmax = (pcx->xmax);
+	ymax = (pcx->ymax);
+#endif
 
 	if (pcx->manufacturer != 0x0a
 		|| pcx->version != 5
@@ -543,28 +595,50 @@ static void LoadTGA( const char *name, byte **pic, int *width, int *height, ID_T
 	// load the file
 	//
 	fileSize = fileSystem->ReadFile( name, (void **)&buffer, timestamp );
-	if ( !buffer ) {
+	if ( !buffer )
 		return;
-	}
 
 	buf_p = buffer;
 
-	targa_header.id_length = *buf_p++;
-	targa_header.colormap_type = *buf_p++;
-	targa_header.image_type = *buf_p++;
-
-	targa_header.colormap_index = LittleShort ( *(short *)buf_p );
+	targa_header.id_length       = *buf_p++;
+	targa_header.colormap_type   = *buf_p++;
+	targa_header.image_type      = *buf_p++;
+#ifdef MSB_FIRST
+	targa_header.colormap_index  = D3_Swap16( *(short *)buf_p );
+#else
+	targa_header.colormap_index  = ( *(short *)buf_p );
+#endif
 	buf_p += 2;
-	targa_header.colormap_length = LittleShort ( *(short *)buf_p );
+#ifdef MSB_FIRST
+	targa_header.colormap_length = D3_Swap16 ( *(short *)buf_p );
+#else
+	targa_header.colormap_length =  ( *(short *)buf_p );
+#endif
 	buf_p += 2;
-	targa_header.colormap_size = *buf_p++;
-	targa_header.x_origin = LittleShort ( *(short *)buf_p );
+	targa_header.colormap_size   = *buf_p++;
+#ifdef MSB_FIRST
+	targa_header.x_origin        = D3_Swap16 ( *(short *)buf_p );
+#else
+	targa_header.x_origin        =  ( *(short *)buf_p );
+#endif
 	buf_p += 2;
-	targa_header.y_origin = LittleShort ( *(short *)buf_p );
+#ifdef MSB_FIRST
+	targa_header.y_origin        = D3_Swap16 ( *(short *)buf_p );
+#else
+	targa_header.y_origin        =  ( *(short *)buf_p );
+#endif
 	buf_p += 2;
-	targa_header.width = LittleShort ( *(short *)buf_p );
+#ifdef MSB_FIRST
+	targa_header.width           = D3_Swap16 ( *(short *)buf_p );
+#else
+	targa_header.width           =  ( *(short *)buf_p );
+#endif
 	buf_p += 2;
-	targa_header.height = LittleShort ( *(short *)buf_p );
+#ifdef MSB_FIRST
+	targa_header.height          = D3_Swap16 ( *(short *)buf_p );
+#else
+	targa_header.height          =  ( *(short *)buf_p );
+#endif
 	buf_p += 2;
 	targa_header.pixel_size = *buf_p++;
 	targa_header.attributes = *buf_p++;

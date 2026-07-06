@@ -46,6 +46,33 @@ If you have questions concerning this license or the applicable additional terms
 ===============================================================================
 */
 
+// swap macros using compiler builtins (or a portable fallback)
+#ifdef _MSC_VER
+  #include <stdlib.h>
+  #define D3_Swap16(x)  _byteswap_ushort(x)
+  #define D3_Swap32(x)  _byteswap_ulong(x)
+#elif defined(__GNUC__) || defined(__clang__)
+  #define D3_Swap16(x)  __builtin_bswap16(x)
+  #define D3_Swap32(x)  __builtin_bswap32(x)
+#else
+  // portable fallback
+  #define D3_Swap16(x)  ((unsigned short)(((x) >> 8) | ((x) << 8)))
+  #define D3_Swap32(x)  ((unsigned int)(((x) >> 24) | (((x) >> 8) & 0xff00) | (((x) << 8) & 0xff0000) | ((x) << 24)))
+#endif
+#ifdef MSB_FIRST
+  #define D3_SwapBE16(x)  (x)
+  #define D3_SwapLE16(x)  D3_Swap16(x)
+  #define D3_SwapBE32(x)  (x)
+  #define D3_SwapLE32(x)  D3_Swap32(x)
+  #define D3_SwapU32(x)    D3_Swap32(x)
+#else
+  #define D3_SwapBE16(x)  D3_Swap16(x)
+  #define D3_SwapLE16(x)  (x)
+  #define D3_SwapBE32(x)  D3_Swap32(x)
+  #define D3_SwapLE32(x)  (x)
+  #define D3_SwapU32(x)    D3_Swap32(x)
+#endif
+
 class idSys;
 class idCommon;
 class idCVarSystem;
@@ -104,14 +131,14 @@ dword	PackColor( const idVec4 &color );
 void	UnpackColor( const dword color, idVec4 &unpackedColor );
 
 // little/big endian conversion
-short	BigShort( short l );
 short	LittleShort( short l );
 int		BigInt( int l );
 int		LittleInt( int l );
-float	BigFloat( float l );
 float	LittleFloat( float l );
 void	BigRevBytes( void *bp, int elsize, int elcount );
 void	Swap_Init( void );
+
+float FloatSwap( float f );
 
 #ifdef MSB_FIRST
 void RevBytesSwap( void *bp, int elsize, int elcount );
