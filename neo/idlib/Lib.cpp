@@ -319,14 +319,16 @@ INPUTS
 RESULTS
    Reverses the byte order in each of elcount elements.
 ===================================================================== */
-ID_INLINE static void RevBytesSwap( void *bp, int elsize, int elcount ) {
-	unsigned char *p, *q;
+void RevBytesSwap( void *bp, int elsize, int elcount )
+{
+	unsigned char *q;
+	unsigned char *p = ( unsigned char * ) bp;
 
-	p = ( unsigned char * ) bp;
-
-	if ( elsize == 2 ) {
+	if ( elsize == 2 )
+	{
 		q = p + 1;
-		while ( elcount-- ) {
+		while ( elcount-- )
+		{
 			*p ^= *q;
 			*q ^= *p;
 			*p ^= *q;
@@ -363,17 +365,41 @@ ID_INLINE static void RevBytesSwap( void *bp, int elsize, int elcount ) {
  Reverses the bitfield of size elsize.
  ===================================================================== */
 #ifdef MSB_FIRST
-ID_INLINE static void RevBitFieldSwap( void *bp, int elsize) {
+void RevBitFieldSwap( void *bp, int elsize) {
 	int i;
-	unsigned char *p, t, v;
+	unsigned char t, v;
+	unsigned char *q;
+	unsigned char *p = ( unsigned char * ) bp;
 
-	LittleRevBytes( bp, elsize, 1 );
+	if ( elsize == 2 )
+	{
+		q = p + 1;
+		*p ^= *q;
+		*q ^= *p;
+		*p ^= *q;
+		p += 2;
+		q += 2;
+	}
+	else
+	{
+		q = p + elsize - 1;
+		while ( p < q )
+		{
+			*p ^= *q;
+			*q ^= *p;
+			*p ^= *q;
+			++p;
+			--q;
+		}
+		p += elsize >> 1;
+	}
 
-	p = (unsigned char *) bp;
-	while ( elsize-- ) {
+	while ( elsize-- )
+	{
 		v = *p;
 		t = 0;
-		for (i = 7; i; i--) {
+		for (i = 7; i; i--)
+		{
 			t <<= 1;
 			v >>= 1;
 			t |= v & 1;
@@ -433,11 +459,10 @@ TTimo: untested - that's the version from initial base64 decode
 ================
 */
 ID_INLINE static int IntForSixtetsBig( byte *in ) {
-	int ret = 0;
-	ret |= in[0];
-	ret |= in[1] << 6;
-	ret |= in[2] << 2*6;
-	ret |= in[3] << 3*6;
+	int ret = in[0];
+	ret    |= in[1] << 6;
+	ret    |= in[2] << 2*6;
+	ret    |= in[3] << 3*6;
 	return ret;
 }
 
@@ -476,18 +501,6 @@ float	LittleFloat( float l ) {
 void	BigRevBytes( void *bp, int elsize, int elcount ) {
 #ifndef MSB_FIRST
 	RevBytesSwap(bp, elsize, elcount);
-#endif
-}
-
-void	LittleRevBytes( void *bp, int elsize, int elcount ){
-#ifdef MSB_FIRST
-	RevBytesSwap(bp, elsize, elcount);
-#endif
-}
-
-void	LittleBitField( void *bp, int elsize ){
-#ifdef MSB_FIRST
-	RevBitFieldSwap(bp, elsize);
 #endif
 }
 

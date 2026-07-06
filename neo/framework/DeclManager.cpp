@@ -1075,7 +1075,9 @@ int idDeclManagerLocal::GetChecksum( void ) const {
 		}
 	}
 
-	LittleRevBytes( checksumData, sizeof(int), total * 2 );
+#ifdef MSB_FIRST
+	RevBytesSwap( checksumData, sizeof(int), total * 2 );
+#endif
 	return MD5_BlockChecksum( checksumData, total * 2 * sizeof( int ) );
 }
 

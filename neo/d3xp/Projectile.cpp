@@ -128,7 +128,9 @@ void idProjectile::Save( idSaveGame *savefile ) const {
 	owner.Save( savefile );
 
 	projectileFlags_s flags = projectileFlags;
-	LittleBitField( &flags, sizeof( flags ) );
+#ifdef MSB_FIRST
+	RevBitFieldSwap( &flags, sizeof( flags ) );
+#endif
 	savefile->Write( &flags, sizeof( flags ) );
 
 	savefile->WriteFloat( thrust );
@@ -166,7 +168,9 @@ void idProjectile::Restore( idRestoreGame *savefile ) {
 	owner.Restore( savefile );
 
 	savefile->Read( &projectileFlags, sizeof( projectileFlags ) );
-	LittleBitField( &projectileFlags, sizeof( projectileFlags ) );
+#ifdef MSB_FIRST
+	RevBitFieldSwap( &projectileFlags, sizeof( projectileFlags ) );
+#endif
 
 	savefile->ReadFloat( thrust );
 	savefile->ReadInt( thrust_end );

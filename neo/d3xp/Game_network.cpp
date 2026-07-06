@@ -703,7 +703,9 @@ void idGameLocal::ServerWriteSnapshot( int clientNum, int sequence, idBitMsg &ms
 
 	// copy the client PVS string
 	memcpy( clientInPVS, snapshot->pvs, ( numPVSClients + 7 ) >> 3 );
-	LittleRevBytes( clientInPVS, sizeof( int ), sizeof( clientInPVS ) / sizeof ( int ) );
+#ifdef MSB_FIRST
+	RevBytesSwap( clientInPVS, sizeof( int ), sizeof( clientInPVS ) / sizeof ( int ) );
+#endif
 }
 
 /*

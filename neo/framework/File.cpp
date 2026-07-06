@@ -414,7 +414,9 @@ int idFile::ReadString( idStr &string ) {
  */
 int idFile::ReadVec2( idVec2 &vec ) {
 	int result = Read( &vec, sizeof( vec ) );
-	LittleRevBytes( &vec, sizeof(float), sizeof(vec)/sizeof(float) );
+#ifdef MSB_FIRST
+	RevBytesSwap( &vec, sizeof(float), sizeof(vec)/sizeof(float) );
+#endif
 	return result;
 }
 
@@ -425,7 +427,9 @@ int idFile::ReadVec2( idVec2 &vec ) {
  */
 int idFile::ReadVec3( idVec3 &vec ) {
 	int result = Read( &vec, sizeof( vec ) );
-	LittleRevBytes( &vec, sizeof(float), sizeof(vec)/sizeof(float) );
+#ifdef MSB_FIRST
+	RevBytesSwap( &vec, sizeof(float), sizeof(vec)/sizeof(float) );
+#endif
 	return result;
 }
 
@@ -436,7 +440,9 @@ int idFile::ReadVec3( idVec3 &vec ) {
  */
 int idFile::ReadVec4( idVec4 &vec ) {
 	int result = Read( &vec, sizeof( vec ) );
-	LittleRevBytes( &vec, sizeof(float), sizeof(vec)/sizeof(float) );
+#ifdef MSB_FIRST
+	RevBytesSwap( &vec, sizeof(float), sizeof(vec)/sizeof(float) );
+#endif
 	return result;
 }
 
@@ -447,7 +453,9 @@ int idFile::ReadVec4( idVec4 &vec ) {
  */
 int idFile::ReadVec6( idVec6 &vec ) {
 	int result = Read( &vec, sizeof( vec ) );
-	LittleRevBytes( &vec, sizeof(float), sizeof(vec)/sizeof(float) );
+#ifdef MSB_FIRST
+	RevBytesSwap( &vec, sizeof(float), sizeof(vec)/sizeof(float) );
+#endif
 	return result;
 }
 
@@ -458,7 +466,9 @@ int idFile::ReadVec6( idVec6 &vec ) {
  */
 int idFile::ReadMat3( idMat3 &mat ) {
 	int result = Read( &mat, sizeof( mat ) );
-	LittleRevBytes( &mat, sizeof(float), sizeof(mat)/sizeof(float) );
+#ifdef MSB_FIRST
+	RevBytesSwap( &mat, sizeof(float), sizeof(mat)/sizeof(float) );
+#endif
 	return result;
 }
 
@@ -560,7 +570,9 @@ int idFile::WriteString( const char *value ) {
  */
 int idFile::WriteVec2( const idVec2 &vec ) {
 	idVec2 v = vec;
-	LittleRevBytes( &v, sizeof(float), sizeof(v)/sizeof(float) );
+#ifdef MSB_FIRST
+	RevBytesSwap( &v, sizeof(float), sizeof(v)/sizeof(float) );
+#endif
 	return Write( &v, sizeof( v ) );
 }
 
@@ -571,7 +583,9 @@ int idFile::WriteVec2( const idVec2 &vec ) {
  */
 int idFile::WriteVec3( const idVec3 &vec ) {
 	idVec3 v = vec;
-	LittleRevBytes( &v, sizeof(float), sizeof(v)/sizeof(float) );
+#ifdef MSB_FIRST
+	RevBytesSwap( &v, sizeof(float), sizeof(v)/sizeof(float) );
+#endif
 	return Write( &v, sizeof( v ) );
 }
 
@@ -582,7 +596,9 @@ int idFile::WriteVec3( const idVec3 &vec ) {
  */
 int idFile::WriteVec4( const idVec4 &vec ) {
 	idVec4 v = vec;
-	LittleRevBytes( &v, sizeof(float), sizeof(v)/sizeof(float) );
+#ifdef MSB_FIRST
+	RevBytesSwap( &v, sizeof(float), sizeof(v)/sizeof(float) );
+#endif
 	return Write( &v, sizeof( v ) );
 }
 
@@ -593,7 +609,9 @@ int idFile::WriteVec4( const idVec4 &vec ) {
  */
 int idFile::WriteVec6( const idVec6 &vec ) {
 	idVec6 v = vec;
-	LittleRevBytes( &v, sizeof(float), sizeof(v)/sizeof(float) );
+#ifdef MSB_FIRST
+	RevBytesSwap( &v, sizeof(float), sizeof(v)/sizeof(float) );
+#endif
 	return Write( &v, sizeof( v ) );
 }
 
@@ -604,7 +622,9 @@ int idFile::WriteVec6( const idVec6 &vec ) {
  */
 int idFile::WriteMat3( const idMat3 &mat ) {
 	idMat3 v = mat;
-	LittleRevBytes(&v, sizeof(float), sizeof(v)/sizeof(float) );
+#ifdef MSB_FIRST
+	RevBytesSwap(&v, sizeof(float), sizeof(v)/sizeof(float) );
+#endif
 	return Write( &v, sizeof( v ) );
 }
 

@@ -277,7 +277,9 @@ idSaveGame::WriteBounds
 */
 void idSaveGame::WriteBounds( const idBounds &bounds ) {
 	idBounds b = bounds;
-	LittleRevBytes( &b, sizeof(float), sizeof(b)/sizeof(float) );
+#ifdef MSB_FIRST
+	RevBytesSwap( &b, sizeof(float), sizeof(b)/sizeof(float) );
+#endif
 	file->Write( &b, sizeof( b ) );
 }
 
@@ -293,7 +295,9 @@ void idSaveGame::WriteWinding( const idWinding &w )
 	file->WriteInt( num );
 	for ( i = 0; i < num; i++ ) {
 		idVec5 v = w[i];
-		LittleRevBytes(&v, sizeof(float), sizeof(v)/sizeof(float) );
+#ifdef MSB_FIRST
+		RevBytesSwap(&v, sizeof(float), sizeof(v)/sizeof(float) );
+#endif
 		file->Write( &v, sizeof(v) );
 	}
 }
@@ -315,7 +319,9 @@ idSaveGame::WriteAngles
 */
 void idSaveGame::WriteAngles( const idAngles &angles ) {
 	idAngles v = angles;
-	LittleRevBytes(&v, sizeof(float), sizeof(v)/sizeof(float) );
+#ifdef MSB_FIRST
+	RevBytesSwap(&v, sizeof(float), sizeof(v)/sizeof(float) );
+#endif
 	file->Write( &v, sizeof( v ) );
 }
 
@@ -1024,7 +1030,9 @@ idRestoreGame::ReadBounds
 */
 void idRestoreGame::ReadBounds( idBounds &bounds ) {
 	file->Read( &bounds, sizeof( bounds ) );
-	LittleRevBytes( &bounds, sizeof(float), sizeof(bounds)/sizeof(float) );
+#ifdef MSB_FIRST
+	RevBytesSwap( &bounds, sizeof(float), sizeof(bounds)/sizeof(float) );
+#endif
 }
 
 /*
@@ -1039,7 +1047,9 @@ void idRestoreGame::ReadWinding( idWinding &w )
 	w.SetNumPoints( num );
 	for ( i = 0; i < num; i++ ) {
 		file->Read( &w[i], sizeof(idVec5) );
-		LittleRevBytes(&w[i], sizeof(float), sizeof(idVec5)/sizeof(float) );
+#ifdef MSB_FIRST
+		RevBytesSwap(&w[i], sizeof(float), sizeof(idVec5)/sizeof(float) );
+#endif
 	}
 }
 
@@ -1059,7 +1069,9 @@ idRestoreGame::ReadAngles
 */
 void idRestoreGame::ReadAngles( idAngles &angles ) {
 	file->Read( &angles, sizeof( angles ) );
-	LittleRevBytes(&angles, sizeof(float), sizeof(idAngles)/sizeof(float) );
+#ifdef MSB_FIRST
+	RevBytesSwap(&angles, sizeof(float), sizeof(idAngles)/sizeof(float) );
+#endif
 }
 
 /*

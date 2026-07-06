@@ -698,7 +698,9 @@ void idEntity::Save( idSaveGame *savefile ) const {
 	}
 
 	entityFlags_s flags = fl;
-	LittleBitField( &flags, sizeof( flags ) );
+#ifdef MSB_FIRST
+	RevBitFieldSwap( &flags, sizeof( flags ) );
+#endif
 	savefile->Write( &flags, sizeof( flags ) );
 
 #ifdef _D3XP
@@ -777,12 +779,13 @@ void idEntity::Restore( idRestoreGame *savefile ) {
 	targets.Clear();
 	savefile->ReadInt( num );
 	targets.SetNum( num );
-	for( i = 0; i < num; i++ ) {
+	for( i = 0; i < num; i++ )
 		targets[ i ].Restore( savefile );
-	}
 
 	savefile->Read( &fl, sizeof( fl ) );
-	LittleBitField( &fl, sizeof( fl ) );
+#ifdef MSB_FIRST
+	RevBitFieldSwap( &fl, sizeof( fl ) );
+#endif
 
 #ifdef _D3XP
 	savefile->ReadInt( timeGroup );

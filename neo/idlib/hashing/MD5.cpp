@@ -54,14 +54,13 @@ the data and converts bytes into longwords for this routine.
 =================
 */
 void MD5_Transform( unsigned int state[4], unsigned int in[16] ) {
-	unsigned int a, b, c, d;
-
-	a = state[0];
-	b = state[1];
-	c = state[2];
-	d = state[3];
-
-	LittleRevBytes( in, sizeof(unsigned int), 16 );
+	unsigned int a = state[0];
+	unsigned int b = state[1];
+	unsigned int c = state[2];
+	unsigned int d = state[3];
+#ifdef MSB_FIRST
+	RevBytesSwap( in, sizeof(unsigned int), 16 );
+#endif
 
 	MD5STEP(F1, a, b, c, d, in[0] + 0xd76aa478, 7);
 	MD5STEP(F1, d, a, b, c, in[1] + 0xe8c7b756, 12);
@@ -131,7 +130,9 @@ void MD5_Transform( unsigned int state[4], unsigned int in[16] ) {
 	MD5STEP(F4, c, d, a, b, in[2] + 0x2ad7d2bb, 15);
 	MD5STEP(F4, b, c, d, a, in[9] + 0xeb86d391, 21);
 
-	LittleRevBytes( in, sizeof(unsigned int), 16 );
+#ifdef MSB_FIRST
+	RevBytesSwap( in, sizeof(unsigned int), 16 );
+#endif
 
 	state[0] += a;
 	state[1] += b;

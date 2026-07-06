@@ -111,9 +111,12 @@ int		LittleInt( int l );
 float	BigFloat( float l );
 float	LittleFloat( float l );
 void	BigRevBytes( void *bp, int elsize, int elcount );
-void	LittleRevBytes( void *bp, int elsize, int elcount );
-void	LittleBitField( void *bp, int elsize );
 void	Swap_Init( void );
+
+#ifdef MSB_FIRST
+void RevBytesSwap( void *bp, int elsize, int elcount );
+void RevBitFieldSwap( void *bp, int elsize);
+#endif
 
 // for base64
 void	SixtetsForInt( byte *out, int src);
