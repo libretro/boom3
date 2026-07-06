@@ -35,10 +35,8 @@ If you have questions concerning this license or the applicable additional terms
 #include <unistd.h>
 #endif
 
-
 /* MSB_FIRST (libretro convention) is defined by the build system on
  * big-endian targets and absent on little-endian ones. */
-
 
 // swap macros using compiler builtins (or a portable fallback)
 #ifdef _MSC_VER
@@ -59,18 +57,12 @@ If you have questions concerning this license or the applicable additional terms
   #define D3_SwapBE32(x)  (x)
   #define D3_SwapLE32(x)  D3_Swap32(x)
   #define D3_SwapU32(x)    D3_Swap32(x)
-  #define SDL_BYTEORDER    4321
-  #define SDL_BIG_ENDIAN   4321
-  #define SDL_LIL_ENDIAN   1234
 #else
   #define D3_SwapBE16(x)  D3_Swap16(x)
   #define D3_SwapLE16(x)  (x)
   #define D3_SwapBE32(x)  D3_Swap32(x)
   #define D3_SwapLE32(x)  (x)
   #define D3_SwapU32(x)    D3_Swap32(x)
-  #define SDL_BYTEORDER    1234
-  #define SDL_BIG_ENDIAN   4321
-  #define SDL_LIL_ENDIAN   1234
 #endif
 
 #include "sys/platform.h"
@@ -193,17 +185,14 @@ PackColor
 ================
 */
 dword PackColor( const idVec4 &color ) {
-	dword dw, dx, dy, dz;
-
-	dx = ColorFloatToByte( color.x );
-	dy = ColorFloatToByte( color.y );
-	dz = ColorFloatToByte( color.z );
-	dw = ColorFloatToByte( color.w );
-
-#if SDL_BYTEORDER == SDL_LIL_ENDIAN
-	return ( dx << 0 ) | ( dy << 8 ) | ( dz << 16 ) | ( dw << 24 );
-#else
+	dword dx = ColorFloatToByte( color.x );
+	dword dy = ColorFloatToByte( color.y );
+	dword dz = ColorFloatToByte( color.z );
+	dword dw = ColorFloatToByte( color.w );
+#ifdef MSB_FIRST
 	return ( dx << 24 ) | ( dy << 16 ) | ( dz << 8 ) | ( dw << 0 );
+#else
+	return ( dx << 0 ) | ( dy << 8 ) | ( dz << 16 ) | ( dw << 24 );
 #endif
 }
 
@@ -213,16 +202,16 @@ UnpackColor
 ================
 */
 void UnpackColor( const dword color, idVec4 &unpackedColor ) {
-#if SDL_BYTEORDER == SDL_LIL_ENDIAN
-	unpackedColor.Set( ( ( color >> 0 ) & 255 ) * ( 1.0f / 255.0f ),
-						( ( color >> 8 ) & 255 ) * ( 1.0f / 255.0f ),
-						( ( color >> 16 ) & 255 ) * ( 1.0f / 255.0f ),
-						( ( color >> 24 ) & 255 ) * ( 1.0f / 255.0f ) );
-#else
+#ifdef MSB_FIRST
 	unpackedColor.Set( ( ( color >> 24 ) & 255 ) * ( 1.0f / 255.0f ),
 						( ( color >> 16 ) & 255 ) * ( 1.0f / 255.0f ),
 						( ( color >> 8 ) & 255 ) * ( 1.0f / 255.0f ),
 						( ( color >> 0 ) & 255 ) * ( 1.0f / 255.0f ) );
+#else
+	unpackedColor.Set( ( ( color >> 0 ) & 255 ) * ( 1.0f / 255.0f ),
+						( ( color >> 8 ) & 255 ) * ( 1.0f / 255.0f ),
+						( ( color >> 16 ) & 255 ) * ( 1.0f / 255.0f ),
+						( ( color >> 24 ) & 255 ) * ( 1.0f / 255.0f ) );
 #endif
 }
 
@@ -232,16 +221,13 @@ PackColor
 ================
 */
 dword PackColor( const idVec3 &color ) {
-	dword dx, dy, dz;
-
-	dx = ColorFloatToByte( color.x );
-	dy = ColorFloatToByte( color.y );
-	dz = ColorFloatToByte( color.z );
-
-#if SDL_BYTEORDER == SDL_LIL_ENDIAN
-	return ( dx << 0 ) | ( dy << 8 ) | ( dz << 16 );
-#else
+	dword dx = ColorFloatToByte( color.x );
+	dword dy = ColorFloatToByte( color.y );
+	dword dz = ColorFloatToByte( color.z );
+#ifdef MSB_FIRST
 	return ( dy << 16 ) | ( dz << 8 ) | ( dx << 0 );
+#else
+	return ( dx << 0 ) | ( dy << 8 ) | ( dz << 16 );
 #endif
 }
 
@@ -251,14 +237,14 @@ UnpackColor
 ================
 */
 void UnpackColor( const dword color, idVec3 &unpackedColor ) {
-#if SDL_BYTEORDER == SDL_LIL_ENDIAN
-	unpackedColor.Set( ( ( color >> 0 ) & 255 ) * ( 1.0f / 255.0f ),
-						( ( color >> 8 ) & 255 ) * ( 1.0f / 255.0f ),
-						( ( color >> 16 ) & 255 ) * ( 1.0f / 255.0f ) );
-#else
+#ifdef MSB_FIRST
 	unpackedColor.Set( ( ( color >> 16 ) & 255 ) * ( 1.0f / 255.0f ),
 						( ( color >> 8 ) & 255 ) * ( 1.0f / 255.0f ),
 						( ( color >> 0 ) & 255 ) * ( 1.0f / 255.0f ) );
+#else
+	unpackedColor.Set( ( ( color >> 0 ) & 255 ) * ( 1.0f / 255.0f ),
+						( ( color >> 8 ) & 255 ) * ( 1.0f / 255.0f ),
+						( ( color >> 16 ) & 255 ) * ( 1.0f / 255.0f ) );
 #endif
 }
 
@@ -376,6 +362,7 @@ ID_INLINE static void RevBytesSwap( void *bp, int elsize, int elcount ) {
  RESULTS
  Reverses the bitfield of size elsize.
  ===================================================================== */
+#ifdef MSB_FIRST
 ID_INLINE static void RevBitFieldSwap( void *bp, int elsize) {
 	int i;
 	unsigned char *p, t, v;
@@ -394,6 +381,7 @@ ID_INLINE static void RevBitFieldSwap( void *bp, int elsize) {
 		*p++ = t;
 	}
 }
+#endif
 
 /*
 ================
@@ -453,19 +441,6 @@ ID_INLINE static int IntForSixtetsBig( byte *in ) {
 	return ret;
 }
 
-/*
-==========
-Swap_IsBigEndian
-==========
-*/
-bool Swap_IsBigEndian( void ) {
-#if SDL_BYTEORDER == SDL_LIL_ENDIAN
-	return false;
-#else
-	return true;
-#endif
-}
-
 short	BigShort( short l ) {
 	return D3_SwapBE16(l);
 }
@@ -483,58 +458,52 @@ int		LittleInt( int l ) {
 }
 
 float	BigFloat( float l ) {
-#if SDL_BYTEORDER == SDL_LIL_ENDIAN
-	return FloatSwap(l);
-#else
+#ifdef MSB_FIRST
 	return l;
+#else
+	return FloatSwap(l);
 #endif
 }
 
 float	LittleFloat( float l ) {
-#if SDL_BYTEORDER == SDL_LIL_ENDIAN
-	return l;
-#else
+#ifdef MSB_FIRST
 	return FloatSwap(l);
+#else
+	return l;
 #endif
 }
 
 void	BigRevBytes( void *bp, int elsize, int elcount ) {
-#if SDL_BYTEORDER == SDL_LIL_ENDIAN
+#ifndef MSB_FIRST
 	RevBytesSwap(bp, elsize, elcount);
-#else
-	return;
 #endif
 }
 
 void	LittleRevBytes( void *bp, int elsize, int elcount ){
-#if SDL_BYTEORDER == SDL_LIL_ENDIAN
-	return;
-#else
+#ifndef MSB_FIRST
 	RevBytesSwap(bp, elsize, elcount);
 #endif
 }
 
 void	LittleBitField( void *bp, int elsize ){
-#if SDL_BYTEORDER == SDL_LIL_ENDIAN
-	return;
-#else
+#ifdef MSB_FIRST
 	RevBitFieldSwap(bp, elsize);
 #endif
 }
 
 void	SixtetsForInt( byte *out, int src) {
-#if SDL_BYTEORDER == SDL_LIL_ENDIAN
-	SixtetsForIntLittle(out, src);
-#else
+#ifdef MSB_FIRST
 	SixtetsForIntBig(out, src);
+#else
+	SixtetsForIntLittle(out, src);
 #endif
 }
 
 int		IntForSixtets( byte *in ) {
-#if SDL_BYTEORDER == SDL_LIL_ENDIAN
-	return IntForSixtetsLittle(in);
-#else
+#ifdef MSB_FIRST
 	return IntForSixtetsBig(in);
+#else
+	return IntForSixtetsLittle(in);
 #endif
 }
 

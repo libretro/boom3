@@ -90,12 +90,9 @@ void R_ListRenderEntityDefs_f( const idCmdArgs &args ) {
 	int			i;
 	idRenderEntityLocal	*mdef;
 
-	if ( !tr.primaryWorld ) {
+	if ( !tr.primaryWorld )
 		return;
-	}
 	int active = 0;
-	int	totalRef = 0;
-	int	totalIntr = 0;
 
 	for ( i = 0 ; i < tr.primaryWorld->entityDefs.Num() ; i++ ) {
 		mdef = tr.primaryWorld->entityDefs[i];
@@ -106,17 +103,13 @@ void R_ListRenderEntityDefs_f( const idCmdArgs &args ) {
 
 		// count up the interactions
 		int	iCount = 0;
-		for ( idInteraction *inter = mdef->firstInteraction; inter != NULL; inter = inter->entityNext ) {
+		for ( idInteraction *inter = mdef->firstInteraction; inter != NULL; inter = inter->entityNext )
 			iCount++;
-		}
-		totalIntr += iCount;
 
 		// count up the references
 		int	rCount = 0;
-		for ( areaReference_t *ref = mdef->entityRefs ; ref ; ref = ref->ownerNext ) {
+		for ( areaReference_t *ref = mdef->entityRefs ; ref ; ref = ref->ownerNext )
 			rCount++;
-		}
-		totalRef += rCount;
 
 		common->Printf( "%4i: %3i intr %2i refs %s\n", i, iCount, rCount, mdef->parms.hModel->Name());
 		active++;
@@ -1199,7 +1192,7 @@ bool idRenderWorldLocal::Trace( modelTrace_t &trace, const idVec3 &start, const 
 	idRenderModel * model;
 	srfTriangles_t * tri;
 	localTrace_t localTrace;
-	int areas[128], numAreas, i, j, numSurfaces;
+	int areas[128], numAreas, i, j;
 	idBounds traceBounds, bounds;
 	float modelMatrix[16];
 	idVec3 localStart, localEnd;
@@ -1215,8 +1208,6 @@ bool idRenderWorldLocal::Trace( modelTrace_t &trace, const idVec3 &start, const 
 
 	// get the world areas the trace is in
 	numAreas = BoundsInAreas( traceBounds, areas, 128 );
-
-	numSurfaces = 0;
 
 	// check all areas for models
 	for ( i = 0; i < numAreas; i++ ) {
@@ -1305,8 +1296,6 @@ bool idRenderWorldLocal::Trace( modelTrace_t &trace, const idVec3 &start, const 
 				if ( !traceBounds.IntersectsBounds( bounds ) || !bounds.LineIntersection( start, trace.point ) ) {
 					continue;
 				}
-
-				numSurfaces++;
 
 				// transform the points into local space
 				R_AxisToModelMatrix( def->parms.axis, def->parms.origin, modelMatrix );

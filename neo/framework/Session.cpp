@@ -62,21 +62,14 @@ idCVar	idSessionLocal::com_disableAutoSaves( "com_disableAutoSaves", "0", CVAR_S
 idSessionLocal		sessLocal;
 idSession			*session = &sessLocal;
 
-// these must be kept up to date with window Levelshot in guis/mainmenu.gui
-const int PREVIEW_X = 211;
-const int PREVIEW_Y = 31;
-const int PREVIEW_WIDTH = 398;
-const int PREVIEW_HEIGHT = 298;
-
-void RandomizeStack( void ) {
+void RandomizeStack( void )
+{
 	// attempt to force uninitialized stack memory bugs
 	int		bytes = 4000000;
 	byte	*buf = (byte *)_alloca( bytes );
-
 	int	fill = rand()&255;
-	for ( int i = 0 ; i < bytes ; i++ ) {
+	for ( int i = 0 ; i < bytes ; i++ )
 		buf[i] = fill;
-	}
 }
 
 /*

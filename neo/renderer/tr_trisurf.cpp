@@ -700,7 +700,6 @@ R_CreateSilRemap
 =================
 */
 static int *R_CreateSilRemap( const srfTriangles_t *tri ) {
-	int		c_removed, c_unique;
 	int		*remap;
 	int		i, j, hashKey;
 	const idDrawVert *v1, *v2;
@@ -716,8 +715,6 @@ static int *R_CreateSilRemap( const srfTriangles_t *tri ) {
 
 	idHashIndex		hash( 1024, tri->numVerts );
 
-	c_removed = 0;
-	c_unique = 0;
 	for ( i = 0 ; i < tri->numVerts ; i++ ) {
 		v1 = &tri->verts[i];
 
@@ -728,13 +725,11 @@ static int *R_CreateSilRemap( const srfTriangles_t *tri ) {
 			if ( v2->xyz[0] == v1->xyz[0]
 				&& v2->xyz[1] == v1->xyz[1]
 				&& v2->xyz[2] == v1->xyz[2] ) {
-				c_removed++;
 				remap[i] = j;
 				break;
 			}
 		}
 		if ( j < 0 ) {
-			c_unique++;
 			remap[i] = i;
 			hash.Add( hashKey, i );
 		}
@@ -959,7 +954,7 @@ int	c_totalSilEdges;
 void R_IdentifySilEdges( srfTriangles_t *tri, bool omitCoplanarEdges ) {
 	int		i;
 	int		numTris;
-	int		shared, single;
+	int		single;
 
 	omitCoplanarEdges = false;	// optimization doesn't work for some reason
 
@@ -1051,21 +1046,16 @@ void R_IdentifySilEdges( srfTriangles_t *tri, bool omitCoplanarEdges ) {
 	// a perfectly built model should only have shared
 	// edges, but most models will have some interpenetration
 	// and dangling edges
-	shared = 0;
 	single = 0;
 	for ( i = 0 ; i < numSilEdges ; i++ ) {
-		if ( silEdges[i].p2 == numPlanes ) {
+		if ( silEdges[i].p2 == numPlanes )
 			single++;
-		} else {
-			shared++;
-		}
 	}
 
-	if ( !single ) {
+	if ( !single )
 		tri->perfectHull = true;
-	} else {
+	else
 		tri->perfectHull = false;
-	}
 
 	tri->numSilEdges = numSilEdges;
 	if(numSilEdges > 0) {
@@ -1118,17 +1108,12 @@ typedef struct {
 
 static void	R_DeriveFaceTangents( const srfTriangles_t *tri, faceTangents_t *faceTangents ) {
 	int		i;
-	int			c_textureDegenerateFaces;
-	int			c_positive, c_negative;
 	faceTangents_t	*ft;
 	idDrawVert	*a, *b, *c;
 
 	//
 	// calculate tangent vectors for each face in isolation
 	//
-	c_positive = 0;
-	c_negative = 0;
-	c_textureDegenerateFaces = 0;
 	for ( i = 0 ; i < tri->numIndexes ; i+=3 ) {
 		float	area;
 		idVec3	temp;
@@ -1158,16 +1143,12 @@ static void	R_DeriveFaceTangents( const srfTriangles_t *tri, faceTangents_t *fac
 			ft->degenerate = true;
 			ft->tangents[0].Zero();
 			ft->tangents[1].Zero();
-			c_textureDegenerateFaces++;
 			continue;
 		}
-		if ( area > 0.0f ) {
+		if ( area > 0.0f )
 			ft->negativePolarity = false;
-			c_positive++;
-		} else {
+		else
 			ft->negativePolarity = true;
-			c_negative++;
-		}
 		ft->degenerate = false;
 
 		float inva = area < 0.0f ? -1 : 1;		// was = 1.0f / area;
@@ -1367,15 +1348,6 @@ void R_DeriveTangentsWithoutNormals( srfTriangles_t *tri ) {
 	tri->tangentsCalculated = true;
 
 	Mem_FreeA( faceTangents, faceTangentsOnStack );
-}
-
-static ID_INLINE void VectorNormalizeFast2( const idVec3 &v, idVec3 &out) {
-	float	ilength;
-
-	ilength = idMath::RSqrt( v[0]*v[0] + v[1]*v[1] + v[2]*v[2] );
-	out[0] = v[0] * ilength;
-	out[1] = v[1] * ilength;
-	out[2] = v[2] * ilength;
 }
 
 /*
@@ -1593,11 +1565,8 @@ triangles could have different texture coordinates.
 =================
 */
 void R_RemoveDuplicatedTriangles( srfTriangles_t *tri ) {
-	int		c_removed;
 	int		i, j, r;
 	int		a, b, c;
-
-	c_removed = 0;
 
 	// check for completely duplicated triangles
 	// any rotation of the triangle is still the same, but a mirroring
@@ -1609,7 +1578,6 @@ void R_RemoveDuplicatedTriangles( srfTriangles_t *tri ) {
 			c = tri->silIndexes[i+(r+2)%3];
 			for ( j = i + 3 ; j < tri->numIndexes ; j+=3 ) {
 				if ( tri->silIndexes[j] == a && tri->silIndexes[j+1] == b && tri->silIndexes[j+2] == c ) {
-					c_removed++;
 					memmove( tri->indexes + j, tri->indexes + j + 3, ( tri->numIndexes - j - 3 ) * sizeof( tri->indexes[0] ) );
 					memmove( tri->silIndexes + j, tri->silIndexes + j + 3, ( tri->numIndexes - j - 3 ) * sizeof( tri->silIndexes[0] ) );
 					tri->numIndexes -= 3;
@@ -1618,11 +1586,6 @@ void R_RemoveDuplicatedTriangles( srfTriangles_t *tri ) {
 			}
 		}
 	}
-
-	if ( c_removed ) {
-		common->Printf( "removed %i duplicated triangles\n", c_removed );
-	}
-
 }
 
 /*
@@ -1633,31 +1596,21 @@ silIndexes must have already been calculated
 =================
 */
 void R_RemoveDegenerateTriangles( srfTriangles_t *tri ) {
-	int		c_removed;
 	int		i;
 	int		a, b, c;
 
 	// check for completely degenerate triangles
-	c_removed = 0;
 	for ( i = 0; i < tri->numIndexes; i += 3 ) {
 		a = tri->silIndexes[i];
 		b = tri->silIndexes[i+1];
 		c = tri->silIndexes[i+2];
 		if ( a == b || a == c || b == c ) {
-			c_removed++;
 			memmove( tri->indexes + i, tri->indexes + i + 3, ( tri->numIndexes - i - 3 ) * sizeof( tri->indexes[0] ) );
-			if ( tri->silIndexes ) {
+			if ( tri->silIndexes )
 				memmove( tri->silIndexes + i, tri->silIndexes + i + 3, ( tri->numIndexes - i - 3 ) * sizeof( tri->silIndexes[0] ) );
-			}
 			tri->numIndexes -= 3;
 			i -= 3;
 		}
-	}
-
-	// this doesn't free the memory used by the unused verts
-
-	if ( c_removed ) {
-		common->Printf( "removed %i degenerate triangles\n", c_removed );
 	}
 }
 

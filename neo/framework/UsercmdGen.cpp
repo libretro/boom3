@@ -297,9 +297,9 @@ void buttonState_t::SetKeyState( int keystate, bool toggle ) {
 	if ( !toggle ) {
 		held = false;
 		on = keystate;
-	} else if ( !keystate ) {
+	} else if ( !keystate )
 		held = false;
-	} else if ( !held ) {
+	else if ( !held ) {
 		held = true;
 		on ^= 1;
 	}
@@ -307,8 +307,6 @@ void buttonState_t::SetKeyState( int keystate, bool toggle ) {
 
 
 const int NUM_USER_COMMANDS = sizeof(userCmdStrings) / sizeof(userCmdString_t);
-
-const int MAX_CHAT_BUFFER = 127;
 
 class idUsercmdGenLocal : public idUsercmdGen {
 public:
@@ -402,8 +400,6 @@ private:
 	int				lastPollTime;
 	float			lastLookValuePitch;
 	float			lastLookValueYaw;
-
-	bool			heldJump; // TODO: ???
 
 	static idCVar	in_yawSpeed;
 	static idCVar	in_pitchSpeed;

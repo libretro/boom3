@@ -54,12 +54,9 @@ void R_OrderIndexes( int numIndexes, glIndex_t *indexes ) {
 	vertRef_t	*vref, **vrefs, *vrefTable;
 	int			numVerts;
 	int			v1, v2;
-	int			c_starts;
-	//int			c_cost;
 
-	if ( !r_orderIndexes.GetBool() ) {
+	if ( !r_orderIndexes.GetBool() )
 		return;
-	}
 
 	// save off the original indexes
 	oldIndexes = (glIndex_t *)_alloca( numIndexes * sizeof( *oldIndexes ) );
@@ -74,9 +71,8 @@ void R_OrderIndexes( int numIndexes, glIndex_t *indexes ) {
 	// find the highest vertex number
 	numVerts = 0;
 	for ( i = 0 ; i < numIndexes ; i++ ) {
-		if ( indexes[i] > numVerts ) {
+		if ( indexes[i] > numVerts )
 			numVerts = indexes[i];
-		}
 	}
 	numVerts++;
 
@@ -95,19 +91,15 @@ void R_OrderIndexes( int numIndexes, glIndex_t *indexes ) {
 
 	// generate new indexes
 	numIndexes = 0;
-	c_starts = 0;
 	while ( numIndexes != numOldIndexes ) {
 		// find a triangle that hasn't been used
 		for ( tri = 0 ; tri < numTris ; tri++ ) {
-			if ( !triangleUsed[tri] ) {
+			if ( !triangleUsed[tri] )
 				break;
-			}
 		}
-		if ( tri == numTris ) {
+		if ( tri == numTris )
 			common->Error( "R_OrderIndexes: ran out of unused tris" );
-		}
 
-		c_starts++;
 
 		do {
 			// emit this tri
@@ -148,9 +140,6 @@ void R_OrderIndexes( int numIndexes, glIndex_t *indexes ) {
 			}
 		} while ( 1 );
 	}
-
-	//c_cost = R_MeshCost( numIndexes, indexes );
-
 }
 
 

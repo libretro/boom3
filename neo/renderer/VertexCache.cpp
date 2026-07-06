@@ -489,18 +489,10 @@ idVertexCache::List
 */
 void idVertexCache::List( void ) {
 	int	numActive = 0;
-	int frameStatic = 0;
-	int	totalStatic = 0;
 
 	vertCache_t *block;
-	for ( block = staticHeaders.next ; block != &staticHeaders ; block = block->next) {
+	for ( block = staticHeaders.next ; block != &staticHeaders ; block = block->next)
 		numActive++;
-
-		totalStatic += block->size;
-		if ( block->frameUsed == currentFrame ) {
-			frameStatic += block->size;
-		}
-	}
 
 	int	numFreeStaticHeaders = 0;
 	for ( block = freeStaticHeaders.next ; block != &freeStaticHeaders ; block = block->next ) {

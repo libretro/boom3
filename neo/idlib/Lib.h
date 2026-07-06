@@ -57,14 +57,14 @@ public:
 	static class idCommon *		common;
 	static class idCVarSystem *	cvarSystem;
 	static class idFileSystem *	fileSystem;
-	static int					frameNumber;
+	static int			frameNumber;
 
-	static void					Init( void );
-	static void					ShutDown( void );
+	static void			Init( void );
+	static void			ShutDown( void );
 
 	// wrapper to idCommon functions
-	static void					Error( const char *fmt, ... );
-	static void					Warning( const char *fmt, ... );
+	static void			Error( const char *fmt, ... );
+	static void			Warning( const char *fmt, ... );
 };
 
 
@@ -114,8 +114,6 @@ void	BigRevBytes( void *bp, int elsize, int elcount );
 void	LittleRevBytes( void *bp, int elsize, int elcount );
 void	LittleBitField( void *bp, int elsize );
 void	Swap_Init( void );
-
-bool	Swap_IsBigEndian( void );
 
 // for base64
 void	SixtetsForInt( byte *out, int src);

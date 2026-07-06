@@ -46,7 +46,7 @@ localTrace_t R_LocalTrace( const idVec3 &start, const idVec3 &end, const float r
 	byte *		cullBits;
 	idPlane		planes[4];
 	localTrace_t	hit;
-	int			c_testEdges, c_testPlanes, c_intersect;
+	int			c_testEdges, c_testPlanes;
 	idVec3		startDir;
 	byte		totalOr;
 	float		radiusSqr;
@@ -85,7 +85,6 @@ localTrace_t R_LocalTrace( const idVec3 &start, const idVec3 &end, const float r
 	// scan for triangles that cross both planes
 	c_testPlanes = 0;
 	c_testEdges = 0;
-	c_intersect = 0;
 
 	radiusSqr = Square( radius );
 	startDir = end - start;
@@ -252,9 +251,6 @@ localTrace_t R_LocalTrace( const idVec3 &start, const idVec3 &end, const float r
 				}
 			}
 		}
-
-		// we hit it
-		c_intersect++;
 
 		hit.fraction = f;
 		hit.normal = plane->Normal();
