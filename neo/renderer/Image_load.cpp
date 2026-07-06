@@ -1928,7 +1928,19 @@ bool idImage::DecodeImageData( bool checkForPrecompressed, decodedImageData_t &o
 		// fall through to load the normal image
 	}
 
-	return DecodeImageDataWorker( out );
+	if ( !DecodeImageDataWorker( out ) ) {
+		// genuine load failure (not a precompressed hit): substitute the
+		// default image. DecodeImageDataWorker() is GL-free and deliberately
+		// does NOT do this (so it can run on a worker thread); on the sync
+		// path we are on the main thread and must fall back here, otherwise
+		// the image is left unloaded and renders as garbage/white. The async
+		// pipeline handles this failure on the main thread in R_AsyncLoadImages.
+		common->Warning( "Couldn't load image: %s", imgName.c_str() );
+		MakeDefault();
+		return false;
+	}
+
+	return true;
 }
 
 /*
