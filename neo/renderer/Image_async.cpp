@@ -23,13 +23,18 @@ along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 */
 
 #include "sys/platform.h"
+
+// libretro-common C headers must come before the idlib headers below:
+// idlib/Str.h installs macros such as `#define strcmp idStr::Cmp`, which
+// otherwise corrupt the standard <cstring> that these headers pull in
+// (breaks the libc++ `using ::strcmp;` on macOS/Xcode). Matches File.cpp.
+#include "retro_spsc.h"
+#include "retro_timers.h"
+
 #include "framework/Common.h"
 #include "framework/Session.h"
 
 #include "renderer/tr_local.h"
-
-#include "retro_spsc.h"
-#include "retro_timers.h"
 
 /*
 ================================================================================
