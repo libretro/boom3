@@ -362,7 +362,19 @@ SRC_LIBRETRO := \
 	$(LIBRETRO_COMM_DIR)/formats/audio_transfer.c \
 	$(LIBRETRO_COMM_DIR)/formats/wav/rwav.c \
 	$(LIBRETRO_COMM_DIR)/formats/vorbis/rvorbis.c \
+	$(LIBRETRO_COMM_DIR)/audio/resampler/drivers/sinc_resampler.c \
+	$(LIBRETRO_COMM_DIR)/audio/resampler/drivers/sinc_resampler_int16.c \
+	$(LIBRETRO_COMM_DIR)/memmap/memalign.c \
 	$(LIBRETRO_COMM_DIR)/glsm/glsm.c
+
+# The float sinc resampler has an optional hand-written NEON assembly inner
+# loop. It's only used on 32-bit ARM when HAVE_ARM_NEON_ASM_OPTIMIZATIONS is
+# defined; the default ARM build uses the C NEON intrinsics path instead, so
+# the .S is not part of SOURCES_C. Cores targeting armv7+NEON can add it:
+ifeq ($(HAVE_ARM_NEON_ASM_OPTIMIZATIONS),1)
+	SOURCES_ASM += $(LIBRETRO_COMM_DIR)/audio/resampler/drivers/sinc_resampler_neon.S
+	CFLAGS  += -DHAVE_ARM_NEON_ASM_OPTIMIZATIONS
+endif
 
 ifeq ($(GLES),1)
 	SRC_RENDERER += \
