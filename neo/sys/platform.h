@@ -227,14 +227,6 @@ If you have questions concerning this license or the applicable additional terms
 #include <errno.h>
 #include <math.h>
 
-// Newer Xcode/Clang <math.h> defines INFINITY as a macro (__builtin_inff()),
-// which collides with idMath::INFINITY member access in every consumer. This
-// header is the first include in every translation unit and is where <math.h>
-// enters, so kill the macro here - once, at the source.
-#ifdef INFINITY
-#undef INFINITY
-#endif
-
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>

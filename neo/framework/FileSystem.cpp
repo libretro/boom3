@@ -3817,10 +3817,10 @@ idFileSystemLocal::MakeTemporaryFile
 idFile * idFileSystemLocal::MakeTemporaryFile( void ) {
 	// libretro-common has no tmpfile() analog; create a uniquely-named
 	// scratch file under the save path and open it read/write.
-	static int tmpCounter = 0;
+	static uint32_t tmpCounter = 0;
 	idStr tmpPath = fs_savepath.GetString();
 	tmpPath += PATHSEPERATOR_STR;
-	tmpPath += va( "d3tmp_%u_%d.tmp", (unsigned)Core_Milliseconds(), tmpCounter++ );
+	tmpPath += va( "d3tmp_%u_%u.tmp", (unsigned)(uint32_t)Core_Milliseconds(), (unsigned)tmpCounter++ );
 	RFILE *f = filestream_open( tmpPath.c_str(),
 		RETRO_VFS_FILE_ACCESS_READ_WRITE,
 		RETRO_VFS_FILE_ACCESS_HINT_NONE );
