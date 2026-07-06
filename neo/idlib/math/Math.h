@@ -929,4 +929,14 @@ ID_INLINE int idMath::FloatHash( const float *array, const int numFloats ) {
 	return hash;
 }
 
+// Newer Xcode/Clang toolchains define INFINITY as a macro (__builtin_inff())
+// in <math.h>, which some translation units pull in after this header. That
+// breaks every idMath::INFINITY member reference (the macro expands inside the
+// qualified-id). Math.h is included by everything that uses idMath, so undef
+// the macro here, at the very end, to guarantee the member is reachable in all
+// consumers regardless of system-header include order.
+#ifdef INFINITY
+#undef INFINITY
+#endif
+
 #endif /* !__MATH_MATH_H__ */
