@@ -276,12 +276,6 @@ void Sys_ShowConsole( int visLevel, bool quitOnClose ) { }
 
 // ---------------------------------------------------------------------------
 
-ID_TIME_T Sys_FileTimeStamp(FILE * fp) {
-	struct stat st;
-	fstat(fileno(fp), &st);
-	return st.st_mtime;
-}
-
 ID_TIME_T Sys_FileTimeStampPath(const char *path) {
 	if (!path)
 		return 0;

@@ -267,7 +267,6 @@ void			Sys_ShowConsole( int visLevel, bool quitOnClose );
 
 
 void			Sys_Mkdir( const char *path );
-ID_TIME_T			Sys_FileTimeStamp( FILE *fp );
 ID_TIME_T			Sys_FileTimeStampPath( const char *path );
 // NOTE: do we need to guarantee the same output on all platforms?
 const char *	Sys_TimeStampToStr( ID_TIME_T timeStamp );
