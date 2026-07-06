@@ -39,9 +39,6 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "sys/platform.h"
 
-#ifdef ID_ENABLE_CURL
-	#include <curl/curl.h>
-#endif
 
 #include "idlib/hashing/MD4.h"
 #include "framework/Licensee.h"
@@ -466,9 +463,6 @@ private:
 	addonInfo_t *			ParseAddonDef( const char *buf, const int len );
 	void					FollowAddonDependencies( pack_t *pak );
 
-	static size_t			CurlWriteFunction( void *ptr, size_t size, size_t nmemb, void *stream );
-							// curl_progress_callback in curl.h
-	static int				CurlProgressFunction( void *clientp, double dltotal, double dlnow, double ultotal, double ulnow );
 };
 
 idCVar	idFileSystemLocal::fs_restrict( "fs_restrict", "", CVAR_SYSTEM | CVAR_INIT | CVAR_BOOL, "" );
@@ -3431,34 +3425,6 @@ back ground loading
 */
 
 /*
-=================
-idFileSystemLocal::CurlWriteFunction
-=================
-*/
-size_t idFileSystemLocal::CurlWriteFunction( void *ptr, size_t size, size_t nmemb, void *stream ) {
-	backgroundDownload_t *bgl = (backgroundDownload_t *)stream;
-	if ( !bgl->f ) {
-		return size * nmemb;
-	}
-		return (size_t)filestream_write( static_cast<idFile_Permanent*>(bgl->f)->GetFilePtr(), ptr, size * nmemb );
-}
-
-/*
-=================
-idFileSystemLocal::CurlProgressFunction
-=================
-*/
-int idFileSystemLocal::CurlProgressFunction( void *clientp, double dltotal, double dlnow, double ultotal, double ulnow ) {
-	backgroundDownload_t *bgl = (backgroundDownload_t *)clientp;
-	if ( bgl->url.status == DL_ABORTING ) {
-		return 1;
-	}
-	bgl->url.dltotal = dltotal;
-	bgl->url.dlnow = dlnow;
-	return 0;
-}
-
-/*
 ===================
 BackgroundDownload
 
@@ -3487,93 +3453,10 @@ int BackgroundDownloadThread( void *pexit ) {
 				filestream_read( static_cast<idFile_Permanent*>(bgl->f)->GetFilePtr(), bgl->file.buffer, bgl->file.length );
 			bgl->completed = true;
 		} else {
-#ifdef ID_ENABLE_CURL
-			// DLTYPE_URL
-			// use a local buffer for curl error since the size define is local
-			char error_buf[ CURL_ERROR_SIZE ];
-			bgl->url.dlerror[ 0 ] = '\0';
-			CURL *session = curl_easy_init();
-			CURLcode ret;
-			if ( !session ) {
-				bgl->url.dlstatus = CURLE_FAILED_INIT;
-				bgl->url.status = DL_FAILED;
-				bgl->completed = true;
-				continue;
-			}
-			ret = curl_easy_setopt( session, CURLOPT_ERRORBUFFER, error_buf );
-			if ( ret ) {
-				bgl->url.dlstatus = ret;
-				bgl->url.status = DL_FAILED;
-				bgl->completed = true;
-				continue;
-			}
-			ret = curl_easy_setopt( session, CURLOPT_URL, bgl->url.url.c_str() );
-			if ( ret ) {
-				bgl->url.dlstatus = ret;
-				bgl->url.status = DL_FAILED;
-				bgl->completed = true;
-				continue;
-			}
-			ret = curl_easy_setopt( session, CURLOPT_FAILONERROR, 1 );
-			if ( ret ) {
-				bgl->url.dlstatus = ret;
-				bgl->url.status = DL_FAILED;
-				bgl->completed = true;
-				continue;
-			}
-			ret = curl_easy_setopt( session, CURLOPT_WRITEFUNCTION, idFileSystemLocal::CurlWriteFunction );
-			if ( ret ) {
-				bgl->url.dlstatus = ret;
-				bgl->url.status = DL_FAILED;
-				bgl->completed = true;
-				continue;
-			}
-			ret = curl_easy_setopt( session, CURLOPT_WRITEDATA, bgl );
-			if ( ret ) {
-				bgl->url.dlstatus = ret;
-				bgl->url.status = DL_FAILED;
-				bgl->completed = true;
-				continue;
-			}
-			ret = curl_easy_setopt( session, CURLOPT_NOPROGRESS, 0 );
-			if ( ret ) {
-				bgl->url.dlstatus = ret;
-				bgl->url.status = DL_FAILED;
-				bgl->completed = true;
-				continue;
-			}
-			ret = curl_easy_setopt( session, CURLOPT_PROGRESSFUNCTION, idFileSystemLocal::CurlProgressFunction );
-			if ( ret ) {
-				bgl->url.dlstatus = ret;
-				bgl->url.status = DL_FAILED;
-				bgl->completed = true;
-				continue;
-			}
-			ret = curl_easy_setopt( session, CURLOPT_PROGRESSDATA, bgl );
-			if ( ret ) {
-				bgl->url.dlstatus = ret;
-				bgl->url.status = DL_FAILED;
-				bgl->completed = true;
-				continue;
-			}
-			bgl->url.dlnow = 0;
-			bgl->url.dltotal = 0;
-			bgl->url.status = DL_INPROGRESS;
-			ret = curl_easy_perform( session );
-			if ( ret ) {
-				Sys_Printf( "curl_easy_perform failed: %s\n", error_buf );
-				idStr::Copynz( bgl->url.dlerror, error_buf, MAX_STRING_CHARS );
-				bgl->url.dlstatus = ret;
-				bgl->url.status = DL_FAILED;
-				bgl->completed = true;
-				continue;
-			}
-			bgl->url.status = DL_DONE;
-			bgl->completed = true;
-#else
+			// DLTYPE_URL: HTTP downloads are not supported by this core
+			// (the libcurl multiplayer pk4 download path was removed).
 			bgl->url.status = DL_FAILED;
 			bgl->completed = true;
-#endif
 		}
 	}
 	return 0;
