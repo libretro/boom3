@@ -1425,6 +1425,9 @@ void idSessionLocal::ExecuteMapChange( bool noFadeWipe ) {
 	MapLoad_Begin();
 	MapLoad_Geometry();
 	MapLoad_Spawn();
+	while ( MapLoad_SpawnPump() ) {
+	}
+	MapLoad_SpawnPlayers();
 	MapLoad_Media();
 	MapLoad_Warmup();
 	MapLoad_Done();
@@ -1466,6 +1469,16 @@ bool idSessionLocal::AdvanceMapLoad() {
 		return true;
 	case LOAD_SPAWN:
 		MapLoad_Spawn();
+		mapLoadPhase = LOAD_SPAWN_PUMP;
+		return true;
+	case LOAD_SPAWN_PUMP:
+		// spawn a bounded batch of entities this frame; stay in this phase
+		// until the game has populated the whole map, so retro_run() keeps
+		// returning during the (formerly 3.4s-blocking) spawn.
+		if ( MapLoad_SpawnPump() ) {
+			return true;	// more entities remain, come back next frame
+		}
+		MapLoad_SpawnPlayers();
 		mapLoadPhase = LOAD_MEDIA;
 		return true;
 	case LOAD_MEDIA:
@@ -1702,12 +1715,43 @@ void idSessionLocal::MapLoad_Spawn() {
 		game->InitFromNewMap( mapLoadFullMapName + ".map", rw, sw, idAsyncNetwork::server.IsActive(), idAsyncNetwork::client.IsActive(), Core_Milliseconds() );
 	}
 
+	// NOTE: player spawn is deferred to MapLoad_SpawnPlayers(), which runs once
+	// the incremental entity spawn (InitFromNewMapPump) has completed and the
+	// game is GAMESTATE_ACTIVE. Spawning players here would run before the map
+	// entities exist.
+}
+
+/*
+===============
+idSessionLocal::MapLoad_SpawnPlayers
+
+Spawn the local player(s), after the map has been fully populated. Split out
+of MapLoad_Spawn() so it can run at the end of the incremental spawn pump
+rather than before the entities exist.
+===============
+*/
+void idSessionLocal::MapLoad_SpawnPlayers() {
 	if ( !idAsyncNetwork::IsActive() && !loadingSaveGame ) {
 		// spawn players
-		for ( i = 0; i < numClients; i++ ) {
+		for ( int i = 0; i < numClients; i++ ) {
 			game->SpawnPlayer( i );
 		}
 	}
+}
+
+/*
+===============
+idSessionLocal::MapLoad_SpawnPump
+
+Drives the incremental entity spawn started by MapLoad_Spawn()'s
+game->InitFromNewMap(). Returns true while more entities remain to spawn
+(come back next frame), false when the game has finished populating the map.
+The savegame path uses the synchronous InitFromSaveGame(), which leaves
+nothing pending, so this returns false immediately there.
+===============
+*/
+bool idSessionLocal::MapLoad_SpawnPump() {
+	return game->InitFromNewMapPump();
 }
 
 /*

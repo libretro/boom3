@@ -112,6 +112,13 @@ public:
 	// Loads a map and spawns all the entities.
 	virtual void				InitFromNewMap( const char *mapName, idRenderWorld *renderWorld, idSoundWorld *soundWorld, bool isServer, bool isClient, int randseed ) = 0;
 
+	// Advances an incremental InitFromNewMap started above: spawns a bounded
+	// batch of map entities per call so the load never blocks. Returns true
+	// while more work remains (call again next frame), false when the map is
+	// fully initialized and GAMESTATE_ACTIVE. A synchronous InitFromNewMap
+	// leaves nothing to pump, so this returns false immediately in that case.
+	virtual bool				InitFromNewMapPump( void ) = 0;
+
 	// Loads a map from a savegame file.
 	virtual bool				InitFromSaveGame( const char *mapName, idRenderWorld *renderWorld, idSoundWorld *soundWorld, idFile *saveGameFile ) = 0;
 

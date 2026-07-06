@@ -387,6 +387,7 @@ public:
 	virtual const idDict &	GetPersistentPlayerInfo( int clientNum );
 	virtual void			SetPersistentPlayerInfo( int clientNum, const idDict &playerInfo );
 	virtual void			InitFromNewMap(const char* mapName, idRenderWorld* renderWorld, idSoundWorld* soundWorld, bool isServer, bool isClient, int randSeed );
+	virtual bool			InitFromNewMapPump( void );
 	virtual bool			InitFromSaveGame(const char* mapName, idRenderWorld* renderWorld, idSoundWorld* soundWorld, idFile* saveGameFile );
 	virtual void			SaveGame( idFile *saveGameFile );
 	virtual void			MapShutdown( void );
@@ -541,6 +542,18 @@ private:
 
 	int						spawnCount;
 	int						mapSpawnCount;			// it's handy to know which entities are part of the map
+	// incremental map-entity spawn cursor (SpawnMapEntitiesStart/Step)
+	int						spawnMapCursor;			// next map-entity index to spawn
+	int						spawnMapNumEntities;	// mapFile->GetNumEntities() cached at Start
+	int						spawnMapNum;			// running spawned count (for the summary print)
+	int						spawnMapInhibit;		// running inhibited count
+	// InitFromNewMap incremental-load phase (driven by InitFromNewMapPump)
+	enum initMapPhase_t {
+		INITMAP_NONE = 0,		// nothing pending (synchronous / done)
+		INITMAP_SPAWN,			// spawning map entities in batches
+		INITMAP_FINISH			// post-spawn tail (locations, events, precache)
+	};
+	initMapPhase_t			initMapPhase;
 
 	idLocationEntity **		locationEntities;		// for location names, etc
 
@@ -595,8 +608,17 @@ private:
 	bool					InhibitEntitySpawn( idDict &spawnArgs );
 							// spawn entities from the map file
 	void					SpawnMapEntities( void );
+						// incremental spawn: SpawnMapEntitiesStart() does the
+						// worldspawn + setup and resets the cursor;
+						// SpawnMapEntitiesStep(maxEntities) spawns up to
+						// maxEntities more, returning true while entities remain.
+						// SpawnMapEntities() runs both to completion.
+	void					SpawnMapEntitiesStart( void );
+	bool					SpawnMapEntitiesStep( int maxEntities );
 							// commons used by init, shutdown, and restart
 	void					MapPopulate( void );
+	void					MapPopulateStart( void );
+	void					MapPopulateFinish( void );
 	void					MapClear( bool clearClients );
 
 	pvsHandle_t				GetClientPVS( idPlayer *player, pvsType_t type );

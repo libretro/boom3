@@ -238,6 +238,11 @@ void idGameLocal::Clear( void ) {
 	mapFile = NULL;
 	spawnCount = INITIAL_SPAWN_COUNT;
 	mapSpawnCount = 0;
+	spawnMapCursor = 1;
+	spawnMapNumEntities = 0;
+	spawnMapNum = 1;
+	spawnMapInhibit = 0;
+	initMapPhase = INITMAP_NONE;
 	camera = NULL;
 	aasList.Clear();
 	aasNames.Clear();
@@ -1255,13 +1260,39 @@ idGameLocal::MapPopulate
 ===================
 */
 void idGameLocal::MapPopulate( void ) {
+	MapPopulateStart();
+	while ( SpawnMapEntitiesStep( 0x7fffffff ) ) {
+	}
+	MapPopulateFinish();
+}
 
+/*
+===================
+idGameLocal::MapPopulateStart
+
+Pre-spawn half of MapPopulate: begin the incremental map-entity spawn. The
+caller then drives SpawnMapEntitiesStep() and calls MapPopulateFinish() once
+it returns false.
+===================
+*/
+void idGameLocal::MapPopulateStart( void ) {
 	if ( isMultiplayer ) {
 		cvarSystem->SetCVarBool( "r_skipSpecular", false );
 	}
-	// parse the key/value pairs and spawn entities
-	SpawnMapEntities();
+	// parse the key/value pairs and begin spawning entities
+	SpawnMapEntitiesStart();
+}
 
+/*
+===================
+idGameLocal::MapPopulateFinish
+
+Post-spawn half of MapPopulate: everything here assumes all map entities have
+already been spawned (location marking, initial-spawn randomization, and the
+deferred EV_FindTargets events that resolve cross-entity references).
+===================
+*/
+void idGameLocal::MapPopulateFinish( void ) {
 	// mark location entities in all connected areas
 	SpreadLocations();
 
@@ -1305,16 +1336,56 @@ void idGameLocal::InitFromNewMap(const char* mapName, idRenderWorld* renderWorld
 
 	InitScriptForMap();
 
-	MapPopulate();
+	// begin the incremental map populate; the entity spawn loop and the
+	// post-spawn tail are driven by InitFromNewMapPump() so the load never
+	// blocks. The session drives the pump each frame (LOAD_SPAWN_PUMP); both
+	// InitFromNewMap call sites live in the session, which always pumps to
+	// completion, so nothing is left half-initialized.
+	MapPopulateStart();
+	initMapPhase = INITMAP_SPAWN;
+}
 
-	mpGame.Reset();
+/*
+===================
+idGameLocal::InitFromNewMapPump
 
-	mpGame.Precache();
+Advances an in-progress InitFromNewMap by a bounded amount and returns true
+while more work remains. Phase 1 spawns a batch of map entities; when the
+spawn loop is exhausted it runs the post-spawn tail (MapPopulateFinish plus
+the multiplayer reset/precache, unused-anim flush, and GAMESTATE_ACTIVE) and
+finishes. Returns false when there is nothing pending.
+===================
+*/
+bool idGameLocal::InitFromNewMapPump( void ) {
+	switch ( initMapPhase ) {
+		case INITMAP_SPAWN: {
+			// spawn a bounded batch this call; SPAWN_ENTITIES_PER_PUMP keeps
+			// each frame's work small enough to stay responsive.
+			static const int SPAWN_ENTITIES_PER_PUMP = 64;
+			if ( SpawnMapEntitiesStep( SPAWN_ENTITIES_PER_PUMP ) ) {
+				return true;	// more entities remain
+			}
+			initMapPhase = INITMAP_FINISH;
+			return true;
+		}
+		case INITMAP_FINISH: {
+			MapPopulateFinish();
 
-	// free up any unused animations
-	animationLib.FlushUnusedAnims();
+			mpGame.Reset();
+			mpGame.Precache();
 
-	gamestate = GAMESTATE_ACTIVE;
+			// free up any unused animations
+			animationLib.FlushUnusedAnims();
+
+			gamestate = GAMESTATE_ACTIVE;
+
+			initMapPhase = INITMAP_NONE;
+			return false;	// done
+		}
+		case INITMAP_NONE:
+		default:
+			return false;
+	}
 }
 
 /*
@@ -3510,24 +3581,42 @@ Parses textual entity definitions out of an entstring and spawns gentities.
 ==============
 */
 void idGameLocal::SpawnMapEntities( void ) {
-	int			i;
-	int			num;
-	int			inhibit;
+	SpawnMapEntitiesStart();
+	while ( SpawnMapEntitiesStep( 0x7fffffff ) ) {
+	}
+}
+
+/*
+==============
+idGameLocal::SpawnMapEntitiesStart
+
+Spawn the worldspawn and prepare the map-entity loop cursor. The rest of the
+entities are spawned by SpawnMapEntitiesStep(), which can be called across
+several frames so the map load never blocks. Cross-entity references (targets)
+are resolved later via posted EV_FindTargets events in ServiceEvents(), after
+every entity exists, so spreading the spawn loop over frames is safe.
+==============
+*/
+void idGameLocal::SpawnMapEntitiesStart( void ) {
 	idMapEntity	*mapEnt;
-	int			numEntities;
 	idDict		args;
 
 	Printf( "Spawning entities\n" );
 
+	spawnMapCursor = 1;
+	spawnMapNumEntities = 0;
+	spawnMapNum = 1;
+	spawnMapInhibit = 0;
+
 	if ( mapFile == NULL ) {
-		Printf("No mapfile present\n");
+		Printf( "No mapfile present\n" );
 		return;
 	}
 
 	SetSkill( g_skill.GetInteger() );
 
-	numEntities = mapFile->GetNumEntities();
-	if ( numEntities == 0 ) {
+	spawnMapNumEntities = mapFile->GetNumEntities();
+	if ( spawnMapNumEntities == 0 ) {
 		Error( "...no entities" );
 	}
 
@@ -3539,12 +3628,28 @@ void idGameLocal::SpawnMapEntities( void ) {
 	if ( !SpawnEntityDef( args ) || !entities[ ENTITYNUM_WORLD ] || !entities[ ENTITYNUM_WORLD ]->IsType( idWorldspawn::Type ) ) {
 		Error( "Problem spawning world entity" );
 	}
+}
 
-	num = 1;
-	inhibit = 0;
+/*
+==============
+idGameLocal::SpawnMapEntitiesStep
 
-	for ( i = 1 ; i < numEntities ; i++ ) {
-		mapEnt = mapFile->GetEntity( i );
+Spawn up to maxEntities more map entities from the cursor. Returns true while
+map entities remain to be spawned (call again), false once every entity has
+been spawned (and prints the summary, matching the monolithic version).
+==============
+*/
+bool idGameLocal::SpawnMapEntitiesStep( int maxEntities ) {
+	int			spawned = 0;
+	idMapEntity	*mapEnt;
+	idDict		args;
+
+	if ( mapFile == NULL ) {
+		return false;
+	}
+
+	while ( spawnMapCursor < spawnMapNumEntities && spawned < maxEntities ) {
+		mapEnt = mapFile->GetEntity( spawnMapCursor );
 		args = mapEnt->epairs;
 
 		if ( !InhibitEntitySpawn( args ) ) {
@@ -3552,13 +3657,21 @@ void idGameLocal::SpawnMapEntities( void ) {
 			CacheDictionaryMedia( &args );
 
 			SpawnEntityDef( args );
-			num++;
+			spawnMapNum++;
 		} else {
-			inhibit++;
+			spawnMapInhibit++;
 		}
+
+		spawnMapCursor++;
+		spawned++;
 	}
 
-	Printf( "...%i entities spawned, %i inhibited\n\n", num, inhibit );
+	if ( spawnMapCursor < spawnMapNumEntities ) {
+		return true;	// more remain
+	}
+
+	Printf( "...%i entities spawned, %i inhibited\n\n", spawnMapNum, spawnMapInhibit );
+	return false;
 }
 
 /*
