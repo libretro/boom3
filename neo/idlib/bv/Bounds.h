@@ -33,6 +33,14 @@ If you have questions concerning this license or the applicable additional terms
 #include "idlib/math/Rotation.h"
 #include "idlib/bv/Sphere.h"
 
+// <float.h>/<math.h> (pulled in transitively above) may define INFINITY as a
+// macro on some toolchains (e.g. Xcode/Clang), which breaks the idMath::INFINITY
+// member references in the inline methods below. Kill the macro here, at the
+// point of use, where it is guaranteed dead regardless of include order.
+#ifdef INFINITY
+#undef INFINITY
+#endif
+
 /*
 ===============================================================================
 

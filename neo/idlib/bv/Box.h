@@ -32,6 +32,12 @@ If you have questions concerning this license or the applicable additional terms
 #include "idlib/math/Vector.h"
 #include "idlib/bv/Bounds.h"
 
+// See Bounds.h: INFINITY may be a macro from <float.h>/<math.h>; undef it
+// before the inline idBox methods reference idMath::INFINITY.
+#ifdef INFINITY
+#undef INFINITY
+#endif
+
 /*
 ===============================================================================
 
