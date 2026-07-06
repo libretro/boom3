@@ -735,7 +735,6 @@ public:
 	static idCVar			s_doorDistanceAdd;
 	static idCVar			s_singleEmitter;
 	static idCVar			s_numberOfSpeakers;
-	static idCVar			s_force22kHz;
 	static idCVar			s_clipVolumes;
 	static idCVar			s_useEAXReverb;
 	static idCVar			s_decompressionLimit;
@@ -796,7 +795,6 @@ public:
 	void					Load();						// loads the current sound based on name
 	void					Reload( bool force );		// reloads if timestamp has changed, or always if force
 	void					PurgeSoundSample();			// frees all data
-	void					CheckForDownSample();		// down sample if required
 	bool					FetchFromCache( int offset, const byte **output, int *position, int *size, const bool allowIO );
 };
 

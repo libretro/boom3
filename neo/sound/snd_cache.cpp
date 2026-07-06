@@ -358,39 +358,6 @@ void idSoundSample::MakeDefault( void ) {
 
 /*
 ===================
-idSoundSample::CheckForDownSample
-===================
-*/
-void idSoundSample::CheckForDownSample( void ) {
-	if ( !idSoundSystemLocal::s_force22kHz.GetBool() ) {
-		return;
-	}
-	if ( objectInfo.wFormatTag != WAVE_FORMAT_TAG_PCM || objectInfo.nSamplesPerSec != 44100 ) {
-		return;
-	}
-	int shortSamples = objectSize >> 1;
-	short *converted = (short *)soundCacheAllocator.Alloc( shortSamples * sizeof( short ) );
-
-	if ( objectInfo.nChannels == 1 ) {
-		for ( int i = 0; i < shortSamples; i++ ) {
-			converted[i] = ((short *)nonCacheData)[i*2];
-		}
-	} else {
-		for ( int i = 0; i < shortSamples; i += 2 ) {
-			converted[i+0] = ((short *)nonCacheData)[i*2+0];
-			converted[i+1] = ((short *)nonCacheData)[i*2+1];
-		}
-	}
-	soundCacheAllocator.Free( nonCacheData );
-	nonCacheData = (byte *)converted;
-	objectSize >>= 1;
-	objectMemSize >>= 1;
-	objectInfo.nAvgBytesPerSec >>= 1;
-	objectInfo.nSamplesPerSec >>= 1;
-}
-
-/*
-===================
 idSoundSample::GetNewTimeStamp
 ===================
 */
@@ -462,9 +429,6 @@ void idSoundSample::Load( void ) {
 
 	nonCacheData = (byte *)soundCacheAllocator.Alloc( objectMemSize );
 	fh.Read( nonCacheData, objectMemSize, NULL );
-
-	// optionally convert it to 22kHz to save memory
-	CheckForDownSample();
 
 	// note: the old OpenAL "hardware buffer" upload used to happen here; the
 	// libretro core mixes everything in software from nonCacheData
