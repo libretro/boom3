@@ -44,7 +44,8 @@ void idChoiceWindow::InitVars( ) {
 	if ( cvarStr.Length() ) {
 		cvar = cvarSystem->Find( cvarStr );
 		if ( !cvar ) {
-			if (strcmp(cvarStr.c_str(), "s_driver") && strcmp(cvarStr.c_str(), "net_serverAllowServerMod"))
+			if (strcmp(cvarStr.c_str(), "s_driver") && strcmp(cvarStr.c_str(), "net_serverAllowServerMod")
+					&& strcmp(cvarStr.c_str(), "r_fullscreen") && strcmp(cvarStr.c_str(), "r_swapInterval"))
 				common->Warning( "idChoiceWindow::InitVars: gui '%s' window '%s' references undefined cvar '%s'", gui->GetSourceFile(), name.c_str(), cvarStr.c_str() );
 			return;
 		}

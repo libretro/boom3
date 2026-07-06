@@ -599,7 +599,8 @@ void idEditWindow::InitCvar( ) {
 
 	cvar = cvarSystem->Find( cvarStr );
 	if ( !cvar ) {
-		common->Warning( "idEditWindow::InitCvar: gui '%s' window '%s' references undefined cvar '%s'", gui->GetSourceFile(), name.c_str(), cvarStr.c_str() );
+		if (strcmp(cvarStr.c_str(), "r_fullscreen") && strcmp(cvarStr.c_str(), "r_swapInterval"))
+			common->Warning( "idEditWindow::InitCvar: gui '%s' window '%s' references undefined cvar '%s'", gui->GetSourceFile(), name.c_str(), cvarStr.c_str() );
 		return;
 	}
 }
