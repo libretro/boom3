@@ -48,21 +48,13 @@ extern "C" {
 
 #define					COMMAND_HISTORY 64
 
-static int				input_hide = 0;
-
 idEditField				input_field;
-static char				input_ret[256];
 
 static idStr			history[ COMMAND_HISTORY ];	// cycle buffer
-static int				history_count = 0;			// buffer fill up
-static int				history_start = 0;			// current history start
-static int				history_current = 0;			// goes back in history
 idEditField				history_backup;				// the base edit line
 
 // terminal support
 idCVar in_tty( "in_tty", "1", CVAR_BOOL | CVAR_INIT | CVAR_SYSTEM, "terminal tab-completion and history" );
-
-static bool				tty_enabled = false;
 
 // pid - useful when you attach to gdb..
 idCVar com_pid( "com_pid", "0", CVAR_INTEGER | CVAR_INIT | CVAR_SYSTEM, "process id" );
@@ -241,9 +233,8 @@ NX_Shutdown
 =================
 */
 void LibRetro_Shutdown( void ) {
-	for ( int i = 0; i < COMMAND_HISTORY; i++ ) {
+	for ( int i = 0; i < COMMAND_HISTORY; i++ )
 		history[ i ].Clear();
-	}
 	// pcvExit();
 	// socketExit();
 }

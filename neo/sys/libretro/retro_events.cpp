@@ -95,48 +95,12 @@ static idList<joystick_poll_t> joystick_polls;
 static idList<kbd_poll_t> kbd_polls;
 static idList<mouse_poll_t> mouse_polls;
 
-static inline byte JoyToKey(int button) {
-    static const int keymap[] = {
-        /* KEY_A      */ K_ENTER,
-        /* KEY_B      */ K_BACKSPACE,
-        /* KEY_X      */ K_ALT,
-        /* KEY_Y      */ K_CTRL,
-        /* KEY_LSTICK */ K_JOY_BTN_LSTICK,
-        /* KEY_RSTICK */ K_JOY_BTN_RSTICK,
-        /* KEY_L      */ K_SHIFT,
-        /* KEY_R      */ K_DEL,
-        /* KEY_ZL     */ K_MOUSE2,
-        /* KEY_ZR     */ K_MOUSE1,
-        /* KEY_PLUS   */ K_ESCAPE,
-        /* KEY_MINUS  */ K_TAB,
-        /* KEY_DLEFT  */ K_LEFTARROW,
-        /* KEY_DUP    */ K_UPARROW,
-        /* KEY_DRIGHT */ K_RIGHTARROW,
-        /* KEY_DDOWN  */ K_DOWNARROW,
-    };
-
-    if (button < 0 || button > 15) return 0;
-    return keymap[button];
-}
-
-static int joy_mouse[2] = { 0 };
-static int joy_mouse_prev[2] = { 0 };
-
-static float touch_pos[2] = { 0 };
-static float touch_pos_prev[2] = { 0 };
-static bool touch_pressed = false;
-static bool touch_pressed_prev = false;
-
 // all the menus are now 4:3, so we got a different origin
 // 960x720 is the 4:3 resolution we get
 
 static int touch_w = 1280;
 static int touch_h = 720;
 static int menu_w = 960;
-static int menu_ox = (1280 - 960) / 2;
-
-extern idSession *session;
-extern idSessionLocal sessLocal;
 
 /*
 =================
@@ -151,7 +115,6 @@ void Sys_InitInput() {
 	touch_w = glConfig.vidWidth;
 	touch_h = glConfig.vidHeight;
 	menu_w = (int)((double)touch_h / 3.0 * 4.0);
-	menu_ox = (touch_w - menu_w) / 2;
 
 	in_kbd.SetModified();
 }
@@ -381,7 +344,7 @@ void Sys_ClearEvents() {
 Sys_GenerateEvents
 ================
 */
-void Sys_GenerateEvents() {
+void Sys_GenerateEvents(void) {
 	char *s = Sys_ConsoleInput();
 }
 
@@ -390,7 +353,7 @@ void Sys_GenerateEvents() {
 Sys_PollKeyboardInputEvents
 ================
 */
-int Sys_PollKeyboardInputEvents() {
+int Sys_PollKeyboardInputEvents(void) {
 	return kbd_polls.Num();
 }
 
