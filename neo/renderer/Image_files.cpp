@@ -35,9 +35,17 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "sys/platform.h"
 
+// libretro-common image_transfer: include right after platform.h and before
+// the idlib/framework headers, so <formats/image.h>'s C declarations are seen
+// before idlib installs its string-function macros (see File.cpp / the
+// Image_async.cpp include-order fix).
+#include <formats/image.h>
+
 #include "renderer/tr_local.h"
 
 #include "renderer/Image.h"
+
+idCVar image_useTransferDecode( "image_useTransferDecode", "0", CVAR_RENDERER | CVAR_BOOL | CVAR_ARCHIVE, "decode TGA images via libretro-common image_transfer instead of the built-in loader" );
 
 /*
 
@@ -905,6 +913,111 @@ If pic is NULL, the image won't actually be loaded, it will just find the
 timestamp.
 =================
 */
+/*
+==================
+LoadTGA_transfer
+
+Decode a TGA using libretro-common's image_transfer, matching the output
+contract of the built-in LoadTGA(): *pic is an R_StaticAlloc'd RGBA8 buffer
+in R,G,B,A byte order (little-endian), width/height set, timestamp filled.
+On any failure *pic is left NULL so the caller falls back / MakeDefaults.
+==================
+*/
+static void LoadTGA_transfer( const char *name, byte **pic, int *width, int *height, ID_TIME_T *timestamp ) {
+	byte	*fileBuf;
+	int		fileLen;
+
+	if ( pic ) {
+		*pic = NULL;
+	}
+
+	// timestamp-only probe: match LoadTGA's early-out
+	if ( !pic ) {
+		fileSystem->ReadFile( name, NULL, timestamp );
+		return;
+	}
+
+	fileLen = fileSystem->ReadFile( name, (void **)&fileBuf, timestamp );
+	if ( !fileBuf ) {
+		return;
+	}
+
+	void *img = image_transfer_new( IMAGE_TYPE_TGA );
+	if ( !img ) {
+		fileSystem->FreeFile( fileBuf );
+		return;
+	}
+
+	image_transfer_set_buffer_ptr( img, IMAGE_TYPE_TGA, fileBuf, (size_t)fileLen );
+
+	if ( !image_transfer_start( img, IMAGE_TYPE_TGA ) ) {
+		image_transfer_free( img, IMAGE_TYPE_TGA );
+		fileSystem->FreeFile( fileBuf );
+		return;
+	}
+
+	// run the decoder to completion (this is the synchronous variant; the
+	// per-frame pump will call image_transfer_iterate one step at a time)
+	while ( image_transfer_iterate( img, IMAGE_TYPE_TGA ) ) {
+	}
+
+	if ( !image_transfer_is_valid( img, IMAGE_TYPE_TGA ) ) {
+		image_transfer_free( img, IMAGE_TYPE_TGA );
+		fileSystem->FreeFile( fileBuf );
+		return;
+	}
+
+	// pull out the decoded RGBA. supports_rgba=true makes rtga pack each
+	// pixel as (a<<24)|(b<<16)|(g<<8)|r, i.e. bytes [r,g,b,a] on little-endian
+	// - identical to the built-in LoadTGA's output order.
+	uint32_t	*transferPixels = NULL;
+	unsigned	w = 0, h = 0;
+	int			ret;
+	do {
+		ret = image_transfer_process( img, IMAGE_TYPE_TGA,
+				&transferPixels, (size_t)fileLen, &w, &h, true );
+	} while ( ret == IMAGE_PROCESS_NEXT );
+
+	image_transfer_free( img, IMAGE_TYPE_TGA );
+	fileSystem->FreeFile( fileBuf );
+
+	if ( ret == IMAGE_PROCESS_ERROR || ret == IMAGE_PROCESS_ERROR_END || !transferPixels ) {
+		if ( transferPixels ) {
+			free( transferPixels );
+		}
+		return;
+	}
+
+	// image_transfer allocates with malloc; copy into an R_StaticAlloc buffer
+	// so the rest of the engine (which R_StaticFree's *pic) stays consistent.
+	//
+	// The engine consumes *pic as an RGBA8 BYTE stream (uploaded with
+	// GL_RGBA, GL_UNSIGNED_BYTE), i.e. bytes [r,g,b,a] on every platform -
+	// that is what the built-in LoadTGA() writes byte-by-byte. rtga packs
+	// each pixel NUMERICALLY as (a<<24)|(b<<16)|(g<<8)|r, so we must extract
+	// the channels by shift rather than memcpy'ing the raw uint32 buffer,
+	// otherwise the byte order would flip on big-endian. Extracting by shift
+	// is correct on both endians.
+	int		numPixels = (int)( w * h );
+	byte	*out = (byte *)R_StaticAlloc( numPixels * 4 );
+	for ( int i = 0; i < numPixels; i++ ) {
+		uint32_t p = transferPixels[i];
+		out[i*4+0] = (byte)( p         & 0xff );	// r
+		out[i*4+1] = (byte)( ( p >> 8 )  & 0xff );	// g
+		out[i*4+2] = (byte)( ( p >> 16 ) & 0xff );	// b
+		out[i*4+3] = (byte)( ( p >> 24 ) & 0xff );	// a
+	}
+	free( transferPixels );
+
+	*pic = out;
+	if ( width ) {
+		*width = (int)w;
+	}
+	if ( height ) {
+		*height = (int)h;
+	}
+}
+
 void R_LoadImage( const char *cname, byte **pic, int *width, int *height, ID_TIME_T *timestamp, bool makePowerOf2 ) {
 	idStr name = cname;
 
@@ -932,7 +1045,11 @@ void R_LoadImage( const char *cname, byte **pic, int *width, int *height, ID_TIM
 	name.ExtractFileExtension( ext );
 
 	if ( ext == "tga" ) {
-		LoadTGA( name.c_str(), pic, width, height, timestamp );            // try tga first
+		if ( image_useTransferDecode.GetBool() ) {
+			LoadTGA_transfer( name.c_str(), pic, width, height, timestamp );
+		} else {
+			LoadTGA( name.c_str(), pic, width, height, timestamp );            // try tga first
+		}
 		if ( ( pic && *pic == 0 ) || ( timestamp && *timestamp == FILE_NOT_FOUND_TIMESTAMP ) ) {
 			name.StripFileExtension();
 			name.DefaultFileExtension( ".jpg" );
