@@ -33,6 +33,7 @@ If you have questions concerning this license or the applicable additional terms
 // 44.1kHz once at load time (instead of the per-block duplicating upsampler
 // in the mixer). Include before snd_local.h / idlib string macros.
 #include <audio/sinc_resampler_int16.h>
+#include <formats/audio.h>
 
 #include "sound/snd_local.h"
 
@@ -458,6 +459,85 @@ static short *ResamplePCMTo44k( const short *src, int srcFrames, int channels, i
 	return result;
 }
 
+// Load a WAV via libretro-common audio_transfer instead of idWaveFile. Reads
+// the whole file, decodes straight to int16 with audio_transfer_read_s16
+// (the cache is int16, so this is the no-round-trip target format), and
+// fills *info + *outData (soundCacheAllocator'd) + *outBytes. Returns true on
+// success. Gated by s_useAudioTransfer; falls back to idWaveFile otherwise.
+idCVar s_useAudioTransfer( "s_useAudioTransfer", "0", CVAR_SOUND | CVAR_BOOL | CVAR_ARCHIVE,
+	"decode WAV sounds via libretro-common audio_transfer instead of the built-in loader" );
+
+static bool LoadWAV_transfer( const char *name, waveformatex_t *info, byte **outData, int *outBytes, int *outSamples ) {
+	void *fileBuf = NULL;
+	int fileLen = fileSystem->ReadFile( name, &fileBuf, NULL );
+	if ( fileLen <= 0 || fileBuf == NULL ) {
+		if ( fileBuf ) {
+			fileSystem->FreeFile( fileBuf );
+		}
+		return false;
+	}
+
+	void *at = audio_transfer_new( AUDIO_TYPE_WAV );
+	if ( !at ) {
+		fileSystem->FreeFile( fileBuf );
+		return false;
+	}
+
+	audio_transfer_set_buffer_ptr( at, AUDIO_TYPE_WAV, fileBuf, (size_t)fileLen );
+
+	if ( !audio_transfer_start( at, AUDIO_TYPE_WAV ) || !audio_transfer_is_valid( at, AUDIO_TYPE_WAV ) ) {
+		audio_transfer_free( at, AUDIO_TYPE_WAV );
+		fileSystem->FreeFile( fileBuf );
+		return false;
+	}
+
+	unsigned channels = 0, rate = 0;
+	uint64_t totalFrames = 0;
+	if ( !audio_transfer_info( at, AUDIO_TYPE_WAV, &channels, &rate, &totalFrames )
+			|| channels < 1 || channels > 2 || totalFrames == 0 ) {
+		audio_transfer_free( at, AUDIO_TYPE_WAV );
+		fileSystem->FreeFile( fileBuf );
+		return false;
+	}
+
+	int totalSamples = (int)( totalFrames * channels );
+	short *pcm = (short *)soundCacheAllocator.Alloc( totalSamples * sizeof( short ) );
+
+	// pull the whole stream out in bounded chunks (read_s16 is the caller-paced
+	// analogue of image_transfer_process; here we drain it to completion at
+	// load time). frames are per-channel.
+	size_t framesLeft = (size_t)totalFrames;
+	short *dst = pcm;
+	while ( framesLeft > 0 ) {
+		size_t got = 0;
+		int ret = audio_transfer_read_s16( at, AUDIO_TYPE_WAV, dst, framesLeft, &got );
+		if ( got > 0 ) {
+			dst += got * channels;
+			framesLeft -= ( got <= framesLeft ) ? got : framesLeft;
+		}
+		if ( ret == AUDIO_PROCESS_END || ret == AUDIO_PROCESS_ERROR || ret == AUDIO_PROCESS_ERROR_END || got == 0 ) {
+			break;
+		}
+	}
+
+	audio_transfer_free( at, AUDIO_TYPE_WAV );
+	fileSystem->FreeFile( fileBuf );
+
+	// fill the format info the way idWaveFile::Open would have
+	memset( info, 0, sizeof( *info ) );
+	info->wFormatTag = WAVE_FORMAT_TAG_PCM;
+	info->nChannels = (word)channels;
+	info->nSamplesPerSec = rate;
+	info->wBitsPerSample = 16;
+	info->nBlockAlign = (word)( channels * sizeof( short ) );
+	info->nAvgBytesPerSec = rate * channels * sizeof( short );
+
+	*outData = (byte *)pcm;
+	*outBytes = totalSamples * sizeof( short );
+	*outSamples = totalSamples;
+	return true;
+}
+
 /*
 ===================
 idSoundSample::Load
@@ -480,6 +560,27 @@ void idSoundSample::Load( void ) {
 	// load it
 	idWaveFile	fh;
 	waveformatex_t info;
+
+	// audio_transfer WAV path: decode straight to int16 into the cache. Only
+	// for .wav (OGG stays on the streaming idWaveFile/decoder path). If it
+	// fails for any reason we fall through to the built-in loader below.
+	idStr ext;
+	idStr( name ).ExtractFileExtension( ext );
+	if ( s_useAudioTransfer.GetBool() && ext.Icmp( "wav" ) == 0 ) {
+		byte *atData = NULL;
+		int atBytes = 0, atSamples = 0;
+		if ( LoadWAV_transfer( name, &info, &atData, &atBytes, &atSamples ) ) {
+			if ( info.nChannels == 1 || info.nChannels == 2 ) {
+				objectInfo = info;
+				objectSize = atSamples;
+				objectMemSize = atBytes;
+				nonCacheData = atData;
+				goto haveData;
+			}
+			// unusable channel count: drop it and fall back
+			soundCacheAllocator.Free( atData );
+		}
+	}
 
 	if ( fh.Open( name, &info ) == -1 ) {
 		common->Warning( "Couldn't load sound '%s' using default", name.c_str() );
@@ -518,6 +619,7 @@ void idSoundSample::Load( void ) {
 	// note: the old OpenAL "hardware buffer" upload used to happen here; the
 	// libretro core mixes everything in software from nonCacheData
 
+haveData:
 	// Optionally resample sub-44kHz PCM up to 44.1kHz once, here, with a sinc
 	// filter - so the mixer never has to upsample per-block. OGG is left
 	// alone (it stays encoded and streams; resampling it here would force a
