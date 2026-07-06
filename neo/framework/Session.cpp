@@ -1469,7 +1469,16 @@ bool idSessionLocal::AdvanceMapLoad() {
 		mapLoadPhase = LOAD_MEDIA;
 		return true;
 	case LOAD_MEDIA:
-		MapLoad_Media();
+		MapLoad_MediaStart();
+		mapLoadPhase = LOAD_MEDIA_PUMP;
+		return true;
+	case LOAD_MEDIA_PUMP:
+		// load a bounded number of images this frame; stay in this phase
+		// until every level image is loaded, so retro_run() keeps returning.
+		if ( MapLoad_MediaPump() ) {
+			return true;	// more images remain, come back next frame
+		}
+		MapLoad_MediaFinish();
 		mapLoadPhase = LOAD_WARMUP;
 		return true;
 	case LOAD_WARMUP:
@@ -1708,7 +1717,8 @@ Phase 4: purge/load the media (images, sounds, decls).
 ===============
 */
 void idSessionLocal::MapLoad_Media() {
-	// actually purge/load the media
+	// classic (blocking) media load - used by the synchronous ExecuteMapChange
+	// path (LoadGame / savestate restore).
 	if ( !mapLoadReloadingSameMap ) {
 		renderSystem->EndLevelLoad();
 		soundSystem->EndLevelLoad( mapLoadMapString.c_str() );
@@ -1716,6 +1726,56 @@ void idSessionLocal::MapLoad_Media() {
 		SetBytesNeededForMapLoad( mapLoadMapString.c_str(), fileSystem->GetReadCount() );
 	}
 	uiManager->EndLevelLoad();
+}
+
+/*
+===============
+idSessionLocal::MapLoad_MediaStart
+
+Model load, sound/decl level-load, and the image purge/collect. The image
+loads themselves are then driven per-frame by MapLoad_MediaPump().
+===============
+*/
+void idSessionLocal::MapLoad_MediaStart() {
+	if ( !mapLoadReloadingSameMap ) {
+		renderSystem->EndLevelLoadStart();		// models + image purge/collect
+		soundSystem->EndLevelLoad( mapLoadMapString.c_str() );
+		declManager->EndLevelLoad();
+		SetBytesNeededForMapLoad( mapLoadMapString.c_str(), fileSystem->GetReadCount() );
+	}
+	uiManager->EndLevelLoad();
+}
+
+/*
+===============
+idSessionLocal::MapLoad_MediaPump
+
+Load a bounded batch of the level's images. Returns true while more images
+remain (so the caller stays in the pump phase and retro_run() keeps
+returning between batches).
+===============
+*/
+bool idSessionLocal::MapLoad_MediaPump() {
+	if ( mapLoadReloadingSameMap ) {
+		return false;	// nothing collected; media was skipped
+	}
+	// budget: how many images to load per frame. Kept modest so a single
+	// retro_run() stays short; the whole set still finishes in a handful of
+	// frames. (2101 images / 128 per frame ~= 16 frames for mars_city1.)
+	return renderSystem->EndLevelLoadStep( 128 );
+}
+
+/*
+===============
+idSessionLocal::MapLoad_MediaFinish
+
+Post-image-load render work (worldspawn nospecular check, optional dump).
+===============
+*/
+void idSessionLocal::MapLoad_MediaFinish() {
+	if ( !mapLoadReloadingSameMap ) {
+		renderSystem->EndLevelLoadFinish();
+	}
 }
 
 /*

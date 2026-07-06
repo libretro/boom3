@@ -202,6 +202,15 @@ public:
 	virtual void			BeginLevelLoad( void ) = 0;
 	virtual void			EndLevelLoad( void ) = 0;
 
+	// libretro incremental map load: EndLevelLoad() split so image loading can
+	// be spread across frames. EndLevelLoadStart() does model load + the image
+	// purge/collect; EndLevelLoadStep() loads up to maxImages and returns true
+	// while more remain; EndLevelLoadFinish() does the post-load worldspawn
+	// checks. EndLevelLoad() itself still runs all three back-to-back.
+	virtual void			EndLevelLoadStart( void ) = 0;
+	virtual bool			EndLevelLoadStep( int maxImages ) = 0;
+	virtual void			EndLevelLoadFinish( void ) = 0;
+
 	// font support
 	virtual bool			RegisterFont( const char *fontName, fontInfoEx_t &font ) = 0;
 

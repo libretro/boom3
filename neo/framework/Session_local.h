@@ -211,6 +211,7 @@ public:
 		LOAD_GEOMETRY,
 		LOAD_SPAWN,
 		LOAD_MEDIA,
+		LOAD_MEDIA_PUMP,
 		LOAD_WARMUP,
 		LOAD_DONE
 	};
@@ -351,6 +352,12 @@ public:
 	void				MapLoad_Geometry();
 	void				MapLoad_Spawn();
 	void				MapLoad_Media();
+	// MEDIA split for per-frame image loading: Start does models/sound/decl and
+	// collects the image list; Pump loads a bounded batch and returns true while
+	// more remain; Finish does the post-load render work.
+	void				MapLoad_MediaStart();
+	bool				MapLoad_MediaPump();
+	void				MapLoad_MediaFinish();
 	void				MapLoad_Warmup();
 	void				MapLoad_Done();
 	void				UnloadMap();

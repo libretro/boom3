@@ -737,6 +737,9 @@ public:
 	virtual void			FreeRenderWorld( idRenderWorld *rw );
 	virtual void			BeginLevelLoad( void );
 	virtual void			EndLevelLoad( void );
+	virtual void			EndLevelLoadStart( void );
+	virtual bool			EndLevelLoadStep( int maxImages );
+	virtual void			EndLevelLoadFinish( void );
 	virtual bool			RegisterFont( const char *fontName, fontInfoEx_t &font );
 	virtual void			SetColor( const idVec4 &rgba );
 	virtual void			SetColor4( float r, float g, float b, float a );

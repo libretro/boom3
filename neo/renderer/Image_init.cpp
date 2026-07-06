@@ -1968,18 +1968,35 @@ preload low mip levels, background load remainder on demand
 ====================
 */
 void idImageManager::EndLevelLoad() {
-	int			start = Core_Milliseconds();
+	// classic blocking path: purge, then load everything in one go.
+	EndLevelLoadStart();
+	while ( EndLevelLoadStep( 0x7fffffff ) ) {
+	}
+}
+
+/*
+===============
+idImageManager::EndLevelLoadStart
+
+Does the purge pass and builds the list of images that still need loading,
+so EndLevelLoadStep() can load them a bounded number at a time (spreading
+the work across frames for the incremental map load).
+===============
+*/
+void idImageManager::EndLevelLoadStart() {
+	levelLoadStartMsec = Core_Milliseconds();
 
 	insideLevelLoad = false;
+	levelLoadPending.Clear();
+	levelLoadCursor = 0;
+	levelLoadPurgeCount = 0;
+	levelLoadKeepCount = 0;
+
 	if ( idAsyncNetwork::serverDedicated.GetInteger() ) {
 		return;
 	}
 
 	common->Printf( "----- idImageManager::EndLevelLoad -----\n" );
-
-	int		purgeCount = 0;
-	int		keepCount = 0;
-	int		loadCount = 0;
 
 	// purge the ones we don't need
 	for ( int i = 0 ; i < images.Num() ; i++ ) {
@@ -1989,65 +2006,66 @@ void idImageManager::EndLevelLoad() {
 		}
 
 		if ( !image->levelLoadReferenced && !image->referencedOutsideLevelLoad ) {
-//			common->Printf( "Purging %s\n", image->imgName.c_str() );
-			purgeCount++;
+			levelLoadPurgeCount++;
 			image->PurgeImage();
 		} else if ( image->texnum != idImage::TEXTURE_NOT_LOADED ) {
-//			common->Printf( "Keeping %s\n", image->imgName.c_str() );
-			keepCount++;
+			levelLoadKeepCount++;
 		}
 	}
 
-	// load the ones we do need, if we are preloading
-	if ( image_asyncLoad.GetBool() ) {
-		// Collect the plain 2D file images that need loading into a batch and
-		// decode them on a worker thread while uploading on the main thread.
-		// Non-2D images (cube maps, partial images) and generator images are
-		// not eligible; load those synchronously here.
-		idList<idImage*> batch;
-		batch.Resize( images.Num() );
-		for ( int i = 0 ; i < images.Num() ; i++ ) {
-			idImage	*image = images[ i ];
-			if ( image->generatorFunction ) {
-				continue;
-			}
-			if ( image->levelLoadReferenced && image->texnum == idImage::TEXTURE_NOT_LOADED && !image->partialImage ) {
-				loadCount++;
-				if ( image->cubeFiles != CF_2D ) {
-					// cube images can't use the 2D decode/upload split
-					image->ActuallyLoadImage( true, false );
-				} else {
-					batch.Append( image );
-				}
-			}
-		}
-		if ( batch.Num() > 0 ) {
-			R_AsyncLoadImages( batch.Ptr(), batch.Num() );
-		}
-	} else {
+	// collect the ones we do need to load
 	for ( int i = 0 ; i < images.Num() ; i++ ) {
 		idImage	*image = images[ i ];
 		if ( image->generatorFunction ) {
 			continue;
 		}
-
 		if ( image->levelLoadReferenced && image->texnum == idImage::TEXTURE_NOT_LOADED && !image->partialImage ) {
-//			common->Printf( "Loading %s\n", image->imgName.c_str() );
-			loadCount++;
-			image->ActuallyLoadImage( true, false );
-
-			if ( ( loadCount & 15 ) == 0 ) {
-				session->PacifierUpdate();
-			}
+			levelLoadPending.Append( image );
 		}
 	}
+}
+
+/*
+===============
+idImageManager::EndLevelLoadStep
+
+Load up to maxImages of the pending images collected by
+EndLevelLoadStart(). Returns true while images remain to be loaded (call
+again next frame); false when the level's image load is complete.
+===============
+*/
+bool idImageManager::EndLevelLoadStep( int maxImages ) {
+	int loaded = 0;
+
+	while ( levelLoadCursor < levelLoadPending.Num() && loaded < maxImages ) {
+		idImage *image = levelLoadPending[ levelLoadCursor ];
+		levelLoadCursor++;
+
+		// re-check: an image can get loaded on demand (Bind) between frames
+		if ( image->texnum == idImage::TEXTURE_NOT_LOADED ) {
+			image->ActuallyLoadImage( true, false );
+			loaded++;
+		}
+
+		if ( ( ( levelLoadCursor ) & 15 ) == 0 ) {
+			session->PacifierUpdate();
+		}
 	}
 
+	if ( levelLoadCursor < levelLoadPending.Num() ) {
+		// more remain
+		return true;
+	}
+
+	// done - report and clear
 	int	end = Core_Milliseconds();
-	common->Printf( "%5i purged from previous\n", purgeCount );
-	common->Printf( "%5i kept from previous\n", keepCount );
-	common->Printf( "%5i new loaded\n", loadCount );
-	common->Printf( "all images loaded in %5.1f seconds\n", (end-start) * 0.001 );
+	common->Printf( "%5i purged from previous\n", levelLoadPurgeCount );
+	common->Printf( "%5i kept from previous\n", levelLoadKeepCount );
+	common->Printf( "%5i new loaded\n", levelLoadPending.Num() );
+	common->Printf( "all images loaded in %5.1f seconds\n", ( end - levelLoadStartMsec ) * 0.001 );
+	levelLoadPending.Clear();
+	levelLoadCursor = 0;
+	return false;
 }
 
 /*

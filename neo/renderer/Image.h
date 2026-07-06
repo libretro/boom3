@@ -391,6 +391,14 @@ public:
 	// Called only by renderSystem::EndLevelLoad
 	void				EndLevelLoad();
 
+	// libretro incremental map load: EndLevelLoad() split so the image loads
+	// can be spread across frames instead of blocking. EndLevelLoadStart()
+	// does the purge and builds the pending-load list; EndLevelLoadStep()
+	// loads up to maxImages of them and returns true while more remain.
+	// Callers that want the classic blocking behavior use EndLevelLoad().
+	void				EndLevelLoadStart();
+	bool				EndLevelLoadStep( int maxImages );
+
 	// used to clear and then write the dds conversion batch file
 	void				StartBuild();
 	void				FinishBuild( bool removeDups = false );
@@ -466,6 +474,14 @@ public:
 	idHashIndex			ddsHash;
 
 	bool				insideLevelLoad;			// don't actually load images now
+
+	// libretro incremental map load: pending image loads collected by
+	// EndLevelLoadStart() and consumed by EndLevelLoadStep().
+	idList<idImage*>	levelLoadPending;
+	int					levelLoadCursor;
+	int					levelLoadStartMsec;
+	int					levelLoadPurgeCount;
+	int					levelLoadKeepCount;
 
 	byte				originalToCompressed[256];	// maps normal maps to 8 bit textures
 	byte				compressedPalette[768];		// the palette that normal maps use

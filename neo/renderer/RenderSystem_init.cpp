@@ -2373,8 +2373,45 @@ idRenderSystemLocal::EndLevelLoad
 ========================
 */
 void idRenderSystemLocal::EndLevelLoad( void ) {
+	EndLevelLoadStart();
+	while ( EndLevelLoadStep( 0x7fffffff ) ) {
+	}
+	EndLevelLoadFinish();
+}
+
+/*
+========================
+idRenderSystemLocal::EndLevelLoadStart
+
+Load the models and do the image purge/collect. Image loading itself is
+then driven by EndLevelLoadStep() so it can be spread across frames.
+========================
+*/
+void idRenderSystemLocal::EndLevelLoadStart( void ) {
 	renderModelManager->EndLevelLoad();
-	globalImages->EndLevelLoad();
+	globalImages->EndLevelLoadStart();
+}
+
+/*
+========================
+idRenderSystemLocal::EndLevelLoadStep
+
+Load up to maxImages of the level's pending images. Returns true while more
+remain (call again next frame).
+========================
+*/
+bool idRenderSystemLocal::EndLevelLoadStep( int maxImages ) {
+	return globalImages->EndLevelLoadStep( maxImages );
+}
+
+/*
+========================
+idRenderSystemLocal::EndLevelLoadFinish
+
+Post-image-load work: optional image dump and the worldspawn nospecular check.
+========================
+*/
+void idRenderSystemLocal::EndLevelLoadFinish( void ) {
 	if ( r_forceLoadImages.GetBool() ) {
 		RB_ShowImages();
 	}
