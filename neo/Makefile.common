@@ -28,6 +28,7 @@ SRC_RENDERER	:=\
 	$(CORE_DIR)/renderer/Image_files.cpp \
 	$(CORE_DIR)/renderer/Image_init.cpp \
 	$(CORE_DIR)/renderer/Image_load.cpp \
+	$(CORE_DIR)/renderer/Image_async.cpp \
 	$(CORE_DIR)/renderer/Image_process.cpp \
 	$(CORE_DIR)/renderer/Image_program.cpp \
 	$(CORE_DIR)/renderer/Interaction.cpp \

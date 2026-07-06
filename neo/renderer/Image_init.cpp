@@ -64,6 +64,7 @@ idCVar idImageManager::image_useAllFormats( "image_useAllFormats", "1", CVAR_REN
 idCVar idImageManager::image_useNormalCompression( "image_useNormalCompression", "2", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "2 = use rxgb compression for normal maps, 1 = use 256 color compression for normal maps if available" );
 idCVar idImageManager::image_usePrecompressedTextures( "image_usePrecompressedTextures", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
 		"1 = use .dds files if present 2 = only use .dds files if they contain BPTC (BC7) textures (those have higher quality than S3TC/DXT) 0 = use uncompressed textures" );
+idCVar idImageManager::image_asyncLoad( "image_asyncLoad", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "overlap image decode (worker thread) with GL upload (main thread) during level load" );
 idCVar idImageManager::image_writePrecompressedTextures( "image_writePrecompressedTextures", "0", CVAR_RENDERER | CVAR_BOOL, "write .dds files if necessary" );
 idCVar idImageManager::image_writeNormalTGA( "image_writeNormalTGA", "0", CVAR_RENDERER | CVAR_BOOL, "write .tgas of the final normal maps for debugging" );
 idCVar idImageManager::image_writeNormalTGAPalletized( "image_writeNormalTGAPalletized", "0", CVAR_RENDERER | CVAR_BOOL, "write .tgas of the final palletized normal maps for debugging" );
@@ -1998,6 +1999,32 @@ void idImageManager::EndLevelLoad() {
 	}
 
 	// load the ones we do need, if we are preloading
+	if ( image_asyncLoad.GetBool() ) {
+		// Collect the plain 2D file images that need loading into a batch and
+		// decode them on a worker thread while uploading on the main thread.
+		// Non-2D images (cube maps, partial images) and generator images are
+		// not eligible; load those synchronously here.
+		idList<idImage*> batch;
+		batch.Resize( images.Num() );
+		for ( int i = 0 ; i < images.Num() ; i++ ) {
+			idImage	*image = images[ i ];
+			if ( image->generatorFunction ) {
+				continue;
+			}
+			if ( image->levelLoadReferenced && image->texnum == idImage::TEXTURE_NOT_LOADED && !image->partialImage ) {
+				loadCount++;
+				if ( image->cubeFiles != CF_2D ) {
+					// cube images can't use the 2D decode/upload split
+					image->ActuallyLoadImage( true, false );
+				} else {
+					batch.Append( image );
+				}
+			}
+		}
+		if ( batch.Num() > 0 ) {
+			R_AsyncLoadImages( batch.Ptr(), batch.Num() );
+		}
+	} else {
 	for ( int i = 0 ; i < images.Num() ; i++ ) {
 		idImage	*image = images[ i ];
 		if ( image->generatorFunction ) {
@@ -2013,6 +2040,7 @@ void idImageManager::EndLevelLoad() {
 				session->PacifierUpdate();
 			}
 		}
+	}
 	}
 
 	int	end = Core_Milliseconds();

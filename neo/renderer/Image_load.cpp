@@ -1912,20 +1912,35 @@ bool idImage::DecodeImageData( bool checkForPrecompressed, decodedImageData_t &o
 		// fall through to load the normal image
 	}
 
+	return DecodeImageDataWorker( out );
+}
+
+/*
+===============
+idImage::DecodeImageDataWorker
+
+The strictly worker-safe part of the decode: R_LoadImageProgram plus the
+dup-check hash, into out. Does NO GL work and does NOT call CheckPrecompressed
+or MakeDefault (both of which touch GL / image-manager state and must run on
+the main thread). Returns true if out holds decoded pixels; false if the
+decode failed (the caller handles the failure - MakeDefault - on the main
+thread).
+===============
+*/
+bool idImage::DecodeImageDataWorker( decodedImageData_t &out ) {
+	out.pic = NULL;
+	out.width = 0;
+	out.height = 0;
+	out.timestamp = timestamp;
+	out.depth = depth;
+
 	R_LoadImageProgram( imgName, &out.pic, &out.width, &out.height, &out.timestamp, &out.depth );
 
 	if ( out.pic == NULL ) {
-		common->Warning( "Couldn't load image: %s", imgName.c_str() );
-		MakeDefault();
 		return false;
 	}
 
-	// keep the decoded depth/timestamp on the image
-	depth = out.depth;
-
 	// build a hash for checking duplicate image files
-	// NOTE: takes about 10% of image load times (SD)
-	// may not be strictly necessary, but some code uses it, so let's leave it in
 	imageHash = MD4_BlockChecksum( out.pic, out.width * out.height * 4 );
 
 	return true;

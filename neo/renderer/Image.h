@@ -243,6 +243,7 @@ public:
 		textureDepth_t	depth;
 	};
 	bool		DecodeImageData( bool checkForPrecompressed, decodedImageData_t &out );
+	bool		DecodeImageDataWorker( decodedImageData_t &out );	// pure decode, no GL / no MakeDefault - safe off-thread
 	void		UploadImageData( decodedImageData_t &in );
 	void		StartBackgroundImageLoad();
 	int			BitsForInternalFormat( int internalFormat ) const;
@@ -407,6 +408,7 @@ public:
 	static idCVar		image_lodbias;				// change lod bias on mipmapped images
 	static idCVar		image_useAllFormats;		// allow alpha/intensity/luminance/luminance+alpha
 	static idCVar		image_usePrecompressedTextures;	// use .dds files if present
+	static idCVar		image_asyncLoad;			// 1 = overlap image decode (worker) with GL upload (main) during level load
 	static idCVar		image_writePrecompressedTextures; // write .dds files if necessary
 	static idCVar		image_writeNormalTGA;		// debug tool to write out .tgas of the final normal maps
 	static idCVar		image_writeNormalTGAPalletized;		// debug tool to write out palletized versions of the final normal maps
@@ -534,6 +536,11 @@ IMAGEPROGRAM
 */
 
 void R_LoadImageProgram( const char *name, byte **pic, int *width, int *height, ID_TIME_T *timestamp, textureDepth_t *depth = NULL );
+
+// Async batch loader (renderer/Image_async.cpp): decodes 'list' on a worker
+// thread while uploading on the main thread. 'list' must contain only plain
+// 2D file images that need loading (no generator/partial/cube images).
+void R_AsyncLoadImages( idImage **list, int count );
 const char *R_ParsePastImageProgram( idLexer &src );
 
 #endif
