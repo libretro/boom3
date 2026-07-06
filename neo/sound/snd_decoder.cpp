@@ -37,6 +37,10 @@ If you have questions concerning this license or the applicable additional terms
 #include "sys/platform.h"
 #include "framework/FileSystem.h"
 
+// libretro-common audio_transfer: optional OGG decode path (rvorbis) selectable
+// via s_useAudioTransfer, in parallel with the built-in stb_vorbis path.
+#include <formats/audio.h>
+
 #include "sound/snd_local.h"
 
 /*
@@ -255,6 +259,7 @@ public:
 	void					Clear( void );
 	int						DecodePCM( idSoundSample *sample, int sampleOffset44k, int sampleCount44k, float *dest );
 	int						DecodeOGG( idSoundSample *sample, int sampleOffset44k, int sampleCount44k, float *dest );
+	int						DecodeOGG_transfer( idSoundSample *sample, int sampleOffset44k, int sampleCount44k, float *dest );
 
 private:
 	bool					failed;				// set if decoding failed
@@ -264,6 +269,7 @@ private:
 	int						lastDecodeTime;		// last time decoding sound
 
 	stb_vorbis*				stbv;				// stb_vorbis (Ogg) handle, using lastSample->nonCacheData
+	void *					atHandle;			// libretro-common audio_transfer OGG handle (s_useAudioTransfer path)
 };
 
 idBlockAlloc<idSampleDecoderLocal, 64>		sampleDecoderAllocator;
@@ -341,6 +347,7 @@ void idSampleDecoderLocal::Clear( void ) {
 	lastSampleOffset = 0;
 	lastDecodeTime = 0;
 	stbv = NULL;
+	atHandle = NULL;
 }
 
 /*
@@ -356,8 +363,14 @@ void idSampleDecoderLocal::ClearDecoder( void ) {
 			break;
 		}
 		case WAVE_FORMAT_TAG_OGG: {
-			stb_vorbis_close( stbv );
-			stbv = NULL;
+			if ( stbv != NULL ) {
+				stb_vorbis_close( stbv );
+				stbv = NULL;
+			}
+			if ( atHandle != NULL ) {
+				audio_transfer_free( atHandle, AUDIO_TYPE_VORBIS );
+				atHandle = NULL;
+			}
 			break;
 		}
 	}
@@ -476,6 +489,11 @@ idSampleDecoderLocal::DecodeOGG
 ====================
 */
 int idSampleDecoderLocal::DecodeOGG( idSoundSample *sample, int sampleOffset44k, int sampleCount44k, float *dest ) {
+	extern idCVar s_useAudioTransfer;
+	if ( s_useAudioTransfer.GetBool() ) {
+		return DecodeOGG_transfer( sample, sampleOffset44k, sampleCount44k, dest );
+	}
+
 	int readSamples, totalSamples;
 
 	int shift = 22050 / sample->objectInfo.nSamplesPerSec;
@@ -586,6 +604,118 @@ int idSampleDecoderLocal::DecodeOGG( idSoundSample *sample, int sampleOffset44k,
 		readSamples += ret;
 		totalSamples -= ret;
 	} while( totalSamples > 0 );
+
+	lastSampleOffset += readSamples;
+
+	return ( readSamples << shift );
+}
+
+/*
+====================
+idSampleDecoderLocal::DecodeOGG_transfer
+
+Ogg decode via libretro-common audio_transfer (rvorbis) instead of the
+built-in stb_vorbis. Selected by s_useAudioTransfer. Mirrors DecodeOGG():
+open-once, seek on offset change, decode in <=MIXBUFFER_SAMPLES chunks with
+audio_transfer_read_f32 (the float path - no int<->float round-trip), then
+UpSampleOGGTo44kHz to 44.1kHz. rvorbis is stb_vorbis-derived, so its float
+output matches the built-in decoder's [-1,1] range.
+====================
+*/
+int idSampleDecoderLocal::DecodeOGG_transfer( idSoundSample *sample, int sampleOffset44k, int sampleCount44k, float *dest ) {
+	int readSamples, totalSamples;
+
+	int shift = 22050 / sample->objectInfo.nSamplesPerSec;
+	int sampleOffset = sampleOffset44k >> shift;
+	int sampleCount = sampleCount44k >> shift;
+
+	// open OGG if not yet opened
+	if ( lastSample == NULL ) {
+		if ( sample->nonCacheData == NULL ) {
+			common->Warning( "Called idSampleDecoderLocal::DecodeOGG_transfer() on idSoundSample '%s' without nonCacheData\n", sample->name.c_str() );
+			failed = true;
+			return 0;
+		}
+		assert( atHandle == NULL );
+		atHandle = audio_transfer_new( AUDIO_TYPE_VORBIS );
+		if ( atHandle == NULL ) {
+			failed = true;
+			return 0;
+		}
+		audio_transfer_set_buffer_ptr( atHandle, AUDIO_TYPE_VORBIS, sample->nonCacheData, sample->objectMemSize );
+		if ( !audio_transfer_start( atHandle, AUDIO_TYPE_VORBIS )
+				|| !audio_transfer_is_valid( atHandle, AUDIO_TYPE_VORBIS ) ) {
+			common->Warning( "idSampleDecoderLocal::DecodeOGG_transfer() audio_transfer_start() for %s failed\n", sample->name.c_str() );
+			audio_transfer_free( atHandle, AUDIO_TYPE_VORBIS );
+			atHandle = NULL;
+			failed = true;
+			return 0;
+		}
+		lastFormat = WAVE_FORMAT_TAG_OGG;
+		lastSample = sample;
+	}
+
+	if ( sample->objectInfo.nChannels > 2 ) {
+		common->Warning( "Ogg Vorbis files with >2 channels are not supported!\n" );
+		failed = true;
+		return 0;
+	}
+
+	// seek if the requested offset isn't where we are. Offsets here are in
+	// per-channel frames (sampleOffset counts interleaved samples).
+	if ( sampleOffset != lastSampleOffset ) {
+		if ( !audio_transfer_seek( atHandle, AUDIO_TYPE_VORBIS, (uint64_t)( sampleOffset / sample->objectInfo.nChannels ) ) ) {
+			common->Warning( "idSampleDecoderLocal::DecodeOGG_transfer() seek(%d) for %s failed\n",
+					sampleOffset / sample->objectInfo.nChannels, sample->name.c_str() );
+			failed = true;
+			return 0;
+		}
+	}
+
+	lastSampleOffset = sampleOffset;
+
+	// decode
+	totalSamples = sampleCount;
+	readSamples = 0;
+	do {
+		float interleaved[MIXBUFFER_SAMPLES * 2];
+		float planarBuf[2][MIXBUFFER_SAMPLES];
+		float *planar[2] = { planarBuf[0], planarBuf[1] };
+		int ch = sample->objectInfo.nChannels;
+		int reqSamples = Min( MIXBUFFER_SAMPLES, totalSamples / ch );
+		if ( reqSamples == 0 ) {
+			readSamples += totalSamples;
+			totalSamples = 0;
+			break;
+		}
+
+		size_t framesGot = 0;
+		int ret = audio_transfer_read_f32( atHandle, AUDIO_TYPE_VORBIS,
+				interleaved, (size_t)reqSamples, &framesGot );
+		if ( ret == AUDIO_PROCESS_ERROR || ret == AUDIO_PROCESS_ERROR_END ) {
+			failed = true;
+			break;
+		}
+		if ( framesGot == 0 ) {
+			// end of stream: pad the rest with silence like the stb path's
+			// trailing memset does via the caller.
+			break;
+		}
+
+		// de-interleave into the planar layout UpSampleOGGTo44kHz expects
+		for ( int i = 0; i < (int)framesGot; i++ ) {
+			for ( int c = 0; c < ch; c++ ) {
+				planarBuf[c][i] = interleaved[i * ch + c];
+			}
+		}
+
+		int gotInterleaved = (int)framesGot * ch;
+		SIMDProcessor->UpSampleOGGTo44kHz( dest + ( readSamples << shift ), planar,
+				gotInterleaved, sample->objectInfo.nSamplesPerSec, sample->objectInfo.nChannels );
+
+		readSamples += gotInterleaved;
+		totalSamples -= gotInterleaved;
+	} while ( totalSamples > 0 );
 
 	lastSampleOffset += readSamples;
 
