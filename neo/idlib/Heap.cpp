@@ -31,10 +31,6 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "idlib/Heap.h"
 
-#ifndef USE_LIBC_MALLOC
-	#define USE_LIBC_MALLOC		0
-#endif
-
 //===============================================================
 //
 //	idHeap
@@ -257,22 +253,14 @@ idHeap::Allocate
 ================
 */
 void *idHeap::Allocate( const dword bytes ) {
-	if ( !bytes ) {
+	if ( !bytes )
 		return NULL;
-	}
 	c_heapAllocRunningCount++;
-
-#if USE_LIBC_MALLOC
-	return malloc( bytes );
-#else
-	if ( !(bytes & ~255) ) {
+	if ( !(bytes & ~255) )
 		return SmallAllocate( bytes );
-	}
-	if ( !(bytes & ~32767) ) {
+	if ( !(bytes & ~32767) )
 		return MediumAllocate( bytes );
-	}
 	return LargeAllocate( bytes );
-#endif
 }
 
 /*
@@ -281,14 +269,10 @@ idHeap::Free
 ================
 */
 void idHeap::Free( void *p ) {
-	if ( !p ) {
+	if ( !p )
 		return;
-	}
 	c_heapAllocRunningCount--;
 
-#if USE_LIBC_MALLOC
-	free( p );
-#else
 	switch( ((byte *)(p))[-1] ) {
 		case SMALL_ALLOC: {
 			SmallFree( p );
@@ -307,7 +291,6 @@ void idHeap::Free( void *p ) {
 			break;
 		}
 	}
-#endif
 }
 
 /*
@@ -359,34 +342,23 @@ idHeap::Msize
 ================
 */
 dword idHeap::Msize( void *p ) {
-
-	if ( !p ) {
+	if ( !p )
 		return 0;
-	}
 
-#if USE_LIBC_MALLOC
-	#ifdef _WIN32
-		return _msize( p );
-	#else
-		return 0;
-	#endif
-#else
-	switch( ((byte *)(p))[-1] ) {
-		case SMALL_ALLOC: {
+	switch( ((byte *)(p))[-1] )
+	{
+		case SMALL_ALLOC:
 			return SMALL_ALIGN( ((byte *)(p))[-SMALL_HEADER_SIZE] * ALIGN );
-		}
-		case MEDIUM_ALLOC: {
+		case MEDIUM_ALLOC:
 			return ((mediumHeapEntry_s *)(((byte *)(p)) - ALIGN_SIZE( MEDIUM_HEADER_SIZE )))->size - ALIGN_SIZE( MEDIUM_HEADER_SIZE );
-		}
-		case LARGE_ALLOC: {
+		case LARGE_ALLOC:
 			return ((idHeap::page_s*)(*((intptr_t *)(((byte *)p) - ALIGN_SIZE( LARGE_HEADER_SIZE )))))->dataSize - ALIGN_SIZE( LARGE_HEADER_SIZE );
-		}
-		default: {
+		default:
 			idLib::common->FatalError( "idHeap::Msize: invalid memory block" );
-			return 0;
-		}
+			break;
 	}
-#endif
+
+	return 0;
 }
 
 /*
