@@ -330,15 +330,16 @@ static void R_ImageAdd( byte *data1, int width1, int height1, byte *data2, int w
 }
 
 
-// we build a canonical token form of the image program here
-static char parseBuffer[MAX_IMAGE_NAME];
+// we build a canonical token form of the image program here; the buffer is
+// passed down through the (recursive) parse so no shared static state is
+// touched - this keeps R_LoadImageProgram safe to run from a worker thread.
 
 /*
 ===================
 AppendToken
 ===================
 */
-static void AppendToken( idToken &token ) {
+static void AppendToken( char *parseBuffer, idToken &token ) {
 	// add a leading space if not at the beginning
 	if ( parseBuffer[0] ) {
 		idStr::Append( parseBuffer, MAX_IMAGE_NAME, " " );
@@ -351,7 +352,7 @@ static void AppendToken( idToken &token ) {
 MatchAndAppendToken
 ===================
 */
-static void MatchAndAppendToken( idLexer &src, const char *match ) {
+static void MatchAndAppendToken( idLexer &src, char *parseBuffer, const char *match ) {
 	if ( !src.ExpectTokenString( match ) ) {
 		return;
 	}
@@ -368,26 +369,26 @@ If both pic and timestamps are NULL, it will just advance past it, which can be
 used to parse an image program from a text stream.
 ===================
 */
-static bool R_ParseImageProgram_r( idLexer &src, byte **pic, int *width, int *height,
+static bool R_ParseImageProgram_r( idLexer &src, char *parseBuffer, byte **pic, int *width, int *height,
 								  ID_TIME_T *timestamps, textureDepth_t *depth ) {
 	idToken		token;
 	float		scale;
 	ID_TIME_T		timestamp;
 
 	src.ReadToken( &token );
-	AppendToken( token );
+	AppendToken( parseBuffer, token );
 
 	if ( !token.Icmp( "heightmap" ) ) {
-		MatchAndAppendToken( src, "(" );
+		MatchAndAppendToken( src, parseBuffer, "(" );
 
-		if ( !R_ParseImageProgram_r( src, pic, width, height, timestamps, depth ) ) {
+		if ( !R_ParseImageProgram_r( src, parseBuffer, pic, width, height, timestamps, depth ) ) {
 			return false;
 		}
 
-		MatchAndAppendToken( src, "," );
+		MatchAndAppendToken( src, parseBuffer, "," );
 
 		src.ReadToken( &token );
-		AppendToken( token );
+		AppendToken( parseBuffer, token );
 		scale = token.GetFloatValue();
 
 		// process it
@@ -398,7 +399,7 @@ static bool R_ParseImageProgram_r( idLexer &src, byte **pic, int *width, int *he
 			}
 		}
 
-		MatchAndAppendToken( src, ")" );
+		MatchAndAppendToken( src, parseBuffer, ")" );
 		return true;
 	}
 
@@ -406,15 +407,15 @@ static bool R_ParseImageProgram_r( idLexer &src, byte **pic, int *width, int *he
 		byte	*pic2 = NULL;
 		int		width2, height2;
 
-		MatchAndAppendToken( src, "(" );
+		MatchAndAppendToken( src, parseBuffer, "(" );
 
-		if ( !R_ParseImageProgram_r( src, pic, width, height, timestamps, depth ) ) {
+		if ( !R_ParseImageProgram_r( src, parseBuffer, pic, width, height, timestamps, depth ) ) {
 			return false;
 		}
 
-		MatchAndAppendToken( src, "," );
+		MatchAndAppendToken( src, parseBuffer, "," );
 
-		if ( !R_ParseImageProgram_r( src, pic ? &pic2 : NULL, &width2, &height2, timestamps, depth ) ) {
+		if ( !R_ParseImageProgram_r( src, parseBuffer, pic ? &pic2 : NULL, &width2, &height2, timestamps, depth ) ) {
 			if ( pic ) {
 				R_StaticFree( *pic );
 				*pic = NULL;
@@ -431,14 +432,14 @@ static bool R_ParseImageProgram_r( idLexer &src, byte **pic, int *width, int *he
 			}
 		}
 
-		MatchAndAppendToken( src, ")" );
+		MatchAndAppendToken( src, parseBuffer, ")" );
 		return true;
 	}
 
 	if ( !token.Icmp( "smoothnormals" ) ) {
-		MatchAndAppendToken( src, "(" );
+		MatchAndAppendToken( src, parseBuffer, "(" );
 
-		if ( !R_ParseImageProgram_r( src, pic, width, height, timestamps, depth ) ) {
+		if ( !R_ParseImageProgram_r( src, parseBuffer, pic, width, height, timestamps, depth ) ) {
 			return false;
 		}
 
@@ -449,7 +450,7 @@ static bool R_ParseImageProgram_r( idLexer &src, byte **pic, int *width, int *he
 			}
 		}
 
-		MatchAndAppendToken( src, ")" );
+		MatchAndAppendToken( src, parseBuffer, ")" );
 		return true;
 	}
 
@@ -457,15 +458,15 @@ static bool R_ParseImageProgram_r( idLexer &src, byte **pic, int *width, int *he
 		byte	*pic2 = NULL;
 		int		width2, height2;
 
-		MatchAndAppendToken( src, "(" );
+		MatchAndAppendToken( src, parseBuffer, "(" );
 
-		if ( !R_ParseImageProgram_r( src, pic, width, height, timestamps, depth ) ) {
+		if ( !R_ParseImageProgram_r( src, parseBuffer, pic, width, height, timestamps, depth ) ) {
 			return false;
 		}
 
-		MatchAndAppendToken( src, "," );
+		MatchAndAppendToken( src, parseBuffer, "," );
 
-		if ( !R_ParseImageProgram_r( src, pic ? &pic2 : NULL, &width2, &height2, timestamps, depth ) ) {
+		if ( !R_ParseImageProgram_r( src, parseBuffer, pic ? &pic2 : NULL, &width2, &height2, timestamps, depth ) ) {
 			if ( pic ) {
 				R_StaticFree( *pic );
 				*pic = NULL;
@@ -479,7 +480,7 @@ static bool R_ParseImageProgram_r( idLexer &src, byte **pic, int *width, int *he
 			R_StaticFree( pic2 );
 		}
 
-		MatchAndAppendToken( src, ")" );
+		MatchAndAppendToken( src, parseBuffer, ")" );
 		return true;
 	}
 
@@ -487,14 +488,14 @@ static bool R_ParseImageProgram_r( idLexer &src, byte **pic, int *width, int *he
 		float	scale[4];
 		int		i;
 
-		MatchAndAppendToken( src, "(" );
+		MatchAndAppendToken( src, parseBuffer, "(" );
 
-		R_ParseImageProgram_r( src, pic, width, height, timestamps, depth );
+		R_ParseImageProgram_r( src, parseBuffer, pic, width, height, timestamps, depth );
 
 		for ( i = 0 ; i < 4 ; i++ ) {
-			MatchAndAppendToken( src, "," );
+			MatchAndAppendToken( src, parseBuffer, "," );
 			src.ReadToken( &token );
-			AppendToken( token );
+			AppendToken( parseBuffer, token );
 			scale[i] = token.GetFloatValue();
 		}
 
@@ -503,44 +504,44 @@ static bool R_ParseImageProgram_r( idLexer &src, byte **pic, int *width, int *he
 			R_ImageScale( *pic, *width, *height, scale );
 		}
 
-		MatchAndAppendToken( src, ")" );
+		MatchAndAppendToken( src, parseBuffer, ")" );
 		return true;
 	}
 
 	if ( !token.Icmp( "invertAlpha" ) ) {
-		MatchAndAppendToken( src, "(" );
+		MatchAndAppendToken( src, parseBuffer, "(" );
 
-		R_ParseImageProgram_r( src, pic, width, height, timestamps, depth );
+		R_ParseImageProgram_r( src, parseBuffer, pic, width, height, timestamps, depth );
 
 		// process it
 		if ( pic ) {
 			R_InvertAlpha( *pic, *width, *height );
 		}
 
-		MatchAndAppendToken( src, ")" );
+		MatchAndAppendToken( src, parseBuffer, ")" );
 		return true;
 	}
 
 	if ( !token.Icmp( "invertColor" ) ) {
-		MatchAndAppendToken( src, "(" );
+		MatchAndAppendToken( src, parseBuffer, "(" );
 
-		R_ParseImageProgram_r( src, pic, width, height, timestamps, depth );
+		R_ParseImageProgram_r( src, parseBuffer, pic, width, height, timestamps, depth );
 
 		// process it
 		if ( pic ) {
 			R_InvertColor( *pic, *width, *height );
 		}
 
-		MatchAndAppendToken( src, ")" );
+		MatchAndAppendToken( src, parseBuffer, ")" );
 		return true;
 	}
 
 	if ( !token.Icmp( "makeIntensity" ) ) {
 		int		i;
 
-		MatchAndAppendToken( src, "(" );
+		MatchAndAppendToken( src, parseBuffer, "(" );
 
-		R_ParseImageProgram_r( src, pic, width, height, timestamps, depth );
+		R_ParseImageProgram_r( src, parseBuffer, pic, width, height, timestamps, depth );
 
 		// copy red to green, blue, and alpha
 		if ( pic ) {
@@ -553,16 +554,16 @@ static bool R_ParseImageProgram_r( idLexer &src, byte **pic, int *width, int *he
 			}
 		}
 
-		MatchAndAppendToken( src, ")" );
+		MatchAndAppendToken( src, parseBuffer, ")" );
 		return true;
 	}
 
 	if ( !token.Icmp( "makeAlpha" ) ) {
 		int		i;
 
-		MatchAndAppendToken( src, "(" );
+		MatchAndAppendToken( src, parseBuffer, "(" );
 
-		R_ParseImageProgram_r( src, pic, width, height, timestamps, depth );
+		R_ParseImageProgram_r( src, parseBuffer, pic, width, height, timestamps, depth );
 
 		// average RGB into alpha, then set RGB to white
 		if ( pic ) {
@@ -576,7 +577,7 @@ static bool R_ParseImageProgram_r( idLexer &src, byte **pic, int *width, int *he
 			}
 		}
 
-		MatchAndAppendToken( src, ")" );
+		MatchAndAppendToken( src, parseBuffer, ")" );
 		return true;
 	}
 
@@ -611,6 +612,7 @@ R_LoadImageProgram
 */
 void R_LoadImageProgram( const char *name, byte **pic, int *width, int *height, ID_TIME_T *timestamps, textureDepth_t *depth ) {
 	idLexer src;
+	char	parseBuffer[MAX_IMAGE_NAME];
 
 	src.LoadMemory( name, strlen(name), name );
 	src.SetFlags( LEXFL_NOFATALERRORS | LEXFL_NOSTRINGCONCAT | LEXFL_NOSTRINGESCAPECHARS | LEXFL_ALLOWPATHNAMES );
@@ -620,7 +622,7 @@ void R_LoadImageProgram( const char *name, byte **pic, int *width, int *height, 
 		*timestamps = 0;
 	}
 
-	R_ParseImageProgram_r( src, pic, width, height, timestamps, depth );
+	R_ParseImageProgram_r( src, parseBuffer, pic, width, height, timestamps, depth );
 
 	src.FreeSource();
 }
@@ -631,7 +633,10 @@ R_ParsePastImageProgram
 ===================
 */
 const char *R_ParsePastImageProgram( idLexer &src ) {
+	// main-thread material parser only; a static return buffer is fine here
+	// (the worker decode path uses R_LoadImageProgram, which has its own local).
+	static char parseBuffer[MAX_IMAGE_NAME];
 	parseBuffer[0] = 0;
-	R_ParseImageProgram_r( src, NULL, NULL, NULL, NULL, NULL );
+	R_ParseImageProgram_r( src, parseBuffer, NULL, NULL, NULL, NULL, NULL );
 	return parseBuffer;
 }
