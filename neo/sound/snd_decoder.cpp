@@ -632,7 +632,14 @@ int idSampleDecoderLocal::DecodeOGG_transfer( idSoundSample *sample, int sampleO
 	// open OGG if not yet opened
 	if ( lastSample == NULL ) {
 		if ( sample->nonCacheData == NULL ) {
-			common->Warning( "Called idSampleDecoderLocal::DecodeOGG_transfer() on idSoundSample '%s' without nonCacheData\n", sample->name.c_str() );
+			// DG: this can legitimately happen and isn't an error: e.g. the menu
+			// music (sound/musical/d3theme.ogg, or cdoomtheme.ogg in Classic Doom3)
+			// is purged by idSoundCache::EndLevelLoad() during a level load, but
+			// menuSoundWorld still briefly references it before the sound world is
+			// switched to the game world. It reloads fine next time it's needed, so
+			// just fail this decode quietly rather than spamming a red warning.
+			// (matches the note in the built-in DecodeOGG(); see dhewm3 issue #461)
+			common->DPrintf( "idSampleDecoderLocal::DecodeOGG_transfer() on '%s' without nonCacheData (purged; benign)\n", sample->name.c_str() );
 			failed = true;
 			return 0;
 		}
