@@ -986,8 +986,6 @@ int idRenderWorldLocal::BoundsInAreas( const idBounds &bounds, int *areas, int m
 		return numAreas;
 	}
 
-	assert( bounds[1][0] - bounds[0][0] < 1e4f && bounds[1][1] - bounds[0][1] < 1e4f && bounds[1][2] - bounds[0][2] < 1e4f );
-
 	if ( !areaNodes ) {
 		return numAreas;
 	}
