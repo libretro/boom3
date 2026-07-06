@@ -345,6 +345,7 @@ SRC_LIBRETRO := \
 	$(LIBRETRO_COMM_DIR)/time/rtime.c \
 	$(LIBRETRO_COMM_DIR)/streams/file_stream.c \
 	$(LIBRETRO_COMM_DIR)/vfs/vfs_implementation.c \
+	$(LIBRETRO_COMM_DIR)/queues/retro_spsc.c \
 	$(LIBRETRO_COMM_DIR)/file/nbio/nbio_intf.c \
 	$(LIBRETRO_COMM_DIR)/file/nbio/nbio_stdio.c \
 	$(LIBRETRO_COMM_DIR)/file/nbio/nbio_linux.c \
