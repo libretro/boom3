@@ -229,6 +229,21 @@ public:
 	bool		CheckPrecompressedImage( bool fullLoad );
 	void		UploadPrecompressedImage( byte *data, int len );
 	void		ActuallyLoadImage( bool checkForPrecompressed, bool fromBackEnd );
+
+	// Async-load seam: ActuallyLoadImage's 2D path is split into a decode
+	// half (DecodeImageData - CPU/file only, safe off the main thread) and
+	// an upload half (UploadImageData - GL, main thread only). The decoded
+	// pixels cross between them via decodedImageData_t. For now both run
+	// serially on the main thread; the worker pipeline uses the same seam.
+	struct decodedImageData_t {
+		byte *			pic;		// R_StaticAlloc'd decoded pixels (or NULL)
+		int				width;
+		int				height;
+		ID_TIME_T		timestamp;
+		textureDepth_t	depth;
+	};
+	bool		DecodeImageData( bool checkForPrecompressed, decodedImageData_t &out );
+	void		UploadImageData( decodedImageData_t &in );
 	void		StartBackgroundImageLoad();
 	int			BitsForInternalFormat( int internalFormat ) const;
 	void		UploadCompressedNormalMap( int width, int height, const byte *rgba, int mipLevel );

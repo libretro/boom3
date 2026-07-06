@@ -1868,50 +1868,88 @@ void	idImage::ActuallyLoadImage( bool checkForPrecompressed, bool fromBackEnd ) 
 			}
 		}
 	} else {
-		// see if we have a pre-generated image file that is
-		// already image processed and compressed
-		if ( checkForPrecompressed && globalImages->image_usePrecompressedTextures.GetBool() ) {
-			if ( CheckPrecompressedImage( true ) ) {
-				// we got the precompressed image
-				return;
-			}
-			// fall through to load the normal image
-		}
-
-		R_LoadImageProgram( imgName, &pic, &width, &height, &timestamp, &depth );
-
-		if ( pic == NULL ) {
-			common->Warning( "Couldn't load image: %s", imgName.c_str() );
-			MakeDefault();
+		// 2D image: split into decode (CPU/file) + upload (GL). Both run
+		// on the main thread here; the async pipeline reuses these halves.
+		decodedImageData_t d;
+		if ( !DecodeImageData( checkForPrecompressed, d ) ) {
+			// decode handled the outcome itself (precompressed hit, or a
+			// load failure that already called MakeDefault)
 			return;
 		}
-/*
-		// swap the red and alpha for rxgb support
-		// do this even on tga normal maps so we only have to use
-		// one fragment program
-		// if the image is precompressed ( either in palletized mode or true rxgb mode )
-		// then it is loaded above and the swap never happens here
-		if ( depth == TD_BUMP && globalImages->image_useNormalCompression.GetInteger() != 1 ) {
-			for ( int i = 0; i < width * height * 4; i += 4 ) {
-				pic[ i + 3 ] = pic[ i ];
-				pic[ i ] = 0;
-			}
-		}
-*/
-		// build a hash for checking duplicate image files
-		// NOTE: takes about 10% of image load times (SD)
-		// may not be strictly necessary, but some code uses it, so let's leave it in
-		imageHash = MD4_BlockChecksum( pic, width * height * 4 );
-
-		GenerateImage( pic, width, height, filter, allowDownSize, repeat, depth );
-		timestamp = timestamp;
-		precompressedFile = false;
-
-		R_StaticFree( pic );
-
-		// write out the precompressed version of this file if needed
-		WritePrecompressedImage();
+		UploadImageData( d );
 	}
+}
+
+/*
+===============
+idImage::DecodeImageData
+
+The CPU/file-only half of a 2D image load: checks for a precompressed
+version, otherwise loads and decodes the image program into out.pic
+(R_StaticAlloc'd) plus dimensions/depth, and computes the dup-check hash.
+
+Returns true if there is decoded data in 'out' that still needs a GL
+upload (via UploadImageData). Returns false if the load was fully handled
+here - a precompressed image was uploaded directly, or the load failed and
+MakeDefault() was called. Contains no GL calls, so it is safe to run off
+the main thread.
+===============
+*/
+bool idImage::DecodeImageData( bool checkForPrecompressed, decodedImageData_t &out ) {
+	out.pic = NULL;
+	out.width = 0;
+	out.height = 0;
+	out.timestamp = timestamp;
+	out.depth = depth;
+
+	// see if we have a pre-generated image file that is
+	// already image processed and compressed
+	if ( checkForPrecompressed && globalImages->image_usePrecompressedTextures.GetBool() ) {
+		if ( CheckPrecompressedImage( true ) ) {
+			// we got the precompressed image
+			return false;
+		}
+		// fall through to load the normal image
+	}
+
+	R_LoadImageProgram( imgName, &out.pic, &out.width, &out.height, &out.timestamp, &out.depth );
+
+	if ( out.pic == NULL ) {
+		common->Warning( "Couldn't load image: %s", imgName.c_str() );
+		MakeDefault();
+		return false;
+	}
+
+	// keep the decoded depth/timestamp on the image
+	depth = out.depth;
+
+	// build a hash for checking duplicate image files
+	// NOTE: takes about 10% of image load times (SD)
+	// may not be strictly necessary, but some code uses it, so let's leave it in
+	imageHash = MD4_BlockChecksum( out.pic, out.width * out.height * 4 );
+
+	return true;
+}
+
+/*
+===============
+idImage::UploadImageData
+
+The GL half of a 2D image load: uploads the decoded pixels, frees the
+decode buffer, and writes out the precompressed version if needed. Must
+run on the main (GL context) thread.
+===============
+*/
+void idImage::UploadImageData( decodedImageData_t &in ) {
+	GenerateImage( in.pic, in.width, in.height, filter, allowDownSize, repeat, in.depth );
+	timestamp = in.timestamp;
+	precompressedFile = false;
+
+	R_StaticFree( in.pic );
+	in.pic = NULL;
+
+	// write out the precompressed version of this file if needed
+	WritePrecompressedImage();
 }
 
 //=========================================================================================================
