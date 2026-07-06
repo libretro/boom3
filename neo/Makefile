@@ -304,6 +304,10 @@ CFLAGS   += -Wall $(fpic) $(CORE) $(SDL2) -DBASE=ON -DUSE_FILE32API -ffast-math 
 # (TGA source images, DDS precompressed). png/jpeg/bmp/webp stay off.
 CFLAGS   += -DHAVE_RTGA -DHAVE_RDDS
 CXXFLAGS += -DHAVE_RTGA -DHAVE_RDDS
+# libretro-common audio_transfer: WAV is built in; enable OGG Vorbis
+# (Doom 3 ships audio as WAV and OGG). FLAC/MP3 stay off.
+CFLAGS   += -DHAVE_RVORBIS
+CXXFLAGS += -DHAVE_RVORBIS
 CXXFLAGS += -Wall $(fpic) -fpermissive -std=gnu++11
 
 # unified core: always the d3xp game module (superset of the base game)
