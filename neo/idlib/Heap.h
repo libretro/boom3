@@ -63,6 +63,11 @@ void		Mem_Dump_f( const class idCmdArgs &args );
 void		Mem_DumpCompressed_f( const class idCmdArgs &args );
 void		Mem_AllocDefragBlock( void );
 
+// Enable/disable the allocation lock. Enabled only while an async worker
+// thread may allocate from the global heap concurrently with the main
+// thread; disabled (default) everywhere else, where it is a no-op branch.
+void		Mem_EnableLock( bool enable );
+
 void *		Mem_Alloc( const int size );
 void *		Mem_ClearedAlloc( const int size );
 void		Mem_Free( void *ptr );

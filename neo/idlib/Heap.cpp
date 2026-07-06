@@ -31,6 +31,49 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "idlib/Heap.h"
 
+#include "rthreads/rthreads.h"
+
+//===============================================================
+//
+//	Optional heap lock
+//
+//	Mem_Alloc/Mem_Free are single-threaded throughout normal engine
+//	operation. The async image-load worker is the one exception: it runs
+//	image decoders that allocate scratch from the same global heap while
+//	the main thread may also be allocating. To keep those two threads from
+//	corrupting the heap's intrusive free lists, allocation can be guarded
+//	by a lock.
+//
+//	The lock is DISABLED by default and only enabled (Mem_EnableLock) for
+//	the duration a worker thread is live. While disabled, the guard is a
+//	single predictable branch on a bool, so the common single-threaded
+//	path is unchanged (and byte-for-byte identical in behavior).
+//
+//===============================================================
+
+static slock_t *	mem_lock		= NULL;
+static bool			mem_lockEnabled	= false;
+
+void Mem_EnableLock( bool enable ) {
+	if ( enable && !mem_lock ) {
+		mem_lock = slock_new();
+	}
+	// only actually gate on the lock if we have one
+	mem_lockEnabled = ( enable && mem_lock != NULL );
+}
+
+ID_INLINE static void Mem_Lock( void ) {
+	if ( mem_lockEnabled ) {
+		slock_lock( mem_lock );
+	}
+}
+
+ID_INLINE static void Mem_Unlock( void ) {
+	if ( mem_lockEnabled ) {
+		slock_unlock( mem_lock );
+	}
+}
+
 //===============================================================
 //
 //	idHeap
@@ -1037,8 +1080,10 @@ void *Mem_Alloc( const int size ) {
 		return NULL;
 	if ( !mem_heap )
 		return malloc( size );
+	Mem_Lock();
 	void *mem = mem_heap->Allocate( size );
 	Mem_UpdateAllocStats( mem_heap->Msize( mem ) );
+	Mem_Unlock();
 	return mem;
 }
 
@@ -1054,8 +1099,10 @@ void Mem_Free( void *ptr ) {
 		free( ptr );
 		return;
 	}
+	Mem_Lock();
 	Mem_UpdateFreeStats( mem_heap->Msize( ptr ) );
 	mem_heap->Free( ptr );
+	Mem_Unlock();
 }
 
 /*
@@ -1068,7 +1115,9 @@ void *Mem_Alloc16( const int size ) {
 		return NULL;
 	if ( !mem_heap )
 		return malloc( size );
+	Mem_Lock();
 	void *mem = mem_heap->Allocate16( size );
+	Mem_Unlock();
 	// make sure the memory is 16 byte aligned
 	assert( ( ((intptr_t)mem) & 15) == 0 );
 	return mem;
@@ -1088,7 +1137,9 @@ void Mem_Free16( void *ptr ) {
 	}
 	// make sure the memory is 16 byte aligned
 	assert( ( ((intptr_t)ptr) & 15) == 0 );
+	Mem_Lock();
 	mem_heap->Free16( ptr );
+	Mem_Unlock();
 }
 
 /*
