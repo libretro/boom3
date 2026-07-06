@@ -300,6 +300,10 @@ TOPDIR ?= $(CURDIR)
 CFLAGS   += -Wall $(fpic) $(CORE) $(SDL2) -DBASE=ON -DUSE_FILE32API -ffast-math \
 			-fno-unsafe-math-optimizations -fno-strict-aliasing -fomit-frame-pointer \
 			-Wno-sign-compare -Wno-switch -Wno-format-security -I$(TOPDIR) -I$(TOPDIR)/sys/libretro/config
+# libretro-common image_transfer: enable only the decoders Doom 3 uses
+# (TGA source images, DDS precompressed). png/jpeg/bmp/webp stay off.
+CFLAGS   += -DHAVE_RTGA -DHAVE_RDDS
+CXXFLAGS += -DHAVE_RTGA -DHAVE_RDDS
 CXXFLAGS += -Wall $(fpic) -fpermissive -std=gnu++11
 
 # unified core: always the d3xp game module (superset of the base game)
