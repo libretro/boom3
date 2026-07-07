@@ -1136,9 +1136,6 @@ void		GLimp_Shutdown( void );
 // and resets the gamma ramps.
 
 void		GLimp_SwapBuffers( void );
-// Bind the frontend hw_render FBO for readback (returns true if a real FBO
-// is bound -> read GL_COLOR_ATTACHMENT0; false -> default fb -> read GL_BACK).
-bool		GLimp_BindNativeFramebuffer( void );
 // Calls the system specific swapbuffers routine, and may also perform
 // other system specific cvar checks that happen every frame.
 // This will not be called if 'r_drawBuffer GL_FRONT'

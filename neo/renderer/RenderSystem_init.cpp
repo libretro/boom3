@@ -1368,16 +1368,16 @@ void R_ReadTiledPixels( int width, int height, byte *buffer, renderView_t *ref =
 			}
 
 			{
-				// The scene renders into the frontend hw_render FBO, not the
-				// default framebuffer; bind it and read its colour attachment
-				// so screenshots aren't black under the libretro GL context.
-				bool boundFbo = GLimp_BindNativeFramebuffer();
+				// DG: It's probably better to restore the glReadBuffer mode after reading the pixels..
+				//     (at least with XWayland on GNOME changing resolutions is wonky when not doing this)
 #ifdef HAVE_OPENGLES
 				qglReadPixels(0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, temp);
 #else
 				GLint oldReadBuf = GL_BACK;
+
+				qglReadPixels(0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, temp);
 				qglGetIntegerv( GL_READ_BUFFER, &oldReadBuf );
-				qglReadBuffer( boundFbo ? GL_COLOR_ATTACHMENT0 : GL_FRONT );
+				qglReadBuffer( GL_FRONT );
 
 				qglReadPixels( 0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, temp );
 

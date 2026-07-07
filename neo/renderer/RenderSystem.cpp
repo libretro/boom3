@@ -942,13 +942,8 @@ void idRenderSystemLocal::CaptureRenderToFile( const char *fileName, bool fixAlp
 	guiModel->Clear();
 	R_IssueRenderCommands();
 
-	// The scene is rendered into the frontend's hw_render FBO, not the
-	// default framebuffer, so reading GL_BACK here captures an unwritten
-	// (black) buffer - which is what made objective screenshots come out
-	// black. Bind that FBO and read its colour attachment instead.
-	bool boundFbo = GLimp_BindNativeFramebuffer();
 #ifndef HAVE_OPENGLES
-	qglReadBuffer( boundFbo ? GL_COLOR_ATTACHMENT0 : GL_BACK );
+	qglReadBuffer( GL_BACK );
 #endif
 
 	// include extra space for OpenGL padding to word boundaries
