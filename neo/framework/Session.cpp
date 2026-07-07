@@ -321,6 +321,7 @@ void idSessionLocal::Clear() {
 	mapLoadReloadingSameMap = false;
 	mapLoadStartTime = 0;
 	mapLoadPendingAutosave = false;
+	mapLoadPendingSaveGameClose = false;
 	mapLoadInsidePhase = false;
 
 	loadingSaveGame = false;
@@ -1574,6 +1575,18 @@ void idSessionLocal::FinishAsyncMapLoad() {
 		SaveGame( GetAutoSaveName( mapLoadAutosaveMapName.c_str() ), true, saveFileName );
 	}
 
+	// A deferred loadgame kept savegameFile open across the load phases (it is
+	// read during LOAD_SPAWN); now that every phase has completed, close it and
+	// clear the load-from-savegame state, mirroring the tail of LoadGame().
+	if ( mapLoadPendingSaveGameClose ) {
+		mapLoadPendingSaveGameClose = false;
+		if ( loadingSaveGame && savegameFile ) {
+			fileSystem->CloseFile( savegameFile );
+			loadingSaveGame = false;
+			savegameFile = NULL;
+		}
+	}
+
 	SetGUI( NULL, NULL );
 }
 
@@ -2383,9 +2396,28 @@ bool idSessionLocal::LoadGame( const char *saveName, idFile *overrideFile ) {
 		// make sure no buttons are pressed
 		mapSpawnData.mapSpawnUsercmd[0].buttons = 0;
 
-		ExecuteMapChange();
-
-		SetGUI( NULL, NULL );
+		// libretro savestate restore (retro_unserialize) requires the load to
+		// complete synchronously before returning - the frontend's state
+		// buffer is only valid for the duration of the call and the libretro
+		// contract is that state is fully restored on return. For that path
+		// keep the blocking ExecuteMapChange(). For a normal user-initiated
+		// menu loadgame, drive the incremental per-frame pump instead so
+		// retro_run() keeps returning while the save loads.
+		extern bool retro_savestate_active;
+		if ( retro_savestate_active ) {
+			ExecuteMapChange();
+			SetGUI( NULL, NULL );
+		} else {
+			// The savegame state (savegameFile, loadingSaveGame,
+			// savegameVersion) are members that survive across the deferred
+			// phases; MapLoad_Spawn() consumes savegameFile during LOAD_SPAWN.
+			// The savegameFile close + GUI clear must wait until every phase
+			// has finished, so they are deferred to FinishAsyncMapLoad() via
+			// mapLoadPendingSaveGameClose.
+			mapLoadPendingSaveGameClose = loadingSaveGame;
+			BeginMapChangeAsync();
+			return true;
+		}
 	}
 
 	if ( loadingSaveGame ) {

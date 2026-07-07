@@ -226,6 +226,7 @@ public:
 	int					mapLoadStartTime;
 	// deferred post-load action for the async path (MoveToNewMap's autosave):
 	bool				mapLoadPendingAutosave;
+	bool				mapLoadPendingSaveGameClose;	// close savegameFile in FinishAsyncMapLoad after a deferred loadgame
 	bool				mapLoadInsidePhase;	// re-entrancy guard: true while a phase runs
 	idStr				mapLoadAutosaveMapName;
 
