@@ -1400,9 +1400,7 @@ idObjective::Spawn
 */
 void idObjective::Spawn( void ) {
 	Hide();
-	if ( cvarSystem->GetCVarBool( "com_makingBuild") ) {
-		PostEventMS( &EV_CamShot, 250 );
-	}
+	PostEventMS( &EV_CamShot, 250 );
 }
 
 /*
