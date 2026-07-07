@@ -340,6 +340,12 @@ public:
 	virtual	bool			EndLevelLoadStep( int maxSamples ) = 0;
 	virtual	void			EndLevelLoadFinish( void ) = 0;
 
+	// Defer/flush control for the post-load warmup settle frames, so sounds
+	// first referenced there (level scripts firing on map start) load in one
+	// pass before gameplay instead of hitching individually.
+	virtual	void			SetDeferSampleLoads( bool defer ) = 0;
+	virtual	void			DrainPendingSamples( void ) = 0;
+
 	// direct mixing for OSes that support it
 	// libretro: render exactly numFrames interleaved stereo frames of the
 	// current sound world and advance the 44kHz sample clock by numFrames.

@@ -1891,10 +1891,20 @@ void idSessionLocal::MapLoad_Warmup() {
 	int i;
 
 	if ( !idAsyncNetwork::IsActive() && !loadingSaveGame ) {
+		// The settle frames below run entity scripts that fire on map start
+		// (e.g. animated scanners), which reference level sounds that would
+		// otherwise inline-load and hitch in the first moments of gameplay.
+		// Defer those loads, run the settle frames, then flush them in one
+		// controlled pass before gameplay proper.
+		soundSystem->SetDeferSampleLoads( true );
+
 		// run a few frames to allow everything to settle
 		for ( i = 0; i < 10; i++ ) {
 			game->RunFrame( mapSpawnData.mapSpawnUsercmd );
 		}
+
+		soundSystem->SetDeferSampleLoads( false );
+		soundSystem->DrainPendingSamples();
 	}
 
 	int	msec = Core_Milliseconds() - mapLoadStartTime;

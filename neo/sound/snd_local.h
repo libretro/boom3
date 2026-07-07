@@ -694,6 +694,8 @@ public:
 	virtual	void			EndLevelLoadStart( const char *mapString );
 	virtual	bool			EndLevelLoadStep( int maxSamples );
 	virtual	void			EndLevelLoadFinish( void );
+	virtual	void			SetDeferSampleLoads( bool defer );
+	virtual	void			DrainPendingSamples( void );
 
 	virtual void			PrintMemInfo( MemInfo_t *mi );
 
@@ -858,6 +860,17 @@ public:
 	void					EndLevelLoadStart();
 	bool					EndLevelLoadStep( int maxSamples );
 	void					EndLevelLoadFinish();
+
+	// Lightweight defer control for the post-load warmup frames: the settle
+	// frames run entity scripts that may reference (and would otherwise inline-
+	// load) level sounds that fire moments into gameplay. SetDeferLoads(true)
+	// makes FindSound() queue such samples into levelLoadPending instead of
+	// loading inline; DrainPending() then loads them all in one controlled pass
+	// before gameplay proper, so those first-moment sounds don't hitch
+	// individually. Unlike BeginLevelLoad(), this does NOT touch reference
+	// flags, so already-resident samples are unaffected.
+	void					SetDeferLoads( bool defer ) { insideLevelLoad = defer; }
+	void					DrainPending();
 
 	void					PrintMemInfo( MemInfo_t *mi );
 

@@ -278,6 +278,26 @@ void idSoundCache::EndLevelLoadFinish() {
 
 /*
 ====================
+idSoundCache::DrainPending
+
+Load every referenced-but-purged sample now (one controlled pass). Used to
+flush samples that FindSound() deferred while SetDeferLoads(true) was in
+effect (the post-load warmup window), so the level's first-moment sounds are
+resident before gameplay proper instead of hitching one by one.
+====================
+*/
+void idSoundCache::DrainPending() {
+	for ( int i = 0 ; i < listCache.Num() ; i++ ) {
+		idSoundSample *sample = listCache[ i ];
+		if ( sample && sample->purged && sample->levelLoadReferenced ) {
+			sample->Load();
+		}
+	}
+	soundCacheAllocator.FreeEmptyBaseBlocks();
+}
+
+/*
+====================
 idSoundCache::EndLevelLoad
 
 Blocking convenience: Start + drain every pending sample + Finish. Kept for

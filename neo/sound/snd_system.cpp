@@ -798,6 +798,20 @@ void idSoundSystemLocal::EndLevelLoadFinish( void ) {
 	soundCache->EndLevelLoadFinish();
 }
 
+void idSoundSystemLocal::SetDeferSampleLoads( bool defer ) {
+	if ( !isInitialized ) {
+		return;
+	}
+	soundCache->SetDeferLoads( defer );
+}
+
+void idSoundSystemLocal::DrainPendingSamples( void ) {
+	if ( !isInitialized ) {
+		return;
+	}
+	soundCache->DrainPending();
+}
+
 /*
 ===================
 idSoundSystemLocal::EndLevelLoad
