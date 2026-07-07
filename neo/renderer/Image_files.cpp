@@ -654,15 +654,12 @@ timestamp.
 */
 /*
 ==================
-LoadTGA_transfer
+LoadTGA
 
-Decode a TGA using libretro-common's image_transfer, matching the output
-contract of the built-in LoadTGA(): *pic is an R_StaticAlloc'd RGBA8 buffer
-in R,G,B,A byte order (little-endian), width/height set, timestamp filled.
-On any failure *pic is left NULL so the caller falls back / MakeDefaults.
+Decode a TGA using libretro-common's image_transfer: *pic is an R_StaticAlloc'd RGBA8 buffer in R,G,B,A byte order (little-endian), width/height set, timestamp filled. On any failure *pic is left NULL so the caller falls back / MakeDefaults.
 ==================
 */
-static void LoadTGA_transfer( const char *name, byte **pic, int *width, int *height, ID_TIME_T *timestamp ) {
+static void LoadTGA( const char *name, byte **pic, int *width, int *height, ID_TIME_T *timestamp ) {
 	byte	*fileBuf;
 	int		fileLen;
 
@@ -670,7 +667,7 @@ static void LoadTGA_transfer( const char *name, byte **pic, int *width, int *hei
 		*pic = NULL;
 	}
 
-	// timestamp-only probe: match LoadTGA's early-out
+	// timestamp-only probe - early-out
 	if ( !pic ) {
 		fileSystem->ReadFile( name, NULL, timestamp );
 		return;
@@ -708,7 +705,6 @@ static void LoadTGA_transfer( const char *name, byte **pic, int *width, int *hei
 
 	// pull out the decoded RGBA. supports_rgba=true makes rtga pack each
 	// pixel as (a<<24)|(b<<16)|(g<<8)|r, i.e. bytes [r,g,b,a] on little-endian
-	// - identical to the built-in LoadTGA's output order.
 	uint32_t	*transferPixels = NULL;
 	unsigned	w = 0, h = 0;
 	int			ret;
@@ -731,12 +727,12 @@ static void LoadTGA_transfer( const char *name, byte **pic, int *width, int *hei
 	// so the rest of the engine (which R_StaticFree's *pic) stays consistent.
 	//
 	// The engine consumes *pic as an RGBA8 BYTE stream (uploaded with
-	// GL_RGBA, GL_UNSIGNED_BYTE), i.e. bytes [r,g,b,a] on every platform -
-	// that is what the built-in LoadTGA() writes byte-by-byte. rtga packs
-	// each pixel NUMERICALLY as (a<<24)|(b<<16)|(g<<8)|r, so we must extract
+	// GL_RGBA, GL_UNSIGNED_BYTE), i.e. bytes [r,g,b,a] on every platform.
+        // rtga packs each pixel NUMERICALLY as 
+        // (a<<24)|(b<<16)|(g<<8)|r, so we must extract
 	// the channels by shift rather than memcpy'ing the raw uint32 buffer,
-	// otherwise the byte order would flip on big-endian. Extracting by shift
-	// is correct on both endians.
+	// otherwise the byte order would flip on big-endian. 
+        // Extracting by shift is correct on both endians.
 	int		numPixels = (int)( w * h );
 	byte	*out = (byte *)R_StaticAlloc( numPixels * 4 );
 	for ( int i = 0; i < numPixels; i++ ) {
@@ -784,7 +780,7 @@ void R_LoadImage( const char *cname, byte **pic, int *width, int *height, ID_TIM
 	name.ExtractFileExtension( ext );
 
 	if ( ext == "tga" ) {
-		LoadTGA_transfer( name.c_str(), pic, width, height, timestamp );  // try tga first
+		LoadTGA( name.c_str(), pic, width, height, timestamp );  // try tga first
 		if ( ( pic && *pic == 0 ) || ( timestamp && *timestamp == FILE_NOT_FOUND_TIMESTAMP ) ) {
 			name.StripFileExtension();
 			name.DefaultFileExtension( ".jpg" );
