@@ -1394,8 +1394,25 @@ void GLimp_SwapBuffers() {
 	}
 }
 
-void retro_cheat_reset(void)
-{}
+/*
+===================
+GLimp_BindNativeFramebuffer
+
+Bind the frontend's hardware-render FBO (the target the scene is actually
+rendered into under the libretro hw_render context) and report whether it is
+a real FBO (non-zero name). Used by readback paths like
+CaptureRenderToFile(): reading GL_BACK is wrong here because nothing is
+rendered to the default framebuffer - the objective screenshot capture would
+otherwise read an unwritten (black) buffer. Returns true if an FBO is bound
+(caller should read GL_COLOR_ATTACHMENT0), false if it fell back to the
+default framebuffer (caller should read GL_BACK).
+===================
+*/
+bool GLimp_BindNativeFramebuffer( void ) {
+	unsigned fbo = hw_render.get_current_framebuffer ? (unsigned)hw_render.get_current_framebuffer() : 0;
+	glBindFramebuffer( RARCH_GL_FRAMEBUFFER, fbo );
+	return fbo != 0;
+}
 
 void retro_cheat_set(unsigned index, bool enabled, const char *code)
 {
