@@ -211,6 +211,8 @@ public:
 		LOAD_GEOMETRY,
 		LOAD_SPAWN,
 		LOAD_SPAWN_PUMP,
+		LOAD_SOUND,
+		LOAD_SOUND_PUMP,
 		LOAD_MEDIA,
 		LOAD_MEDIA_PUMP,
 		LOAD_WARMUP,
@@ -354,6 +356,9 @@ public:
 	void				MapLoad_Spawn();
 	bool				MapLoad_SpawnPump();
 	void				MapLoad_SpawnPlayers();
+	void				MapLoad_SoundStart();
+	bool				MapLoad_SoundPump();
+	void				MapLoad_SoundFinish();
 	void				MapLoad_Media();
 	// MEDIA split for per-frame image loading: Start does models/sound/decl and
 	// collects the image list; Pump loads a bounded batch and returns true while

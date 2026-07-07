@@ -1479,6 +1479,20 @@ bool idSessionLocal::AdvanceMapLoad() {
 			return true;	// more entities remain, come back next frame
 		}
 		MapLoad_SpawnPlayers();
+		mapLoadPhase = LOAD_SOUND;
+		return true;
+	case LOAD_SOUND:
+		MapLoad_SoundStart();
+		mapLoadPhase = LOAD_SOUND_PUMP;
+		return true;
+	case LOAD_SOUND_PUMP:
+		// load a bounded number of sound samples this frame (decode + sinc
+		// resample); stay here until every referenced sample is resident so
+		// retro_run() keeps returning during the (formerly blocking) sound load.
+		if ( MapLoad_SoundPump() ) {
+			return true;	// more samples remain, come back next frame
+		}
+		MapLoad_SoundFinish();
 		mapLoadPhase = LOAD_MEDIA;
 		return true;
 	case LOAD_MEDIA:
@@ -1756,6 +1770,52 @@ bool idSessionLocal::MapLoad_SpawnPump() {
 
 /*
 ===============
+idSessionLocal::MapLoad_SoundStart
+
+Map EFX load + sample purge/collect. The referenced sound samples that
+aren't resident yet (deferred by idSoundCache::FindSound during level load)
+are then loaded per-frame by MapLoad_SoundPump(), so the decode + one-shot
+sinc resample of the level's sounds no longer blocks in a single frame.
+===============
+*/
+void idSessionLocal::MapLoad_SoundStart() {
+	if ( !mapLoadReloadingSameMap ) {
+		soundSystem->EndLevelLoadStart( mapLoadMapString.c_str() );
+	}
+}
+
+/*
+===============
+idSessionLocal::MapLoad_SoundPump
+
+Load a bounded batch of the level's pending sound samples. Returns true while
+more remain (so the caller stays in the pump phase and retro_run() keeps
+returning between batches).
+===============
+*/
+bool idSessionLocal::MapLoad_SoundPump() {
+	if ( mapLoadReloadingSameMap ) {
+		return false;	// nothing collected; sound load was skipped
+	}
+	// budget: samples per frame. Sound sets are far smaller than image sets
+	// (a few hundred vs 2101), but each Load() can decode + resample a whole
+	// clip, so keep the batch modest to bound per-frame cost.
+	return soundSystem->EndLevelLoadStep( 32 );
+}
+
+/*
+===============
+idSessionLocal::MapLoad_SoundFinish
+===============
+*/
+void idSessionLocal::MapLoad_SoundFinish() {
+	if ( !mapLoadReloadingSameMap ) {
+		soundSystem->EndLevelLoadFinish();
+	}
+}
+
+/*
+===============
 idSessionLocal::MapLoad_Media
 Phase 4: purge/load the media (images, sounds, decls).
 ===============
@@ -1783,7 +1843,6 @@ loads themselves are then driven per-frame by MapLoad_MediaPump().
 void idSessionLocal::MapLoad_MediaStart() {
 	if ( !mapLoadReloadingSameMap ) {
 		renderSystem->EndLevelLoadStart();		// models + image purge/collect
-		soundSystem->EndLevelLoad( mapLoadMapString.c_str() );
 		declManager->EndLevelLoad();
 		SetBytesNeededForMapLoad( mapLoadMapString.c_str(), fileSystem->GetReadCount() );
 	}

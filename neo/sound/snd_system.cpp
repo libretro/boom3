@@ -761,7 +761,7 @@ void idSoundSystemLocal::BeginLevelLoad() {
 idSoundSystemLocal::EndLevelLoad
 ===================
 */
-void idSoundSystemLocal::EndLevelLoad( const char *mapstring ) {
+void idSoundSystemLocal::EndLevelLoadStart( const char *mapstring ) {
 	if ( isInitialized ) {
 		idStr efxname( "efxs/" );
 		idStr mapname( mapstring );
@@ -781,10 +781,36 @@ void idSoundSystemLocal::EndLevelLoad( const char *mapstring ) {
 	if ( !isInitialized ) {
 		return;
 	}
-	soundCache->EndLevelLoad();
+	soundCache->EndLevelLoadStart();
+}
 
+bool idSoundSystemLocal::EndLevelLoadStep( int maxSamples ) {
+	if ( !isInitialized ) {
+		return false;
+	}
+	return soundCache->EndLevelLoadStep( maxSamples );
+}
+
+void idSoundSystemLocal::EndLevelLoadFinish( void ) {
+	if ( !isInitialized ) {
 		return;
+	}
+	soundCache->EndLevelLoadFinish();
+}
 
+/*
+===================
+idSoundSystemLocal::EndLevelLoad
+
+Blocking convenience (Start + drain + Finish) for callers not driven by the
+per-frame load pump.
+===================
+*/
+void idSoundSystemLocal::EndLevelLoad( const char *mapstring ) {
+	EndLevelLoadStart( mapstring );
+	while ( EndLevelLoadStep( 0x7fffffff ) ) {
+	}
+	EndLevelLoadFinish();
 }
 
 /*

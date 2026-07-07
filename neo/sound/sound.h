@@ -331,6 +331,15 @@ public:
 	// as we do with images, to avoid having a union in memory at one time.
 	virtual	void			EndLevelLoad( const char *mapString ) = 0;
 
+	// Incremental variant of EndLevelLoad() so the sound residency load can
+	// be spread across frames (mirrors renderSystem's image pump).
+	// EndLevelLoadStart() does the map EFX load + sample purge/collect;
+	// EndLevelLoadStep() loads up to maxSamples and returns true while more
+	// remain; EndLevelLoadFinish() frees empty base blocks.
+	virtual	void			EndLevelLoadStart( const char *mapString ) = 0;
+	virtual	bool			EndLevelLoadStep( int maxSamples ) = 0;
+	virtual	void			EndLevelLoadFinish( void ) = 0;
+
 	// direct mixing for OSes that support it
 	// libretro: render exactly numFrames interleaved stereo frames of the
 	// current sound world and advance the 44kHz sample clock by numFrames.

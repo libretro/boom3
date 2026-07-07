@@ -28,6 +28,7 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "sys/platform.h"
 #include "framework/FileSystem.h"
+#include "framework/Session.h"
 
 // libretro-common integer sinc resampler: used to resample PCM samples to
 // 44.1kHz once at load time (instead of the per-block duplicating upsampler
@@ -56,6 +57,8 @@ idSoundCache::idSoundCache() {
 	listCache.AssureSize( 1024, NULL );
 	listCache.SetGranularity( 256 );
 	insideLevelLoad = false;
+	levelLoadPending.SetGranularity( 256 );
+	levelLoadCursor = 0;
 }
 
 /*
@@ -103,7 +106,9 @@ idSoundSample *idSoundCache::FindSound( const idStr& filename, bool loadOnDemand
 		idSoundSample *def = listCache[i];
 		if ( def && def->name == fname ) {
 			def->levelLoadReferenced = true;
-			if ( def->purged && !loadOnDemandOnly ) {
+			if ( def->purged && !loadOnDemandOnly && !insideLevelLoad ) {
+				// during level load the pump (EndLevelLoadStep) loads this;
+				// leave it purged so the load spreads across frames.
 				def->Load();
 			}
 			return def;
@@ -125,10 +130,12 @@ idSoundSample *idSoundCache::FindSound( const idStr& filename, bool loadOnDemand
 	def->onDemand = loadOnDemandOnly;
 	def->purged = true;
 
-	if ( !loadOnDemandOnly ) {
+	if ( !loadOnDemandOnly && !insideLevelLoad ) {
 		// this may make it a default sound if it can't be loaded
 		def->Load();
 	}
+	// (during level load, the sample stays purged and is loaded by the
+	//  EndLevelLoadStep() pump so the work spreads across frames)
 
 	return def;
 }
@@ -187,36 +194,101 @@ EndLevelLoad
 Free all samples marked as unused
 ====================
 */
-void idSoundCache::EndLevelLoad() {
-	int	useCount, purgeCount;
+void idSoundCache::EndLevelLoadStart() {
 	common->Printf( "----- idSoundCache::EndLevelLoad -----\n" );
 
 	insideLevelLoad = false;
+	levelLoadPending.SetNum( 0, false );
+	levelLoadCursor = 0;
 
-	// purge the ones we don't need
-	useCount = 0;
-	purgeCount = 0;
+	// purge the ones we don't need; collect the referenced-but-purged ones
+	// so EndLevelLoadStep() can Load() them a bounded number at a time.
+	int useCount = 0, purgeCount = 0;
 	for ( int i = 0 ; i < listCache.Num() ; i++ ) {
 		idSoundSample	*sample = listCache[ i ];
 		if ( !sample ) {
 			continue;
 		}
-		if ( sample->purged ) {
+		if ( !sample->levelLoadReferenced ) {
+			if ( !sample->purged ) {
+				purgeCount += sample->objectMemSize;
+				sample->PurgeSoundSample();
+			}
 			continue;
 		}
-		if ( !sample->levelLoadReferenced ) {
-//			common->Printf( "Purging %s\n", sample->name.c_str() );
-			purgeCount += sample->objectMemSize;
-			sample->PurgeSoundSample();
+		// referenced this level
+		if ( sample->purged ) {
+			// not resident yet (deferred by FindSound during level load) -
+			// queue it for the pump
+			levelLoadPending.Append( sample );
 		} else {
 			useCount += sample->objectMemSize;
 		}
 	}
 
-	soundCacheAllocator.FreeEmptyBaseBlocks();
-
 	common->Printf( "%5ik referenced\n", useCount / 1024 );
 	common->Printf( "%5ik purged\n", purgeCount / 1024 );
+}
+
+/*
+====================
+idSoundCache::EndLevelLoadStep
+
+Load up to maxSamples of the pending samples collected by
+EndLevelLoadStart(). Each Load() does the file read, decode, and (for
+sub-44kHz PCM) the one-shot sinc resample. Returns true while samples remain
+(call again next frame); false when the level's sound load is complete.
+====================
+*/
+bool idSoundCache::EndLevelLoadStep( int maxSamples ) {
+	int loaded = 0;
+
+	while ( levelLoadCursor < levelLoadPending.Num() && loaded < maxSamples ) {
+		idSoundSample *sample = levelLoadPending[ levelLoadCursor ];
+		levelLoadCursor++;
+
+		// re-check: a sample can get loaded on demand (played) between frames
+		if ( sample && sample->purged ) {
+			sample->Load();
+			loaded++;
+		}
+
+		if ( ( levelLoadCursor & 15 ) == 0 ) {
+			session->PacifierUpdate();
+		}
+	}
+
+	if ( levelLoadCursor < levelLoadPending.Num() ) {
+		return true;	// more remain
+	}
+
+	levelLoadPending.SetNum( 0, false );
+	levelLoadCursor = 0;
+	return false;
+}
+
+/*
+====================
+idSoundCache::EndLevelLoadFinish
+====================
+*/
+void idSoundCache::EndLevelLoadFinish() {
+	soundCacheAllocator.FreeEmptyBaseBlocks();
+}
+
+/*
+====================
+idSoundCache::EndLevelLoad
+
+Blocking convenience: Start + drain every pending sample + Finish. Kept for
+callers that aren't driven by the per-frame load pump.
+====================
+*/
+void idSoundCache::EndLevelLoad() {
+	EndLevelLoadStart();
+	while ( EndLevelLoadStep( 0x7fffffff ) ) {
+	}
+	EndLevelLoadFinish();
 }
 
 /*

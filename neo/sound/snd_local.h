@@ -691,6 +691,9 @@ public:
 
 	virtual	void			BeginLevelLoad( void );
 	virtual	void			EndLevelLoad( const char *mapString );
+	virtual	void			EndLevelLoadStart( const char *mapString );
+	virtual	bool			EndLevelLoadStep( int maxSamples );
+	virtual	void			EndLevelLoadFinish( void );
 
 	virtual void			PrintMemInfo( MemInfo_t *mi );
 
@@ -845,13 +848,24 @@ public:
 	void					ReloadSounds( bool force );
 
 	void					BeginLevelLoad();
+	// Level-load sound residency is spread across frames so retro_run()
+	// returns every frame (mirrors idImageManager). EndLevelLoadStart()
+	// purges unreferenced samples and collects the referenced-but-purged
+	// ones; EndLevelLoadStep() loads up to maxSamples and returns true while
+	// more remain; EndLevelLoadFinish() frees empty base blocks. EndLevelLoad()
+	// is kept as a blocking convenience (Start + drain-all + Finish).
 	void					EndLevelLoad();
+	void					EndLevelLoadStart();
+	bool					EndLevelLoadStep( int maxSamples );
+	void					EndLevelLoadFinish();
 
 	void					PrintMemInfo( MemInfo_t *mi );
 
 private:
 	bool					insideLevelLoad;
 	idList<idSoundSample*>	listCache;
+	idList<idSoundSample*>	levelLoadPending;	// samples to Load() during the pump
+	int						levelLoadCursor;	// drain position in levelLoadPending
 };
 
 #endif /* !__SND_LOCAL_H__ */
