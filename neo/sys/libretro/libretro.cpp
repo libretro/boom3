@@ -541,20 +541,35 @@ main
  * fs_game: unset for Doom 3, "d3xp" for RoE. Selected automatically from
  * the content's directory name, overridable with the doom_game core option. */
 static int fake_argc = 0;
-static char *fake_argv[4] = { nullptr };
+static char *fake_argv[8] = { nullptr };
 
-static void set_game_args(bool roe)
+static char game_base_arg[1024];
+
+static void set_game_args(bool roe, const char *content_dir_name)
 {
+	fake_argc = 0;
+
 	if (roe) {
-		fake_argv[0] = (char *)"+set";
-		fake_argv[1] = (char *)"fs_game";
-		fake_argv[2] = (char *)"d3xp";
-		fake_argv[3] = nullptr;
-		fake_argc    = 3;
-	} else {
-		fake_argv[0] = nullptr;
-		fake_argc    = 0;
+		fake_argv[fake_argc++] = (char *)"+set";
+		fake_argv[fake_argc++] = (char *)"fs_game";
+		fake_argv[fake_argc++] = (char *)"d3xp";
 	}
+
+	/* The engine always mounts BASE_GAMEDIR ("base") under fs_basepath, so a
+	 * install whose game data directory is not literally named "base" (e.g.
+	 * "base-retail") would find nothing and die with "Couldn't load
+	 * default.cfg". Pass the real directory name as fs_game_base, which the
+	 * engine mounts in addition to BASE_GAMEDIR, so those layouts work. */
+	if (content_dir_name && content_dir_name[0]
+	    && idStr::Icmp(content_dir_name, BASE_GAMEDIR) != 0
+	    && idStr::Icmp(content_dir_name, "d3xp") != 0) {
+		snprintf(game_base_arg, sizeof(game_base_arg), "%s", content_dir_name);
+		fake_argv[fake_argc++] = (char *)"+set";
+		fake_argv[fake_argc++] = (char *)"fs_game_base";
+		fake_argv[fake_argc++] = game_base_arg;
+	}
+
+	fake_argv[fake_argc] = nullptr;
 }
 
 static void extract_basename(char *buf, const char *path, size_t size)
@@ -1217,7 +1232,7 @@ bool retro_load_game(const struct retro_game_info *info)
 				roe = true;
 			/* "auto": keep the detection result */
 		}
-		set_game_args(roe);
+		set_game_args(roe, content_dir_name);
 		if (log_cb)
 			log_cb(RETRO_LOG_INFO, "[boom3] game: %s (content dir '%s')\n",
 			       roe ? "Doom 3: Resurrection of Evil (fs_game d3xp)" : "Doom 3",
