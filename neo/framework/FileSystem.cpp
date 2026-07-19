@@ -2727,7 +2727,19 @@ void idFileSystemLocal::Init( void ) {
 
 	if ( ReadFile( "default.cfg", NULL, NULL ) <= 0 ) {
 		// DG: the demo gamedata is in demo/ instead of base/. to make it "just work", add a fallback for that
-		if(fs_game.GetString()[0] == '\0' || idStr::Icmp(fs_game.GetString(), BASE_GAMEDIR) == 0) {
+		// An explicitly configured fs_game_base (the libretro core passes the
+		// real content directory name there when the install's game data
+		// directory is not literally named "base", e.g. "base-retail") must not
+		// be replaced by the demo guess: doing so unmounts the only directory
+		// that actually holds the game data and turns a path problem into a
+		// confusing "trying again with demo/" failure. Only take the demo
+		// fallback when nothing else was asked for.
+		bool haveExplicitGameBase = fs_game_base.GetString()[0] &&
+			idStr::Icmp( fs_game_base.GetString(), BASE_GAMEDIR ) != 0 &&
+			idStr::Icmp( fs_game_base.GetString(), "demo" ) != 0;
+
+		if ( !haveExplicitGameBase &&
+			 ( fs_game.GetString()[0] == '\0' || idStr::Icmp(fs_game.GetString(), BASE_GAMEDIR) == 0 ) ) {
 			common->Warning("Couldn't find default.cfg in %s/, trying again with demo/\n", BASE_GAMEDIR);
 			fs_game.SetString("demo");
 			fs_game_base.SetString("demo");
@@ -2737,6 +2749,10 @@ void idFileSystemLocal::Init( void ) {
 			// busted and error out now, rather than getting an unreadable
 			// graphics screen when the font fails to load
 			// Dedicated servers can run with no outside files at all
+			if ( haveExplicitGameBase ) {
+				common->Printf( "Searched for game data in '%s' (fs_game_base) under fs_basepath '%s'.\n",
+					fs_game_base.GetString(), fs_basepath.GetString() );
+			}
 			common->FatalError( "Couldn't load default.cfg" );
 		}
 	}
