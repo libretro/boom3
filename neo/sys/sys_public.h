@@ -129,7 +129,8 @@ enum sysPath_t {
 	PATH_BASE,
 	PATH_CONFIG,
 	PATH_SAVE,
-	PATH_EXE
+	PATH_EXE,
+	PATH_GAMEDIR	// name of the directory holding the game data ("base" normally)
 #if defined(__AROS__)
 	, PATH_LAUNCH
 #endif

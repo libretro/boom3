@@ -413,6 +413,7 @@ private:
 	static idCVar			fs_devpath;
 	static idCVar			fs_game;
 	static idCVar			fs_game_base;
+	static idCVar			fs_gamedirname;
 	static idCVar			fs_caseSensitiveOS;
 	static idCVar			fs_searchAddons;
 	// DG: additional directory to search for game DLLs
@@ -474,6 +475,7 @@ idCVar	idFileSystemLocal::fs_savepath( "fs_savepath", "", CVAR_SYSTEM | CVAR_INI
 idCVar	idFileSystemLocal::fs_cdpath( "fs_cdpath", "", CVAR_SYSTEM | CVAR_INIT, "" );
 idCVar	idFileSystemLocal::fs_devpath( "fs_devpath", "", CVAR_SYSTEM | CVAR_INIT, "" );
 idCVar	idFileSystemLocal::fs_game( "fs_game", "", CVAR_SYSTEM | CVAR_INIT | CVAR_SERVERINFO, "mod path" );
+idCVar  idFileSystemLocal::fs_gamedirname( "fs_gamedirname", "", CVAR_SYSTEM | CVAR_INIT, "name of the directory holding the game data when it is not \"base\"" );
 idCVar  idFileSystemLocal::fs_game_base( "fs_game_base", "", CVAR_SYSTEM | CVAR_INIT | CVAR_SERVERINFO, "alternate mod path, searched after the main fs_game path, before the basedir" );
 #if defined(__AROS__) || defined(WIN32)
 idCVar	idFileSystemLocal::fs_caseSensitiveOS( "fs_caseSensitiveOS", "0", CVAR_SYSTEM | CVAR_BOOL, "" );
@@ -2257,6 +2259,18 @@ void idFileSystemLocal::Startup( void ) {
 		common->Printf( "restarting filesystem with %d addon pak file(s) to include\n", addonChecksums.Num() );
 	}
 
+	// The stock engine only ever mounts BASE_GAMEDIR ("base") here, so an
+	// install whose game data directory is named anything else (e.g.
+	// "base-retail") mounts nothing and startup dies with "Couldn't load
+	// default.cfg". fs_gamedirname lets the host name the directory that
+	// actually holds the data; mount it in addition to (and before) "base" so
+	// both stock and non-stock layouts work without relying on fs_game, which
+	// is also used for mods and is overwritten by the demo fallback.
+	if ( fs_gamedirname.GetString()[0] &&
+		 idStr::Icmp( fs_gamedirname.GetString(), BASE_GAMEDIR ) ) {
+		SetupGameDirectories( fs_gamedirname.GetString() );
+	}
+
 	SetupGameDirectories( BASE_GAMEDIR );
 
 	// fs_game_base override
@@ -2697,6 +2711,7 @@ void idFileSystemLocal::Init( void ) {
 	common->StartupVariable( "fs_devpath", false );
 	common->StartupVariable( "fs_game", false );
 	common->StartupVariable( "fs_game_base", false );
+	common->StartupVariable( "fs_gamedirname", false );
 	common->StartupVariable( "fs_copyfiles", false );
 	common->StartupVariable( "fs_restrict", false );
 	common->StartupVariable( "fs_searchAddons", false );
@@ -2710,6 +2725,12 @@ void idFileSystemLocal::Init( void ) {
 
 	if (fs_configpath.GetString()[0] == '\0' && Sys_GetPath(PATH_CONFIG, path))
 		fs_configpath.SetString(path);
+
+	// Ask the host directly for the directory that actually holds the game
+	// data, rather than relying on a "+set fs_gamedirname" command-line
+	// argument, so it cannot be lost in argument parsing.
+	if (fs_gamedirname.GetString()[0] == '\0' && Sys_GetPath(PATH_GAMEDIR, path))
+		fs_gamedirname.SetString(path);
 
 	if ( fs_devpath.GetString()[0] == '\0' ) {
 #ifdef WIN32
@@ -2734,9 +2755,13 @@ void idFileSystemLocal::Init( void ) {
 		// that actually holds the game data and turns a path problem into a
 		// confusing "trying again with demo/" failure. Only take the demo
 		// fallback when nothing else was asked for.
-		bool haveExplicitGameBase = fs_game_base.GetString()[0] &&
-			idStr::Icmp( fs_game_base.GetString(), BASE_GAMEDIR ) != 0 &&
-			idStr::Icmp( fs_game_base.GetString(), "demo" ) != 0;
+		bool haveExplicitGameBase =
+			( fs_gamedirname.GetString()[0] &&
+			  idStr::Icmp( fs_gamedirname.GetString(), BASE_GAMEDIR ) != 0 &&
+			  idStr::Icmp( fs_gamedirname.GetString(), "demo" ) != 0 ) ||
+			( fs_game_base.GetString()[0] &&
+			  idStr::Icmp( fs_game_base.GetString(), BASE_GAMEDIR ) != 0 &&
+			  idStr::Icmp( fs_game_base.GetString(), "demo" ) != 0 );
 
 		if ( !haveExplicitGameBase &&
 			 ( fs_game.GetString()[0] == '\0' || idStr::Icmp(fs_game.GetString(), BASE_GAMEDIR) == 0 ) ) {

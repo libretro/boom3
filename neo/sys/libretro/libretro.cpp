@@ -435,6 +435,8 @@ static void context_destroy(void)
     }
 }
 
+char g_game_dir_name[256];	// real name of the directory holding the paks
+
 bool Sys_GetPath(sysPath_t type, idStr &path) {
 	path.Clear();
 
@@ -446,6 +448,14 @@ bool Sys_GetPath(sysPath_t type, idStr &path) {
 		return true;
 	case PATH_EXE:
 		path = ".";
+		return true;
+	case PATH_GAMEDIR:
+		/* The directory that actually holds the paks. The engine mounts
+		 * BASE_GAMEDIR ("base") by default, which fails for installs whose
+		 * data directory is named differently (e.g. "base-retail"). */
+		if ( !g_game_dir_name[0] )
+			return false;
+		path = g_game_dir_name;
 		return true;
 	}
 
@@ -558,14 +568,16 @@ static void set_game_args(bool roe, const char *content_dir_name)
 	/* The engine always mounts BASE_GAMEDIR ("base") under fs_basepath, so a
 	 * install whose game data directory is not literally named "base" (e.g.
 	 * "base-retail") would find nothing and die with "Couldn't load
-	 * default.cfg". Pass the real directory name as fs_game_base, which the
-	 * engine mounts in addition to BASE_GAMEDIR, so those layouts work. */
+	 * default.cfg". Pass the real directory name as fs_gamedirname, which the
+	 * engine mounts in addition to BASE_GAMEDIR, so those layouts work. It is
+	 * deliberately not fs_game/fs_game_base: those are the mod paths and the
+	 * demo fallback overwrites them. */
 	if (content_dir_name && content_dir_name[0]
 	    && idStr::Icmp(content_dir_name, BASE_GAMEDIR) != 0
 	    && idStr::Icmp(content_dir_name, "d3xp") != 0) {
 		snprintf(game_base_arg, sizeof(game_base_arg), "%s", content_dir_name);
 		fake_argv[fake_argc++] = (char *)"+set";
-		fake_argv[fake_argc++] = (char *)"fs_game_base";
+		fake_argv[fake_argc++] = (char *)"fs_gamedirname";
 		fake_argv[fake_argc++] = game_base_arg;
 	}
 
