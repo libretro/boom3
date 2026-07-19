@@ -112,6 +112,12 @@ public:
 	void					RestoreObjects( void );
 	void					DeleteObjects( void );
 
+	// Entities whose render entity/light still needs regenerating after
+	// RestoreObjects(). Render state is not saved, so this must be run to
+	// completion before the restored game is presented; it reads no savegame
+	// data, so the caller may spread it across frames.
+	const idList<idEntity *> &	GetPendingVisuals( void ) const { return pendingVisuals; }
+
 	void					Error( const char *fmt, ... ) id_attribute((format(printf,2,3)));
 
 	void					Read( void *buffer, int len );
@@ -175,6 +181,7 @@ public:
 private:
 	int						buildNumber;
 	int						internalSavegameVersion; // DG added this
+	idList<idEntity *>		pendingVisuals;	// filled by RestoreObjects()
 
 	idFile *				file;
 

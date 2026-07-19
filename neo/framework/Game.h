@@ -122,6 +122,13 @@ public:
 	// Loads a map from a savegame file.
 	virtual bool				InitFromSaveGame( const char *mapName, idRenderWorld *renderWorld, idSoundWorld *soundWorld, idFile *saveGameFile ) = 0;
 
+	// Regenerate render entities/lights for up to maxEntities restored
+	// entities after InitFromSaveGame(); returns true while more remain.
+	// Render state is not saved, so this must be run to completion before the
+	// restored game is presented. It reads no savegame data, so it can be
+	// spread across frames.
+	virtual bool				RestoreVisualsStep( int maxEntities ) = 0;
+
 	// Saves the current game state, the session may have written some data to the file already.
 	virtual void				SaveGame( idFile *saveGameFile ) = 0;
 

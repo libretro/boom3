@@ -389,6 +389,7 @@ public:
 	virtual void			InitFromNewMap(const char* mapName, idRenderWorld* renderWorld, idSoundWorld* soundWorld, bool isServer, bool isClient, int randSeed );
 	virtual bool			InitFromNewMapPump( void );
 	virtual bool			InitFromSaveGame(const char* mapName, idRenderWorld* renderWorld, idSoundWorld* soundWorld, idFile* saveGameFile );
+	virtual bool			RestoreVisualsStep( int maxEntities );
 	virtual void			SaveGame( idFile *saveGameFile );
 	virtual void			MapShutdown( void );
 	virtual void			CacheDictionaryMedia( const idDict *dict );
@@ -554,6 +555,10 @@ private:
 		INITMAP_FINISH			// post-spawn tail (locations, events, precache)
 	};
 	initMapPhase_t			initMapPhase;
+	// Pending render entity/light regeneration after a savegame restore,
+	// captured from idRestoreGame and drained by RestoreVisualsStep().
+	idList<idEntity *>		restoreVisualsList;
+	int						restoreVisualsIndex;
 
 	idLocationEntity **		locationEntities;		// for location names, etc
 

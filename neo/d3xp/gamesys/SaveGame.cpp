@@ -840,12 +840,17 @@ void idRestoreGame::RestoreObjects( void ) {
 		CallRestore_r( objects[ i ]->GetType(), objects[ i ] );
 	}
 
-	// regenerate render entities and render lights because are not saved
+	// Regenerate render entities and render lights, because they are not
+	// saved. This reads nothing from the savegame stream, so instead of doing
+	// every entity in one blocking pass we hand the exact same set to the
+	// caller, which can spread it across frames (see
+	// idGameLocal::RestoreVisualsStep). Collecting the pointers here keeps the
+	// set identical to the original loop, and they stay valid because the
+	// objects outlive this idRestoreGame (they are the live game entities).
+	pendingVisuals.Clear();
 	for( i = 1; i < objects.Num(); i++ ) {
 		if ( objects[ i ]->IsType( idEntity::Type ) ) {
-			idEntity *ent = static_cast<idEntity *>( objects[ i ] );
-			ent->UpdateVisuals();
-			ent->Present();
+			pendingVisuals.Append( static_cast<idEntity *>( objects[ i ] ) );
 		}
 	}
 }

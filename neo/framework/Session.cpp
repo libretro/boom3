@@ -1778,6 +1778,15 @@ nothing pending, so this returns false immediately there.
 ===============
 */
 bool idSessionLocal::MapLoad_SpawnPump() {
+	// New-map loads spawn their entities in batches here. A savegame load has
+	// no map-entity spawn to pump (InitFromNewMapPump() is a no-op for it),
+	// but it does have the render entity/light regeneration left pending by
+	// InitFromSaveGame(); pump that in bounded batches instead so a restore
+	// doesn't submit every entity to the renderer in one blocking frame.
+	static const int RESTORE_VISUALS_PER_PUMP = 64;
+	if ( game->RestoreVisualsStep( RESTORE_VISUALS_PER_PUMP ) ) {
+		return true;	// more restored entities remain
+	}
 	return game->InitFromNewMapPump();
 }
 

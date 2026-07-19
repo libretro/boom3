@@ -243,6 +243,8 @@ void idGameLocal::Clear( void ) {
 	spawnMapNum = 1;
 	spawnMapInhibit = 0;
 	initMapPhase = INITMAP_NONE;
+	restoreVisualsIndex = 0;
+	restoreVisualsList.Clear();
 	camera = NULL;
 	aasList.Clear();
 	aasNames.Clear();
@@ -1664,6 +1666,14 @@ bool idGameLocal::InitFromSaveGame( const char *mapName, idRenderWorld *renderWo
 
 	savegame.RestoreObjects();
 
+	// RestoreObjects() no longer regenerates render entities/lights itself; it
+	// hands us the exact same entity set it used to iterate. Take a copy (the
+	// idRestoreGame is about to go out of scope) so the caller can spread that
+	// work across frames via RestoreVisualsStep(). Callers wanting the old
+	// blocking behaviour simply drain it in a loop.
+	restoreVisualsList = savegame.GetPendingVisuals();
+	restoreVisualsIndex = 0;
+
 	mpGame.Reset();
 
 	mpGame.Precache();
@@ -1673,6 +1683,41 @@ bool idGameLocal::InitFromSaveGame( const char *mapName, idRenderWorld *renderWo
 
 	gamestate = GAMESTATE_ACTIVE;
 
+	return true;
+}
+
+/*
+===================
+idGameLocal::RestoreVisualsStep
+
+Regenerate render entities and render lights for up to maxEntities restored
+entities, continuing where the previous call left off; returns true while more
+remain. This is the tail of a savegame restore (render state is not saved) and
+reads nothing from the savegame stream, so it is safe to suspend between
+batches. UpdateVisuals()/Present() are per-entity and independent, so the split
+does not change the result. Returns false when nothing is pending.
+===================
+*/
+bool idGameLocal::RestoreVisualsStep( int maxEntities ) {
+	int done = 0;
+
+	while ( restoreVisualsIndex < restoreVisualsList.Num() ) {
+		idEntity *ent = restoreVisualsList[ restoreVisualsIndex ];
+		restoreVisualsIndex++;
+		if ( ent ) {
+			ent->UpdateVisuals();
+			ent->Present();
+		}
+		if ( ++done >= maxEntities ) {
+			break;
+		}
+	}
+
+	if ( restoreVisualsIndex >= restoreVisualsList.Num() ) {
+		restoreVisualsList.Clear();
+		restoreVisualsIndex = 0;
+		return false;	// done
+	}
 	return true;
 }
 
