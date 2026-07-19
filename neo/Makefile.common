@@ -333,6 +333,8 @@ SRC_GAME_D3XP	:=\
 SRC_LIBRETRO := \
 	$(LIBRETRO_COMM_DIR)/file/retro_dirent.c \
 	$(LIBRETRO_COMM_DIR)/encodings/encoding_utf.c \
+	$(LIBRETRO_COMM_DIR)/encodings/encoding_deflate.c \
+	$(LIBRETRO_COMM_DIR)/encodings/encoding_crc32.c \
 	$(LIBRETRO_COMM_DIR)/string/stdstring.c \
 	$(LIBRETRO_COMM_DIR)/file/file_path.c \
 	$(LIBRETRO_COMM_DIR)/file/file_path_io.c \
@@ -434,7 +436,6 @@ SOURCES_CXX	:=\
 
 SOURCES_C	:=\
 	$(CORE_DIR)/framework/minizip/ioapi.c \
-	$(CORE_DIR)/framework/miniz/miniz.c \
 	$(CORE_DIR)/renderer/stblib_impls.c \
 	$(SRC_GLAD) \
 	$(SRC_LIBRETRO) \

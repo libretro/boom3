@@ -50,8 +50,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 //#include <zlib.h>
-#include "../miniz/miniz.h" // DG: use miniz instead of zlib
-#include "../miniz/minizconf.h"
+// DG used miniz instead of zlib here; the inflate side is now libretro-common's
+// (encodings/deflate.h) behind a small z_stream-compatible shim, so minizip's
+// calling convention is unchanged.
+#include "rinflate_compat.h"
+#include "minizconf.h"
 
 #if defined(USE_FILE32API)
 #define fopen64 fopen
