@@ -8,7 +8,8 @@
 
    Only the surface unzip.cpp needs is provided:
 
-     types    z_stream, Bytef, uInt, uLong, voidpf, z_off_t
+     types    z_stream, Bytef, uInt, uLong, voidpf (z_off_t comes
+              from minizconf.h)
      calls    inflateInit2(), inflate(), inflateEnd(), crc32()
      codes    Z_OK, Z_STREAM_END, Z_DATA_ERROR, Z_BUF_ERROR, Z_MEM_ERROR,
               Z_STREAM_ERROR, Z_NO_FLUSH, Z_SYNC_FLUSH, Z_FINISH,
@@ -52,7 +53,10 @@ typedef void          *voidp;
 typedef void          *voidpf;
 typedef const void    *voidpc;
 typedef uint32_t       z_crc_t;
-typedef long           z_off_t;
+/* z_off_t / z_off64_t are deliberately not defined here: minizconf.h owns
+   them and picks off_t where available. Defining a typedef here would slip
+   past its "#ifndef z_off_t" macro guard and could disagree with off_t on
+   targets where they differ (Win64, _FILE_OFFSET_BITS=64). */
 
 #define Z_OK             0
 #define Z_STREAM_END     1
