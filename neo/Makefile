@@ -142,7 +142,7 @@ else ifeq ($(platform), libnx)
     DEFINES := -DSWITCH=1 -D__SWITCH__=1 -DHAVE_LIBNX=1
     CFLAGS	:=	 $(DEFINES) -g -fPIE -I$(LIBNX)/include/ -I$(PORTLIBS)/include/ -ffunction-sections -fdata-sections -ftls-model=local-exec
     CFLAGS += $(INCDIRS) \
-		-I$(CORE_DIR)/jpeg-8c -fvisibility=hidden
+		-fvisibility=hidden
     CFLAGS	+= -march=armv8-a -mtune=cortex-a57 -mtp=soft -mcpu=cortex-a57+crc+fp+simd
     CXXFLAGS := $(ASFLAGS) $(CFLAGS) -std=gnu++11
     STATIC_LINKING = 1

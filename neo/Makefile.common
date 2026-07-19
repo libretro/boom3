@@ -15,7 +15,6 @@ endif
 
 INCFLAGS   :=  \
 	-I$(LIBRETRO_COMM_DIR)/include \
-	-I$(CORE_DIR)/jpeg-8c \
 	$(SDL_CFLAGS) \
 
 SRC_RENDERER	:=\
@@ -406,8 +405,7 @@ else
 		$(LIBRETRO_COMM_DIR)/glsym/glsym_gl.c
 endif
 
-SOURCES_DIR = \
-	$(CORE_DIR)/jpeg-8c
+SOURCES_DIR =
 	
 DIRS_C  := $(foreach dir,$(SOURCES_DIR), $(wildcard $(dir)/*.c))
 
