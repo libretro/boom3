@@ -26,13 +26,9 @@ If you have questions concerning this license or the applicable additional terms
 ===========================================================================
 */
 
-// DG: replace libjpeg with stb_image.h because it causes fewer headaches
-#define STBI_NO_HDR
-#define STBI_NO_LINEAR
-#define STBI_ONLY_JPEG // at least for now, only use it for JPEG
-#define STBI_NO_STDIO  // images are passed as buffers
-#include "stb_image.h"
-
+// DG replaced libjpeg with stb_image.h here; JPEG decoding now goes through
+// libretro-common's rjpeg via image_transfer (see LoadJPG()), the same backend
+// used for TGA, so stb_image.h is no longer needed for reading.
 #include "sys/platform.h"
 
 // libretro-common image_transfer: include right after platform.h and before
@@ -603,27 +599,71 @@ static void LoadJPG( const char *filename, unsigned char **pic, int *width, int 
 	f->Read( fbuffer, len );
 	fileSystem->CloseFile( f );
 
-	int w=0, h=0, comp=0;
-	byte* decodedImageData = stbi_load_from_memory( fbuffer, len, &w, &h, &comp, 4 );
-
-	Mem_Free( fbuffer );
-
-	if ( decodedImageData == NULL ) {
-		common->Warning( "stb_image was unable to load JPG %s : %s\n",
-					filename, stbi_failure_reason());
+	// decode through libretro-common's image_transfer (rjpeg), the same path
+	// LoadTGA() uses for TGA, so the core has one image backend
+	void *img = image_transfer_new( IMAGE_TYPE_JPEG );
+	if ( img == NULL ) {
+		Mem_Free( fbuffer );
+		common->Warning( "Couldn't create JPEG decoder for %s\n", filename );
 		return;
 	}
 
-	// *pic must be allocated with R_StaticAlloc(), but stb_image allocates with malloc()
-	// (and as there is no R_StaticRealloc(), #define STBI_MALLOC etc won't help)
-	// so the decoded data must be copied once
-	int size = w*h*4;
+	image_transfer_set_buffer_ptr( img, IMAGE_TYPE_JPEG, fbuffer, len );
+
+	if ( !image_transfer_start( img, IMAGE_TYPE_JPEG ) ) {
+		image_transfer_free( img, IMAGE_TYPE_JPEG );
+		Mem_Free( fbuffer );
+		common->Warning( "rjpeg was unable to start decoding JPG %s\n", filename );
+		return;
+	}
+
+	while ( image_transfer_iterate( img, IMAGE_TYPE_JPEG ) ) {
+	}
+
+	if ( !image_transfer_is_valid( img, IMAGE_TYPE_JPEG ) ) {
+		image_transfer_free( img, IMAGE_TYPE_JPEG );
+		Mem_Free( fbuffer );
+		common->Warning( "rjpeg was unable to load JPG %s\n", filename );
+		return;
+	}
+
+	uint32_t *decoded = NULL;
+	unsigned w = 0, h = 0;
+	int process = IMAGE_PROCESS_NEXT;
+	do {
+		process = image_transfer_process( img, IMAGE_TYPE_JPEG,
+				&decoded, len, &w, &h, 1 );
+	} while ( process == IMAGE_PROCESS_NEXT );
+
+	Mem_Free( fbuffer );
+
+	if ( process == IMAGE_PROCESS_ERROR || process == IMAGE_PROCESS_ERROR_END
+			|| decoded == NULL || w == 0 || h == 0 ) {
+		image_transfer_free( img, IMAGE_TYPE_JPEG );
+		common->Warning( "rjpeg was unable to load JPG %s\n", filename );
+		return;
+	}
+
+	// image_transfer hands back 32bpp pixels as 0xAARRGGBB in native order;
+	// the engine wants RGBA byte order, so swap R and B while copying into
+	// the R_StaticAlloc() buffer it requires.
+	int size = w * h * 4;
 	*pic = (byte *)R_StaticAlloc( size );
-	memcpy( *pic, decodedImageData, size );
-	*width = w;
+	{
+		const uint32_t *src = decoded;
+		byte *dst = *pic;
+		for ( unsigned i = 0; i < w * h; i++ ) {
+			uint32_t px = src[i];
+			dst[i*4 + 0] = (byte)( px         & 0xFF );	// R
+			dst[i*4 + 1] = (byte)( ( px >>  8 ) & 0xFF );	// G
+			dst[i*4 + 2] = (byte)( ( px >> 16 ) & 0xFF );	// B
+			dst[i*4 + 3] = (byte)( ( px >> 24 ) & 0xFF );	// A
+		}
+	}
+	*width  = w;
 	*height = h;
-	// now that decodedImageData has been copied into *pic, it's not needed anymore
-	stbi_image_free( decodedImageData );
+
+	image_transfer_free( img, IMAGE_TYPE_JPEG );
 }
 
 //===================================================================

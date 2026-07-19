@@ -301,9 +301,10 @@ CFLAGS   += -Wall $(fpic) $(CORE) $(SDL2) -DBASE=ON -DUSE_FILE32API -ffast-math 
 			-fno-unsafe-math-optimizations -fno-strict-aliasing -fomit-frame-pointer \
 			-Wno-sign-compare -Wno-switch -Wno-format-security -I$(TOPDIR) -I$(TOPDIR)/sys/libretro/config
 # libretro-common image_transfer: enable only the decoders Doom 3 uses
-# (TGA source images, DDS precompressed). png/jpeg/bmp/webp stay off.
-CFLAGS   += -DHAVE_RTGA -DHAVE_RDDS
-CXXFLAGS += -DHAVE_RTGA -DHAVE_RDDS
+# (TGA source images, DDS precompressed, JPEG for mod content that ships .jpg
+# instead of .tga - see LoadJPG()). png/bmp/webp stay off.
+CFLAGS   += -DHAVE_RTGA -DHAVE_RDDS -DHAVE_RJPEG
+CXXFLAGS += -DHAVE_RTGA -DHAVE_RDDS -DHAVE_RJPEG
 # libretro-common audio_transfer: enable WAV and OGG Vorbis decoders
 # (Doom 3 ships audio as WAV and OGG). FLAC/MP3 stay off.
 CFLAGS   += -DHAVE_RVORBIS -DHAVE_RWAV

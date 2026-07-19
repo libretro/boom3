@@ -355,6 +355,7 @@ SRC_LIBRETRO := \
 	$(LIBRETRO_COMM_DIR)/glsym/rglgen.c \
 	$(LIBRETRO_COMM_DIR)/formats/image_transfer.c \
 	$(LIBRETRO_COMM_DIR)/formats/tga/rtga.c \
+	$(LIBRETRO_COMM_DIR)/formats/jpeg/rjpeg.c \
 	$(LIBRETRO_COMM_DIR)/formats/dds/rdds.c \
 	$(LIBRETRO_COMM_DIR)/formats/audio_transfer.c \
 	$(LIBRETRO_COMM_DIR)/formats/wav/rwav.c \

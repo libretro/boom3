@@ -1,18 +1,10 @@
-// this source file includes the implementations of stb_image and stb_image_write
+// this source file includes the implementation of stb_image_write
 // having it in a separate source file allows optimizing it in debug builds (for faster load times)
-// without hurting the debugability of the source files stb_image(_write) is used in
-
-// include this first, otherwise build breaks because of  use_idStr_* #defines in Str.h
-#if defined(__APPLE__) && !defined(__clang__) && defined(__GNUC__) && __GNUC__ < 5
-  // Extra-Hack for ancient GCC 4.2-based Apple compilers that don't support __thread
-  #define STBI_NO_THREAD_LOCALS
-#endif
-#define STB_IMAGE_IMPLEMENTATION
-#define STBI_NO_HDR
-#define STBI_NO_LINEAR
-#define STBI_ONLY_JPEG // at least for now, only use it for JPEG
-#define STBI_NO_STDIO  // images are passed as buffers
-#include "stb_image.h"
+// without hurting the debugability of the source files stb_image_write is used in
+//
+// stb_image (the reader) is no longer built: JPEG decoding moved to
+// libretro-common's rjpeg via image_transfer, and libretro-common has no image
+// writer, so only stb_image_write remains here.
 
 
 #include <encodings/deflate.h>
