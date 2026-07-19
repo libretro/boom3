@@ -7,6 +7,11 @@
 // writer, so only stb_image_write remains here.
 
 
+// stdlib.h for malloc()/free() below: these used to come in transitively via
+// stb_image.h, so dropping that header left them undeclared. clang rejects
+// implicit declarations outright (ISO C99+), breaking the macOS build.
+#include <stdlib.h>
+
 #include <encodings/deflate.h>
 
 /* PNG's IDAT payload is a zlib-wrapped deflate stream, so window_bits is
