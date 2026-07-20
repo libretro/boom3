@@ -371,8 +371,12 @@ bool idSoundSystemLocal::ShutdownHW() {
 		return false;
 	}
 
-	shutdown = true;		// don't do anything at AsyncUpdate() time
-	Sys_Sleep( 100 );		// sleep long enough to make sure any async sound talking to hardware has returned
+	// There is no async sound thread in this core: MixFrameFloat/MixFrameS16
+	// are called from retro_run on the main thread, which is the same thread
+	// running this shutdown, and both already bail out on the shutdown flag.
+	// The original 100ms sleep was waiting for an AsyncUpdate() that is never
+	// implemented here, so it only delayed retro_unload_game.
+	shutdown = true;
 
 	common->Printf( "Shutting down sound hardware\n" );
 

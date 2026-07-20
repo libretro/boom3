@@ -223,7 +223,12 @@ void idAsyncServer::Kill( void ) {
 				}
 			}
 		}
-		Sys_Sleep( 10 );
+		// The original code slept 10ms between rounds to space these packets
+		// out on the wire. serverPort.SendPacket() is an unconnected UDP
+		// sendto() which returns as soon as the datagram is queued, and
+		// ClosePort() is a separate call that Kill() does not make, so the
+		// packets still go out; the sleep only stalled the caller. Blocking
+		// here would stall retro_unload_game and the frontend with it.
 	}
 
 	// reset any pureness

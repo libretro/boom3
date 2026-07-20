@@ -39,7 +39,6 @@ If you have questions concerning this license or the applicable additional terms
 typedef DWORD sys_threadID_t;
 #else
 #include <pthread.h>
-#include <unistd.h>
 typedef pthread_t sys_threadID_t;
 #endif
 
@@ -66,19 +65,6 @@ static sys_threadID_t GetCurrentThreadID() {
 	return GetCurrentThreadId();
 #else
 	return pthread_self();
-#endif
-}
-
-/*
-==============
-Sys_Sleep
-==============
-*/
-void Sys_Sleep(int msec) {
-#ifdef _WIN32
-	Sleep(msec);
-#else
-	usleep(msec * 1000);
 #endif
 }
 

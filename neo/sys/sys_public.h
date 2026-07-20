@@ -159,7 +159,6 @@ void			Sys_DebugVPrintf( const char *fmt, va_list arg );
 
 // allow game to yield CPU time
 // NOTE: due to SDL_TIMESLICE this is very bad portability karma, and should be completely removed
-void			Sys_Sleep( int msec );
 
 // The deterministic core clock (milliseconds of core time, derived from
 // the retro_run() frame count - NOT a wall clock; see sys/libretro/stubs.cpp)
