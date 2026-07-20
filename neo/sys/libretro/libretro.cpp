@@ -282,28 +282,67 @@ static retro_hw_context_type get_hw_context_type(void)
 #endif
 }
 
-static void update_variables(bool startup)
+/* Snap a host target rate to the nearest value the option advertises.
+ * Same thresholds as tyrquake's backport of the prboom option. */
+static unsigned nearest_supported_rate(unsigned host_rate)
+{
+	if (host_rate <= (32000u + 44100u) / 2) return 32000;
+	if (host_rate <= (44100u + 48000u) / 2) return 44100;
+	if (host_rate <= (48000u + 96000u) / 2) return 48000;
+	return 96000;
+}
+
+/* Resolve the "Sound Samplerate (Hint)" option to a concrete rate.
+ *
+ * "auto" - the default - asks the frontend what rate its audio device is
+ * actually running at via RETRO_ENVIRONMENT_GET_TARGET_SAMPLE_RATE and snaps
+ * to the nearest advertised value, so the core renders directly at the host
+ * rate and nothing in the chain has to resample. That is the point of the
+ * "(Hint)" in the name. Frontends that do not implement the call fall back to
+ * 44100, which is what Doom 3's assets are authored at, so they see exactly
+ * the previous behaviour. An explicit "32000".."96000" is taken verbatim.
+ *
+ * Resolved at startup only: retro_get_system_av_info() is queried once, so
+ * the rate cannot change afterwards. */
+static void update_audio_samplerate(void)
 {
 	struct retro_variable var;
-	
+	unsigned chosen = SAMPLE_RATE_DEFAULT;
+
 	var.key = "doom_sound_samplerate";
 	var.value = NULL;
 
-	if (startup)
+	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
 	{
-		if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+		if (!strcmp(var.value, "auto"))
 		{
-			unsigned hz = (unsigned)atoi(var.value);
-			if (hz == 44100 || hz == 48000 || hz == 96000)
-				sample_rate = hz;
-			else
-				sample_rate = SAMPLE_RATE_DEFAULT;
+			unsigned host_rate = 0;
+			if (environ_cb(RETRO_ENVIRONMENT_GET_TARGET_SAMPLE_RATE, &host_rate)
+					&& host_rate > 0)
+				chosen = nearest_supported_rate(host_rate);
+			/* else: keep the 44100 fallback above */
 		}
 		else
-			sample_rate = SAMPLE_RATE_DEFAULT;
-
-		snd_SetSampleRate((int)sample_rate);
+		{
+			unsigned hz = (unsigned)atoi(var.value);
+			if (hz == 32000 || hz == 44100 || hz == 48000 || hz == 96000)
+				chosen = hz;
+		}
 	}
+
+	sample_rate = chosen;
+	snd_SetSampleRate((int)sample_rate);
+
+	if (log_cb)
+		log_cb(RETRO_LOG_INFO, "[boom3] audio sample rate: %u Hz\n", sample_rate);
+}
+
+static void update_variables(bool startup)
+{
+	struct retro_variable var;
+
+	if (startup)
+		update_audio_samplerate();
 
 	var.key = "doom_framerate";
 	var.value = NULL;

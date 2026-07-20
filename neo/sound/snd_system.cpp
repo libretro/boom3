@@ -89,7 +89,7 @@ void snd_SetSampleRate( int hz ) {
 	   modern devices actually run at, so picking one of those lets the
 	   frontend skip a resampling stage.
 	*/
-	if ( hz != 44100 && hz != 48000 && hz != 96000 ) {
+	if ( hz != 32000 && hz != 44100 && hz != 48000 && hz != 96000 ) {
 		hz = PRIMARYFREQ;
 	}
 	snd_sampleRate = hz;

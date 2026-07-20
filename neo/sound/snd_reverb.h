@@ -193,12 +193,15 @@ ID_INLINE void idSoundReverb::Init( void ) {
 	   each scaled length, so the delay times match to within 0.2 ms across
 	   all three rates.
 	*/
+	static const int lens32[REVERB_LINES] = { 1187, 1399, 1637, 1973, 2309, 2591, 2903, 3119 };
 	static const int lens44[REVERB_LINES] = { 1637, 1913, 2251, 2707, 3169, 3571, 4001, 4297 };
 	static const int lens48[REVERB_LINES] = { 1783, 2083, 2459, 2953, 3449, 3889, 4357, 4679 };
 	static const int lens96[REVERB_LINES] = { 3571, 4177, 4903, 5897, 6899, 7789, 8713, 9371 };
+	static const int apl32[2] = { 241, 331 };
 	static const int apl44[2] = { 331, 449 };
 	static const int apl48[2] = { 359, 487 };
 	static const int apl96[2] = { 719, 977 };
+	static const int eofs32[REVERB_EARLY_TAPS] = { 257, 659, 1031, 1361, 1693, 2237 };
 	static const int eofs44[REVERB_EARLY_TAPS] = { 353, 907, 1409, 1861, 2311, 3079 };
 	static const int eofs48[REVERB_EARLY_TAPS] = { 383, 991, 1531, 2027, 2521, 3347 };
 	static const int eofs96[REVERB_EARLY_TAPS] = { 769, 1979, 3067, 4051, 5039, 6703 };
@@ -208,6 +211,8 @@ ID_INLINE void idSoundReverb::Init( void ) {
 		lens = lens96; apl = apl96; eofs = eofs96;
 	} else if ( snd_SampleRate() == 48000 ) {
 		lens = lens48; apl = apl48; eofs = eofs48;
+	} else if ( snd_SampleRate() == 32000 ) {
+		lens = lens32; apl = apl32; eofs = eofs32;
 	}
 
 	for ( int i = 0; i < REVERB_LINES; i++ ) {
