@@ -14,6 +14,7 @@ static SDL_Window *win; static SDL_GLContext glc;
 static FILE *fcap;
 static bool want_float=false, negotiated_float=false;
 const char *g_framerate = "60";
+const char *g_samplerate = "44100";	// served to doom_sound_samplerate; argv[9]
 // pixel probe: mean luminance of the viewmodel region (bottom-center),
 // sampled after each retro_run inside [probe_from, probe_to)
 static int probe_from=0, probe_to=0;
@@ -71,6 +72,7 @@ static bool env_cb(unsigned cmd, void *data){
 		struct retro_variable *v = (struct retro_variable*)data;
 		if (!strcmp(v->key,"doom_resolution")) { v->value = "640x480"; return true; }
 		if (!strcmp(v->key,"doom_framerate"))  { extern const char *g_framerate; v->value = g_framerate; return true; }
+		if (!strcmp(v->key,"doom_sound_samplerate")) { extern const char *g_samplerate; v->value = g_samplerate; return true; }
 		v->value = NULL; return false; }
 	case RETRO_ENVIRONMENT_SET_HW_RENDER & 0xffff: {
 		struct retro_hw_render_callback *cb = (struct retro_hw_render_callback*)data;
@@ -128,6 +130,12 @@ int main(int argc, char **argv){
 	set_ab(batch_s16); set_ip(input_poll); set_is(input_state);
 	r_init();
 
+	/* options must be in place before retro_load_game: the core reads
+	   doom_framerate and doom_sound_samplerate from update_variables(true)
+	   inside load, so parsing them after it serves stale defaults */
+	if (argc > 6) g_framerate = argv[6];
+	if (argc > 9) g_samplerate = argv[9];
+
 	struct retro_game_info gi; memset(&gi,0,sizeof gi);
 	gi.path = argv[1];
 	if (!r_load(&gi)){ fprintf(stderr,"load failed\n"); return 2; }
@@ -141,7 +149,6 @@ int main(int argc, char **argv){
 	auto r_unser = (bool(*)(const void*,size_t))dlsym(so,"retro_unserialize");
 	void *state_buf = NULL; size_t state_size = 0;
 
-	if (argc > 6) g_framerate = argv[6];
 	probe_from = argc > 7 ? atoi(argv[7]) : 0;
 	probe_to   = argc > 8 ? atoi(argv[8]) : 0;
 	if (probe_to - probe_from > 4096) probe_to = probe_from + 4096;
