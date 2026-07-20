@@ -4085,6 +4085,21 @@ static void RefDeriveTriPlanes( idPlane *planes, const idDrawVert *verts, const 
 	}
 }
 
+static void RefNormalizeTangents( idDrawVert *verts, const int numVerts ) {
+	for ( int i = 0; i < numVerts; i++ ) {
+		idVec3 &v = verts[i].normal;
+		float f;
+		f = idMath::RSqrt( v.x * v.x + v.y * v.y + v.z * v.z );
+		v.x *= f; v.y *= f; v.z *= f;
+		for ( int j = 0; j < 2; j++ ) {
+			idVec3 &t = verts[i].tangents[j];
+			t -= ( t * v ) * v;
+			f = idMath::RSqrt( t.x * t.x + t.y * t.y + t.z * t.z );
+			t.x *= f; t.y *= f; t.z *= f;
+		}
+	}
+}
+
 static int RefCreateVertexProgramShadowCache( idVec4 *vertexCache, const idDrawVert *verts, const int numVerts ) {
 	for ( int i = 0; i < numVerts; i++ ) {
 		const float *v = verts[i].xyz.ToFloatPtr();
@@ -4110,6 +4125,8 @@ void TestVectorizedKernels( void ) {
 	ALIGN16( idVec2 tcB[VK_VERTS] );
 	ALIGN16( idVec4 cacheA[VK_VERTS*2] );
 	ALIGN16( idVec4 cacheB[VK_VERTS*2] );
+	ALIGN16( idDrawVert ntA[VK_VERTS] );
+	ALIGN16( idDrawVert ntB[VK_VERTS] );
 	ALIGN16( int indexes[VK_TRIS*3] );
 	int failures = 0;
 	int mode, n, i, j;
@@ -4142,6 +4159,22 @@ void TestVectorizedKernels( void ) {
 			/* poison: must never surface in a w lane or a plane distance */
 			verts[i].st[0] = 1234.5f;
 			verts[i].st[1] = -6789.0f;
+			/* NormalizeTangents reads normal and both tangents */
+			if ( mode == 2 ) {
+				verts[i].normal.Set( 0.0f, -0.0f, srnd.CRandomFloat() * 8.0f );
+				verts[i].tangents[0].Set( -0.0f, srnd.CRandomFloat() * 8.0f, 0.0f );
+				verts[i].tangents[1].Set( srnd.CRandomFloat() * 8.0f, 0.0f, -0.0f );
+			} else {
+				verts[i].normal.Set( srnd.CRandomFloat() * 100.0f,
+				                     srnd.CRandomFloat() * 100.0f,
+				                     srnd.CRandomFloat() * 100.0f );
+				verts[i].tangents[0].Set( srnd.CRandomFloat() * 100.0f,
+				                          srnd.CRandomFloat() * 100.0f,
+				                          srnd.CRandomFloat() * 100.0f );
+				verts[i].tangents[1].Set( srnd.CRandomFloat() * 100.0f,
+				                          srnd.CRandomFloat() * 100.0f,
+				                          srnd.CRandomFloat() * 100.0f );
+			}
 		}
 
 		for ( i = 0; i < VK_TRIS*3; i++ ) {
@@ -4168,6 +4201,12 @@ void TestVectorizedKernels( void ) {
 			SIMDProcessor->OverlayPointCull( bitsB, tcB, planes, verts, n );
 			if ( memcmp( bitsA, bitsB, sizeof( bitsA ) ) != 0 ||
 			     memcmp( tcA, tcB, sizeof( tcA ) ) != 0 ) failures++;
+
+			/* rewrites its input, so both sides start from a pristine copy */
+			memcpy( ntA, verts, sizeof( ntA ) ); memcpy( ntB, verts, sizeof( ntB ) );
+			RefNormalizeTangents( ntA, n );
+			SIMDProcessor->NormalizeTangents( ntB, n );
+			if ( memcmp( ntA, ntB, sizeof( ntA ) ) != 0 ) failures++;
 
 			memset( cacheA, 0xAA, sizeof( cacheA ) ); memset( cacheB, 0xAA, sizeof( cacheB ) );
 			j  = RefCreateVertexProgramShadowCache( cacheA, verts, n );

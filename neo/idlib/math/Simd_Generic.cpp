@@ -3074,8 +3074,78 @@ idSIMD_Generic::NormalizeTangents
 ============
 */
 void VPCALL idSIMD_Generic::NormalizeTangents( idDrawVert *verts, const int numVerts ) {
+	int i = 0;
 
-	for ( int i = 0; i < numVerts; i++ ) {
+#if defined(SIMD_POINTCULL_SSE2) || defined(SIMD_POINTCULL_NEON)
+	for ( ; i + 3 < numVerts; i += 4 ) {
+		float nx[4], ny[4], nz[4];
+		float tx[2][4], ty[2][4], tz[2][4];
+		simdTriPlane_t NX, NY, NZ, f;
+		int j, k;
+
+		for ( j = 0; j < 4; j++ ) {
+			nx[j] = verts[i+j].normal.x;
+			ny[j] = verts[i+j].normal.y;
+			nz[j] = verts[i+j].normal.z;
+			for ( k = 0; k < 2; k++ ) {
+				tx[k][j] = verts[i+j].tangents[k].x;
+				ty[k][j] = verts[i+j].tangents[k].y;
+				tz[k][j] = verts[i+j].tangents[k].z;
+			}
+		}
+
+		NX = SIMD_TRIPLANE_LOAD( nx );
+		NY = SIMD_TRIPLANE_LOAD( ny );
+		NZ = SIMD_TRIPLANE_LOAD( nz );
+
+		f = SIMD_TRIPLANE_RSQRT( SIMD_TRIPLANE_ADD( SIMD_TRIPLANE_ADD(
+				SIMD_TRIPLANE_MUL( NX, NX ), SIMD_TRIPLANE_MUL( NY, NY ) ),
+				SIMD_TRIPLANE_MUL( NZ, NZ ) ) );
+		NX = SIMD_TRIPLANE_MUL( NX, f );
+		NY = SIMD_TRIPLANE_MUL( NY, f );
+		NZ = SIMD_TRIPLANE_MUL( NZ, f );
+
+		SIMD_TRIPLANE_STORE( nx, NX );
+		SIMD_TRIPLANE_STORE( ny, NY );
+		SIMD_TRIPLANE_STORE( nz, NZ );
+
+		for ( k = 0; k < 2; k++ ) {
+			simdTriPlane_t TX, TY, TZ, d, g;
+
+			TX = SIMD_TRIPLANE_LOAD( tx[k] );
+			TY = SIMD_TRIPLANE_LOAD( ty[k] );
+			TZ = SIMD_TRIPLANE_LOAD( tz[k] );
+
+			/* t -= ( t * v ) * v, keeping the scalar operand order */
+			d = SIMD_TRIPLANE_ADD( SIMD_TRIPLANE_ADD(
+					SIMD_TRIPLANE_MUL( TX, NX ), SIMD_TRIPLANE_MUL( TY, NY ) ),
+					SIMD_TRIPLANE_MUL( TZ, NZ ) );
+			TX = SIMD_TRIPLANE_SUB( TX, SIMD_TRIPLANE_MUL( d, NX ) );
+			TY = SIMD_TRIPLANE_SUB( TY, SIMD_TRIPLANE_MUL( d, NY ) );
+			TZ = SIMD_TRIPLANE_SUB( TZ, SIMD_TRIPLANE_MUL( d, NZ ) );
+
+			g = SIMD_TRIPLANE_RSQRT( SIMD_TRIPLANE_ADD( SIMD_TRIPLANE_ADD(
+					SIMD_TRIPLANE_MUL( TX, TX ), SIMD_TRIPLANE_MUL( TY, TY ) ),
+					SIMD_TRIPLANE_MUL( TZ, TZ ) ) );
+			TX = SIMD_TRIPLANE_MUL( TX, g );
+			TY = SIMD_TRIPLANE_MUL( TY, g );
+			TZ = SIMD_TRIPLANE_MUL( TZ, g );
+
+			SIMD_TRIPLANE_STORE( tx[k], TX );
+			SIMD_TRIPLANE_STORE( ty[k], TY );
+			SIMD_TRIPLANE_STORE( tz[k], TZ );
+		}
+
+		for ( j = 0; j < 4; j++ ) {
+			verts[i+j].normal.Set( nx[j], ny[j], nz[j] );
+			for ( k = 0; k < 2; k++ ) {
+				verts[i+j].tangents[k].Set( tx[k][j], ty[k][j], tz[k][j] );
+			}
+		}
+	}
+#endif
+
+	for ( ; i < numVerts; i++ ) {
 		idVec3 &v = verts[i].normal;
 		float f;
 
