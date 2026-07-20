@@ -2245,7 +2245,16 @@ bool idSessionLocal::SaveGame( const char *saveName, bool autosave, const char* 
 	// Write screenshot (never for memory targets: no files, and HW-render
 	// GL may not be available outside the render phase)
 	if ( !autosave && !overrideFile ) {
-		renderSystem->CropRenderSize( 320, 240, false );
+		/*
+		   forceDimensions: CropRenderSize normally takes virtual 640x480
+		   coordinates and scales them to physical pixels, so "320x240" means
+		   "half the screen" - 1920x1080 at 4K, an 8MB preview for a thumbnail
+		   the GUI draws at a few hundred pixels wide. Every other caller
+		   either passes makePowerOfTwo, which bounds the result, or actually
+		   wants the resolution scaling. This one does not: it is a fixed-size
+		   UI image, so ask for exactly 320x240 device pixels.
+		*/
+		renderSystem->CropRenderSize( 320, 240, false, true );
 		game->Draw( 0 );
 		renderSystem->CaptureRenderToFile( previewFile, true );
 		renderSystem->UnCrop();
