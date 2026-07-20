@@ -29,7 +29,6 @@ along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 // otherwise corrupt the standard <cstring> that these headers pull in
 // (breaks the libc++ `using ::strcmp;` on macOS/Xcode). Matches File.cpp.
 #include "retro_spsc.h"
-#include "retro_timers.h"
 
 #include "framework/Common.h"
 #include "framework/Session.h"
@@ -110,15 +109,19 @@ static int R_AsyncDecodeWorker( void *parm ) {
 		if ( retro_spsc_read_avail( &s->reqQ ) >= sizeof( req ) ) {
 			retro_spsc_read( &s->reqQ, &req, sizeof( req ) );
 
+			// main may be blocked waiting for room in the request queue
+			Sys_TriggerEvent( TRIGGER_EVENT_ASYNC_MAIN );
+
 			asyncLoadRes_t res;
 			res.image = req.image;
 			res.decoded = req.image->DecodeImageDataWorker( res.data );
 
 			// block until there is room in the result queue (main drains it)
 			while ( retro_spsc_write_avail( &s->resQ ) < sizeof( res ) ) {
-				retro_sleep( 0 );
+				Sys_WaitForEvent( TRIGGER_EVENT_ASYNC_WORKER );
 			}
 			retro_spsc_write( &s->resQ, &res, sizeof( res ) );
+			Sys_TriggerEvent( TRIGGER_EVENT_ASYNC_MAIN );
 			continue;
 		}
 
@@ -126,7 +129,9 @@ static int R_AsyncDecodeWorker( void *parm ) {
 			// stop requested and no more requests pending
 			break;
 		}
-		retro_sleep( 0 );
+
+		// nothing to do: sleep until main submits or sets stop
+		Sys_WaitForEvent( TRIGGER_EVENT_ASYNC_WORKER );
 	}
 	return 0;
 }
@@ -208,6 +213,7 @@ void R_AsyncLoadImages( idImage **list, int count ) {
 			req.image = img;
 			retro_spsc_write( &async.reqQ, &req, sizeof( req ) );
 			submitted++;
+			Sys_TriggerEvent( TRIGGER_EVENT_ASYNC_WORKER );
 		}
 
 		// drain any finished decodes and upload them (GL, main thread)
@@ -223,18 +229,27 @@ void R_AsyncLoadImages( idImage **list, int count ) {
 			}
 			completed++;
 
+			// freed a result slot: the worker may be blocked on a full resQ
+			Sys_TriggerEvent( TRIGGER_EVENT_ASYNC_WORKER );
+
 			if ( ( ++pacifier & 15 ) == 0 ) {
 				session->PacifierUpdate();
 			}
 		}
 
 		if ( completed < count ) {
-			retro_sleep( 0 );
+			// nothing ready: sleep until the worker posts a result or takes a
+			// request. Both paths trigger ASYNC_MAIN, and the trigger is
+			// sticky, so a signal raised between the drain above and this
+			// wait is not lost.
+			Sys_WaitForEvent( TRIGGER_EVENT_ASYNC_MAIN );
 		}
 	}
 
-	// tell the worker to exit and reap it
+	// tell the worker to exit and reap it; it may be blocked in
+	// Sys_WaitForEvent, so wake it after setting the flag
 	retro_atomic_store_release_int( &async.stop, 1 );
+	Sys_TriggerEvent( TRIGGER_EVENT_ASYNC_WORKER );
 	Sys_DestroyThread( async.thread );
 	async.running = false;
 

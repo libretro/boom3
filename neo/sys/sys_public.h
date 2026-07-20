@@ -411,7 +411,16 @@ enum {
 	TRIGGER_EVENT_ZERO = 0,
 	TRIGGER_EVENT_ONE,
 	TRIGGER_EVENT_TWO,
-	TRIGGER_EVENT_THREE
+	TRIGGER_EVENT_THREE,
+
+	// async image decode hand-off (renderer/Image_async.cpp). Aliases of the
+	// generic slots above, which nothing else uses; named so the two
+	// directions are not confused. ASYNC_MAIN wakes the main thread when the
+	// worker has produced a result or consumed a request; ASYNC_WORKER wakes
+	// the worker when main has submitted a request, freed a result slot, or
+	// asked it to stop.
+	TRIGGER_EVENT_ASYNC_MAIN   = TRIGGER_EVENT_TWO,
+	TRIGGER_EVENT_ASYNC_WORKER = TRIGGER_EVENT_THREE
 };
 
 void				Sys_WaitForEvent( int index = TRIGGER_EVENT_ZERO );
