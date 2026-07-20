@@ -65,8 +65,6 @@ extern idCVar		com_machineSpec;
 extern idCVar		com_purgeAll;
 extern idCVar		com_developer;
 extern idCVar		com_allowConsole;
-extern idCVar		com_speeds;
-extern idCVar		com_showFPS;
 extern idCVar		com_showMemoryUsage;
 extern idCVar		com_showAsyncStats;
 extern idCVar		com_showSoundDecoders;
@@ -76,8 +74,6 @@ extern idCVar		com_enableDebuggerServer;
 extern idCVar		com_dbgClientAdr;
 extern idCVar		com_dbgServerAdr;
 
-extern int			time_gameFrame;			// game logic time
-extern int			time_gameDraw;			// game present time
 extern int			time_frontend;			// renderer frontend time
 extern int			time_backend;			// renderer backend time
 

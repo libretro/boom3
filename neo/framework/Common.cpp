@@ -90,8 +90,6 @@ idCVar com_asyncSound( "com_asyncSound", "1", CVAR_INTEGER|CVAR_SYSTEM, ASYNCSOU
 idCVar com_forceGenericSIMD( "com_forceGenericSIMD", "0", CVAR_BOOL | CVAR_SYSTEM | CVAR_NOCHEAT, "force generic platform independent SIMD" );
 idCVar com_developer( "developer", "0", CVAR_BOOL|CVAR_SYSTEM|CVAR_NOCHEAT, "developer mode" );
 idCVar com_allowConsole( "com_allowConsole", "0", CVAR_BOOL | CVAR_SYSTEM | CVAR_NOCHEAT, "allow toggling console with the tilde key" );
-idCVar com_speeds( "com_speeds", "0", CVAR_BOOL|CVAR_SYSTEM|CVAR_NOCHEAT, "show engine timings" );
-idCVar com_showFPS( "com_showFPS", "0", CVAR_INTEGER|CVAR_SYSTEM|CVAR_ARCHIVE|CVAR_NOCHEAT, "show frames rendered per second" );
 idCVar com_showMemoryUsage( "com_showMemoryUsage", "0", CVAR_BOOL|CVAR_SYSTEM|CVAR_NOCHEAT, "show total and per frame memory usage" );
 idCVar com_showAsyncStats( "com_showAsyncStats", "0", CVAR_BOOL|CVAR_SYSTEM|CVAR_NOCHEAT, "show async network stats" );
 idCVar com_showSoundDecoders( "com_showSoundDecoders", "0", CVAR_BOOL|CVAR_SYSTEM|CVAR_NOCHEAT, "show sound decoders" );
@@ -113,12 +111,6 @@ idCVar com_product_lang_ext( "com_product_lang_ext", "1", CVAR_INTEGER | CVAR_SY
 const double  com_preciseFrameLengthMS = 1000.0 / 60.0;
 
 double com_preciseFrameTimeMS = 0; // like com_frameTime but as double: time (since start) for the current frame in milliseconds
-
-// com_speeds times
-int				time_gameFrame;
-int				time_gameDraw;
-int				time_frontend;			// renderSystem frontend time
-int				time_backend;			// renderSystem backend time
 
 int				com_frameTime;			// time (since start) for the current frame in milliseconds
 int				com_frameNumber;		// variable frame number
@@ -495,11 +487,8 @@ void idCommonLocal::VPrintf( const char *fmt, va_list args ) {
 	if ( com_outputMsg ) {
 		if ( com_msgID == -1 ) {
 			com_msgID = ::RegisterWindowMessage( DMAP_MSGID );
-			if ( !FindEditor() ) {
+			if ( !FindEditor() )
 				com_outputMsg = false;
-			} else {
-				Sys_ShowWindow( false );
-			}
 		}
 		if ( com_hwndMsg ) {
 			ATOM atom = ::GlobalAddAtom( msg );
@@ -2320,17 +2309,6 @@ void idCommonLocal::Frame( void ) {
 			session->UpdateScreen( false );
 		}
 
-		// report timing information
-		if ( com_speeds.GetBool() ) {
-			static int	lastTime;
-			int		nowTime = Core_Milliseconds();
-			int		com_frameMsec = nowTime - lastTime;
-			lastTime = nowTime;
-			Printf( "frame:%i all:%3i gfr:%3i rf:%3i bk:%3i\n", com_frameNumber, com_frameMsec, time_gameFrame, time_frontend, time_backend );
-			time_gameFrame = 0;
-			time_gameDraw = 0;
-		}
-
 		com_frameNumber++;
 
 		// set idLib frame number for frame based memory dumps
@@ -2339,7 +2317,8 @@ void idCommonLocal::Frame( void ) {
 D3P_FRAMEMARK // tell profiler (tracy) that this is the end of a frame
 	}
 
-	catch( idException & ) {
+	catch( idException & )
+	{
 		return;			// an ERP_DROP was thrown
 	}
 }

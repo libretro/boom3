@@ -111,13 +111,6 @@ void Sys_ShutdownInput() {
 	mouse_polls.Clear();
 }
 
-void Sys_ShowWindow( bool show ) {
-}
-
-bool Sys_IsWindowVisible( void ) {
-	return true;
-}
-
 void Conbuf_AppendText( const char *pMsg )
 {
 	// This was a leftover of the Win32 console window: it reformatted the

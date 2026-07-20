@@ -2802,10 +2802,7 @@ void idSessionLocal::Draw() {
 		// normal drawing for both single and multi player
 		if ( !com_skipGameDraw.GetBool() && GetLocalClientNum() >= 0 ) {
 			// draw the game view
-			int	start = Core_Milliseconds();
 			gameDraw = game->Draw( GetLocalClientNum() );
-			int end = Core_Milliseconds();
-			time_gameDraw += ( end - start );	// note time used for com_speeds
 		}
 		if ( !gameDraw ) {
 			renderSystem->SetColor( colorBlack );
@@ -2833,8 +2830,8 @@ void idSessionLocal::Draw() {
 			renderSystem->DrawStretchPic( 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, 0, 0, 1, 1, declManager->FindMaterial( "_white" ) );
 		}
 #else
-		// draw the console full screen - this should only ever happen in developer builds
-		console->Draw( true );
+		// draw the console full screen
+		console->Draw(true);
 #endif
 		fullConsole = true;
 	}
@@ -2875,18 +2872,11 @@ void idSessionLocal::UpdateScreen( bool outOfSequence ) {
 
 	D3P_ScopedCPUSample(Session_UpdateScreen);
 #ifdef _WIN32
-
-	if ( com_editors ) {
-		if ( !Sys_IsWindowVisible() ) {
-			return;
-		}
-	}
-#endif
-
-	if ( insideUpdateScreen ) {
+	if ( com_editors )
 		return;
-//		common->FatalError( "idSessionLocal::UpdateScreen: recursively called" );
-	}
+#endif
+	if ( insideUpdateScreen )
+		return;
 
 	insideUpdateScreen = true;
 
@@ -2897,13 +2887,7 @@ void idSessionLocal::UpdateScreen( bool outOfSequence ) {
 	// draw everything
 	Draw();
 
-	D3P_BeginCPUSample(Render_EndFrame);
-	if ( com_speeds.GetBool() ) {
-		renderSystem->EndFrame( &time_frontend, &time_backend );
-	} else {
-		renderSystem->EndFrame( NULL, NULL );
-	}
-	D3P_EndCPUSample(Render_EndFrame);
+	renderSystem->EndFrame( NULL, NULL );
 
 	insideUpdateScreen = false;
 }
@@ -3142,11 +3126,7 @@ void idSessionLocal::RunGameTic() {
 	}
 
 	// run the game logic every player move
-	int	start = Core_Milliseconds();
 	gameReturn_t	ret = game->RunFrame( &cmd );
-
-	int end = Core_Milliseconds();
-	time_gameFrame += end - start;	// note time used for com_speeds
 
 	// check for constency failure from a recorded command
 	if ( cmdDemoFile ) {

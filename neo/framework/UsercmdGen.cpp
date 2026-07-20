@@ -337,7 +337,6 @@ private:
 	bool			Inhibited( void );
 	void			AdjustAngles( void );
 	void			KeyMove( void );
-	void			CircleToSquare( float & axis_x, float & axis_y ) const;
 	void			MouseMove( void );
 	void			CmdButtons( void );
 
@@ -695,84 +694,6 @@ void idUsercmdGenLocal::MouseMove( void ) {
 	} else {
 		cmd.forwardmove = idMath::ClampChar( (int)(cmd.forwardmove - strafeMy) );
 	}
-}
-
-/*
-========================
-idUsercmdGenLocal::CircleToSquare
-========================
-*/
-void idUsercmdGenLocal::CircleToSquare( float & axis_x, float & axis_y ) const {
-	// bring everything in the first quadrant
-	bool flip_x = false;
-	if ( axis_x < 0.0f ) {
-		flip_x = true;
-		axis_x *= -1.0f;
-	}
-	bool flip_y = false;
-	if ( axis_y < 0.0f ) {
-		flip_y = true;
-		axis_y *= -1.0f;
-	}
-
-	// swap the two axes so we project against the vertical line X = 1
-	bool swap = false;
-	if ( axis_y > axis_x ) {
-		float tmp = axis_x;
-		axis_x = axis_y;
-		axis_y = tmp;
-		swap = true;
-	}
-
-	if ( axis_x < 0.001f ) {
-		// on one of the axes where no correction is needed
-		return;
-	}
-
-	// length (max 1.0f at the unit circle)
-	float len = idMath::Sqrt( axis_x * axis_x + axis_y * axis_y );
-	if ( len > 1.0f ) {
-		len = 1.0f;
-	}
-	// thales
-	float axis_y_us = axis_y / axis_x;
-
-	// use a power curve to shift the correction to happen closer to the unit circle
-	float correctionRatio = Square( len );
-	axis_x += correctionRatio * ( len - axis_x );
-	axis_y += correctionRatio * ( axis_y_us - axis_y );
-
-	// go back through the symmetries
-	if ( swap ) {
-		float tmp = axis_x;
-		axis_x = axis_y;
-		axis_y = tmp;
-	}
-	if ( flip_x ) {
-		axis_x *= -1.0f;
-	}
-	if ( flip_y ) {
-		axis_y *= -1.0f;
-	}
-}
-
-static float joyAxisToMouseDelta(float axis, float deadzone)
-{
-	float ret = 0.0f;
-	float val = fabsf(axis); // calculations below require a positive value
-	if(val > deadzone) {
-		// from deadzone .. 1 to 0 .. 1-deadzone
-		val -= deadzone;
-		// and then to 0..1
-		val = val * (1.0f / (1.0f - deadzone));
-
-		// make it exponential curve - exp(val*3) should return sth between 1 and 20;
-		// then turning that into 0.5 .. 10
-		ret = expf( val * 3.0f ) * 0.5f;
-		if(axis < 0.0f) // restore sign
-			ret = -ret;
-	}
-	return ret;
 }
 
 extern bool D3_IN_interactiveIngameGuiActive; // from sys/events.cpp

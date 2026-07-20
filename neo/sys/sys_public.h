@@ -199,8 +199,6 @@ void			Sys_EndMouseInputEvents( void );
 class idUserInterface;
 void			Sys_SetInteractiveIngameGuiActive( bool active, idUserInterface* ui );
 
-void			Sys_ShowWindow( bool show );
-bool			Sys_IsWindowVisible( void );
 void			Sys_ShowConsole( int visLevel, bool quitOnClose );
 
 

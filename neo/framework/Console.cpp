@@ -227,15 +227,6 @@ float SCR_DrawFPS( float y ) {
 		int w = strlen( s ) * BIGCHAR_WIDTH;
 
 		renderSystem->DrawBigStringExt( 635 - w, idMath::FtoiFast( y ) + 2, s, colorWhite, true, localConsole.charSetShader);
-
-		if ( com_showFPS.GetInteger() > 1 ) {
-			y +=  BIGCHAR_HEIGHT + 4;
-
-			s = va( "avg %.2fms min %.2f max %.2f", total * (1.0f / FPS_FRAMES), minTime, maxTime );
-			w = strlen ( s ) * SMALLCHAR_WIDTH;
-			renderSystem->DrawSmallStringExt( 635 - w, idMath::FtoiFast( y ) + 2, s, colorWhite, true, localConsole.charSetShader );
-		}
-
 	}
 
 	return y + BIGCHAR_HEIGHT + 4;
@@ -1227,10 +1218,6 @@ void	idConsoleLocal::Draw( bool forceFullScreen ) {
 		if ( !con_noPrint.GetBool() ) {
 			DrawNotify();
 		}
-	}
-
-	if ( com_showFPS.GetBool() ) {
-		y = SCR_DrawFPS( 0 );
 	}
 
 	if ( com_showMemoryUsage.GetBool() ) {
