@@ -1635,13 +1635,18 @@ void idSoundWorldLocal::AddChannelContribution( idSoundEmitterLocal *sound, idSo
 					Snd_FloatToS16( srcS16, alignedInputSamples, stereoSample ? numFrames*2 : numFrames );
 					haveS16 = true;
 				}
+				/* rounded Q15 requantizer, matching the mix kernels: the
+				   send feeds the reverb input, it is not inside a feedback
+				   loop, so rounding is safe (the reverb's internal QMUL
+				   keeps its deliberate toward-zero truncation - that one
+				   guarantees tail decay). */
 				if ( stereoSample ) {
 					for ( int k = 0; k < numFrames; k++ ) {
-						reverbSendI[k] += ( ( ( srcS16[(size_t)k*2] + srcS16[(size_t)k*2+1] ) / 2 ) * sq ) >> 15;
+						reverbSendI[k] += ( ( ( srcS16[(size_t)k*2] + srcS16[(size_t)k*2+1] ) / 2 ) * sq + 0x4000 ) >> 15;
 					}
 				} else {
 					for ( int k = 0; k < numFrames; k++ ) {
-						reverbSendI[k] += ( srcS16[k] * sq ) >> 15;
+						reverbSendI[k] += ( srcS16[k] * sq + 0x4000 ) >> 15;
 					}
 				}
 			}

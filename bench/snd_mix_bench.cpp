@@ -79,10 +79,28 @@ int main() {
 	static float conv[MIXBUFFER_SAMPLES*2];
 	for (int i=0;i<MIXBUFFER_SAMPLES*2;i++) conv[i]=frand_pm32k()*1.5f; // exceed clamp range
 	conv[0]=-32768.0f; conv[1]=32767.0f; conv[2]=-40000.f; conv[3]=50000.f; conv[4]=-0.7f; conv[5]=0.7f;
-	OLD_MixedSoundToSamples(outA, conv, MIXBUFFER_SAMPLES*2);
+	/* the narrow now rounds half away from zero (the old kernel truncated):
+	   verify (a) saturation identical to old, (b) exact integers unchanged
+	   (WAV losslessness), (c) error vs the ideal <= 0.5 LSP and unbiased,
+	   and report the old truncation error alongside for the record */
 	Snd_MixedSoundToSamples(outB, conv, MIXBUFFER_SAMPLES*2);
-	int mism=0; for(int i=0;i<MIXBUFFER_SAMPLES*2;i++) if(outA[i]!=outB[i]) mism++;
-	printf("MixedSoundToSamples new-vs-old: %s (%d mismatches)\n", mism?"FAIL":"bit-exact", mism);
+	OLD_MixedSoundToSamples(outA, conv, MIXBUFFER_SAMPLES*2);
+	{
+		int satm=0, intm=0; double wnew=0, wold=0, mnew=0, mold=0; long cnt=0;
+		for (int i=0;i<MIXBUFFER_SAMPLES*2;i++) {
+			double v = conv[i];
+			if (v <= -32768.0 || v >= 32767.0) { if (outA[i]!=outB[i]) satm++; continue; }
+			if (v == floor(v) && outB[i] != (short)v) intm++;
+			double en = outB[i] - v, eo = outA[i] - v;
+			if (fabs(en)>wnew) wnew=fabs(en);
+			if (fabs(eo)>wold) wold=fabs(eo);
+			mnew += en; mold += eo; cnt++;
+		}
+		printf("MixedSoundToSamples: saturation vs old %s, exact-int lossless %s\n",
+			satm?"FAIL":"bit-exact", intm?"FAIL":"OK");
+		printf("  error vs ideal: new max %.4f mean %+.4f | old max %.4f mean %+.4f LSB %s\n",
+			wnew, mnew/cnt, wold, mold/cnt, (wnew<=0.5001 && fabs(mnew/cnt)<0.02)?"OK":"FAIL");
+	}
 
 	// s16 kernels: SIMD-vs-scalar bit exactness at awkward sizes
 	int total_mism=0;
@@ -93,12 +111,29 @@ int main() {
 			const int baseL=(int)lastQ[0]<<8, baseR=(int)lastQ[1]<<8;
 			const int incL=(((int)curQ[0]-lastQ[0])<<8)/n, incR=(((int)curQ[1]-lastQ[1])<<8)/n;
 			for(int i=0;i<n;i++){ int gL=(baseL+incL*i)>>8, gR=(baseR+incR*i)>>8;
-				accA[i*2+0]+=(srcS[i]*gL)>>15; accA[i*2+1]+=(srcS[i]*gR)>>15; }
+				accA[i*2+0]+=(srcS[i]*gL+0x4000)>>15; accA[i*2+1]+=(srcS[i]*gR+0x4000)>>15; }
 		}
 		Snd_MixTwoSpeakerMonoS16(accB, srcS, n, lastQ, curQ);
 		for(int i=0;i<n*2;i++) if(accA[i]!=accB[i]) total_mism++;
 	}
 	printf("s16 mono %s-vs-reference over n=1..1470: %s (%d mismatches)\n", simd, total_mism?"FAIL":"bit-exact", total_mism);
+
+	// s16 stereo kernel (new SIMD path): bit exactness vs closed-form reference
+	{
+		short srcSt[MIXBUFFER_SAMPLES*2];
+		for (int i=0;i<MIXBUFFER_SAMPLES*2;i++) srcSt[i]=(short)((int)(rng())%65536-32768);
+		int stm=0;
+		for (int n=1;n<=1470;n+=7) {
+			memset(accA,0,sizeof accA); memset(accB,0,sizeof accB);
+			const int baseL=(int)lastQ[0]<<8, baseR=(int)lastQ[1]<<8;
+			const int incL=(((int)curQ[0]-lastQ[0])<<8)/n, incR=(((int)curQ[1]-lastQ[1])<<8)/n;
+			for(int i=0;i<n;i++){ int gL=(baseL+incL*i)>>8, gR=(baseR+incR*i)>>8;
+				accA[i*2+0]+=(srcSt[i*2+0]*gL+0x4000)>>15; accA[i*2+1]+=(srcSt[i*2+1]*gR+0x4000)>>15; }
+			Snd_MixTwoSpeakerStereoS16(accB, srcSt, n, lastQ, curQ);
+			for(int i=0;i<n*2;i++) if(accA[i]!=accB[i]) stm++;
+		}
+		printf("s16 stereo %s-vs-reference over n=1..1470: %s (%d mismatches)\n", simd, stm?"FAIL":"bit-exact", stm);
+	}
 
 	// Snd_SumToS16 saturation exactness
 	for(int i=0;i<64;i++) accA[i]=(int)(rng())%200000-100000;
@@ -167,6 +202,17 @@ int main() {
 	sinki+=accA[100];
 	printf("NEW  s16   mono  735: %8.2f ns/frame-sample\n", (t1-t0)*1e6/((double)REPS*5*N));
 
+	{
+		static short srcSt2[MIXBUFFER_SAMPLES*2];
+		for (int i=0;i<MIXBUFFER_SAMPLES*2;i++) srcSt2[i]=(short)((i*2654435761u)>>17);
+		memset(accA,0,sizeof accA);
+		t0=now_ms();
+		for(int r=0;r<REPS*5;r++) Snd_MixTwoSpeakerStereoS16(accA, srcSt2, N, lastQ, curQ);
+		t1=now_ms();
+		sinki+=accA[100];
+		printf("NEW  s16 stereo  735: %8.2f ns/frame-sample\n", (t1-t0)*1e6/((double)REPS*5*N));
+	}
+
 	t0=now_ms();
 	for(int r=0;r<REPS;r++){ OLD_MixedSoundToSamples(outA, conv, MIXBUFFER_SAMPLES*2); asm volatile("" ::: "memory"); }
 	t1=now_ms(); sinki+=outA[9];
@@ -187,6 +233,9 @@ int main() {
 }
 // ---- reverb unit test (appended) ----
 #define ID_INLINE inline
+/* snd_reverb.h reads the output rate through snd_SampleRate(); the core
+   defines the variable in snd_system.cpp, the bench provides it here */
+int snd_sampleRate = 44100;
 #include "../neo/sound/snd_reverb.h"
 static idSoundReverb rvbF, rvbI;
 int reverb_test() {

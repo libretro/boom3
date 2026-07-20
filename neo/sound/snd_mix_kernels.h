@@ -183,37 +183,64 @@ static inline void Snd_MixTwoSpeakerStereo( float *dest, const float *src, int n
 ====================
 Snd_MixedSoundToSamples
 
-Clamp-and-truncate float mix buffer (int16 scale) to int16 output.
-Semantics identical to the old idSIMD_Generic::MixedSoundToSamples:
-<= -32768 saturates low, >= 32767 saturates high, otherwise C truncation
-toward zero. numSamples counts individual samples (frames * channels).
+Clamp-and-round float samples (int16 scale) to int16.
+<= -32768 saturates low, >= 32767 saturates high, otherwise round half
+away from zero. numSamples counts individual samples (frames * channels).
+
+Rounds rather than truncating: the only caller is the s16 mixer's decode
+edge (Snd_FloatToS16), where PCM decode floats are exact integers - the
++-0.5 bias truncates back to the same integer, so WAV sources stay
+bit-lossless - but Ogg blocks arrive as real-valued floats from the
+vorbis decode and the sinc resampler. Truncation toward zero gave those a
+signal-correlated error of up to 1 LSB folded around zero (crossover
+distortion); rounding halves it to +-0.5 LSB and removes the fold.
+
+Half-away (add +-0.5 by sign, then truncate) rather than half-even so all
+three implementations are the same two exact float operations: the bias
+add is IEEE nearest in every path and the conversion truncates in every
+path (cvtt / vcvtq / C cast), keeping the result bit-identical across
+scalar, SSE2, and NEON.
 ====================
 */
 static inline void Snd_MixedSoundToSamples( short *out, const float *in, int numSamples ) {
 	int i = 0;
 
 #if SND_MIX_SSE2
-	const __m128 lo = _mm_set1_ps( -32768.0f );
-	const __m128 hi = _mm_set1_ps(  32767.0f );
+	const __m128 lo   = _mm_set1_ps( -32768.0f );
+	const __m128 hi   = _mm_set1_ps(  32767.0f );
+	const __m128 half = _mm_set1_ps( 0.5f );
+	const __m128 sgn  = _mm_castsi128_ps( _mm_set1_epi32( (int)0x80000000u ) );
 	for ( ; i + 8 <= numSamples; i += 8 ) {
 		__m128 a = _mm_loadu_ps( in + i );
 		__m128 b = _mm_loadu_ps( in + i + 4 );
 		a = _mm_min_ps( _mm_max_ps( a, lo ), hi );
 		b = _mm_min_ps( _mm_max_ps( b, lo ), hi );
-		// cvtt = truncate toward zero, matching the old (short) cast;
+		// +-0.5 with the sample's sign, then truncate = round half away
+		a = _mm_add_ps( a, _mm_or_ps( _mm_and_ps( a, sgn ), half ) );
+		b = _mm_add_ps( b, _mm_or_ps( _mm_and_ps( b, sgn ), half ) );
 		// inputs are pre-clamped so the INT_MIN indefinite case can't occur
 		__m128i ia = _mm_cvttps_epi32( a );
 		__m128i ib = _mm_cvttps_epi32( b );
 		_mm_storeu_si128( (__m128i *)( out + i ), _mm_packs_epi32( ia, ib ) );
 	}
 #elif SND_MIX_NEON
-	const float32x4_t lo = vdupq_n_f32( -32768.0f );
-	const float32x4_t hi = vdupq_n_f32(  32767.0f );
+	const float32x4_t lo   = vdupq_n_f32( -32768.0f );
+	const float32x4_t hi   = vdupq_n_f32(  32767.0f );
+	const float32x4_t half = vdupq_n_f32( 0.5f );
+	const uint32x4_t  sgn  = vdupq_n_u32( 0x80000000u );
 	for ( ; i + 8 <= numSamples; i += 8 ) {
 		float32x4_t a = vld1q_f32( in + i );
 		float32x4_t b = vld1q_f32( in + i + 4 );
 		a = vminq_f32( vmaxq_f32( a, lo ), hi );
 		b = vminq_f32( vmaxq_f32( b, lo ), hi );
+		float32x4_t ba = vreinterpretq_f32_u32( vorrq_u32(
+				vandq_u32( vreinterpretq_u32_f32( a ), sgn ),
+				vreinterpretq_u32_f32( half ) ) );
+		float32x4_t bb = vreinterpretq_f32_u32( vorrq_u32(
+				vandq_u32( vreinterpretq_u32_f32( b ), sgn ),
+				vreinterpretq_u32_f32( half ) ) );
+		a = vaddq_f32( a, ba );
+		b = vaddq_f32( b, bb );
 		int32x4_t ia = vcvtq_s32_f32( a );        // truncates toward zero
 		int32x4_t ib = vcvtq_s32_f32( b );
 		int16x8_t p  = vcombine_s16( vqmovn_s32( ia ), vqmovn_s32( ib ) );
@@ -225,12 +252,13 @@ static inline void Snd_MixedSoundToSamples( short *out, const float *in, int num
 		const float *ip = in + i, *ie = in + numSamples;
 		short *op = out + i;
 		for ( ; ip < ie; ip++, op++ ) {
-			if ( *ip <= -32768.0f ) {
+			float v = *ip;
+			if ( v <= -32768.0f ) {
 				*op = -32768;
-			} else if ( *ip >= 32767.0f ) {
+			} else if ( v >= 32767.0f ) {
 				*op = 32767;
 			} else {
-				*op = (short)*ip;
+				*op = (short)( v >= 0.0f ? v + 0.5f : v - 0.5f );
 			}
 		}
 	}
@@ -249,13 +277,20 @@ Design for bit-exact determinism across compilers AND architectures:
  - the gain ramp is the closed form g(i) = (last<<8 + inc_q23*i) >> 8
    with inc_q23 = ((cur-last)<<8)/numFrames (C integer division), so
    scalar and SIMD lanes compute identical per-frame gains,
- - each contribution is (sample * gain) >> 15 with arithmetic shift,
-   accumulated in int32 (each term is <= 32767 in magnitude, so overflow
+ - each contribution is (sample * gain + 0x4000) >> 15 - round half up
+   at the Q15 requantizer rather than the floor of a bare arithmetic
+   shift, whose error is one-sided in (-1, 0] LSB: with N active voices
+   that floored a DC bias of about -N/2 LSB into the accumulator on top
+   of signal-correlated truncation noise. The bias add is the same
+   integer op in scalar, SSE2, and NEON, so lanes stay bit-identical.
+   Accumulated in int32 (each term is <= 32767 in magnitude, so overflow
    would need ~65k simultaneous full-scale channels - impossible),
  - the final narrow saturates int32 to [-32768, 32767].
-Every operation is integer with defined semantics; SSE2 uses
-madd(unpack(s),unpack(g)) >> 15 and NEON uses vmull_s16 >> 15, which are
-bit-identical to the scalar (s*g)>>15.
+Every operation is integer with defined semantics, there are no
+cross-lane reductions, and the gain ramp is closed-form per frame - so
+the kernels are plain scalar loops and any auto-vectorization of them is
+bit-identical by construction (hand-written SSE2 paths measured 2x
+slower than what the compiler emits from these loops; see the kernels).
 ===========================================================================
 */
 
@@ -295,77 +330,24 @@ static inline void Snd_MixTwoSpeakerMonoS16( int *dest, const short *src, int nu
 	const int baseR = (int)lastQ15[1] << 8;
 	const int incL  = ( ( (int)currentQ15[0] - lastQ15[0] ) << 8 ) / numFrames;
 	const int incR  = ( ( (int)currentQ15[1] - lastQ15[1] ) << 8 ) / numFrames;
-	int i = 0;
 
-#if SND_MIX_SSE2
-	__m128i idx   = _mm_setr_epi32( 0, 1, 2, 3 );
-	// per-lane q23 gain accumulators: base + inc*idx
-	__m128i gLq   = _mm_add_epi32( _mm_set1_epi32( baseL ),
-	                  _mm_setr_epi32( 0, incL, incL*2, incL*3 ) );
-	__m128i gRq   = _mm_add_epi32( _mm_set1_epi32( baseR ),
-	                  _mm_setr_epi32( 0, incR, incR*2, incR*3 ) );
-	const __m128i stepL = _mm_set1_epi32( incL * 4 );
-	const __m128i stepR = _mm_set1_epi32( incR * 4 );
-	const __m128i zero  = _mm_setzero_si128();
-	(void)idx;
-
-	for ( ; i + 4 <= numFrames; i += 4 ) {
-		// 4 mono samples, sign-extended to 32 then repacked as s16 lanes 0..3
-		__m128i s16v = _mm_loadl_epi64( (const __m128i *)( src + i ) );  // s0..s3 in low 64
-		__m128i s32  = _mm_srai_epi32( _mm_unpacklo_epi16( s16v, s16v ), 16 ); // sign-extend
-		// gains q23 -> q15 (arithmetic shift preserves the closed form)
-		__m128i gL15 = _mm_srai_epi32( gLq, 8 );
-		__m128i gR15 = _mm_srai_epi32( gRq, 8 );
-		// (s * g) >> 15 in 32-bit: products fit (|s|<=32768, |g|<=32767)
-		// 32-bit lane multiply on SSE2 via madd of s16 pairs:
-		// repack s and g to s16 lanes with zero partners, madd multiplies pairs
-		__m128i sPk  = _mm_packs_epi32( s32,  zero );        // s16 lanes 0..3
-		__m128i gLPk = _mm_packs_epi32( gL15, zero );
-		__m128i gRPk = _mm_packs_epi32( gR15, zero );
-		__m128i pL   = _mm_srai_epi32( _mm_madd_epi16( _mm_unpacklo_epi16( sPk, zero ),
-		                                               _mm_unpacklo_epi16( gLPk, zero ) ), 15 );
-		__m128i pR   = _mm_srai_epi32( _mm_madd_epi16( _mm_unpacklo_epi16( sPk, zero ),
-		                                               _mm_unpacklo_epi16( gRPk, zero ) ), 15 );
-		// interleave L/R and accumulate
-		__m128i lo   = _mm_unpacklo_epi32( pL, pR );         // L0 R0 L1 R1
-		__m128i hi   = _mm_unpackhi_epi32( pL, pR );         // L2 R2 L3 R3
-		__m128i *d0  = (__m128i *)( dest + i*2 );
-		__m128i *d1  = (__m128i *)( dest + i*2 + 4 );
-		_mm_storeu_si128( d0, _mm_add_epi32( _mm_loadu_si128( d0 ), lo ) );
-		_mm_storeu_si128( d1, _mm_add_epi32( _mm_loadu_si128( d1 ), hi ) );
-		gLq = _mm_add_epi32( gLq, stepL );
-		gRq = _mm_add_epi32( gRq, stepR );
-	}
-#elif SND_MIX_NEON
-	const int32_t gl0[4] = { baseL, baseL + incL, baseL + incL*2, baseL + incL*3 };
-	const int32_t gr0[4] = { baseR, baseR + incR, baseR + incR*2, baseR + incR*3 };
-	int32x4_t gLq = vld1q_s32( gl0 );
-	int32x4_t gRq = vld1q_s32( gr0 );
-	const int32x4_t stepL = vdupq_n_s32( incL * 4 );
-	const int32x4_t stepR = vdupq_n_s32( incR * 4 );
-
-	for ( ; i + 4 <= numFrames; i += 4 ) {
-		int16x4_t sv  = vld1_s16( src + i );
-		int32x4_t gL  = vshrq_n_s32( gLq, 8 );
-		int32x4_t gR  = vshrq_n_s32( gRq, 8 );
-		int32x4_t pL  = vshrq_n_s32( vmulq_s32( vmovl_s16( sv ), gL ), 15 );
-		int32x4_t pR  = vshrq_n_s32( vmulq_s32( vmovl_s16( sv ), gR ), 15 );
-		int32x4x2_t z = vzipq_s32( pL, pR );
-		vst1q_s32( dest + i*2,     vaddq_s32( vld1q_s32( dest + i*2 ),     z.val[0] ) );
-		vst1q_s32( dest + i*2 + 4, vaddq_s32( vld1q_s32( dest + i*2 + 4 ), z.val[1] ) );
-		gLq = vaddq_s32( gLq, stepL );
-		gRq = vaddq_s32( gRq, stepR );
-	}
-#endif
-
-	{
-		int *d = dest + (size_t)i*2;
-		for ( ; i < numFrames; i++, d += 2 ) {
-			const int gL = ( baseL + incL * i ) >> 8;
-			const int gR = ( baseR + incR * i ) >> 8;
-			d[0] += ( src[i] * gL ) >> 15;
-			d[1] += ( src[i] * gR ) >> 15;
-		}
+	/*
+	   Deliberately plain scalar. A hand-written SSE2 path lived here (pack
+	   the 4 mono samples against zero partners, madd, unpack) and measured
+	   0.72 ns/frame-sample; the compiler's auto-vectorization of this loop
+	   measures 0.35 on the same machine - the pack dance wastes half of
+	   every vector, and the closed-form gain g(i) = (base + inc*i) >> 8 is
+	   exactly what makes the loop legal to vectorize. Bit-exactness does
+	   not depend on how the compiler carves it into lanes: every operation
+	   is defined integer arithmetic with no cross-lane reductions, so any
+	   vectorization of this loop produces identical bytes.
+	*/
+	int *d = dest;
+	for ( int i = 0; i < numFrames; i++, d += 2 ) {
+		const int gL = ( baseL + incL * i ) >> 8;
+		const int gR = ( baseR + incR * i ) >> 8;
+		d[0] += ( src[i] * gL + 0x4000 ) >> 15;
+		d[1] += ( src[i] * gR + 0x4000 ) >> 15;
 	}
 }
 
@@ -384,17 +366,15 @@ static inline void Snd_MixTwoSpeakerStereoS16( int *dest, const short *src, int 
 	const int baseR = (int)lastQ15[1] << 8;
 	const int incL  = ( ( (int)currentQ15[0] - lastQ15[0] ) << 8 ) / numFrames;
 	const int incR  = ( ( (int)currentQ15[1] - lastQ15[1] ) << 8 ) / numFrames;
-	int i = 0;
 
-	{
-		int *d = dest + (size_t)i*2;
-		const short *sp = src + (size_t)i*2;
-		for ( ; i < numFrames; i++, d += 2, sp += 2 ) {
-			const int gL = ( baseL + incL * i ) >> 8;
-			const int gR = ( baseR + incR * i ) >> 8;
-			d[0] += ( sp[0] * gL ) >> 15;
-			d[1] += ( sp[1] * gR ) >> 15;
-		}
+	/* plain scalar on purpose - see the mono kernel above */
+	int *d = dest;
+	const short *sp = src;
+	for ( int i = 0; i < numFrames; i++, d += 2, sp += 2 ) {
+		const int gL = ( baseL + incL * i ) >> 8;
+		const int gR = ( baseR + incR * i ) >> 8;
+		d[0] += ( sp[0] * gL + 0x4000 ) >> 15;
+		d[1] += ( sp[1] * gR + 0x4000 ) >> 15;
 	}
 }
 
