@@ -185,9 +185,9 @@ void VPCALL idSIMD_SSE::Dot( float *dst, const idPlane &constant, const idDrawVe
 			xmm0 = _mm_mul_ps(xmm0, xmm4);
 			xmm1 = _mm_mul_ps(xmm1, xmm5);
 			xmm2 = _mm_mul_ps(xmm2, xmm6);
-			xmm0 = _mm_add_ps(xmm0, xmm7);
 			xmm0 = _mm_add_ps(xmm0, xmm1);
 			xmm0 = _mm_add_ps(xmm0, xmm2);
+			xmm0 = _mm_add_ps(xmm0, xmm7);
 
 	/*
 		movlps		[ecx-16+0], xmm0
@@ -230,11 +230,11 @@ void VPCALL idSIMD_SSE::Dot( float *dst, const idPlane &constant, const idDrawVe
 			xmm0 = _mm_mul_ss(xmm0, xmm4);
 			xmm1 = _mm_mul_ss(xmm1, xmm5);
 			xmm2 = _mm_mul_ss(xmm2, xmm6);
-			xmm0 = _mm_add_ss(xmm0, xmm7);
 			dst_p = dst_p + 4;
 			xmm0 = _mm_add_ss(xmm0, xmm1);
 			count_l4 = count_l4 + DRAWVERT_SIZE;
 			xmm0 = _mm_add_ss(xmm0, xmm2);
+			xmm0 = _mm_add_ss(xmm0, xmm7);
 			count_l1 = count_l1 - 1;
 			_mm_store_ss((float *) (dst_p-4), xmm0);
 		} while( count_l1 != 0);
@@ -560,9 +560,9 @@ void VPCALL idSIMD_SSE::Dot( float *dst, const idVec3 &constant, const idPlane *
 			xmm0 = _mm_mul_ps(xmm0, xmm5);
 			xmm1 = _mm_mul_ps(xmm1, xmm6);
 			xmm2 = _mm_mul_ps(xmm2, xmm7);
-			xmm0 = _mm_add_ps(xmm0, xmm3);
 			xmm0 = _mm_add_ps(xmm0, xmm1);
 			xmm0 = _mm_add_ps(xmm0, xmm2);
+			xmm0 = _mm_add_ps(xmm0, xmm3);
 
 	/*
 		movlps		[ecx-16+0], xmm0
@@ -611,11 +611,11 @@ void VPCALL idSIMD_SSE::Dot( float *dst, const idVec3 &constant, const idPlane *
 			xmm1 = _mm_mul_ss(xmm1, xmm6);
 			xmm2 = _mm_mul_ss(xmm2, xmm7);
 
-			xmm0 = _mm_add_ss(xmm0, xmm3);
 			dst_p = dst_p + 4;
 			xmm0 = _mm_add_ss(xmm0, xmm1);
 			count_l4 = count_l4 + 16;
 			xmm0 = _mm_add_ss(xmm0, xmm2);
+			xmm0 = _mm_add_ss(xmm0, xmm3);
 			count_l1 = count_l1 - 1;
 			_mm_store_ss((float *) (dst_p-4), xmm0);
 		} while (count_l1 != 0);
