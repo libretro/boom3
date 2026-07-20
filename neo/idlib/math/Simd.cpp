@@ -3984,6 +3984,215 @@ void TestNegate( void ) {
 
 /*
 ============
+TestVectorizedKernels
+
+  The kernels vectorized in idSIMD_Generic - the three point culls,
+  DeriveTriPlanes and CreateVertexProgramShadowCache - cannot be checked by
+  the p_generic/p_simd comparisons above. On every GCC/Clang target almost all
+  of idSIMD_SSE is MSVC-x86 inline asm and compiles out, so idSIMD_SSE3
+  inherits those methods straight from idSIMD_Generic: both sides of those
+  tests run the same code and pass whatever it does.
+
+  These tests instead compare against scalar reference implementations held
+  here, written out longhand and deliberately not sharing code with the
+  kernels. Bit patterns are compared, not magnitudes, because the guarantee
+  being defended is exactness: the point culls decide which side of a plane a
+  vertex falls on and feed shadow volume and decal generation, and any
+  divergence between a SIMD and a scalar build is a cross-platform desync.
+
+  Vertex data is chosen to include the cases that actually broke things during
+  development: values sitting on a plane to within a few ulp, axis-aligned and
+  degenerate geometry that produces -0.0f, and st[] poisoned so that a leak of
+  st[0] into a w lane shows up.
+============
+*/
+static void RefTracePointCull( byte *cullBits, byte &totalOr, const float radius, const idPlane *planes, const idDrawVert *verts, const int numVerts ) {
+	byte tOr = 0;
+	for ( int i = 0; i < numVerts; i++ ) {
+		byte bits;
+		float d0, d1, d2, d3, t;
+		const idVec3 &v = verts[i].xyz;
+		d0 = planes[0].Distance( v );
+		d1 = planes[1].Distance( v );
+		d2 = planes[2].Distance( v );
+		d3 = planes[3].Distance( v );
+		t = d0 + radius; bits  = FLOATSIGNBITSET( t ) << 0;
+		t = d1 + radius; bits |= FLOATSIGNBITSET( t ) << 1;
+		t = d2 + radius; bits |= FLOATSIGNBITSET( t ) << 2;
+		t = d3 + radius; bits |= FLOATSIGNBITSET( t ) << 3;
+		t = d0 - radius; bits |= FLOATSIGNBITSET( t ) << 4;
+		t = d1 - radius; bits |= FLOATSIGNBITSET( t ) << 5;
+		t = d2 - radius; bits |= FLOATSIGNBITSET( t ) << 6;
+		t = d3 - radius; bits |= FLOATSIGNBITSET( t ) << 7;
+		bits ^= 0x0F;
+		tOr |= bits;
+		cullBits[i] = bits;
+	}
+	totalOr = tOr;
+}
+
+static void RefDecalPointCull( byte *cullBits, const idPlane *planes, const idDrawVert *verts, const int numVerts ) {
+	for ( int i = 0; i < numVerts; i++ ) {
+		byte bits;
+		const idVec3 &v = verts[i].xyz;
+		float d0 = planes[0].Distance( v ), d1 = planes[1].Distance( v );
+		float d2 = planes[2].Distance( v ), d3 = planes[3].Distance( v );
+		float d4 = planes[4].Distance( v ), d5 = planes[5].Distance( v );
+		bits  = FLOATSIGNBITSET( d0 ) << 0;
+		bits |= FLOATSIGNBITSET( d1 ) << 1;
+		bits |= FLOATSIGNBITSET( d2 ) << 2;
+		bits |= FLOATSIGNBITSET( d3 ) << 3;
+		bits |= FLOATSIGNBITSET( d4 ) << 4;
+		bits |= FLOATSIGNBITSET( d5 ) << 5;
+		cullBits[i] = bits ^ 0x3F;
+	}
+}
+
+static void RefOverlayPointCull( byte *cullBits, idVec2 *texCoords, const idPlane *planes, const idDrawVert *verts, const int numVerts ) {
+	for ( int i = 0; i < numVerts; i++ ) {
+		byte bits;
+		float d0, d1;
+		const idVec3 &v = verts[i].xyz;
+		texCoords[i][0] = d0 = planes[0].Distance( v );
+		texCoords[i][1] = d1 = planes[1].Distance( v );
+		bits  = FLOATSIGNBITSET( d0 ) << 0;
+		d0 = 1.0f - d0;
+		bits |= FLOATSIGNBITSET( d1 ) << 1;
+		d1 = 1.0f - d1;
+		bits |= FLOATSIGNBITSET( d0 ) << 2;
+		bits |= FLOATSIGNBITSET( d1 ) << 3;
+		cullBits[i] = bits;
+	}
+}
+
+static void RefDeriveTriPlanes( idPlane *planes, const idDrawVert *verts, const int numVerts, const int *indexes, const int numIndexes ) {
+	for ( int i = 0; i < numIndexes; i += 3 ) {
+		const idDrawVert *a = verts + indexes[i + 0];
+		const idDrawVert *b = verts + indexes[i + 1];
+		const idDrawVert *c = verts + indexes[i + 2];
+		float d0[3], d1[3], f;
+		idVec3 n;
+		d0[0] = b->xyz[0] - a->xyz[0]; d0[1] = b->xyz[1] - a->xyz[1]; d0[2] = b->xyz[2] - a->xyz[2];
+		d1[0] = c->xyz[0] - a->xyz[0]; d1[1] = c->xyz[1] - a->xyz[1]; d1[2] = c->xyz[2] - a->xyz[2];
+		n[0] = d1[1] * d0[2] - d1[2] * d0[1];
+		n[1] = d1[2] * d0[0] - d1[0] * d0[2];
+		n[2] = d1[0] * d0[1] - d1[1] * d0[0];
+		f = idMath::RSqrt( n.x * n.x + n.y * n.y + n.z * n.z );
+		n.x *= f; n.y *= f; n.z *= f;
+		planes->SetNormal( n );
+		planes->FitThroughPoint( a->xyz );
+		planes++;
+	}
+}
+
+static int RefCreateVertexProgramShadowCache( idVec4 *vertexCache, const idDrawVert *verts, const int numVerts ) {
+	for ( int i = 0; i < numVerts; i++ ) {
+		const float *v = verts[i].xyz.ToFloatPtr();
+		vertexCache[i*2+0][0] = v[0]; vertexCache[i*2+1][0] = v[0];
+		vertexCache[i*2+0][1] = v[1]; vertexCache[i*2+1][1] = v[1];
+		vertexCache[i*2+0][2] = v[2]; vertexCache[i*2+1][2] = v[2];
+		vertexCache[i*2+0][3] = 1.0f; vertexCache[i*2+1][3] = 0.0f;
+	}
+	return numVerts * 2;
+}
+
+#define VK_VERTS	256
+#define VK_TRIS		64
+
+void TestVectorizedKernels( void ) {
+	ALIGN16( idDrawVert verts[VK_VERTS] );
+	ALIGN16( idPlane planes[6] );
+	ALIGN16( idPlane planesA[VK_TRIS] );
+	ALIGN16( idPlane planesB[VK_TRIS] );
+	ALIGN16( byte bitsA[VK_VERTS] );
+	ALIGN16( byte bitsB[VK_VERTS] );
+	ALIGN16( idVec2 tcA[VK_VERTS] );
+	ALIGN16( idVec2 tcB[VK_VERTS] );
+	ALIGN16( idVec4 cacheA[VK_VERTS*2] );
+	ALIGN16( idVec4 cacheB[VK_VERTS*2] );
+	ALIGN16( int indexes[VK_TRIS*3] );
+	int failures = 0;
+	int mode, n, i, j;
+
+	idLib::common->Printf( "====================================\n" );
+
+	for ( mode = 0; mode < 3; mode++ ) {
+		idRandom srnd( RANDOM_SEED + mode );
+
+		for ( i = 0; i < 6; i++ ) {
+			planes[i].SetNormal( idVec3( srnd.CRandomFloat(), srnd.CRandomFloat(), srnd.CRandomFloat() ) );
+			planes[i][3] = srnd.CRandomFloat() * ( mode == 1 ? 0.000001f : 10.0f );
+		}
+
+		for ( i = 0; i < VK_VERTS; i++ ) {
+			if ( mode == 1 ) {
+				/* straddle the planes to within a few ulp */
+				float t = srnd.CRandomFloat() * 0.000001f;
+				verts[i].xyz.Set( t, -t, t );
+			} else if ( mode == 2 ) {
+				/* axis aligned and degenerate: produces exact and negative zeros */
+				int m = (int)( srnd.RandomFloat() * 4.0f ) & 3;
+				float t = srnd.CRandomFloat() * 8.0f;
+				verts[i].xyz.Set( m == 0 ? t : 0.0f, m == 1 ? t : 0.0f, m == 2 ? t : 0.0f );
+			} else {
+				verts[i].xyz.Set( srnd.CRandomFloat() * 100.0f,
+				                  srnd.CRandomFloat() * 100.0f,
+				                  srnd.CRandomFloat() * 100.0f );
+			}
+			/* poison: must never surface in a w lane or a plane distance */
+			verts[i].st[0] = 1234.5f;
+			verts[i].st[1] = -6789.0f;
+		}
+
+		for ( i = 0; i < VK_TRIS*3; i++ ) {
+			indexes[i] = (int)( srnd.RandomFloat() * (float)( VK_VERTS - 1 ) );
+		}
+
+		/* every count, so the scalar tails below a multiple of four are covered */
+		for ( n = 0; n <= VK_VERTS; n++ ) {
+			byte orA = 0, orB = 0;
+
+			memset( bitsA, 0xAA, sizeof( bitsA ) ); memset( bitsB, 0xAA, sizeof( bitsB ) );
+			RefTracePointCull( bitsA, orA, 8.0f, planes, verts, n );
+			SIMDProcessor->TracePointCull( bitsB, orB, 8.0f, planes, verts, n );
+			if ( orA != orB || memcmp( bitsA, bitsB, sizeof( bitsA ) ) != 0 ) failures++;
+
+			memset( bitsA, 0xAA, sizeof( bitsA ) ); memset( bitsB, 0xAA, sizeof( bitsB ) );
+			RefDecalPointCull( bitsA, planes, verts, n );
+			SIMDProcessor->DecalPointCull( bitsB, planes, verts, n );
+			if ( memcmp( bitsA, bitsB, sizeof( bitsA ) ) != 0 ) failures++;
+
+			memset( bitsA, 0xAA, sizeof( bitsA ) ); memset( bitsB, 0xAA, sizeof( bitsB ) );
+			memset( tcA, 0x5A, sizeof( tcA ) ); memset( tcB, 0x5A, sizeof( tcB ) );
+			RefOverlayPointCull( bitsA, tcA, planes, verts, n );
+			SIMDProcessor->OverlayPointCull( bitsB, tcB, planes, verts, n );
+			if ( memcmp( bitsA, bitsB, sizeof( bitsA ) ) != 0 ||
+			     memcmp( tcA, tcB, sizeof( tcA ) ) != 0 ) failures++;
+
+			memset( cacheA, 0xAA, sizeof( cacheA ) ); memset( cacheB, 0xAA, sizeof( cacheB ) );
+			j  = RefCreateVertexProgramShadowCache( cacheA, verts, n );
+			j -= SIMDProcessor->CreateVertexProgramShadowCache( cacheB, verts, n );
+			if ( j != 0 || memcmp( cacheA, cacheB, sizeof( cacheA ) ) != 0 ) failures++;
+		}
+
+		for ( n = 0; n <= VK_TRIS; n++ ) {
+			memset( planesA, 0xAA, sizeof( planesA ) ); memset( planesB, 0xAA, sizeof( planesB ) );
+			RefDeriveTriPlanes( planesA, verts, VK_VERTS, indexes, n * 3 );
+			SIMDProcessor->DeriveTriPlanes( planesB, verts, VK_VERTS, indexes, n * 3 );
+			if ( memcmp( planesA, planesB, sizeof( planesA ) ) != 0 ) failures++;
+		}
+	}
+
+	if ( failures ) {
+		idLib::common->Printf( S_COLOR_RED "   vectorized kernels: %d bit mismatches vs scalar reference\n", failures );
+	} else {
+		idLib::common->Printf( "   vectorized kernels vs scalar reference: ok\n" );
+	}
+}
+
+
+/*
+============
 idSIMD::Test_f
 ============
 */
@@ -4075,6 +4284,7 @@ void idSIMD::Test_f( const idCmdArgs &args ) {
 	TestDecalPointCull();
 	TestOverlayPointCull();
 	TestDeriveTriPlanes();
+	TestVectorizedKernels();
 	TestDeriveTangents();
 	TestDeriveUnsmoothedTangents();
 	TestNormalizeTangents();
