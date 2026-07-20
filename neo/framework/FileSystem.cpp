@@ -3884,7 +3884,8 @@ void idFileSystemLocal::FindMapScreenshot( const char *path, char *buf, int len 
 	if ( ReadFile( buf, NULL, NULL ) == -1 ) {
 		// try to extract from an addon
 		file = OpenFileReadFlags( buf, FSFLAG_SEARCH_ADDONS );
-		if ( file ) {
+		if ( file )
+		{
 			// save it out to an addon splash directory
 			int dlen = file->Length();
 			char *data = new char[ dlen ];
@@ -3893,8 +3894,8 @@ void idFileSystemLocal::FindMapScreenshot( const char *path, char *buf, int len 
 			idStr::snPrintf( buf, len, "guis/assets/splash/addon/%s.tga", mapname.c_str() );
 			WriteFile( buf, data, dlen );
 			delete[] data;
-		} else {
-			idStr::Copynz( buf, "guis/assets/splash/pdtempa", len );
 		}
+		else
+			idStr::Copynz( buf, "guis/assets/splash/pdtempa", len );
 	}
 }

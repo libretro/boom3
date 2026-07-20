@@ -47,14 +47,7 @@
 extern "C" {
 #endif
 
-// DG: we're using miniz.h now, which is included by ioapi.h
-//#ifndef _ZLIB_H
-//#include <zlib.h>
-//#endif
-
-// TODO #ifndef  _ZLIBIOAPI_H
 #include "ioapi.h"
-// TODO #endif
 
 #ifdef HAVE_BZIP2
 #include "bzlib.h"
