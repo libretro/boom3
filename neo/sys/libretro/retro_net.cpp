@@ -387,7 +387,7 @@ bool idPort::GetPacket( netadr_t &net_from, void *data, int &size, int maxSize )
 	}
 
 	fromlen = sizeof( from );
-	ret = recvfrom( netSocket, data, maxSize, 0, (struct sockaddr *) &from, (socklen_t *) &fromlen );
+	ret = recvfrom( netSocket, (char *)data, maxSize, 0, (struct sockaddr *) &from, (socklen_t *) &fromlen );
 
 	if ( ret == -1 ) {
 		if (errno == EWOULDBLOCK || errno == ECONNREFUSED) {
@@ -445,7 +445,7 @@ bool idPort::GetPacketBlocking( netadr_t &net_from, void *data, int &size, int m
 	struct sockaddr_in from;
 	int fromlen;
 	fromlen = sizeof( from );
-	ret = recvfrom( netSocket, data, maxSize, 0, (struct sockaddr *)&from, (socklen_t *)&fromlen );
+	ret = recvfrom( netSocket, (char *)data, maxSize, 0, (struct sockaddr *)&from, (socklen_t *)&fromlen );
 	if ( ret == -1 ) {
 		// there should be no blocking errors once select declares things are good
 		common->DPrintf( "idPort::GetPacketBlocking: %s\n", strerror( errno ) );
@@ -477,7 +477,7 @@ void idPort::SendPacket( const netadr_t to, const void *data, int size ) {
 
 	NetadrToSockadr( &to, &addr );
 
-	ret = sendto( netSocket, data, size, 0, (struct sockaddr *) &addr, sizeof(addr) );
+	ret = sendto( netSocket, (const char *)data, size, 0, (struct sockaddr *) &addr, sizeof(addr) );
 	if ( ret == -1 ) {
 		common->Printf( "idPort::SendPacket ERROR: to %s: %s\n", Sys_NetAdrToString( to ), strerror( errno ) );
 	}
