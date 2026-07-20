@@ -2578,9 +2578,77 @@ idSIMD_Generic::DeriveTriPlanes
 ============
 */
 void VPCALL idSIMD_Generic::DeriveTriPlanes( idPlane *planes, const idDrawVert *verts, const int numVerts, const int *indexes, const int numIndexes ) {
-	int i;
+	int i = 0;
 
-	for ( i = 0; i < numIndexes; i += 3 ) {
+#if defined(SIMD_POINTCULL_SSE2) || defined(SIMD_POINTCULL_NEON)
+	{
+		const int numTris = numIndexes / 3;
+		int tri = 0;
+
+		for ( ; tri + 3 < numTris; tri += 4 ) {
+			float ax[4], ay[4], az[4], bx[4], by[4], bz[4], cx[4], cy[4], cz[4];
+			float ox[4], oy[4], oz[4], od[4];
+			simdTriPlane_t AX, AY, AZ, d0x, d0y, d0z, d1x, d1y, d1z;
+			simdTriPlane_t nx, ny, nz, sq, f, dot;
+			int j;
+
+			for ( j = 0; j < 4; j++ ) {
+				const idDrawVert *a = verts + indexes[(tri+j)*3 + 0];
+				const idDrawVert *b = verts + indexes[(tri+j)*3 + 1];
+				const idDrawVert *c = verts + indexes[(tri+j)*3 + 2];
+				ax[j] = a->xyz[0]; ay[j] = a->xyz[1]; az[j] = a->xyz[2];
+				bx[j] = b->xyz[0]; by[j] = b->xyz[1]; bz[j] = b->xyz[2];
+				cx[j] = c->xyz[0]; cy[j] = c->xyz[1]; cz[j] = c->xyz[2];
+			}
+
+			AX = SIMD_TRIPLANE_LOAD( ax );
+			AY = SIMD_TRIPLANE_LOAD( ay );
+			AZ = SIMD_TRIPLANE_LOAD( az );
+
+			d0x = SIMD_TRIPLANE_SUB( SIMD_TRIPLANE_LOAD( bx ), AX );
+			d0y = SIMD_TRIPLANE_SUB( SIMD_TRIPLANE_LOAD( by ), AY );
+			d0z = SIMD_TRIPLANE_SUB( SIMD_TRIPLANE_LOAD( bz ), AZ );
+			d1x = SIMD_TRIPLANE_SUB( SIMD_TRIPLANE_LOAD( cx ), AX );
+			d1y = SIMD_TRIPLANE_SUB( SIMD_TRIPLANE_LOAD( cy ), AY );
+			d1z = SIMD_TRIPLANE_SUB( SIMD_TRIPLANE_LOAD( cz ), AZ );
+
+			nx = SIMD_TRIPLANE_SUB( SIMD_TRIPLANE_MUL( d1y, d0z ), SIMD_TRIPLANE_MUL( d1z, d0y ) );
+			ny = SIMD_TRIPLANE_SUB( SIMD_TRIPLANE_MUL( d1z, d0x ), SIMD_TRIPLANE_MUL( d1x, d0z ) );
+			nz = SIMD_TRIPLANE_SUB( SIMD_TRIPLANE_MUL( d1x, d0y ), SIMD_TRIPLANE_MUL( d1y, d0x ) );
+
+			sq = SIMD_TRIPLANE_ADD( SIMD_TRIPLANE_ADD(
+					SIMD_TRIPLANE_MUL( nx, nx ), SIMD_TRIPLANE_MUL( ny, ny ) ),
+					SIMD_TRIPLANE_MUL( nz, nz ) );
+			f  = SIMD_TRIPLANE_RSQRT( sq );
+
+			nx = SIMD_TRIPLANE_MUL( nx, f );
+			ny = SIMD_TRIPLANE_MUL( ny, f );
+			nz = SIMD_TRIPLANE_MUL( nz, f );
+
+			/* d = -( Normal() * a->xyz ), keeping the scalar operand order */
+			dot = SIMD_TRIPLANE_ADD( SIMD_TRIPLANE_ADD(
+					SIMD_TRIPLANE_MUL( nx, AX ), SIMD_TRIPLANE_MUL( ny, AY ) ),
+					SIMD_TRIPLANE_MUL( nz, AZ ) );
+
+			SIMD_TRIPLANE_STORE( ox, nx );
+			SIMD_TRIPLANE_STORE( oy, ny );
+			SIMD_TRIPLANE_STORE( oz, nz );
+			SIMD_TRIPLANE_STORE( od, SIMD_TRIPLANE_NEGATE( dot ) );
+
+			for ( j = 0; j < 4; j++ ) {
+				planes[tri+j][0] = ox[j];
+				planes[tri+j][1] = oy[j];
+				planes[tri+j][2] = oz[j];
+				planes[tri+j][3] = od[j];
+			}
+		}
+
+		planes += tri;
+		i = tri * 3;
+	}
+#endif
+
+	for ( ; i < numIndexes; i += 3 ) {
 		const idDrawVert *a, *b, *c;
 		float d0[3], d1[3], f;
 		idVec3 n;

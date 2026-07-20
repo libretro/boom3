@@ -132,4 +132,68 @@ ID_INLINE int SIMD_POINTCULL_SIGNMASK( float32x4_t v ) {
 
 #endif
 
+/*
+   Helpers shared by DeriveTriPlanes.
+
+   SIMD_TRIPLANE_RSQRT is a lane-wise transcription of idMath::RSqrt - the
+   Quake inverse square root, one Newton step. It is only integer and float
+   arithmetic, so it reproduces the scalar result exactly, including for
+   x == 0, x == -0 and x < 0 (verified bit-identical over the float exponent
+   range and on those special cases). Do not substitute rsqrtps/vrsqrteq:
+   those are hardware approximations with different, and architecture
+   dependent, results.
+
+   SIMD_TRIPLANE_NEGATE must be an exclusive-or of the sign bit rather than a
+   subtract from zero. idPlane::FitThroughPoint computes d = -( Normal() * p ),
+   a unary negation, and 0.0f - 0.0f is +0.0f whereas -( 0.0f ) is -0.0f. A
+   subtract-from-zero here silently turns every -0.0f plane distance into
+   +0.0f, which is a bit difference that no visual test would catch.
+*/
+#if defined(SIMD_POINTCULL_SSE2)
+
+ID_INLINE __m128 SIMD_TRIPLANE_RSQRT( __m128 x ) {
+	__m128  y = _mm_mul_ps( x, _mm_set1_ps( 0.5f ) );
+	__m128i i = _mm_sub_epi32( _mm_set1_epi32( 0x5f3759df ),
+	                           _mm_srai_epi32( _mm_castps_si128( x ), 1 ) );
+	__m128  r = _mm_castsi128_ps( i );
+	return _mm_mul_ps( r, _mm_sub_ps( _mm_set1_ps( 1.5f ),
+	                                  _mm_mul_ps( _mm_mul_ps( r, r ), y ) ) );
+}
+
+ID_INLINE __m128 SIMD_TRIPLANE_NEGATE( __m128 v ) {
+	return _mm_xor_ps( v, _mm_castsi128_ps( _mm_set1_epi32( (int)0x80000000 ) ) );
+}
+
+#define SIMD_TRIPLANE_MUL( a, b )	_mm_mul_ps( (a), (b) )
+#define SIMD_TRIPLANE_SUB( a, b )	_mm_sub_ps( (a), (b) )
+#define SIMD_TRIPLANE_ADD( a, b )	_mm_add_ps( (a), (b) )
+#define SIMD_TRIPLANE_LOAD( p )		_mm_loadu_ps( p )
+#define SIMD_TRIPLANE_STORE( p, v )	_mm_storeu_ps( (p), (v) )
+typedef __m128 simdTriPlane_t;
+
+#elif defined(SIMD_POINTCULL_NEON)
+
+ID_INLINE float32x4_t SIMD_TRIPLANE_RSQRT( float32x4_t x ) {
+	float32x4_t y = vmulq_f32( x, vdupq_n_f32( 0.5f ) );
+	int32x4_t   i = vsubq_s32( vdupq_n_s32( 0x5f3759df ),
+	                           vshrq_n_s32( vreinterpretq_s32_f32( x ), 1 ) );
+	float32x4_t r = vreinterpretq_f32_s32( i );
+	return vmulq_f32( r, vsubq_f32( vdupq_n_f32( 1.5f ),
+	                                vmulq_f32( vmulq_f32( r, r ), y ) ) );
+}
+
+ID_INLINE float32x4_t SIMD_TRIPLANE_NEGATE( float32x4_t v ) {
+	return vreinterpretq_f32_u32( veorq_u32( vreinterpretq_u32_f32( v ),
+	                                         vdupq_n_u32( 0x80000000u ) ) );
+}
+
+#define SIMD_TRIPLANE_MUL( a, b )	vmulq_f32( (a), (b) )
+#define SIMD_TRIPLANE_SUB( a, b )	vsubq_f32( (a), (b) )
+#define SIMD_TRIPLANE_ADD( a, b )	vaddq_f32( (a), (b) )
+#define SIMD_TRIPLANE_LOAD( p )		vld1q_f32( p )
+#define SIMD_TRIPLANE_STORE( p, v )	vst1q_f32( (p), (v) )
+typedef float32x4_t simdTriPlane_t;
+
+#endif
+
 #endif /* !__SIMD_POINTCULL_H__ */
