@@ -2913,7 +2913,6 @@ void idSessionLocal::UpdateScreen( bool outOfSequence ) {
 idSessionLocal::Frame
 ===============
 */
-extern int g_screenshotFormat;
 void idSessionLocal::Frame() {
 	D3P_ScopedCPUSample(Session_Frame);
 

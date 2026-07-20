@@ -429,7 +429,6 @@ SOURCES_CXX	:=\
 
 SOURCES_C	:=\
 	$(CORE_DIR)/framework/minizip/ioapi.c \
-	$(CORE_DIR)/renderer/stblib_impls.c \
 	$(SRC_GLAD) \
 	$(SRC_LIBRETRO) \
 	$(DIRS_C)

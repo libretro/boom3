@@ -45,8 +45,6 @@ If you have questions concerning this license or the applicable additional terms
 
 // Vista OpenGL wrapper check
 
-#include "stb_image_write.h"
-
 #ifdef HAVE_OPENGLES
 #include "renderer/gles_compat.h"
 #endif
@@ -242,9 +240,6 @@ idCVar r_scaleMenusTo43( "r_scaleMenusTo43", "1", CVAR_RENDERER | CVAR_ARCHIVE |
 // DG: the fscking patent has finally expired
 idCVar r_useCarmacksReverse( "r_useCarmacksReverse", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "Use Z-Fail (Carmack's Reverse) when rendering shadows" );
 idCVar r_useStencilOpSeparate( "r_useStencilOpSeparate", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "Use glStencilOpSeparate() (if available) when rendering shadows" );
-idCVar r_screenshotFormat("r_screenshotFormat", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "Screenshot format. 0 = TGA (default), 1 = BMP, 2 = PNG, 3 = JPG");
-idCVar r_screenshotJpgQuality("r_screenshotJpgQuality", "75", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "Screenshot quality for JPG images (1-100). Lower value means smaller file but worse quality");
-idCVar r_screenshotPngCompression("r_screenshotPngCompression", "3", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "Compression level when using PNG screenshots (0-9). Higher levels generate smaller files, but take noticeably longer");
 // DG: allow freely resizing the window
 idCVar r_windowResizable("r_windowResizable", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "Allow resizing (and maximizing) the window (needs SDL2; with 2.0.5 or newer it's applied immediately)" );
 idCVar r_vidRestartAlwaysFull( "r_vidRestartAlwaysFull", 0, CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "Always do a full vid_restart (ignore 'partial' argument), e.g. when changing window size" );
@@ -310,14 +305,6 @@ PFNGLSTENCILOPSEPARATEPROC qglStencilOpSeparate;
 // GL_ARB_debug_output
 
 #endif // !HAVE_OPENGLES
-
-// eez: This is a slight hack for letting us select the desired screenshot format in other functions
-//  This is a hack to avoid adding another function parameter to idRenderSystem::TakeScreenshot(),
-//  which would break the API of the dhewm3 SDK for mods.
-//  Note that this is reset to -1 (which means: use value of r_screenshotFormat) at the end of
-//  idRenderSystemLocal::TakeScreenshot(), so if your code wants to enforce a specific format,
-//  it must set g_screenshotFormat accordingly before each call to TakeScreenshot().
-int g_screenshotFormat = -1;
 
 enum {
 	// Not all GL.h header know about GL_DEBUG_SEVERITY_NOTIFICATION_*.
@@ -1409,19 +1396,6 @@ void R_ReadTiledPixels( int width, int height, byte *buffer, renderView_t *ref =
 
 /*
 ==================
-WriteScreenshotForSTBIW
-
-Callback to each stbi_write_* function
-==================
-*/
-static void WriteScreenshotForSTBIW(void* context, void* data, int size)
-{
-	idFile* f = (idFile*)context;
-	f->Write(data, size);
-}
-
-/*
-==================
 TakeScreenshot
 
 Move to tr_imagefiles.c...
@@ -1432,16 +1406,13 @@ If ref == NULL, session->updateScreen will be used
 ==================
 */
 void idRenderSystemLocal::TakeScreenshot( int width, int height, const char *fileName, int blends, renderView_t *ref ) {
-	byte		*buffer, *swapBuffer;
+	byte		*buffer;
 	int			i, j;
 
 	takingScreenshot = true;
 
 	int	pix = width * height;
-	int lineSize = width * 3;
-
 	buffer = (byte *)R_StaticAlloc(pix*3);
-	swapBuffer = (byte*)R_StaticAlloc(lineSize);
 
 	if ( blends <= 1 ) {
 		R_ReadTiledPixels( width, height, buffer, ref );
@@ -1469,50 +1440,29 @@ void idRenderSystemLocal::TakeScreenshot( int width, int height, const char *fil
 		r_jitter.SetBool( false );
 	}
 
-	// The buffer is upside down, we need to flip it the right way.
-	for (i = 0; i < height / 2; ++i) {
-		byte* line1 = &buffer[i * lineSize];
-		byte* line2 = &buffer[(height - i - 1) * lineSize];
-		memcpy(swapBuffer, line1, lineSize);
-		memcpy(line1, line2, lineSize);
-		memcpy(line2, swapBuffer, lineSize);
+	// R_WriteTGA takes RGBA and handles the vertical flip itself (passing
+	// flipVertical omits the TGA flip bit, which is what the bottom-up GL
+	// readback wants), so widen into a second buffer and let it do the rest.
+	// This matches idRenderSystemLocal::CaptureRenderToFile, which has always
+	// written savegame previews and PDA objective shots this way.
+	//
+	// Note: the old stb path opened "viewnote" screenshots under fs_cdpath;
+	// fileSystem->WriteFile() defaults to fs_savepath. That only affects the
+	// dev-only viewnotes feature, which already writes to a hardcoded p:/
+	// drive elsewhere and is not reachable in a shipped core.
+	{
+		byte *rgba = (byte *)R_StaticAlloc( pix * 4 );
+		for ( i = 0; i < pix; i++ ) {
+			rgba[i*4+0] = buffer[i*3+0];
+			rgba[i*4+1] = buffer[i*3+1];
+			rgba[i*4+2] = buffer[i*3+2];
+			rgba[i*4+3] = 255;
+		}
+		R_WriteTGA( fileName, rgba, width, height, true );
+		R_StaticFree( rgba );
 	}
-	
-	idFile* f;
-	if (strstr(fileName, "viewnote")) {
-		f = fileSystem->OpenFileWrite( fileName, "fs_cdpath" );
-	}
-	else {
-		f = fileSystem->OpenFileWrite( fileName );
-	}
-
-	// If no specific format is requested, default to using the CVar value.
-	if (g_screenshotFormat == -1) {
-		g_screenshotFormat = cvarSystem->GetCVarInteger( "r_screenshotFormat" );
-	}
-
-	switch (g_screenshotFormat) {
-		default:
-			stbi_write_tga_to_func( WriteScreenshotForSTBIW, f, width, height, 3, buffer );
-			break;
-		case 1:
-			stbi_write_bmp_to_func( WriteScreenshotForSTBIW, f, width, height, 3, buffer);
-			break;
-		case 2:
-			stbi_write_png_compression_level = idMath::ClampInt( 0, 9, r_screenshotPngCompression.GetInteger() );
-			stbi_write_png_to_func( WriteScreenshotForSTBIW, f, width, height, 3, buffer, 3 * width );
-			break;
-		case 3:
-			stbi_write_jpg_to_func( WriteScreenshotForSTBIW, f, width, height, 3, buffer, idMath::ClampInt( 1, 100, r_screenshotJpgQuality.GetInteger() ) );
-			break;
-	}
-
-	g_screenshotFormat = -1;
-
-	fileSystem->CloseFile(f);
 
 	R_StaticFree( buffer );
-	R_StaticFree( swapBuffer );
 
 	takingScreenshot = false;
 
@@ -1535,8 +1485,6 @@ void R_ScreenshotFilename( int &lastNumber, const char *base, idStr &fileName ) 
 	bool fsrestrict = cvarSystem->GetCVarBool( "fs_restrict" );
 	cvarSystem->SetCVarBool( "fs_restrict", false );
 
-	int format = cvarSystem->GetCVarInteger("r_screenshotFormat");
-
 	lastNumber++;
 	if ( lastNumber > 99999 ) {
 		lastNumber = 99999;
@@ -1554,20 +1502,7 @@ void R_ScreenshotFilename( int &lastNumber, const char *base, idStr &fileName ) 
 		frac -= d*10;
 		e = frac;
 
-		switch (format) {
-			default:
-				sprintf(fileName, "%s%i%i%i%i%i.tga", base, a, b, c, d, e);
-				break;
-			case 1:
-				sprintf(fileName, "%s%i%i%i%i%i.bmp", base, a, b, c, d, e);
-				break;
-			case 2:
-				sprintf(fileName, "%s%i%i%i%i%i.png", base, a, b, c, d, e);
-				break;
-			case 3:
-				sprintf(fileName, "%s%i%i%i%i%i.jpg", base, a, b, c, d, e);
-				break;
-		}
+		sprintf(fileName, "%s%i%i%i%i%i.tga", base, a, b, c, d, e);
 		
 		if ( lastNumber == 99999 ) {
 			break;
@@ -1581,68 +1516,6 @@ void R_ScreenshotFilename( int &lastNumber, const char *base, idStr &fileName ) 
 	cvarSystem->SetCVarBool( "fs_restrict", fsrestrict );
 }
 
-/*
-==================
-R_BlendedScreenShot
-
-screenshot
-screenshot [filename]
-screenshot [width] [height]
-screenshot [width] [height] [samples]
-==================
-*/
-#define	MAX_BLENDS	256	// to keep the accumulation in shorts
-void R_ScreenShot_f( const idCmdArgs &args ) {
-	static int lastNumber = 0;
-	idStr checkname;
-
-	int width = glConfig.vidWidth;
-	int height = glConfig.vidHeight;
-	int	blends = 0;
-
-	switch ( args.Argc() ) {
-	case 1:
-		width = glConfig.vidWidth;
-		height = glConfig.vidHeight;
-		blends = 1;
-		R_ScreenshotFilename( lastNumber, "screenshots/shot", checkname );
-		break;
-	case 2:
-		width = glConfig.vidWidth;
-		height = glConfig.vidHeight;
-		blends = 1;
-		checkname = args.Argv( 1 );
-		break;
-	case 3:
-		width = atoi( args.Argv( 1 ) );
-		height = atoi( args.Argv( 2 ) );
-		blends = 1;
-		R_ScreenshotFilename( lastNumber, "screenshots/shot", checkname );
-		break;
-	case 4:
-		width = atoi( args.Argv( 1 ) );
-		height = atoi( args.Argv( 2 ) );
-		blends = atoi( args.Argv( 3 ) );
-		if ( blends < 1 ) {
-			blends = 1;
-		}
-		if ( blends > MAX_BLENDS ) {
-			blends = MAX_BLENDS;
-		}
-		R_ScreenshotFilename( lastNumber, "screenshots/shot", checkname );
-		break;
-	default:
-		common->Printf( "usage: screenshot\n       screenshot <filename>\n       screenshot <width> <height>\n       screenshot <width> <height> <blends>\n" );
-		return;
-	}
-
-	// put the console away
-	console->Close();
-
-	tr.TakeScreenshot( width, height, checkname, blends, NULL );
-
-	common->Printf( "Wrote %s\n", checkname.c_str() );
-}
 
 /*
 ===============
@@ -1772,7 +1645,6 @@ void R_EnvShot_f( const idCmdArgs &args ) {
 		ref.height = glConfig.vidHeight;
 		ref.viewaxis = axis[i];
 		sprintf( fullname, "env/%s%s", baseName, extensions[i] );
-		g_screenshotFormat = 0;
 		tr.TakeScreenshot( size, size, fullname, blends, &ref );
 	}
 
@@ -2209,7 +2081,6 @@ void R_InitCommands( void ) {
 	cmdSystem->AddCommand( "reloadGuis", R_ReloadGuis_f, CMD_FL_RENDERER, "reloads guis" );
 	cmdSystem->AddCommand( "listGuis", R_ListGuis_f, CMD_FL_RENDERER, "lists guis" );
 	cmdSystem->AddCommand( "touchGui", R_TouchGui_f, CMD_FL_RENDERER, "touches a gui" );
-	cmdSystem->AddCommand( "screenshot", R_ScreenShot_f, CMD_FL_RENDERER, "takes a screenshot" );
 	cmdSystem->AddCommand( "envshot", R_EnvShot_f, CMD_FL_RENDERER, "takes an environment shot" );
 	cmdSystem->AddCommand( "makeAmbientMap", R_MakeAmbientMap_f, CMD_FL_RENDERER|CMD_FL_CHEAT, "makes an ambient map" );
 	cmdSystem->AddCommand( "benchmark", R_Benchmark_f, CMD_FL_RENDERER, "benchmark" );
