@@ -218,7 +218,6 @@ SRC_IDLIB	:=\
 	$(CORE_DIR)/idlib/math/Simd_AltiVec.cpp \
 	$(CORE_DIR)/idlib/math/Simd_SSE.cpp \
 	$(CORE_DIR)/idlib/math/Simd_SSE2.cpp \
-	$(CORE_DIR)/idlib/math/Simd_SSE3.cpp \
 	$(CORE_DIR)/idlib/math/Vector.cpp \
 	$(CORE_DIR)/idlib/BitMsg.cpp \
 	$(CORE_DIR)/idlib/LangDict.cpp \

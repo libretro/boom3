@@ -98,7 +98,6 @@ static inline void CPUid(int index, int *a, int *b, int *c, int *d) {
 #error unsupported compiler
 #endif
 
-#define c_SSE3		(1 << 0)
 #define d_SSE2		(1 << 26)
 #define d_FXSAVE	(1 << 24)
 
@@ -112,18 +111,6 @@ static inline bool HasDAZ() {
 	CPUid(1, &a, &b, &c, &d);
 
 	return (d & d_FXSAVE) == d_FXSAVE && (d & d_SSE2) == d_SSE2;
-}
-
-static inline bool HasSSE3() {
-	int a, b, c, d;
-
-	CPUid(0, &a, &b, &c, &d);
-	if (a < 1)
-		return false;
-
-	CPUid(1, &a, &b, &c, &d);
-
-	return (c & c_SSE3) == c_SSE3;
 }
 
 #define MXCSR_DAZ	(1 << 6)

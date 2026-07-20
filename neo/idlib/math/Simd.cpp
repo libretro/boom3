@@ -40,7 +40,6 @@ If you have questions concerning this license or the applicable additional terms
 #include "idlib/math/Simd_Generic.h"
 #include "idlib/math/Simd_SSE.h"
 #include "idlib/math/Simd_SSE2.h"
-#include "idlib/math/Simd_SSE3.h"
 #include "idlib/math/Simd_AltiVec.h"
 #include "idlib/math/Plane.h"
 #include "idlib/bv/Bounds.h"
@@ -86,8 +85,6 @@ void idSIMD::InitProcessor( const char *module, bool forceGeneric ) {
 		if ( !processor ) {
 			if ( ( cpuid & CPUID_ALTIVEC ) ) {
 				processor = new idSIMD_AltiVec;
-			} else if ( ( cpuid & CPUID_SSE ) && ( cpuid & CPUID_SSE2 ) && ( cpuid & CPUID_SSE3 ) ) {
-				processor = new idSIMD_SSE3;
 			} else if ( ( cpuid & CPUID_SSE ) && ( cpuid & CPUID_SSE2 ) ) {
 				processor = new idSIMD_SSE2;
 			} else if ( ( cpuid & CPUID_SSE ) ) {
@@ -3989,7 +3986,7 @@ TestVectorizedKernels
   The kernels vectorized in idSIMD_Generic - the three point culls,
   DeriveTriPlanes and CreateVertexProgramShadowCache - cannot be checked by
   the p_generic/p_simd comparisons above. On every GCC/Clang target almost all
-  of idSIMD_SSE is MSVC-x86 inline asm and compiles out, so idSIMD_SSE3
+  of idSIMD_SSE is MSVC-x86 inline asm and compiles out, so idSIMD_SSE2
   inherits those methods straight from idSIMD_Generic: both sides of those
   tests run the same code and pass whatever it does.
 
@@ -4331,12 +4328,6 @@ void idSIMD::Test_f( const idCmdArgs &args ) {
 				return;
 			}
 			p_simd = new idSIMD_SSE2;
-		} else if ( idStr::Icmp( argString, "SSE3" ) == 0 ) {
-			if ( !( cpuid & CPUID_SSE ) || !( cpuid & CPUID_SSE2 ) || !( cpuid & CPUID_SSE3 ) ) {
-				common->Printf( "CPU does not support SSE & SSE2 & SSE3\n" );
-				return;
-			}
-			p_simd = new idSIMD_SSE3();
 		} else if ( idStr::Icmp( argString, "AltiVec" ) == 0 ) {
 			if ( !( cpuid & CPUID_ALTIVEC ) ) {
 				common->Printf( "CPU does not support AltiVec\n" );
@@ -4344,7 +4335,7 @@ void idSIMD::Test_f( const idCmdArgs &args ) {
 			}
 			p_simd = new idSIMD_AltiVec();
 		} else {
-			common->Printf( "invalid argument, use: MMX, 3DNow, SSE, SSE2, SSE3, AltiVec\n" );
+			common->Printf( "invalid argument, use: SSE, SSE2, AltiVec\n" );
 			return;
 		}
 	}
