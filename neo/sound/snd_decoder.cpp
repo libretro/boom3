@@ -177,6 +177,9 @@ int idWaveFile::CloseOGG( void ) {
 ===================================================================================
 */
 
+/* see rsTail in idSampleDecoderLocal */
+#define RESAMPLE_TAIL_FRAMES	4
+
 class idSampleDecoderLocal : public idSampleDecoder {
 public:
 	virtual void			Decode( idSoundSample *sample, int sampleOffset44k, int sampleCount44k, float *dest );
@@ -196,6 +199,35 @@ private:
 	int						lastDecodeTime;		// last time decoding sound
 
 	void *					atHandle;			// libretro-common audio_transfer OGG handle
+
+	/*
+	   Ogg rate-conversion state. Ogg stays encoded at its authored rate and
+	   is resampled per block while streaming, so the resampler has to be a
+	   STREAM too: a block that restarts its interpolation phase at zero and
+	   throws away the source frames it did not consume produces a
+	   discontinuity at every block boundary. Measured before this state
+	   existed: a step of 8956 where the signal's largest legitimate step was
+	   864, once per block - about every 33ms - which is what it sounded like.
+
+	   rsNum is the position numerator: rsNum/dstRate is the fractional source
+	   frame the next output sample sits at. Keeping it exact rather than
+	   pre-computing a fixed-point step means there is no per-sample rounding
+	   and therefore no drift, however long the stream runs.
+
+	   rsTail holds the source frames read but not yet consumed, which the
+	   next block needs for its first interpolations.
+	*/
+	int64_t					rsNum;				// 0 <= rsNum < dstRate
+	int						rsTailFrames;
+	int						rsRate;				// rate the state belongs to
+	/*
+	   The tail is what a block read but did not consume, which is at most the
+	   two frames the final output sample interpolates between - measured 1 to
+	   2 across every rate and block size. Sized to 4 frames rather than a mix
+	   buffer: 64 decoders are pooled, so MIXBUFFER_SAMPLES here would be 2MB
+	   of state to hold two frames. The copy is bounded against this.
+	*/
+	float					rsTail[RESAMPLE_TAIL_FRAMES * 2];
 };
 
 idBlockAlloc<idSampleDecoderLocal, 64>		sampleDecoderAllocator;
@@ -273,6 +305,9 @@ void idSampleDecoderLocal::Clear( void ) {
 	lastSampleOffset = 0;
 	lastDecodeTime = 0;
 	atHandle = NULL;
+	rsNum = 0;
+	rsTailFrames = 0;
+	rsRate = 0;
 }
 
 /*
@@ -504,6 +539,7 @@ int idSampleDecoderLocal::DecodeOGG( idSoundSample *sample, int sampleOffset44k,
 		float *planar[2] = { planarBuf[0], planarBuf[1] };
 		int ch = sample->objectInfo.nChannels;
 		int reqSamples = Min( MIXBUFFER_SAMPLES, totalSamples / ch );
+		int gotFrames = 0;		/* frames produced, always in the OUTPUT domain */
 		if ( reqSamples == 0 ) {
 			readSamples += totalSamples;
 			totalSamples = 0;
@@ -511,77 +547,125 @@ int idSampleDecoderLocal::DecodeOGG( idSoundSample *sample, int sampleOffset44k,
 		}
 
 		/*
-		   Ogg assets stay at their authored rate (the sound cache resamples
-		   PCM at load time but deliberately leaves Ogg encoded, since
-		   resampling it there would force a full decode into memory). When the
-		   output rate differs, ask the decoder for proportionally fewer source
-		   frames and interpolate up, or the stream plays at the wrong pitch -
-		   8.8% fast at 48kHz, 118% fast at 96kHz.
+		   Ogg assets stay at their authored rate - the sound cache resamples
+		   PCM once at load time but deliberately leaves Ogg encoded, since
+		   resampling it there would force a full decode into memory. When the
+		   output rate differs it has to be converted here, per block, or the
+		   stream plays at the wrong pitch: 8.8% fast at 48kHz, 118% at 96kHz.
+
+		   This is a streaming resampler, not a per-block one. Position is held
+		   in an exact rational accumulator (rsNum/dstRate source frames) that
+		   carries across calls, and the source frames read but not consumed are
+		   kept in rsTail for the next block to interpolate from. Both matter:
+		   restarting the phase each block put a discontinuity at every block
+		   boundary, and rounding the phase increment to fixed point drifts.
 		*/
 		const int srcRate = sample->objectInfo.nSamplesPerSec;
 		const int dstRate = snd_SampleRate();
-		int srcWanted = reqSamples;
-		if ( srcRate != dstRate ) {
-			srcWanted = (int)( ( (int64_t)reqSamples * srcRate ) / dstRate );
-			if ( srcWanted < 1 ) {
-				srcWanted = 1;
+
+		if ( srcRate == dstRate ) {
+			/* no conversion: read straight through */
+			size_t framesGot = 0;
+			int ret = audio_transfer_read_f32( atHandle, AUDIO_TYPE_VORBIS,
+					interleaved, (size_t)reqSamples, &framesGot );
+			if ( ret == AUDIO_PROCESS_ERROR || ret == AUDIO_PROCESS_ERROR_END ) {
+				failed = true;
+				break;
 			}
-		}
+			if ( framesGot == 0 ) {
+				break;
+			}
+			gotFrames = (int)framesGot;
+		} else {
+			/* reset the stream state if the rate changed under us */
+			if ( rsRate != srcRate ) {
+				rsRate = srcRate;
+				rsNum = 0;
+				rsTailFrames = 0;
+			}
 
-		size_t framesGot = 0;
-		int ret = audio_transfer_read_f32( atHandle, AUDIO_TYPE_VORBIS,
-				interleaved, (size_t)srcWanted, &framesGot );
-		if ( ret == AUDIO_PROCESS_ERROR || ret == AUDIO_PROCESS_ERROR_END ) {
-			failed = true;
-			break;
-		}
-		if ( framesGot == 0 ) {
-			// end of stream: pad the rest with silence like the stb path's
-			// trailing memset does via the caller.
-			break;
-		}
+			/* carry the unconsumed tail to the front of the work buffer */
+			if ( rsTailFrames > 0 ) {
+				memcpy( interleaved, rsTail, (size_t)rsTailFrames * ch * sizeof( float ) );
+			}
 
-		if ( srcRate != dstRate ) {
-			/*
-			   Linear interpolation, matching what the rest of this path does
-			   in spirit - the SIMD upsamplers are nearest-neighbour sample
-			   duplication. Held in a fixed 16.16 accumulator so the result
-			   depends only on the frame index, not on any running state.
-			*/
+			/* the last output sample reads source frames idx and idx+1 */
+			int64_t lastNum = rsNum + (int64_t)srcRate * ( reqSamples - 1 );
+			int needTotal = (int)( lastNum / dstRate ) + 2;
+			int needNew = needTotal - rsTailFrames;
+			if ( needNew < 0 ) {
+				needNew = 0;
+			}
+			if ( rsTailFrames + needNew > MIXBUFFER_SAMPLES ) {
+				needNew = MIXBUFFER_SAMPLES - rsTailFrames;
+			}
+
+			size_t framesGot = 0;
+			if ( needNew > 0 ) {
+				int ret = audio_transfer_read_f32( atHandle, AUDIO_TYPE_VORBIS,
+						interleaved + rsTailFrames * ch, (size_t)needNew, &framesGot );
+				if ( ret == AUDIO_PROCESS_ERROR || ret == AUDIO_PROCESS_ERROR_END ) {
+					failed = true;
+					break;
+				}
+			}
+			int avail = rsTailFrames + (int)framesGot;
+			if ( avail <= 0 ) {
+				break;		/* end of stream */
+			}
+
 			static float resampled[MIXBUFFER_SAMPLES * 2];
-			int outFrames = (int)( ( (int64_t)framesGot * dstRate ) / srcRate );
-			if ( outFrames > MIXBUFFER_SAMPLES ) {
-				outFrames = MIXBUFFER_SAMPLES;
-			}
-			for ( int i = 0; i < outFrames; i++ ) {
-				int64_t pos  = ( (int64_t)i * srcRate << 16 ) / dstRate;
-				int     idx  = (int)( pos >> 16 );
-				float   frac = (float)( pos & 0xFFFF ) * ( 1.0f / 65536.0f );
-				int     idx1 = ( idx + 1 < (int)framesGot ) ? idx + 1 : (int)framesGot - 1;
+			for ( int i = 0; i < reqSamples; i++ ) {
+				int64_t pos = rsNum + (int64_t)srcRate * i;
+				int     idx = (int)( pos / dstRate );
+				float   frac = (float)( pos % dstRate ) / (float)dstRate;
+				int     i0 = ( idx     < avail ) ? idx     : avail - 1;
+				int     i1 = ( idx + 1 < avail ) ? idx + 1 : avail - 1;
 				for ( int c = 0; c < ch; c++ ) {
-					float a = interleaved[idx  * ch + c];
-					float b = interleaved[idx1 * ch + c];
+					float a = interleaved[i0 * ch + c];
+					float b = interleaved[i1 * ch + c];
 					resampled[i * ch + c] = a + ( b - a ) * frac;
 				}
 			}
-			memcpy( interleaved, resampled, outFrames * ch * sizeof( float ) );
-			framesGot = (size_t)outFrames;
+
+			/* advance the exact position and keep whatever was not consumed */
+			rsNum += (int64_t)srcRate * reqSamples;
+			int consumed = (int)( rsNum / dstRate );
+			rsNum -= (int64_t)consumed * dstRate;
+			rsTailFrames = avail - consumed;
+			if ( rsTailFrames < 0 ) {
+				rsTailFrames = 0;
+			} else if ( rsTailFrames > RESAMPLE_TAIL_FRAMES ) {
+				/* cannot happen for the rate pairs offered - the tail is the 1-2
+				   frames the last output sample straddles - but clamp rather than
+				   overrun if a future rate makes it larger */
+				rsTailFrames = RESAMPLE_TAIL_FRAMES;
+			}
+			if ( rsTailFrames > 0 ) {
+				memcpy( rsTail, interleaved + consumed * ch,
+						(size_t)rsTailFrames * ch * sizeof( float ) );
+			}
+
+			memcpy( interleaved, resampled, (size_t)reqSamples * ch * sizeof( float ) );
+			gotFrames = reqSamples;
 		}
 
 		// de-interleave into the planar layout UpSampleOGGTo44kHz expects
-		for ( int i = 0; i < (int)framesGot; i++ ) {
+		for ( int i = 0; i < gotFrames; i++ ) {
 			for ( int c = 0; c < ch; c++ ) {
 				planarBuf[c][i] = interleaved[i * ch + c];
 			}
 		}
 
-		int gotInterleaved = (int)framesGot * ch;
-		/* already at the output rate after the conversion above, so tell the
-		   upsampler 44100 (its 1:1 passthrough case) rather than the asset's
-		   authored rate, which would make it duplicate samples again */
+		int gotInterleaved = gotFrames * ch;
+		/*
+		   The data is already at the output rate by this point, whether it came
+		   through the straight-through path or the resampler, so pass 44100 -
+		   the upsampler's 1:1 passthrough case. Passing the asset's authored
+		   rate would make it duplicate samples on top of the conversion.
+		*/
 		SIMDProcessor->UpSampleOGGTo44kHz( dest + ( readSamples << shift ), planar,
-				gotInterleaved, ( srcRate != dstRate ) ? 44100 : sample->objectInfo.nSamplesPerSec,
-				sample->objectInfo.nChannels );
+				gotInterleaved, 44100, sample->objectInfo.nChannels );
 
 		readSamples += gotInterleaved;
 		totalSamples -= gotInterleaved;
