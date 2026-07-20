@@ -1504,8 +1504,6 @@ void idCommonLocal::InitLanguageDict( void ) {
 	}
 
 	fileSystem->FreeFileList(langFiles);
-
-	Sys_InitScanTable();
 }
 
 /*

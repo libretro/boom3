@@ -149,14 +149,6 @@ void Conbuf_AppendText( const char *pMsg )
 }
 
 /*
-===========
-Sys_InitScanTable
-===========
-*/
-void Sys_InitScanTable() {
-}
-
-/*
 ===============
 Sys_GetConsoleKey
 ===============

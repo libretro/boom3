@@ -157,9 +157,6 @@ void			Sys_Printf( const char *msg, ... )id_attribute((format(printf,1,2)));
 void			Sys_DebugPrintf( const char *fmt, ... )id_attribute((format(printf,1,2)));
 void			Sys_DebugVPrintf( const char *fmt, va_list arg );
 
-// allow game to yield CPU time
-// NOTE: due to SDL_TIMESLICE this is very bad portability karma, and should be completely removed
-
 // The deterministic core clock (milliseconds of core time, derived from
 // the retro_run() frame count - NOT a wall clock; see sys/libretro/stubs.cpp)
 double			Core_MillisecondsPrecise( void );
@@ -212,7 +209,6 @@ char			*Sys_ConsoleInput( void );
 // the main window is recreated
 void			Sys_InitInput( void );
 void			Sys_ShutdownInput( void );
-void			Sys_InitScanTable( void );
 unsigned char	Sys_GetConsoleKey( bool shifted );
 // map a scancode key to a char
 // does nothing on win32, as SE_KEY == SE_CHAR there
