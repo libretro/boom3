@@ -1,5 +1,5 @@
 /*
-snd_efxfile.cpp - efxs/*.efx reverb definition parser.
+snd_efxfile.cpp - reverb definition parser for .efx files under efxs/.
 
 Grammar-compatible with the OpenAL-era dhewm3 parser (which followed
 Creative's EAX property conventions): "reverb <name> { ... }" blocks with

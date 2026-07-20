@@ -1365,7 +1365,6 @@ void idSoundWorldLocal::AddChannelContribution( idSoundEmitterLocal *sound, idSo
 
 	int  mask = shader->speakerMask;
 	bool omni = ( parms->soundShaderFlags & SSF_OMNIDIRECTIONAL) != 0;
-	bool looping = ( parms->soundShaderFlags & SSF_LOOPING ) != 0;
 	bool global = ( parms->soundShaderFlags & SSF_GLOBAL ) != 0;
 	bool noOcclusion = ( parms->soundShaderFlags & SSF_NO_OCCLUSION ) || !idSoundSystemLocal::s_useOcclusion.GetBool();
 
@@ -1715,7 +1714,6 @@ float idSoundWorldLocal::FindAmplitude( idSoundEmitterLocal *sound, const int lo
 		int	localTriggerTimes = chan->trigger44kHzTime;
 
 		bool looping = ( parms->soundShaderFlags & SSF_LOOPING ) != 0;
-
 		// check for screen shakes
 		float shakes = parms->shakes;
 		if ( shakesOnly && shakes <= 0.0f ) {

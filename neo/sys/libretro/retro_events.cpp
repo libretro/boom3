@@ -345,7 +345,8 @@ Sys_GenerateEvents
 ================
 */
 void Sys_GenerateEvents(void) {
-	char *s = Sys_ConsoleInput();
+	// called for its side effects; the returned line is not consumed here
+	(void)Sys_ConsoleInput();
 }
 
 /*

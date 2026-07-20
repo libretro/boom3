@@ -92,6 +92,12 @@ private:
 
 
 ID_INLINE idRotation::idRotation( void ) {
+	// axisValid was left indeterminate here, so a default-constructed
+	// idRotation could take the "matrix already valid" path in ToMat3() and
+	// hand back an uninitialised axis. Clear it (and the matrix, so copies of
+	// a default-constructed rotation are deterministic).
+	axisValid = false;
+	axis.Identity();
 }
 
 ID_INLINE idRotation::idRotation( const idVec3 &rotationOrigin, const idVec3 &rotationVec, const float rotationAngle ) {
@@ -99,6 +105,10 @@ ID_INLINE idRotation::idRotation( const idVec3 &rotationOrigin, const idVec3 &ro
 	vec = rotationVec;
 	angle = rotationAngle;
 	axisValid = false;
+	// axis is only meaningful once ReCalculateMatrix() has run (axisValid
+	// guards that), but it is still copied wholesale by the implicit
+	// copy/move assignment, which would propagate indeterminate floats.
+	axis.Identity();
 }
 
 ID_INLINE void idRotation::Set( const idVec3 &rotationOrigin, const idVec3 &rotationVec, const float rotationAngle ) {

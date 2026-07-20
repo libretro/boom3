@@ -374,8 +374,11 @@ typedef int (*xthread_t)( void * );
 
 typedef struct {
 	const char		*name;
-	unsigned long	threadHandle;   // pthread_t
-	unsigned long	threadId;
+	// pthread_t on POSIX, a HANDLE on Windows. uintptr_t rather than
+	// unsigned long: the latter is 32 bit on Win64 (LLP64), so storing a
+	// HANDLE in it truncates the pointer.
+	uintptr_t		threadHandle;
+	uintptr_t		threadId;
 } xthreadInfo;
 
 void				Sys_CreateThread( xthread_t function, void *parms, xthreadInfo &info, const char *name );

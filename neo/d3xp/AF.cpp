@@ -897,8 +897,10 @@ bool idAF::Load( idEntity *ent, const char *fileName ) {
 			//  CONSTRAINT_HINGESTEERING has no DECLAF_CONSTRAINT_ equivalent,
 			//  and thus DECLAF_CONSTRAINT_SLIDER != CONSTRAINT_SLIDER (5 != 6)
 			//  and DECLAF_CONSTRAINT_SPRING != CONSTRAINT_SPRING (6 != 10)
+			// The cast makes the mismatch explicit rather than silencing a
+			// warning by accident; behaviour is unchanged from upstream.
 			if ( file->constraints[j]->name.Icmp( constraint->GetName() ) == 0 &&
-					file->constraints[j]->type == constraint->GetType() ) {
+					(int)file->constraints[j]->type == (int)constraint->GetType() ) {
 				break;
 			}
 		}

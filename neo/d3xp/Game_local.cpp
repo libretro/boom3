@@ -3976,11 +3976,11 @@ void idGameLocal::KillBox( idEntity *ent, bool catch_teleport ) {
 idGameLocal::RequirementMet
 ================
 */
-bool idGameLocal::RequirementMet( idEntity *activator, const idStr &requires, int removeItem ) {
-	if ( requires.Length() ) {
+bool idGameLocal::RequirementMet( idEntity *activator, const idStr &requiresItem, int removeItem ) {
+	if ( requiresItem.Length() ) {
 		if ( activator->IsType( idPlayer::Type ) ) {
 			idPlayer *player = static_cast<idPlayer *>(activator);
-			idDict *item = player->FindInventoryItem( requires );
+			idDict *item = player->FindInventoryItem( requiresItem );
 			if ( item ) {
 				if ( removeItem ) {
 					player->RemoveInventoryItem( item );

@@ -1841,8 +1841,7 @@ On exit, the idImage will have a valid OpenGL texture number that can be bound
 ===============
 */
 void	idImage::ActuallyLoadImage( bool checkForPrecompressed, bool fromBackEnd ) {
-	int		width, height;
-	byte	*pic;
+	int		width;
 
 	// this is the ONLY place generatorFunction will ever be called
 	if ( generatorFunction ) {

@@ -180,6 +180,13 @@ void	idMegaTexture::SetMappingForSurface( const srfTriangles_t *tri ) {
 
 	idDrawVert	origin, axis[2];
 
+	// xyz is only assigned when the scan below finds a qualifying vertex; zero
+	// it so the vector maths afterwards can never read indeterminate values
+	// (and so the results stay deterministic if a surface has no such vertex).
+	origin.xyz.Zero();
+	axis[0].xyz.Zero();
+	axis[1].xyz.Zero();
+
 	origin.st[0] = 1.0;
 	origin.st[1] = 1.0;
 

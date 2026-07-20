@@ -93,10 +93,8 @@ retro_audio_sample_batch_t audio_batch_cb;
 retro_environment_t environ_cb;
 static retro_input_poll_t poll_cb;
 static retro_input_state_t input_cb;
-static struct retro_rumble_interface rumble;
 retro_perf_get_time_usec_t perf_get_time_usec = NULL;
 static bool libretro_supports_bitmasks = false;
-static bool needs_gl_reinit = false;
 
 static void audio_upload_frame(void);
 
@@ -596,8 +594,13 @@ static void extract_basename(char *buf, const char *path, size_t size)
    if (*base == '\\' || *base == '/')
       base++;
 
-   strncpy(buf, base, size - 1);
-   buf[size - 1] = '\0';
+   {
+      size_t len = strlen(base);
+      if (len > size - 1)
+         len = size - 1;
+      memcpy(buf, base, len);
+      buf[len] = '\0';
+   }
 
    ext = strrchr(buf, '.');
    if (ext)
@@ -1256,11 +1259,14 @@ bool retro_load_game(const struct retro_game_info *info)
 		if (strlen(base_save_dir) > 0)
 		{
 			// Get game 'name' (i.e. subdirectory)
-			char game_name[1024];
+			// half of g_save_dir each, so "<base><slash><name>" always fits
+			// and snprintf() never has to truncate
+			char game_name[sizeof(g_save_dir) / 2 - 1];
 			extract_basename(game_name, g_rom_dir, sizeof(game_name));
-			
+
 			// > Build final save path
-			snprintf(g_save_dir, sizeof(g_save_dir), "%s%c%s", base_save_dir, slash, game_name);
+			snprintf(g_save_dir, sizeof(g_save_dir), "%.*s%c%s",
+					(int)(sizeof(g_save_dir) / 2 - 1), base_save_dir, slash, game_name);
 			use_external_savedir = true;
 			
 			// > Create save directory, if required

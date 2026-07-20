@@ -310,6 +310,15 @@ CXXFLAGS += -DHAVE_RTGA -DHAVE_RDDS -DHAVE_RJPEG
 CFLAGS   += -DHAVE_RVORBIS -DHAVE_RWAV
 CXXFLAGS += -DHAVE_RVORBIS -DHAVE_RWAV
 CXXFLAGS += -Wall $(fpic) -fpermissive -std=gnu++11
+# idlib deliberately memset()s/memcpy()s POD-ish structs and classes that the
+# compiler considers non-trivial only because they have constructors; rewriting
+# ~60 of those to value-initialisation would be churn with no runtime benefit.
+# The binding tables in sys/libretro/libretro.cpp likewise store string literals
+# in char* fields, as the rest of the engine's string handling does.
+CXXFLAGS += -Wno-class-memaccess -Wno-write-strings
+# vendored libretro-common ignores some fread() results; suppress rather than
+# patch, so our copy stays diffable against upstream.
+CFLAGS   += -Wno-unused-result
 
 # unified core: always the d3xp game module (superset of the base game)
 CFLAGS	 +=	-I$(TOPDIR)/d3xp -D_D3XP

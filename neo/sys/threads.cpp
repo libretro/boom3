@@ -301,7 +301,7 @@ void Sys_CreateThread(xthread_t function, void *parms, xthreadInfo& info, const 
 		return;
 	}
 	info.name = name;
-	info.threadHandle = (unsigned long)t;
+	info.threadHandle = (uintptr_t)t;
 	info.threadId = GetThreadId(t);
 #else
 	pthread_t t;
@@ -312,8 +312,8 @@ void Sys_CreateThread(xthread_t function, void *parms, xthreadInfo& info, const 
 	}
 
 	info.name = name;
-	info.threadHandle = (unsigned long)t;
-	info.threadId = (unsigned long)t;
+	info.threadHandle = (uintptr_t)t;
+	info.threadId = (uintptr_t)t;
 #endif
 
 	if (thread_count < MAX_THREADS)
@@ -333,8 +333,8 @@ void Sys_DestroyThread(xthreadInfo& info) {
 	assert(info.threadHandle);
 
 #ifdef _WIN32
-	WaitForSingleObject((HANDLE)info.threadHandle, INFINITE);
-	CloseHandle((HANDLE)info.threadHandle);
+	WaitForSingleObject((HANDLE)(uintptr_t)info.threadHandle, INFINITE);
+	CloseHandle((HANDLE)(uintptr_t)info.threadHandle);
 #else
 	pthread_join((pthread_t)info.threadHandle, NULL);
 #endif

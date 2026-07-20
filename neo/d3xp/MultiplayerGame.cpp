@@ -3456,6 +3456,7 @@ void idMultiplayerGame::ServerCallVote( int clientNum, const idBitMsg &msg ) {
 			break;
 		case VOTE_GAMETYPE:
 			vote_gameTypeIndex = strtol( value, NULL, 10 );
+			(void)vote_gameTypeIndex;	// only consumed by the CTF path below
 #ifdef CTF
 			assert( vote_gameTypeIndex > 0 && vote_gameTypeIndex < GAME_COUNT );
 			strcpy( value, si_gameTypeArgs[ vote_gameTypeIndex ] );

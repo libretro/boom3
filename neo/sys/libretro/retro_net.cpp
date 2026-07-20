@@ -103,8 +103,12 @@ ExtractPort
 */
 static bool ExtractPort( const char *src, char *buf, int bufsize, int *port ) {
 	char *p;
-	strncpy( buf, src, bufsize );
-	p = buf; p += Min( bufsize - 1, (int)strlen( src ) ); *p = '\0';
+	int len = (int)strlen( src );
+	if ( len > bufsize - 1 ) {
+		len = bufsize - 1;
+	}
+	memcpy( buf, src, len );
+	buf[len] = '\0';
 	p = strchr( buf, ':' );
 	if ( !p ) {
 		return false;
@@ -614,9 +618,8 @@ idTCP::Write
 ==================
 */
 
-static void got_SIGPIPE( int signum ) {
-	common->Printf( "idTCP: SIGPIPE\n" );
-}
+// (a SIGPIPE handler used to live here; it was never installed, and
+// libretro-common's net_compat.c already does signal(SIGPIPE, SIG_IGN))
 
 int	idTCP::Write(void *data, int size) {
 	int nbytes;

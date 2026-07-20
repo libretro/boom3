@@ -449,7 +449,7 @@ void idCommonLocal::VPrintf( const char *fmt, va_list args ) {
 	// don't overflow
 	if ( idStr::vsnPrintf( msg+timeLength, MAX_PRINT_MSG_SIZE-timeLength-1, fmt, args ) < 0 ) {
 		msg[sizeof(msg)-2] = '\n'; msg[sizeof(msg)-1] = '\0'; // avoid output garbling
-		Sys_Printf( "idCommon::VPrintf: truncated to %zd characters\n", strlen(msg)-1 );
+		Sys_Printf( "idCommon::VPrintf: truncated to %i characters\n", (int)( strlen( msg ) - 1 ) );
 	}
 
 	if ( rd_buffer ) {
