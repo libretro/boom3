@@ -35,6 +35,7 @@ If you have questions concerning this license or the applicable additional terms
 
 // libretro-common audio_transfer: WAV/OGG decode (rwav/rvorbis).
 #include <formats/audio.h>
+#include <audio/audio_resampler.h>
 
 #include "sound/snd_local.h"
 
@@ -177,8 +178,8 @@ int idWaveFile::CloseOGG( void ) {
 ===================================================================================
 */
 
-/* see rsTail in idSampleDecoderLocal */
-#define RESAMPLE_TAIL_FRAMES	4
+/* surplus output frames held between blocks; see rsCarry below */
+#define RESAMPLE_CARRY_FRAMES	64
 
 class idSampleDecoderLocal : public idSampleDecoder {
 public:
@@ -201,33 +202,33 @@ private:
 	void *					atHandle;			// libretro-common audio_transfer OGG handle
 
 	/*
-	   Ogg rate-conversion state. Ogg stays encoded at its authored rate and
-	   is resampled per block while streaming, so the resampler has to be a
-	   STREAM too: a block that restarts its interpolation phase at zero and
-	   throws away the source frames it did not consume produces a
-	   discontinuity at every block boundary. Measured before this state
-	   existed: a step of 8956 where the signal's largest legitimate step was
-	   864, once per block - about every 33ms - which is what it sounded like.
+	   Ogg rate-conversion state.
 
-	   rsNum is the position numerator: rsNum/dstRate is the fractional source
-	   frame the next output sample sits at. Keeping it exact rather than
-	   pre-computing a fixed-point step means there is no per-sample rounding
-	   and therefore no drift, however long the stream runs.
+	   Ogg stays encoded at its authored rate - the sound cache resamples PCM
+	   once at load but leaves Ogg alone, since resampling it there would force
+	   a full decode into memory - so it has to be converted per block while
+	   streaming. That means the resampler must itself be a stream: an earlier
+	   per-block one that restarted its phase and discarded the source frames
+	   it had not consumed put a discontinuity at every block boundary,
+	   measured as a step of 8956 against a largest legitimate step of 864,
+	   once per retro_run.
 
-	   rsTail holds the source frames read but not yet consumed, which the
-	   next block needs for its first interpolations.
+	   This is libretro-common's sinc resampler, which holds that state
+	   internally. It was already in the tree and built, just unused.
 	*/
-	int64_t					rsNum;				// 0 <= rsNum < dstRate
-	int						rsTailFrames;
-	int						rsRate;				// rate the state belongs to
+	void *					rsHandle;			// sinc resampler, NULL until needed
+	int						rsSrcRate;			// rate the handle was built for
+	int						rsDstRate;
 	/*
-	   The tail is what a block read but did not consume, which is at most the
-	   two frames the final output sample interpolates between - measured 1 to
-	   2 across every rate and block size. Sized to 4 frames rather than a mix
-	   buffer: 64 decoders are pooled, so MIXBUFFER_SAMPLES here would be 2MB
-	   of state to hold two frames. The copy is bounded against this.
+	   The resampler returns a few more frames than asked for - measured 2 to
+	   5 per block at 44.1->96kHz, because the exact output count for a given
+	   input depends on its internal phase. Discarding them would drop 2-5
+	   samples of audio per block, which is a discontinuity every retro_run
+	   and audible as scratching. They are held here and emitted first next
+	   time instead.
 	*/
-	float					rsTail[RESAMPLE_TAIL_FRAMES * 2];
+	float					rsCarry[RESAMPLE_CARRY_FRAMES * 2];
+	int						rsCarryFrames;
 };
 
 idBlockAlloc<idSampleDecoderLocal, 64>		sampleDecoderAllocator;
@@ -305,9 +306,10 @@ void idSampleDecoderLocal::Clear( void ) {
 	lastSampleOffset = 0;
 	lastDecodeTime = 0;
 	atHandle = NULL;
-	rsNum = 0;
-	rsTailFrames = 0;
-	rsRate = 0;
+	rsHandle = NULL;
+	rsSrcRate = 0;
+	rsDstRate = 0;
+	rsCarryFrames = 0;
 }
 
 /*
@@ -327,6 +329,13 @@ void idSampleDecoderLocal::ClearDecoder( void ) {
 				audio_transfer_free( atHandle, AUDIO_TYPE_VORBIS );
 				atHandle = NULL;
 			}
+			if ( rsHandle != NULL ) {
+				sinc_resampler.free( rsHandle );
+				rsHandle = NULL;
+				rsSrcRate = 0;
+				rsDstRate = 0;
+			}
+			rsCarryFrames = 0;
 			break;
 		}
 	}
@@ -577,77 +586,125 @@ int idSampleDecoderLocal::DecodeOGG( idSoundSample *sample, int sampleOffset44k,
 			}
 			gotFrames = (int)framesGot;
 		} else {
-			/* reset the stream state if the rate changed under us */
-			if ( rsRate != srcRate ) {
-				rsRate = srcRate;
-				rsNum = 0;
-				rsTailFrames = 0;
-			}
-
-			/* carry the unconsumed tail to the front of the work buffer */
-			if ( rsTailFrames > 0 ) {
-				memcpy( interleaved, rsTail, (size_t)rsTailFrames * ch * sizeof( float ) );
-			}
-
-			/* the last output sample reads source frames idx and idx+1 */
-			int64_t lastNum = rsNum + (int64_t)srcRate * ( reqSamples - 1 );
-			int needTotal = (int)( lastNum / dstRate ) + 2;
-			int needNew = needTotal - rsTailFrames;
-			if ( needNew < 0 ) {
-				needNew = 0;
-			}
-			if ( rsTailFrames + needNew > MIXBUFFER_SAMPLES ) {
-				needNew = MIXBUFFER_SAMPLES - rsTailFrames;
-			}
-
-			size_t framesGot = 0;
-			if ( needNew > 0 ) {
-				int ret = audio_transfer_read_f32( atHandle, AUDIO_TYPE_VORBIS,
-						interleaved + rsTailFrames * ch, (size_t)needNew, &framesGot );
-				if ( ret == AUDIO_PROCESS_ERROR || ret == AUDIO_PROCESS_ERROR_END ) {
+			/*
+			   Rebuild the resampler if the rate pair changed. Doing it lazily
+			   keeps decoders that never touch a mismatched Ogg from paying for
+			   the filter tables.
+			*/
+			if ( rsHandle == NULL || rsSrcRate != srcRate || rsDstRate != dstRate ) {
+				if ( rsHandle != NULL ) {
+					sinc_resampler.free( rsHandle );
+					rsHandle = NULL;
+				}
+				rsHandle = sinc_resampler.init( NULL, (double)dstRate / (double)srcRate,
+						RESAMPLER_QUALITY_HIGHER, 0 );
+				if ( rsHandle == NULL ) {
+					common->Warning( "idSampleDecoderLocal: could not create resampler for %s\n",
+							sample->name.c_str() );
 					failed = true;
 					break;
 				}
-			}
-			int avail = rsTailFrames + (int)framesGot;
-			if ( avail <= 0 ) {
-				break;		/* end of stream */
+				rsSrcRate = srcRate;
+				rsDstRate = dstRate;
 			}
 
-			static float resampled[MIXBUFFER_SAMPLES * 2];
-			for ( int i = 0; i < reqSamples; i++ ) {
-				int64_t pos = rsNum + (int64_t)srcRate * i;
-				int     idx = (int)( pos / dstRate );
-				float   frac = (float)( pos % dstRate ) / (float)dstRate;
-				int     i0 = ( idx     < avail ) ? idx     : avail - 1;
-				int     i1 = ( idx + 1 < avail ) ? idx + 1 : avail - 1;
-				for ( int c = 0; c < ch; c++ ) {
-					float a = interleaved[i0 * ch + c];
-					float b = interleaved[i1 * ch + c];
-					resampled[i * ch + c] = a + ( b - a ) * frac;
+			/*
+			   Fill reqSamples output frames, never discarding any the resampler
+			   produces. It returns a few more than the ratio implies - measured
+			   2 to 5 per block - because the exact count depends on its internal
+			   phase; those go into rsCarry and come out first next time. An
+			   earlier version clamped and dropped them, which put a
+			   discontinuity in the stream once per block.
+			*/
+			static float rsIn[MIXBUFFER_SAMPLES * 2];
+			static float rsOut[( MIXBUFFER_SAMPLES + RESAMPLE_CARRY_FRAMES ) * 2];
+			int filled = 0;
+
+			if ( rsCarryFrames > 0 ) {
+				int take = ( rsCarryFrames < reqSamples ) ? rsCarryFrames : reqSamples;
+				for ( int i = 0; i < take; i++ ) {
+					for ( int c = 0; c < ch; c++ ) {
+						interleaved[i * ch + c] = rsCarry[i * 2 + c];
+					}
+				}
+				filled = take;
+				rsCarryFrames -= take;
+				if ( rsCarryFrames > 0 ) {
+					memmove( rsCarry, rsCarry + take * 2,
+							(size_t)rsCarryFrames * 2 * sizeof( float ) );
 				}
 			}
 
-			/* advance the exact position and keep whatever was not consumed */
-			rsNum += (int64_t)srcRate * reqSamples;
-			int consumed = (int)( rsNum / dstRate );
-			rsNum -= (int64_t)consumed * dstRate;
-			rsTailFrames = avail - consumed;
-			if ( rsTailFrames < 0 ) {
-				rsTailFrames = 0;
-			} else if ( rsTailFrames > RESAMPLE_TAIL_FRAMES ) {
-				/* cannot happen for the rate pairs offered - the tail is the 1-2
-				   frames the last output sample straddles - but clamp rather than
-				   overrun if a future rate makes it larger */
-				rsTailFrames = RESAMPLE_TAIL_FRAMES;
-			}
-			if ( rsTailFrames > 0 ) {
-				memcpy( rsTail, interleaved + consumed * ch,
-						(size_t)rsTailFrames * ch * sizeof( float ) );
+			bool streamEnded = false;
+			while ( filled < reqSamples ) {
+				int still = reqSamples - filled;
+				int srcWanted = (int)( ( (int64_t)still * srcRate ) / dstRate ) + 1;
+				if ( srcWanted > MIXBUFFER_SAMPLES ) {
+					srcWanted = MIXBUFFER_SAMPLES;
+				}
+
+				size_t framesGot = 0;
+				int ret = audio_transfer_read_f32( atHandle, AUDIO_TYPE_VORBIS,
+						rsIn, (size_t)srcWanted, &framesGot );
+				if ( ret == AUDIO_PROCESS_ERROR || ret == AUDIO_PROCESS_ERROR_END ) {
+					failed = true;
+					streamEnded = true;
+					break;
+				}
+				if ( framesGot == 0 ) {
+					streamEnded = true;
+					break;
+				}
+
+				/* the resampler works on interleaved stereo; widen mono */
+				if ( ch == 1 ) {
+					for ( int i = (int)framesGot - 1; i >= 0; i-- ) {
+						float v = rsIn[i];
+						rsIn[i*2+0] = v;
+						rsIn[i*2+1] = v;
+					}
+				}
+
+				struct resampler_data rd;
+				memset( &rd, 0, sizeof( rd ) );
+				rd.data_in      = rsIn;
+				rd.data_out     = rsOut;
+				rd.input_frames = framesGot;
+				rd.ratio        = (double)dstRate / (double)srcRate;
+				sinc_resampler.process( rsHandle, &rd );
+
+				int got = (int)rd.output_frames;
+				if ( got <= 0 ) {
+					streamEnded = true;
+					break;
+				}
+
+				int take = ( got < still ) ? got : still;
+				for ( int i = 0; i < take; i++ ) {
+					for ( int c = 0; c < ch; c++ ) {
+						interleaved[( filled + i ) * ch + c] = rsOut[i * 2 + c];
+					}
+				}
+				filled += take;
+
+				int surplus = got - take;
+				if ( surplus > 0 ) {
+					if ( surplus > RESAMPLE_CARRY_FRAMES - rsCarryFrames ) {
+						surplus = RESAMPLE_CARRY_FRAMES - rsCarryFrames;
+					}
+					if ( surplus > 0 ) {
+						memcpy( rsCarry + rsCarryFrames * 2, rsOut + take * 2,
+								(size_t)surplus * 2 * sizeof( float ) );
+						rsCarryFrames += surplus;
+					}
+				}
 			}
 
-			memcpy( interleaved, resampled, (size_t)reqSamples * ch * sizeof( float ) );
-			gotFrames = reqSamples;
+			if ( filled == 0 ) {
+				break;		/* nothing left in the stream */
+			}
+			(void)streamEnded;
+			gotFrames = filled;
 		}
 
 		// de-interleave into the planar layout UpSampleOGGTo44kHz expects
