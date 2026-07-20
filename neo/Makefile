@@ -228,6 +228,13 @@ else ifeq ($(COMPILE_ARCH),x86)
     D3_ARCH := x86
     MSB_FIRST := 0
     D3_SIZEOFPTR := 4
+    # Evaluate float expressions in SSE registers rather than the x87 stack.
+    # x87 computes at 80-bit internally and rounds to 32-bit at points the
+    # compiler chooses, so the same source produces different results here
+    # than on x86_64/ARM. -ffp-contract=off does not help: the excess
+    # precision is in the register file, not in fused operations. SSE2 is
+    # baseline on every x86 CPU since 2003.
+    ARCH_FP_FLAGS := -msse -msse2 -mfpmath=sse
 else ifneq (,$(findstring arm,$(COMPILE_ARCH)))
     D3_ARCH := arm
     MSB_FIRST := 0
@@ -259,6 +266,9 @@ else
 endif
 
 CFLAGS += -DD3_OSTYPE=\"$(D3_OSTYPE)\" -DD3_SIZEOFPTR=$(D3_SIZEOFPTR) -DD3_ARCH=\"$(D3_ARCH)\"
+# per-architecture floating point evaluation flags (see the arch block above)
+CFLAGS   += $(ARCH_FP_FLAGS)
+CXXFLAGS += $(ARCH_FP_FLAGS)
 # libretro convention: MSB_FIRST is defined (with no value) only on
 # big-endian targets
 ifeq ($(MSB_FIRST), 1)
@@ -298,7 +308,8 @@ TOPDIR ?= $(CURDIR)
 
 
 CFLAGS   += -Wall $(fpic) $(CORE) $(SDL2) -DBASE=ON -DUSE_FILE32API -ffast-math \
-			-fno-unsafe-math-optimizations -fno-strict-aliasing -fomit-frame-pointer \
+			-fno-unsafe-math-optimizations -ffp-contract=off \
+			-fno-strict-aliasing -fomit-frame-pointer \
 			-Wno-sign-compare -Wno-switch -Wno-format-security -I$(TOPDIR) -I$(TOPDIR)/sys/libretro/config
 # libretro-common image_transfer: enable only the decoders Doom 3 uses
 # (TGA source images, DDS precompressed, JPEG for mod content that ships .jpg
