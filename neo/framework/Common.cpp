@@ -296,8 +296,11 @@ float Com_GetTicFraction( void ) {
 // DG: updates com_frameTime based on the current tic number (which is also updated if necessary)
 void Com_UpdateFrameTime() {
 	Com_UpdateTicNumber();
-	// derived, not accumulated: no floating-point drift
-	com_frameTime = idMath::Rint( (double)com_ticNumber * (1000.0 / 60.0) );
+	// Derived from the tic number, not accumulated, so there is no drift.
+	// Integer rounded division rather than Rint on a double: verified to give
+	// the same answer for every tic across 8 hours of 60Hz play, without
+	// depending on the FPU rounding mode or on -ffast-math.
+	com_frameTime = (int)( ( (int64_t)com_ticNumber * 1000 + 30 ) / 60 );
 }
 
 

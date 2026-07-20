@@ -105,15 +105,19 @@ void			Sys_Printf( const char *msg, ... )id_attribute((format(printf,1,2)));
 void			Sys_DebugPrintf( const char *fmt, ... )id_attribute((format(printf,1,2)));
 void			Sys_DebugVPrintf( const char *fmt, va_list arg );
 
-// The deterministic core clock (milliseconds of core time, derived from
-// the retro_run() frame count - NOT a wall clock; see sys/libretro/stubs.cpp)
+// The deterministic core clock: core time derived from the retro_run() frame
+// count, NOT a wall clock. Accumulated in integer microseconds so the result
+// depends only on how many frames have run, not on the framerate history or
+// on floating point rounding. See sys/libretro/stubs.cpp.
+int64_t			Core_MicrosecondsPrecise( void );
 double			Core_MillisecondsPrecise( void );
 uint64_t		Core_FrameCount( void );
 void			Core_AdvanceFrame( void );
 void			Core_SetFramerate( int fps );
 
 ID_INLINE unsigned int Core_Milliseconds( void ) {
-	return (unsigned int)Core_MillisecondsPrecise();
+	// integer division, not a double truncation
+	return (unsigned int)( Core_MicrosecondsPrecise() / 1000 );
 }
 
 

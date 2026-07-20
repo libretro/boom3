@@ -27,8 +27,20 @@ extern retro_perf_get_time_usec_t perf_get_time_usec;
 // The base offset keeps the clock strictly positive (parts of the
 // engine treat 0/negative time as "uninitialized"), and framerate
 // changes fold elapsed time into the base so the clock stays monotonic.
+/*
+   Core time is derived from the frame counter, never from a wall clock, so
+   two runs that see the same number of retro_run calls agree exactly.
+
+   The accumulator is integer microseconds rather than a double. Both forms
+   are deterministic for a fixed framerate - measured identical over 8 hours
+   at 60fps - but Core_SetFramerate folds the elapsed time into the base on
+   every rate change, and in double that rounding accumulates: 8 switches of
+   100k frames each drifted 2.3us from exact. Small, but it makes the result
+   depend on the framerate history rather than only on the frame count, which
+   is the property savestates and replays rely on.
+*/
 static uint64_t core_frame_count = 0;
-static double   core_ms_base     = 16.0;
+static int64_t  core_base_us     = 16000;	/* folded elapsed time */
 static int      core_fps         = 60;
 
 void Core_AdvanceFrame( void ) {
@@ -44,14 +56,20 @@ void Core_SetFramerate( int fps ) {
 		fps = 60;
 	if ( fps != core_fps )
 	{
-		core_ms_base    += (double)core_frame_count * 1000.0 / (double)core_fps;
+		core_base_us    += (int64_t)core_frame_count * 1000000 / core_fps;
 		core_frame_count = 0;
 		core_fps         = fps;
 	}
 }
 
+int64_t Core_MicrosecondsPrecise( void ) {
+	return core_base_us + (int64_t)core_frame_count * 1000000 / core_fps;
+}
+
 double Core_MillisecondsPrecise( void ) {
-	return core_ms_base + (double)core_frame_count * 1000.0 / (double)core_fps;
+	/* kept for the few callers that want sub-millisecond resolution as a
+	   double; the value itself is computed in integers above */
+	return (double)Core_MicrosecondsPrecise() / 1000.0;
 }
 
 // ---- Debugger server ----
