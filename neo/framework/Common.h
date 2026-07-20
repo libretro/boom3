@@ -60,7 +60,6 @@ typedef enum {
 
 extern idCVar		com_version;
 extern idCVar		com_skipRenderer;
-extern idCVar		com_asyncSound;
 extern idCVar		com_machineSpec;
 extern idCVar		com_purgeAll;
 extern idCVar		com_developer;
@@ -74,22 +73,10 @@ extern idCVar		com_enableDebuggerServer;
 extern idCVar		com_dbgClientAdr;
 extern idCVar		com_dbgServerAdr;
 
-extern int			time_frontend;			// renderer frontend time
-extern int			time_backend;			// renderer backend time
-
 extern int			com_frameTime;			// time for the current frame in milliseconds
 extern volatile int	com_ticNumber;			// 60 hz tics, incremented by async function
 extern int			com_editors;			// current active editor(s)
 extern bool			com_editorActive;		// true if an editor has focus
-
-extern bool			com_debuggerSupported;	// only set to true when the updateDebugger function is set. see GetAdditionalFunction()
-
-#ifdef _WIN32
-const char			DMAP_MSGID[] = "DMAPOutput";
-const char			DMAP_DONE[] = "DMAPDone";
-extern HWND			com_hwndMsg;
-extern bool			com_outputMsg;
-#endif
 
 struct MemInfo_t {
 	idStr			filebase;

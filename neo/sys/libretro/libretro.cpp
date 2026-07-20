@@ -133,8 +133,6 @@ static const int kb_mouse_keys[5] = {
 
 static float mouse_sensitivity = 3.0f;
 
-extern idCVar com_asyncSound;
-
 extern void Char_Event(int c);
 
 gp_layout_t modern = {
@@ -1359,7 +1357,6 @@ void retro_run(void)
 
 	if (first_boot) {
 		network_init();
-		//com_asyncSound.SetInteger(0);
 		common->Init( fake_argc, fake_argv );
 		first_boot = false;
 		update_variables(false);

@@ -84,8 +84,6 @@ idCVar com_skipRenderer( "com_skipRenderer", "0", CVAR_BOOL|CVAR_SYSTEM, "skip t
 idCVar com_machineSpec( "com_machineSpec", "-1", CVAR_INTEGER | CVAR_ARCHIVE | CVAR_SYSTEM, "hardware classification, -1 = not detected, 0 = low quality, 1 = medium quality, 2 = high quality, 3 = ultra quality" );
 idCVar com_purgeAll( "com_purgeAll", "0", CVAR_BOOL | CVAR_ARCHIVE | CVAR_SYSTEM, "purge everything between level loads" );
 idCVar com_memoryMarker( "com_memoryMarker", "-1", CVAR_INTEGER | CVAR_SYSTEM | CVAR_INIT, "used as a marker for memory stats" );
-#define ASYNCSOUND_INFO "0: mix sound inline, 1 or 3: async update every 16ms 2: async update about every 100ms (original behavior)"
-idCVar com_asyncSound( "com_asyncSound", "1", CVAR_INTEGER|CVAR_SYSTEM, ASYNCSOUND_INFO, 0, 3 );
 idCVar com_forceGenericSIMD( "com_forceGenericSIMD", "0", CVAR_BOOL | CVAR_SYSTEM | CVAR_NOCHEAT, "force generic platform independent SIMD" );
 idCVar com_developer( "developer", "0", CVAR_BOOL|CVAR_SYSTEM|CVAR_NOCHEAT, "developer mode" );
 idCVar com_allowConsole( "com_allowConsole", "0", CVAR_BOOL | CVAR_SYSTEM | CVAR_NOCHEAT, "allow toggling console with the tilde key" );
@@ -107,14 +105,6 @@ int				com_frameTime;			// time (since start) for the current frame in milliseco
 volatile int	com_ticNumber;			// 60 hz tics
 int				com_editors;			// currently opened editor(s)
 bool			com_editorActive;		//  true if an editor has focus
-
-bool			com_debuggerSupported;	// only set to true when the updateDebugger function is set. see GetAdditionalFunction()
-
-#ifdef _WIN32
-HWND			com_hwndMsg = NULL;
-bool			com_outputMsg = false;
-unsigned int	com_msgID = -1;
-#endif
 
 // writes si_version to the config file - in a kinda obfuscated way
 //#define ID_WRITE_VERSION
@@ -260,7 +250,7 @@ void Com_SetFrameSchedule( int framerateHz ) {
 // advances com_ticNumber according to the frame schedule. Idempotent
 // within a frame: the session's loading pumps call this repeatedly inside
 // one retro_run() and must not fabricate extra tics.
-void Com_UpdateTicNumber() {
+void Com_UpdateTicNumber(void) {
 	static uint64_t lastFrame = (uint64_t)-1;
 	uint64_t f = Core_FrameCount();
 	if ( f == lastFrame )
@@ -313,7 +303,6 @@ idCommonLocal::idCommonLocal( void ) {
 	com_fullyInitialized = false;
 	com_refreshOnPrint = false;
 	com_errorEntered = 0;
-	com_debuggerSupported = false;
 
 	strcpy( errorMessage, "" );
 
@@ -357,37 +346,6 @@ void idCommonLocal::EndRedirect( void ) {
 	rd_buffersize = 0;
 	rd_flush = NULL;
 }
-
-#ifdef _WIN32
-
-/*
-==================
-EnumWindowsProc
-==================
-*/
-BOOL CALLBACK EnumWindowsProc( HWND hwnd, LPARAM lParam ) {
-	char buff[1024];
-
-	::GetWindowText( hwnd, buff, sizeof( buff ) );
-	if ( idStr::Icmpn( buff, EDITOR_WINDOWTEXT, strlen( EDITOR_WINDOWTEXT ) ) == 0 ) {
-		com_hwndMsg = hwnd;
-		return FALSE;
-	}
-	return TRUE;
-}
-
-/*
-==================
-FindEditor
-==================
-*/
-bool FindEditor( void ) {
-	com_hwndMsg = NULL;
-	EnumWindows( EnumWindowsProc, 0 );
-	return !( com_hwndMsg == NULL );
-}
-
-#endif
 
 /*
 ==================
@@ -470,22 +428,6 @@ void idCommonLocal::VPrintf( const char *fmt, va_list args ) {
 		// let session redraw the animated loading screen if necessary
 		session->PacifierUpdate();
 	}
-
-#ifdef _WIN32
-
-	if ( com_outputMsg ) {
-		if ( com_msgID == -1 ) {
-			com_msgID = ::RegisterWindowMessage( DMAP_MSGID );
-			if ( !FindEditor() )
-				com_outputMsg = false;
-		}
-		if ( com_hwndMsg ) {
-			ATOM atom = ::GlobalAddAtom( msg );
-			::PostMessage( com_hwndMsg, com_msgID, 0, static_cast<LPARAM>(atom) );
-		}
-	}
-
-#endif
 }
 
 /*
@@ -2762,7 +2704,6 @@ void idCommonLocal::ShutdownGame( bool reloading ) {
 	if ( game != NULL )
 		game->Shutdown();
 
-	com_debuggerSupported = false; // HvG: Reset debugger availability.
 	gameCallbacks.Reset(); // DG: these callbacks are invalid now because DLL has been unloaded
 
 	// dump warnings to "warnings.txt"
@@ -2802,16 +2743,6 @@ static bool isDemo( void )
 	return sessLocal.IsDemoVersion();
 }
 
-static bool updateDebugger( idInterpreter *interpreter, idProgram *program, int instructionPointer )
-{
-	if (com_editors & EDITOR_DEBUGGER) 
-	{
-		DebuggerServerCheckBreakpoint( interpreter, program, instructionPointer );
-		return true;
-	}
-	return false;
-}
-
 // returns true if that function is available in this version of dhewm3
 // *out_fnptr will be the function (you'll have to cast it probably)
 // *out_userArg will be an argument you have to pass to the function, if appropriate (else NULL)
@@ -2834,8 +2765,6 @@ bool idCommonLocal::GetAdditionalFunction(idCommon::FunctionType ft, idCommon::F
 			return true;
 
 		case idCommon::FT_UpdateDebugger:
-			*out_fnptr = (idCommon::FunctionPointer)updateDebugger;
-			com_debuggerSupported = true;
 			return true;
 
 		default:

@@ -118,11 +118,9 @@ idCompressor_None::GetFullPath
 ================
 */
 const char *idCompressor_None::GetFullPath( void ) {
-	if ( file ) {
+	if ( file )
 		return file->GetFullPath();
-	} else {
-		return "";
-	}
+	return "";
 }
 
 /*
@@ -131,9 +129,8 @@ idCompressor_None::Write
 ================
 */
 int idCompressor_None::Write( const void *inData, int inLength ) {
-	if ( compress == false || inLength <= 0 ) {
+	if ( compress == false || inLength <= 0 )
 		return 0;
-	}
 	return file->Write( inData, inLength );
 }
 
@@ -143,9 +140,8 @@ idCompressor_None::Read
 ================
 */
 int idCompressor_None::Read( void *outData, int outLength ) {
-	if ( compress == true || outLength <= 0 ) {
+	if ( compress == true || outLength <= 0 )
 		return 0;
-	}
 	return file->Read( outData, outLength );
 }
 
@@ -155,11 +151,9 @@ idCompressor_None::Length
 ================
 */
 int idCompressor_None::Length( void ) {
-	if ( file ) {
+	if ( file )
 		return file->Length();
-	} else {
-		return 0;
-	}
+	return 0;
 }
 
 /*
@@ -168,11 +162,9 @@ idCompressor_None::Timestamp
 ================
 */
 ID_TIME_T idCompressor_None::Timestamp( void ) {
-	if ( file ) {
+	if ( file )
 		return file->Timestamp();
-	} else {
-		return 0;
-	}
+	return 0;
 }
 
 /*
@@ -181,11 +173,9 @@ idCompressor_None::Tell
 ================
 */
 int idCompressor_None::Tell( void ) {
-	if ( file ) {
+	if ( file )
 		return file->Tell();
-	} else {
-		return 0;
-	}
+	return 0;
 }
 
 /*
@@ -194,9 +184,8 @@ idCompressor_None::ForceFlush
 ================
 */
 void idCompressor_None::ForceFlush( void ) {
-	if ( file ) {
+	if ( file )
 		file->ForceFlush();
-	}
 }
 
 /*
@@ -205,9 +194,8 @@ idCompressor_None::Flush
 ================
 */
 void idCompressor_None::Flush( void ) {
-	if ( file ) {
+	if ( file )
 		file->ForceFlush();
-	}
 }
 
 /*
@@ -534,15 +522,13 @@ idCompressor_BitStream::Write
 int idCompressor_BitStream::Write( const void *inData, int inLength ) {
 	int i;
 
-	if ( compress == false || inLength <= 0 ) {
+	if ( compress == false || inLength <= 0 )
 		return 0;
-	}
 
 	InitCompress( inData, inLength );
 
-	for ( i = 0; i < inLength; i++ ) {
+	for ( i = 0; i < inLength; i++ )
 		WriteBits( ReadBits( 8 ), 8 );
-	}
 	return i;
 }
 
@@ -552,13 +538,11 @@ idCompressor_BitStream::FinishCompress
 ================
 */
 void idCompressor_BitStream::FinishCompress( void ) {
-	if ( compress == false ) {
+	if ( compress == false )
 		return;
-	}
 
-	if ( writeByte ) {
+	if ( writeByte )
 		file->Write( buffer, writeByte );
-	}
 	writeLength = 0;
 	writeByte = 0;
 	writeBit = 0;
@@ -572,15 +556,13 @@ idCompressor_BitStream::Read
 int idCompressor_BitStream::Read( void *outData, int outLength ) {
 	int i;
 
-	if ( compress == true || outLength <= 0 ) {
+	if ( compress == true || outLength <= 0 )
 		return 0;
-	}
 
 	InitDecompress( outData, outLength );
 
-	for ( i = 0; i < outLength && readLength >= 0; i++ ) {
+	for ( i = 0; i < outLength && readLength >= 0; i++ )
 		WriteBits( ReadBits( 8 ), 8 );
-	}
 	return i;
 }
 
@@ -590,11 +572,9 @@ idCompressor_BitStream::GetCompressionRatio
 ================
 */
 float idCompressor_BitStream::GetCompressionRatio( void ) const {
-	if ( compress ) {
+	if ( compress )
 		return ( readTotalBytes - writeTotalBytes ) * 100.0f / readTotalBytes;
-	} else {
-		return ( writeTotalBytes - readTotalBytes ) * 100.0f / writeTotalBytes;
-	}
+	return ( writeTotalBytes - readTotalBytes ) * 100.0f / writeTotalBytes;
 }
 
 
