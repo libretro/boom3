@@ -211,8 +211,8 @@ R_ShowTriMemory_f
 ===============
 */
 void R_ShowTriSurfMemory_f( const idCmdArgs &args ) {
-	common->Printf( "%6zd kB in %d triangle surfaces\n",
-		( srfTrianglesAllocator.GetAllocCount() * sizeof( srfTriangles_t ) ) >> 10,
+	common->Printf( "%6i kB in %d triangle surfaces\n",
+		(int)( ( srfTrianglesAllocator.GetAllocCount() * sizeof( srfTriangles_t ) ) >> 10 ),
 			srfTrianglesAllocator.GetAllocCount() );
 
 	common->Printf( "%6d kB vertex memory (%d kB free in %d blocks, %d empty base blocks)\n",
@@ -251,8 +251,8 @@ void R_ShowTriSurfMemory_f( const idCmdArgs &args ) {
 		triDupVertAllocator.GetBaseBlockMemory() >> 10, triDupVertAllocator.GetFreeBlockMemory() >> 10,
 			triDupVertAllocator.GetNumFreeBlocks(), triDupVertAllocator.GetNumEmptyBaseBlocks() );
 
-	common->Printf( "%6zu kB total triangle memory\n",
-		( srfTrianglesAllocator.GetAllocCount() * sizeof( srfTriangles_t ) +
+	common->Printf( "%6i kB total triangle memory\n",
+		(int)( ( srfTrianglesAllocator.GetAllocCount() * sizeof( srfTriangles_t ) +
 			triVertexAllocator.GetBaseBlockMemory() +
 			triIndexAllocator.GetBaseBlockMemory() +
 			triShadowVertexAllocator.GetBaseBlockMemory() +
@@ -261,7 +261,7 @@ void R_ShowTriSurfMemory_f( const idCmdArgs &args ) {
 			triSilEdgeAllocator.GetBaseBlockMemory() +
 			triDominantTrisAllocator.GetBaseBlockMemory() +
 			triMirroredVertAllocator.GetBaseBlockMemory() +
-			triDupVertAllocator.GetBaseBlockMemory() ) >> 10 );
+			triDupVertAllocator.GetBaseBlockMemory() ) >> 10 ) );
 }
 
 /*

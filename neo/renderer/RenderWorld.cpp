@@ -1521,7 +1521,7 @@ void idRenderWorldLocal::GenerateAllInteractions() {
 		}
 
 		common->Printf( "interactionTable size: %i bytes\n", size );
-		common->Printf( "%d interaction take %zd bytes\n", count, count * sizeof( idInteraction ) );
+		common->Printf( "%d interaction take %i bytes\n", count, (int)( count * sizeof( idInteraction ) ) );
 	}
 
 	// entities flagged as noDynamicInteractions will no longer make any

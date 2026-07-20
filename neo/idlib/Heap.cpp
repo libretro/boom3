@@ -194,13 +194,16 @@ void idHeap::Init () {
 	largeFirstUsedPage	= NULL;								// init large heap manager
 	swapPage			= NULL;
 
+	// Must precede the AllocatePage() below: its out-of-memory path reads
+	// (and frees) defragBlock, so leaving it indeterminate until afterwards
+	// meant the very first page allocation could free a garbage pointer.
+	defragBlock = NULL;
+
 	memset( smallFirstFree, 0, sizeof(smallFirstFree) );	// init small heap manager
 	smallFirstUsedPage	= NULL;
 	smallCurPage		= AllocatePage( pageSize );
 	assert( smallCurPage );
 	smallCurPageOffset	= SMALL_ALIGN( 0 );
-
-	defragBlock = NULL;
 
 	mediumFirstFreePage	= NULL;								// init medium heap manager
 	mediumLastFreePage	= NULL;

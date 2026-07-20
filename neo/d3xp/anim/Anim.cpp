@@ -1049,7 +1049,7 @@ void idAnimManager::ListAnims( void ) const {
 		if ( animptr && *animptr ) {
 			anim = *animptr;
 			s = anim->Size();
-			gameLocal.Printf( "%8zd bytes : %2d refs : %s\n", s, anim->NumRefs(), anim->Name() );
+			gameLocal.Printf( "%8i bytes : %2d refs : %s\n", (int)s, anim->NumRefs(), anim->Name() );
 			size += s;
 			num++;
 		}
@@ -1060,8 +1060,8 @@ void idAnimManager::ListAnims( void ) const {
 		namesize += jointnames[ i ].Size();
 	}
 
-	gameLocal.Printf( "\n%zd memory used in %d anims\n", size, num );
-	gameLocal.Printf( "%zd memory used in %d joint names\n", namesize, jointnames.Num() );
+	gameLocal.Printf( "\n%i memory used in %d anims\n", (int)size, num );
+	gameLocal.Printf( "%i memory used in %d joint names\n", (int)namesize, jointnames.Num() );
 }
 
 /*
