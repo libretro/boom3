@@ -120,6 +120,19 @@ public:
 	static double				Sqrt64( float x );			// square root with 64 bits precision
 
 	static float				Sin( float a );				// sine with 32 bits precision
+	/*
+		The "maximum absolute error" figures on the *16 trig functions below are
+		the error of the underlying minimax polynomial evaluated in double. The
+		code evaluates in float, so float rounding of the Horner chain dominates
+		and the measured error is ~1e-07, roughly two orders of magnitude larger.
+
+		Separately, Sin16/Cos16 reduce range with a -= floorf(a/TWO_PI)*TWO_PI.
+		TWO_PI as a float is 2.78e-08 off 2*pi, and reduction multiplies that by
+		the quotient, so phase error grows linearly with |a|: ~2e-04 at |a|~2^11
+		and ~0.9 at |a|~2^24, by which point the result is meaningless. Callers
+		passing an unbounded time-derived argument (see AI.cpp and Weapon.cpp)
+		should prefer Sin/Cos, which call libm and reduce properly.
+	*/
 	static float				Sin16( float a );			// sine with 16 bits precision, maximum absolute error is 2.3082e-09
 	static double				Sin64( float a );			// sine with 64 bits precision
 
@@ -797,11 +810,22 @@ ID_INLINE int idMath::Ftoi( float f ) {
 	return (int) f;
 }
 
+/*
+	NOTE: despite the name and the comment in the MSVC branch below, this is
+	NOT round-to-nearest anywhere except 32-bit MSVC. Every other target falls
+	through to the plain (int) cast at the bottom, which truncates toward zero.
+
+	That difference is visible in ANGLE2SHORT/ANGLE2BYTE above, so network
+	angle quantisation here does not match the original 32-bit Windows build.
+	It is however consistent across all targets we ship, so it is not a
+	determinism hazard, and changing it now would alter behaviour relative to
+	builds already in the wild. Left as-is deliberately.
+*/
 ID_INLINE int idMath::FtoiFast( float f ) {
 #if defined(_MSC_VER) && defined(_M_IX86)
 	int i;
 	__asm fld		f
-	__asm fistp		i		// use default rouding mode (round nearest)
+	__asm fistp		i		// use default rounding mode (round nearest)
 	return i;
 #elif 0						// round chop (C/C++ standard)
 	int i, s, e, m, shift;
