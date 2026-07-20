@@ -811,7 +811,10 @@ int idSoundEmitterLocal::StartSound( const idSoundShader *shader, const s_channe
 		chan->triggerGame44kHzTime &= ~7;
 	}
 
-	length *= 1000 / (float)PRIMARYFREQ;
+	/* length is in OUTPUT samples (LengthIn44kHzSamples returns the output
+	   domain), so convert with the output rate, not the asset rate. Using
+	   PRIMARYFREQ here made every computed duration 2.18x wrong at 96kHz. */
+	length *= 1000 / (float)snd_SampleRate();
 
 	Sys_LeaveCriticalSection();
 

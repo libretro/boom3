@@ -405,11 +405,25 @@ idSoundSample::LengthIn44kHzSamples
 ===================
 */
 int idSoundSample::LengthIn44kHzSamples( void ) const {
-	// objectSize is samples
+	/*
+	   objectSize is in source samples; the caller wants the length in OUTPUT
+	   samples (the mixer's clock domain).
+
+	   The shifts below are the historical 11025/22050 -> 44100 expansions.
+	   PCM assets are resampled to the output rate when they are loaded, so
+	   they land in the final branch with nSamplesPerSec already equal to the
+	   output rate. Ogg is deliberately left encoded at its authored rate and
+	   resampled per block while streaming, so it needs scaling here - without
+	   it a 44.1kHz Ogg reports its source length at 96kHz output and every
+	   sound is treated as 2.18x shorter than it is, cutting playback short
+	   and confusing the looping and completion checks.
+	*/
 	if ( objectInfo.nSamplesPerSec == 11025 ) {
 		return objectSize << 2;
 	} else if ( objectInfo.nSamplesPerSec == 22050 ) {
 		return objectSize << 1;
+	} else if ( objectInfo.nSamplesPerSec != snd_SampleRate() ) {
+		return (int)( ( (int64_t)objectSize * snd_SampleRate() ) / objectInfo.nSamplesPerSec );
 	} else {
 		return objectSize << 0;
 	}

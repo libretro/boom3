@@ -458,10 +458,24 @@ int idSampleDecoderLocal::DecodeOGG( idSoundSample *sample, int sampleOffset44k,
 		return 0;
 	}
 
-	// seek if the requested offset isn't where we are. Offsets here are in
-	// per-channel frames (sampleOffset counts interleaved samples).
+	/*
+	   Seek if the requested offset isn't where we are.
+
+	   sampleOffset is in OUTPUT samples, but audio_transfer_seek() addresses
+	   the file in SOURCE frames. Those are the same thing only when the asset
+	   rate matches the output rate. When they differ - Ogg is left encoded at
+	   its authored rate and resampled per block below - the offset has to be
+	   scaled, or every seek lands the wrong distance into the stream: at
+	   96kHz output with a 44.1kHz asset it overshoots by 2.18x, which is
+	   audible as the stream constantly jumping forward.
+	*/
 	if ( sampleOffset != lastSampleOffset ) {
-		if ( !audio_transfer_seek( atHandle, AUDIO_TYPE_VORBIS, (uint64_t)( sampleOffset / sample->objectInfo.nChannels ) ) ) {
+		uint64_t srcFrame = (uint64_t)( sampleOffset / sample->objectInfo.nChannels );
+		if ( sample->objectInfo.nSamplesPerSec != snd_SampleRate() ) {
+			srcFrame = ( srcFrame * (uint64_t)sample->objectInfo.nSamplesPerSec )
+					/ (uint64_t)snd_SampleRate();
+		}
+		if ( !audio_transfer_seek( atHandle, AUDIO_TYPE_VORBIS, srcFrame ) ) {
 			common->Warning( "idSampleDecoderLocal::DecodeOGG() seek(%d) for %s failed\n",
 					sampleOffset / sample->objectInfo.nChannels, sample->name.c_str() );
 			failed = true;
