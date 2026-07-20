@@ -3214,7 +3214,100 @@ void VPCALL idSIMD_Generic::CreateSpecularTextureCoords( idVec4 *texCoords, cons
 		used[indexes[i]] = true;
 	}
 
-	for ( int i = 0; i < numVerts; i++ ) {
+	int i = 0;
+
+#if defined(SIMD_POINTCULL_SSE2) || defined(SIMD_POINTCULL_NEON)
+	{
+		const simdTriPlane_t LX = SIMD_TRIPLANE_SPLAT( lightOrigin[0] );
+		const simdTriPlane_t LY = SIMD_TRIPLANE_SPLAT( lightOrigin[1] );
+		const simdTriPlane_t LZ = SIMD_TRIPLANE_SPLAT( lightOrigin[2] );
+		const simdTriPlane_t VX = SIMD_TRIPLANE_SPLAT( viewOrigin[0] );
+		const simdTriPlane_t VY = SIMD_TRIPLANE_SPLAT( viewOrigin[1] );
+		const simdTriPlane_t VZ = SIMD_TRIPLANE_SPLAT( viewOrigin[2] );
+
+		for ( ; i + 3 < numVerts; i += 4 ) {
+			float px[4], py[4], pz[4];
+			float t0x[4], t0y[4], t0z[4], t1x[4], t1y[4], t1z[4], nx[4], ny[4], nz[4];
+			float o0[4], o1[4], o2[4];
+			simdTriPlane_t PX, PY, PZ, ldx, ldy, ldz, vdx, vdy, vdz, il;
+			int j;
+
+			/* a partially used block keeps the original scalar path, so the
+			   skip semantics are preserved exactly */
+			if ( !( used[i] && used[i+1] && used[i+2] && used[i+3] ) ) {
+				for ( j = 0; j < 4; j++ ) {
+					if ( !used[i+j] ) {
+						continue;
+					}
+					const idDrawVert *v = &verts[i+j];
+					idVec3 lightDir = lightOrigin - v->xyz;
+					idVec3 viewDir = viewOrigin - v->xyz;
+					float ilength;
+					ilength = idMath::RSqrt( lightDir * lightDir );
+					lightDir[0] *= ilength; lightDir[1] *= ilength; lightDir[2] *= ilength;
+					ilength = idMath::RSqrt( viewDir * viewDir );
+					viewDir[0] *= ilength; viewDir[1] *= ilength; viewDir[2] *= ilength;
+					lightDir += viewDir;
+					texCoords[i+j][0] = lightDir * v->tangents[0];
+					texCoords[i+j][1] = lightDir * v->tangents[1];
+					texCoords[i+j][2] = lightDir * v->normal;
+					texCoords[i+j][3] = 1.0f;
+				}
+				continue;
+			}
+
+			for ( j = 0; j < 4; j++ ) {
+				const idDrawVert *v = &verts[i+j];
+				px[j] = v->xyz.x; py[j] = v->xyz.y; pz[j] = v->xyz.z;
+				t0x[j] = v->tangents[0].x; t0y[j] = v->tangents[0].y; t0z[j] = v->tangents[0].z;
+				t1x[j] = v->tangents[1].x; t1y[j] = v->tangents[1].y; t1z[j] = v->tangents[1].z;
+				nx[j] = v->normal.x; ny[j] = v->normal.y; nz[j] = v->normal.z;
+			}
+
+			PX = SIMD_TRIPLANE_LOAD( px );
+			PY = SIMD_TRIPLANE_LOAD( py );
+			PZ = SIMD_TRIPLANE_LOAD( pz );
+
+			ldx = SIMD_TRIPLANE_SUB( LX, PX );
+			ldy = SIMD_TRIPLANE_SUB( LY, PY );
+			ldz = SIMD_TRIPLANE_SUB( LZ, PZ );
+			vdx = SIMD_TRIPLANE_SUB( VX, PX );
+			vdy = SIMD_TRIPLANE_SUB( VY, PY );
+			vdz = SIMD_TRIPLANE_SUB( VZ, PZ );
+
+			il = SIMD_TRIPLANE_RSQRT( SIMD_TRIPLANE_ADD( SIMD_TRIPLANE_ADD(
+					SIMD_TRIPLANE_MUL( ldx, ldx ), SIMD_TRIPLANE_MUL( ldy, ldy ) ),
+					SIMD_TRIPLANE_MUL( ldz, ldz ) ) );
+			ldx = SIMD_TRIPLANE_MUL( ldx, il );
+			ldy = SIMD_TRIPLANE_MUL( ldy, il );
+			ldz = SIMD_TRIPLANE_MUL( ldz, il );
+
+			il = SIMD_TRIPLANE_RSQRT( SIMD_TRIPLANE_ADD( SIMD_TRIPLANE_ADD(
+					SIMD_TRIPLANE_MUL( vdx, vdx ), SIMD_TRIPLANE_MUL( vdy, vdy ) ),
+					SIMD_TRIPLANE_MUL( vdz, vdz ) ) );
+			vdx = SIMD_TRIPLANE_MUL( vdx, il );
+			vdy = SIMD_TRIPLANE_MUL( vdy, il );
+			vdz = SIMD_TRIPLANE_MUL( vdz, il );
+
+			ldx = SIMD_TRIPLANE_ADD( ldx, vdx );
+			ldy = SIMD_TRIPLANE_ADD( ldy, vdy );
+			ldz = SIMD_TRIPLANE_ADD( ldz, vdz );
+
+			SIMD_TRIPLANE_STORE( o0, SIMD_TRIPLANE_DOT3( ldx, ldy, ldz, t0x, t0y, t0z ) );
+			SIMD_TRIPLANE_STORE( o1, SIMD_TRIPLANE_DOT3( ldx, ldy, ldz, t1x, t1y, t1z ) );
+			SIMD_TRIPLANE_STORE( o2, SIMD_TRIPLANE_DOT3( ldx, ldy, ldz, nx, ny, nz ) );
+
+			for ( j = 0; j < 4; j++ ) {
+				texCoords[i+j][0] = o0[j];
+				texCoords[i+j][1] = o1[j];
+				texCoords[i+j][2] = o2[j];
+				texCoords[i+j][3] = 1.0f;
+			}
+		}
+	}
+#endif
+
+	for ( ; i < numVerts; i++ ) {
 		if ( !used[i] ) {
 			continue;
 		}

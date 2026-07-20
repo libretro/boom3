@@ -4100,6 +4100,50 @@ static void RefNormalizeTangents( idDrawVert *verts, const int numVerts ) {
 	}
 }
 
+static void RefCreateTextureSpaceLightVectors( idVec3 *lightVectors, const idVec3 &lightOrigin, const idDrawVert *verts, const int numVerts, const int *indexes, const int numIndexes ) {
+	bool *used = (bool *)_alloca16( numVerts * sizeof( used[0] ) );
+	memset( used, 0, numVerts * sizeof( used[0] ) );
+	for ( int i = numIndexes - 1; i >= 0; i-- ) {
+		used[indexes[i]] = true;
+	}
+	for ( int i = 0; i < numVerts; i++ ) {
+		if ( !used[i] ) {
+			continue;
+		}
+		const idDrawVert *v = &verts[i];
+		idVec3 lightDir = lightOrigin - v->xyz;
+		lightVectors[i][0] = lightDir * v->tangents[0];
+		lightVectors[i][1] = lightDir * v->tangents[1];
+		lightVectors[i][2] = lightDir * v->normal;
+	}
+}
+
+static void RefCreateSpecularTextureCoords( idVec4 *texCoords, const idVec3 &lightOrigin, const idVec3 &viewOrigin, const idDrawVert *verts, const int numVerts, const int *indexes, const int numIndexes ) {
+	bool *used = (bool *)_alloca16( numVerts * sizeof( used[0] ) );
+	memset( used, 0, numVerts * sizeof( used[0] ) );
+	for ( int i = numIndexes - 1; i >= 0; i-- ) {
+		used[indexes[i]] = true;
+	}
+	for ( int i = 0; i < numVerts; i++ ) {
+		if ( !used[i] ) {
+			continue;
+		}
+		const idDrawVert *v = &verts[i];
+		idVec3 lightDir = lightOrigin - v->xyz;
+		idVec3 viewDir = viewOrigin - v->xyz;
+		float ilength;
+		ilength = idMath::RSqrt( lightDir * lightDir );
+		lightDir[0] *= ilength; lightDir[1] *= ilength; lightDir[2] *= ilength;
+		ilength = idMath::RSqrt( viewDir * viewDir );
+		viewDir[0] *= ilength; viewDir[1] *= ilength; viewDir[2] *= ilength;
+		lightDir += viewDir;
+		texCoords[i][0] = lightDir * v->tangents[0];
+		texCoords[i][1] = lightDir * v->tangents[1];
+		texCoords[i][2] = lightDir * v->normal;
+		texCoords[i][3] = 1.0f;
+	}
+}
+
 static int RefCreateVertexProgramShadowCache( idVec4 *vertexCache, const idDrawVert *verts, const int numVerts ) {
 	for ( int i = 0; i < numVerts; i++ ) {
 		const float *v = verts[i].xyz.ToFloatPtr();
@@ -4127,6 +4171,13 @@ void TestVectorizedKernels( void ) {
 	ALIGN16( idVec4 cacheB[VK_VERTS*2] );
 	ALIGN16( idDrawVert ntA[VK_VERTS] );
 	ALIGN16( idDrawVert ntB[VK_VERTS] );
+	ALIGN16( idVec3 lvA[VK_VERTS] );
+	ALIGN16( idVec3 lvB[VK_VERTS] );
+	ALIGN16( idVec4 stA[VK_VERTS] );
+	ALIGN16( idVec4 stB[VK_VERTS] );
+	ALIGN16( int vkIdx[VK_TRIS*3] );
+	idVec3 lightOrigin( 10.0f, 20.0f, 30.0f );
+	idVec3 viewOrigin( -5.0f, 15.0f, 25.0f );
 	ALIGN16( int indexes[VK_TRIS*3] );
 	int failures = 0;
 	int mode, n, i, j;
@@ -4201,6 +4252,24 @@ void TestVectorizedKernels( void ) {
 			SIMDProcessor->OverlayPointCull( bitsB, tcB, planes, verts, n );
 			if ( memcmp( bitsA, bitsB, sizeof( bitsA ) ) != 0 ||
 			     memcmp( tcA, tcB, sizeof( tcA ) ) != 0 ) failures++;
+
+			/* index-filtered: build indexes inside [0,n) so used[] stays in bounds,
+			   and vary the density so partially-used blocks are exercised */
+			{
+				int m = ( n == 0 ) ? 0 : ( ( mode == 2 ) ? n : VK_TRIS*3 );
+				for ( j = 0; j < m; j++ ) {
+					vkIdx[j] = indexes[j] % ( n ? n : 1 );
+				}
+				memset( lvA, 0xAA, sizeof( lvA ) ); memset( lvB, 0xAA, sizeof( lvB ) );
+				RefCreateTextureSpaceLightVectors( lvA, lightOrigin, verts, n, vkIdx, m );
+				SIMDProcessor->CreateTextureSpaceLightVectors( lvB, lightOrigin, verts, n, vkIdx, m );
+				if ( memcmp( lvA, lvB, sizeof( lvA ) ) != 0 ) failures++;
+
+				memset( stA, 0xAA, sizeof( stA ) ); memset( stB, 0xAA, sizeof( stB ) );
+				RefCreateSpecularTextureCoords( stA, lightOrigin, viewOrigin, verts, n, vkIdx, m );
+				SIMDProcessor->CreateSpecularTextureCoords( stB, lightOrigin, viewOrigin, verts, n, vkIdx, m );
+				if ( memcmp( stA, stB, sizeof( stA ) ) != 0 ) failures++;
+			}
 
 			/* rewrites its input, so both sides start from a pristine copy */
 			memcpy( ntA, verts, sizeof( ntA ) ); memcpy( ntB, verts, sizeof( ntB ) );

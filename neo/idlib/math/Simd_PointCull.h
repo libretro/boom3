@@ -169,6 +169,7 @@ ID_INLINE __m128 SIMD_TRIPLANE_NEGATE( __m128 v ) {
 #define SIMD_TRIPLANE_ADD( a, b )	_mm_add_ps( (a), (b) )
 #define SIMD_TRIPLANE_LOAD( p )		_mm_loadu_ps( p )
 #define SIMD_TRIPLANE_STORE( p, v )	_mm_storeu_ps( (p), (v) )
+#define SIMD_TRIPLANE_SPLAT( f )	_mm_set1_ps( f )
 typedef __m128 simdTriPlane_t;
 
 /*
@@ -203,6 +204,7 @@ ID_INLINE float32x4_t SIMD_TRIPLANE_NEGATE( float32x4_t v ) {
 #define SIMD_TRIPLANE_ADD( a, b )	vaddq_f32( (a), (b) )
 #define SIMD_TRIPLANE_LOAD( p )		vld1q_f32( p )
 #define SIMD_TRIPLANE_STORE( p, v )	vst1q_f32( (p), (v) )
+#define SIMD_TRIPLANE_SPLAT( f )	vdupq_n_f32( f )
 typedef float32x4_t simdTriPlane_t;
 
 ID_INLINE float32x4_t SIMD_SHADOW_MASKXYZ( void ) {
@@ -217,6 +219,19 @@ ID_INLINE float32x4_t SIMD_SHADOW_W1( void ) {
 		vreinterpretq_u32_f32( a ), vreinterpretq_u32_f32( b ) ) )
 #define SIMD_SHADOW_OR( a, b )	vreinterpretq_f32_u32( vorrq_u32( \
 		vreinterpretq_u32_f32( a ), vreinterpretq_u32_f32( b ) ) )
+
+#endif
+
+/*
+   ( ax*bx + ay*by ) + az*bz - the operand order idVec3::operator* uses.
+   Shared by both instruction sets; do not reassociate.
+*/
+#if defined(SIMD_POINTCULL_SSE2) || defined(SIMD_POINTCULL_NEON)
+#define SIMD_TRIPLANE_DOT3( ax, ay, az, bx, by, bz ) \
+	SIMD_TRIPLANE_ADD( SIMD_TRIPLANE_ADD( \
+		SIMD_TRIPLANE_MUL( (ax), SIMD_TRIPLANE_LOAD( bx ) ), \
+		SIMD_TRIPLANE_MUL( (ay), SIMD_TRIPLANE_LOAD( by ) ) ), \
+		SIMD_TRIPLANE_MUL( (az), SIMD_TRIPLANE_LOAD( bz ) ) )
 
 #endif
 
