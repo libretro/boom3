@@ -48,6 +48,8 @@ void idSoundWorldLocal::Init( idRenderWorld *renderWorld ) {
 	listenerPrivateId = 0;
 	listenerQU.Zero();
 	listenerArea = 0;
+	reverbCachedArea = -2;		// no area resolved yet; -1 is the valid "outside world" value
+	reverbCachedGen = -1;
 	listenerAreaName = "Undefined";
 
 
@@ -435,7 +437,18 @@ void idSoundWorldLocal::MixLoop( int currentSampleTime, int numFrames, float *fi
 	// (area number -> area name -> "default", same chain as the OpenAL era)
 	const bool reverbOn = idSoundSystemLocal::s_useReverb.GetBool()
 	                       && soundSystemLocal.efxloaded && listenerArea >= 0;
-	if ( reverbOn ) {
+	if ( reverbOn && ( listenerArea != reverbCachedArea
+	                   || reverbCachedGen != soundSystemLocal.efxGeneration ) ) {
+		/*
+		   Resolve the preset only when the listener's area changes. This
+		   ran unconditionally per mix block - an idStr construction plus
+		   up to three linear name searches through the EFX database, 60
+		   times a second, for a result that can only change when
+		   listenerArea does (PlaceListener refreshes listenerArea and
+		   listenerAreaName together, and the database is immutable after
+		   level load). reverbCachedArea is reset alongside efxloaded so a
+		   reloaded database re-resolves.
+		*/
 		idStr s( listenerArea );
 		sndReverbParams_t rp;
 		bool found = soundSystemLocal.EFXDatabase.FindEffect( s, &rp );
@@ -451,6 +464,8 @@ void idSoundWorldLocal::MixLoop( int currentSampleTime, int numFrames, float *fi
 			reverbEffectName = s;
 			reverb.SetParams( rp );
 		}
+		reverbCachedArea = listenerArea;
+		reverbCachedGen = soundSystemLocal.efxGeneration;
 	}
 	// clear the mono send accumulator for this block (format-appropriate)
 	if ( soundSystemLocal.outputIsFloat ) {
@@ -691,6 +706,8 @@ void idSoundWorldLocal::PlaceListener( const idVec3& origin, const idMat3& axis,
 		listenerArea = rw->PointInArea( listenerQU );	// where are we?
 	} else {
 		listenerArea = 0;
+	reverbCachedArea = -2;		// no area resolved yet; -1 is the valid "outside world" value
+	reverbCachedGen = -1;
 	}
 
 	if ( listenerArea < 0 ) {

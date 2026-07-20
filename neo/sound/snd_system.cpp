@@ -308,6 +308,7 @@ void idSoundSystemLocal::Init() {
 	muted = false;
 	shutdown = false;
 	efxloaded = false;
+	efxGeneration = 0;
 
 	currentSoundWorld = NULL;
 	soundCache = NULL;
@@ -784,6 +785,7 @@ void idSoundSystemLocal::BeginLevelLoad() {
 	if ( efxloaded ) {
 		EFXDatabase.Clear();
 		efxloaded = false;
+		efxGeneration++;
 	}
 }
 
@@ -802,6 +804,7 @@ void idSoundSystemLocal::EndLevelLoadStart( const char *mapstring ) {
 		efxname += mapname;
 
 		efxloaded = EFXDatabase.LoadFile( efxname );
+		efxGeneration++;
 		if ( efxloaded ) {
 			common->Printf( "sound: found %s\n", efxname.c_str() );
 		} else {

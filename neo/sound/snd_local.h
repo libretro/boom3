@@ -586,6 +586,8 @@ public:
 	// channel loop in whichever format the mixer is running
 	idSoundReverb			reverb;
 	idStr					reverbEffectName;	// currently applied preset
+	int						reverbCachedArea;	// listener area the preset was resolved for
+	int						reverbCachedGen;	// efxGeneration that resolution belongs to
 	float					reverbSendF[MIXBUFFER_SAMPLES];
 	int						reverbSendI[MIXBUFFER_SAMPLES];
 	bool					listenerAreFiltersInitialized;
@@ -643,6 +645,7 @@ public:
 
 	idEFXFile			EFXDatabase;
 	bool				efxloaded;
+	int					efxGeneration;		// bumped on every EFX load/clear so worlds re-resolve cached presets
 	static idCVar			s_useReverb;
 	static idCVar			s_reverbGain;
 
