@@ -339,6 +339,95 @@ R_CheckPortableExtensions
 static void R_CheckPortableExtensions( void ) {
 	glConfig.glVersion = atof( glConfig.version_string );
 
+	/*
+	   Query the framebuffer's actual bit depths.
+
+	   These were never assigned anywhere, so glConfig - a plain global - left
+	   them at zero. That is not cosmetic: RB_STD_FillDepthBuffer does
+
+	       qglClearStencil( 1 << (glConfig.stencilBits - 1) );
+
+	   and with stencilBits == 0 that is 1 << -1, undefined behaviour, which
+	   does not produce the 128 the shadow algorithm needs. Doom 3 clears the
+	   stencil to the midpoint of the buffer, has shadow volumes increment and
+	   decrement around it, then lights only pixels passing GL_GEQUAL with
+	   reference 128 (draw_arb2.cpp, draw_gles2.cpp, draw_common.cpp). Clear
+	   the wrong value and every pixel fails that test, so no shadow-casting
+	   light contributes - no shadows, and lights that do not light.
+
+	   Upstream dhewm3 fills these in from SDL_GL_GetAttribute after creating
+	   the context; that assignment was lost when the platform layer was
+	   replaced, and nothing warned because the bad shift is silent.
+	*/
+	{
+		glConfig.stencilBits = 0;
+		glConfig.depthBits   = 0;
+		glConfig.colorBits   = 0;
+
+#if defined(HAVE_OPENGLES)
+		/*
+		   GLES2 has neither GL_STENCIL_BITS nor the default-framebuffer
+		   attachment queries - GL_STENCIL, GL_DEPTH, GL_BACK_LEFT and the
+		   *_SIZE enums are desktop-only. The frontend is asked for depth and
+		   stencil via hw_render, and context creation fails without them, so
+		   take the requested layout as given.
+		*/
+		glConfig.stencilBits = 8;
+		glConfig.depthBits   = 24;
+		glConfig.colorBits   = 24;
+#else
+		{
+			GLint bits = 0;
+
+			if ( glGetFramebufferAttachmentParameteriv ) {
+				glGetFramebufferAttachmentParameteriv( GL_FRAMEBUFFER, GL_STENCIL,
+						GL_FRAMEBUFFER_ATTACHMENT_STENCIL_SIZE, &bits );
+				glConfig.stencilBits = bits;
+				bits = 0;
+				glGetFramebufferAttachmentParameteriv( GL_FRAMEBUFFER, GL_DEPTH,
+						GL_FRAMEBUFFER_ATTACHMENT_DEPTH_SIZE, &bits );
+				glConfig.depthBits = bits;
+				bits = 0;
+				glGetFramebufferAttachmentParameteriv( GL_FRAMEBUFFER, GL_BACK_LEFT,
+						GL_FRAMEBUFFER_ATTACHMENT_RED_SIZE, &bits );
+				glConfig.colorBits = bits * 3;
+				/* these raise an error on drivers where the attachment does
+				   not exist; do not let it leak into the frame */
+				while ( qglGetError() != GL_NO_ERROR ) { }
+			}
+
+			/* deprecated in core profile, but this core asks for
+			   RETRO_HW_CONTEXT_OPENGL, i.e. a compatibility context */
+			if ( glConfig.stencilBits == 0 ) {
+				bits = 0; qglGetIntegerv( GL_STENCIL_BITS, &bits ); glConfig.stencilBits = bits;
+			}
+			if ( glConfig.depthBits == 0 ) {
+				bits = 0; qglGetIntegerv( GL_DEPTH_BITS, &bits );   glConfig.depthBits = bits;
+			}
+			if ( glConfig.colorBits == 0 ) {
+				GLint r = 0, g = 0, b = 0;
+				qglGetIntegerv( GL_RED_BITS, &r );
+				qglGetIntegerv( GL_GREEN_BITS, &g );
+				qglGetIntegerv( GL_BLUE_BITS, &b );
+				glConfig.colorBits = r + g + b;
+			}
+			while ( qglGetError() != GL_NO_ERROR ) { }
+		}
+#endif
+
+		if ( glConfig.stencilBits == 0 ) {
+			common->Warning( "could not determine stencil buffer depth, assuming 8 - "
+							 "stencil shadows may be wrong" );
+			glConfig.stencilBits = 8;
+		}
+		if ( glConfig.depthBits == 0 ) {
+			glConfig.depthBits = 24;
+		}
+		if ( glConfig.colorBits == 0 ) {
+			glConfig.colorBits = 24;
+		}
+	}
+
 #ifdef HAVE_OPENGLES
     glConfig.multitextureAvailable        = true;
     glConfig.textureLODBiasAvailable      = false;
