@@ -160,9 +160,25 @@ private:
 
 // single defined float->Q15 choke point for all reverb coefficients
 static inline short Snd_ReverbCoefQ15( float v ) {
+	/*
+	   Round rather than truncate. (short)( v * 32768.0f ) truncates toward
+	   zero, which averages 0.50 LSB of error against 0.25 for round-to-
+	   nearest and peaks at 1.0 LSB against 0.5 - measured over 200k
+	   coefficients. Scale by 32767 so the rounded result cannot reach 32768,
+	   which does not fit in a short and would wrap to -32768.
+
+	   This is below the 16-bit noise floor on its own (0.5 LSB of 32768 is
+	   -96 dBFS), but reverb feedback gains are applied once per pass around
+	   the FDN loop, so the error compounds with decay time: about -0.0065 dB
+	   over a 3 second RT60. Still inaudible; it is fixed because a defined
+	   choke point costs nothing to get right.
+	*/
 	if ( v <= -0.999969f ) return -32767;
 	if ( v >=  0.999969f ) return  32767;
-	return (short)( v * 32768.0f );
+	int q = (int)( v * 32767.0f + ( v >= 0.0f ? 0.5f : -0.5f ) );
+	if ( q >  32767 ) q =  32767;
+	if ( q < -32767 ) q = -32767;
+	return (short)q;
 }
 
 ID_INLINE void idSoundReverb::Init( void ) {

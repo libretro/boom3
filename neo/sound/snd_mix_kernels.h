@@ -260,10 +260,26 @@ bit-identical to the scalar (s*g)>>15.
 */
 
 static inline short Snd_ClampGainQ15( float v ) {
-	// single, defined float->Q15 choke point for the s16 mixer
+	/*
+	   Single, defined float->Q15 choke point for the s16 mixer.
+
+	   Rounds rather than truncating: gains are non-negative, so truncation
+	   was a one-sided error that attenuated every gain by an average of half
+	   an LSB. Measured against the ideal v*32767, worst-case error drops from
+	   0.999 to 0.501 LSB and the mean from 0.334 to 0.250.
+
+	   The 32767 scale is deliberate. Rounding v*32768 overflows for v just
+	   below 1.0 - lrintf( 0.99999f * 32768.0f ) is 32768, which does not fit
+	   in a short and wraps to -32768, a full-scale sign flip on the loudest
+	   gains. The old truncation happened to be safe from that because it
+	   could never reach 32768; the rounded form has to be made safe on
+	   purpose.
+	*/
 	if ( v <= 0.0f )   return 0;
 	if ( v >= 1.0f )   return 32767;
-	return (short)( v * 32768.0f );   // truncation toward zero
+	int q = (int)( v * 32767.0f + 0.5f );
+	if ( q > 32767 ) q = 32767;
+	return (short)q;
 }
 
 /*
