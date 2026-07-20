@@ -441,8 +441,21 @@ int idSampleDecoderLocal::DecodePCM( idSoundSample *sample, int sampleOffset44k,
 		readSamples = sampleCount;
 	}
 
-	// duplicate samples for 44kHz output
-	SIMDProcessor->UpSamplePCMTo44kHz( dest, (const short *)(first+pos), readSamples, sample->objectInfo.nSamplesPerSec, sample->objectInfo.nChannels );
+	/*
+	   PCM is resampled to the output rate when it is loaded, so the common
+	   case here is nSamplesPerSec == snd_SampleRate() and the upsampler's
+	   1:1 passthrough - which its implementations spell "44100" (the same
+	   convention DecodeOGG uses; passing 48000/96000 lands in a dead
+	   assert(0) branch that writes nothing, which played every .wav as
+	   stale buffer garbage at those rates). The authored rate is only
+	   passed through when the load-time resample could not run (allocation
+	   failure keeps the native-rate data): at 44.1kHz output the historical
+	   duplication is exact, at other rates it is a wrong-pitch fallback -
+	   degraded, but it plays.
+	*/
+	SIMDProcessor->UpSamplePCMTo44kHz( dest, (const short *)(first+pos), readSamples,
+			sample->objectInfo.nSamplesPerSec == snd_SampleRate() ? 44100 : sample->objectInfo.nSamplesPerSec,
+			sample->objectInfo.nChannels );
 
 	return ( readSamples << shift );
 }
@@ -466,9 +479,23 @@ UpSampleOGGTo44kHz to 44.1kHz.
 int idSampleDecoderLocal::DecodeOGG( idSoundSample *sample, int sampleOffset44k, int sampleCount44k, float *dest ) {
 	int readSamples, totalSamples;
 
-	int shift = 22050 / sample->objectInfo.nSamplesPerSec;
-	int sampleOffset = sampleOffset44k >> shift;
-	int sampleCount = sampleCount44k >> shift;
+	/*
+	   Everything in this function is in OUTPUT samples (the mixer's clock
+	   domain). The old pipeline counted in SOURCE samples and expanded by
+	   << shift at the end because UpSampleOGGTo44kHz did the 11/22kHz ->
+	   44.1kHz duplication. The streaming resampler below replaced that
+	   duplication - it already produces output-rate frames - so the shift
+	   accounting on top of it double-converted: a 22050 mono asset had its
+	   request halved (>> shift), the resampler filled that half with
+	   output-rate frames, and the << shift on the return claimed the full
+	   block was written. Result: the second half of every mix block stayed
+	   silent for every sub-44.1kHz Ogg (97% of the retail assets), which is
+	   the block-cadence stutter this replaces. The only domain conversion
+	   that survives is the seek below, where the file is addressed in
+	   source frames.
+	*/
+	int sampleOffset = sampleOffset44k;
+	int sampleCount = sampleCount44k;
 
 	// open OGG if not yet opened
 	if ( lastSample == NULL ) {
@@ -524,6 +551,21 @@ int idSampleDecoderLocal::DecodeOGG( idSoundSample *sample, int sampleOffset44k,
 					sampleOffset / sample->objectInfo.nChannels, sample->name.c_str() );
 			failed = true;
 			return 0;
+		}
+		/*
+		   The resampler's filter history and any carried-over output frames
+		   belong to the pre-seek position in the stream; blending them into
+		   post-seek audio puts a burst of the old position at the new one
+		   (audible when a looping sound wraps). There is no reset entry
+		   point, so rebuild lazily: freeing the handle makes the block loop
+		   below re-init it at the same rate pair.
+		*/
+		rsCarryFrames = 0;
+		if ( rsHandle != NULL ) {
+			sinc_resampler.free( rsHandle );
+			rsHandle = NULL;
+			rsSrcRate = 0;
+			rsDstRate = 0;
 		}
 	}
 
@@ -721,7 +763,7 @@ int idSampleDecoderLocal::DecodeOGG( idSoundSample *sample, int sampleOffset44k,
 		   the upsampler's 1:1 passthrough case. Passing the asset's authored
 		   rate would make it duplicate samples on top of the conversion.
 		*/
-		SIMDProcessor->UpSampleOGGTo44kHz( dest + ( readSamples << shift ), planar,
+		SIMDProcessor->UpSampleOGGTo44kHz( dest + readSamples, planar,
 				gotInterleaved, 44100, sample->objectInfo.nChannels );
 
 		readSamples += gotInterleaved;
@@ -730,5 +772,5 @@ int idSampleDecoderLocal::DecodeOGG( idSoundSample *sample, int sampleOffset44k,
 
 	lastSampleOffset += readSamples;
 
-	return ( readSamples << shift );
+	return readSamples;
 }
