@@ -34,6 +34,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "idlib/math/Matrix.h"
 #include "renderer/Model.h"
 
+#include "idlib/math/Simd_PointCull.h"
 #include "idlib/math/Simd_Generic.h"
 
 //===============================================================
@@ -2358,8 +2359,48 @@ void VPCALL idSIMD_Generic::TracePointCull( byte *cullBits, byte &totalOr, const
 	byte tOr;
 
 	tOr = 0;
+	i = 0;
 
-	for ( i = 0; i < numVerts; i++ ) {
+#if defined(SIMD_POINTCULL_SSE2) || defined(SIMD_POINTCULL_NEON)
+	{
+		simdPointCull_t pa[4], pb[4], pc[4], pd[4];
+		simdPointCull_t vrad = SIMD_POINTCULL_SPLAT( radius );
+		int k;
+
+		for ( k = 0; k < 4; k++ ) {
+			pa[k] = SIMD_POINTCULL_SPLAT( planes[k][0] );
+			pb[k] = SIMD_POINTCULL_SPLAT( planes[k][1] );
+			pc[k] = SIMD_POINTCULL_SPLAT( planes[k][2] );
+			pd[k] = SIMD_POINTCULL_SPLAT( planes[k][3] );
+		}
+
+		for ( ; i + 3 < numVerts; i += 4 ) {
+			simdPointCull_t X, Y, Z;
+			int lo[4], hi[4], j;
+
+			SIMD_POINTCULL_LOAD4( verts, i, X, Y, Z );
+
+			for ( k = 0; k < 4; k++ ) {
+				simdPointCull_t d = SIMD_POINTCULL_DIST( pa[k], pb[k], pc[k], pd[k], X, Y, Z );
+				lo[k] = SIMD_POINTCULL_SIGNMASK( SIMD_POINTCULL_ADD( d, vrad ) );
+				hi[k] = SIMD_POINTCULL_SIGNMASK( SIMD_POINTCULL_SUB( d, vrad ) );
+			}
+
+			for ( j = 0; j < 4; j++ ) {
+				byte bits = 0;
+				for ( k = 0; k < 4; k++ ) {
+					bits |= (byte)( ( ( lo[k] >> j ) & 1 ) << k );
+					bits |= (byte)( ( ( hi[k] >> j ) & 1 ) << ( k + 4 ) );
+				}
+				bits ^= 0x0F;
+				tOr |= bits;
+				cullBits[i+j] = bits;
+			}
+		}
+	}
+#endif
+
+	for ( ; i < numVerts; i++ ) {
 		byte bits;
 		float d0, d1, d2, d3, t;
 		const idVec3 &v = verts[i].xyz;
@@ -2402,9 +2443,43 @@ idSIMD_Generic::DecalPointCull
 ============
 */
 void VPCALL idSIMD_Generic::DecalPointCull( byte *cullBits, const idPlane *planes, const idDrawVert *verts, const int numVerts ) {
-	int i;
+	int i = 0;
 
-	for ( i = 0; i < numVerts; i++ ) {
+#if defined(SIMD_POINTCULL_SSE2) || defined(SIMD_POINTCULL_NEON)
+	{
+		simdPointCull_t pa[6], pb[6], pc[6], pd[6];
+		int k;
+
+		for ( k = 0; k < 6; k++ ) {
+			pa[k] = SIMD_POINTCULL_SPLAT( planes[k][0] );
+			pb[k] = SIMD_POINTCULL_SPLAT( planes[k][1] );
+			pc[k] = SIMD_POINTCULL_SPLAT( planes[k][2] );
+			pd[k] = SIMD_POINTCULL_SPLAT( planes[k][3] );
+		}
+
+		for ( ; i + 3 < numVerts; i += 4 ) {
+			simdPointCull_t X, Y, Z;
+			int mask[6], j;
+
+			SIMD_POINTCULL_LOAD4( verts, i, X, Y, Z );
+
+			for ( k = 0; k < 6; k++ ) {
+				mask[k] = SIMD_POINTCULL_SIGNMASK(
+					SIMD_POINTCULL_DIST( pa[k], pb[k], pc[k], pd[k], X, Y, Z ) );
+			}
+
+			for ( j = 0; j < 4; j++ ) {
+				byte bits = 0;
+				for ( k = 0; k < 6; k++ ) {
+					bits |= (byte)( ( ( mask[k] >> j ) & 1 ) << k );
+				}
+				cullBits[i+j] = bits ^ 0x3F;
+			}
+		}
+	}
+#endif
+
+	for ( ; i < numVerts; i++ ) {
 		byte bits;
 		float d0, d1, d2, d3, d4, d5;
 		const idVec3 &v = verts[i].xyz;
@@ -2433,9 +2508,50 @@ idSIMD_Generic::OverlayPointCull
 ============
 */
 void VPCALL idSIMD_Generic::OverlayPointCull( byte *cullBits, idVec2 *texCoords, const idPlane *planes, const idDrawVert *verts, const int numVerts ) {
-	int i;
+	int i = 0;
 
-	for ( i = 0; i < numVerts; i++ ) {
+#if defined(SIMD_POINTCULL_SSE2) || defined(SIMD_POINTCULL_NEON)
+	{
+		simdPointCull_t pa[2], pb[2], pc[2], pd[2];
+		simdPointCull_t one = SIMD_POINTCULL_SPLAT( 1.0f );
+		int k;
+
+		for ( k = 0; k < 2; k++ ) {
+			pa[k] = SIMD_POINTCULL_SPLAT( planes[k][0] );
+			pb[k] = SIMD_POINTCULL_SPLAT( planes[k][1] );
+			pc[k] = SIMD_POINTCULL_SPLAT( planes[k][2] );
+			pd[k] = SIMD_POINTCULL_SPLAT( planes[k][3] );
+		}
+
+		for ( ; i + 3 < numVerts; i += 4 ) {
+			simdPointCull_t X, Y, Z, d[2];
+			float dist[2][4];
+			int neg[2], inv[2], j;
+
+			SIMD_POINTCULL_LOAD4( verts, i, X, Y, Z );
+
+			for ( k = 0; k < 2; k++ ) {
+				d[k]   = SIMD_POINTCULL_DIST( pa[k], pb[k], pc[k], pd[k], X, Y, Z );
+				neg[k] = SIMD_POINTCULL_SIGNMASK( d[k] );
+				inv[k] = SIMD_POINTCULL_SIGNMASK( SIMD_POINTCULL_SUB( one, d[k] ) );
+				SIMD_POINTCULL_STORE( dist[k], d[k] );
+			}
+
+			for ( j = 0; j < 4; j++ ) {
+				byte bits;
+				texCoords[i+j][0] = dist[0][j];
+				texCoords[i+j][1] = dist[1][j];
+				bits  = (byte)( ( ( neg[0] >> j ) & 1 ) << 0 );
+				bits |= (byte)( ( ( neg[1] >> j ) & 1 ) << 1 );
+				bits |= (byte)( ( ( inv[0] >> j ) & 1 ) << 2 );
+				bits |= (byte)( ( ( inv[1] >> j ) & 1 ) << 3 );
+				cullBits[i+j] = bits;
+			}
+		}
+	}
+#endif
+
+	for ( ; i < numVerts; i++ ) {
 		byte bits;
 		float d0, d1;
 		const idVec3 &v = verts[i].xyz;
