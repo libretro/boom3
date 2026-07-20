@@ -278,6 +278,205 @@ int reverb_test() {
 		for(int i=0;i<1024;i++) if(o1[i]!=o2[i]) mism++;
 	}
 	printf("reverb int replay determinism: %s\n", mism?"FAIL":"bit-exact");
+
+	/* ---- EAXREVERB feature tests: steady-sine and noise-burst probes ----
+	   Single impulses die to exact zero in the integer path long before a
+	   tail window opens (truncation is designed to do exactly that), so
+	   every decay measurement here uses a deterministic noise burst, and
+	   every spectral-gain measurement a steady sine placed far from the
+	   first-order corners. */
+	{
+		struct Probe {
+			unsigned rng;
+			Probe():rng(0x12345u){}
+			int noise(){ rng = rng*1664525u+1013904223u; return (int)(rng>>17)-16384; }
+			/* steady sine at f, return wet output RMS after settling */
+			static double sineRMS( const sndReverbParams_t &pp, double f ) {
+				static int zi[512], di[1024], si[512];
+				idSoundReverb r; r.Init(); r.SetParams(pp);
+				memset(zi,0,sizeof zi);
+				for (int b=0;b<REVERB_XFADE_BLOCKS+2;b++){ memset(di,0,sizeof di); r.ProcessS16(zi,di,512,0.5f); }
+				double e=0; long n=0;
+				for (int b=0;b*512<44100*2;b++){
+					for (int i=0;i<512;i++) si[i]=(int)(12000.0*sin(2*3.14159265*f*(b*512+i)/44100.0));
+					memset(di,0,sizeof di);
+					r.ProcessS16(si,di,512,0.5f);
+					if (b*512>44100){ for (int i=0;i<512;i++){ e+=(double)di[i*2]*di[i*2]; n++; } }
+				}
+				return sqrt(e/(double)n);
+			}
+			/* noise burst 0.5s, then band energy (4x one-pole cascade, LP or
+			   HP at fSplit) in [t0,t0+0.3] and [t1,t1+0.3] */
+			static void decayBands( const sndReverbParams_t &pp, double fSplit, int highBand,
+			                        double t0, double t1, double *e0, double *e1 ) {
+				static int zi[512], di[1024], si[512];
+				idSoundReverb r; r.Init(); r.SetParams(pp);
+				memset(zi,0,sizeof zi);
+				for (int b=0;b<REVERB_XFADE_BLOCKS+2;b++){ memset(di,0,sizeof di); r.ProcessS16(zi,di,512,0.5f); }
+				Probe pr; double lp[4]={0,0,0,0};
+				const double c=1.0-2*3.14159265*fSplit/44100.0;
+				*e0=0; *e1=0; long n=0;
+				for (int b=0;b*512<44100*4;b++){
+					int burst = (b*512 < 22050);
+					for (int i=0;i<512;i++) si[i]= burst ? pr.noise() : 0;
+					memset(di,0,sizeof di);
+					r.ProcessS16(si,di,512,0.5f);
+					for (int i=0;i<512;i++){
+						double v=di[i*2];
+						for (int k=0;k<4;k++){ lp[k]+=(1.0-c)*((k?lp[k-1]:v)-lp[k]); }
+						double band = highBand ? (v-lp[3]) : lp[3];
+						double t=(double)n/44100.0;
+						if (t>=t0 && t<t0+0.3) *e0+=band*band;
+						if (t>=t1 && t<t1+0.3) *e1+=band*band;
+						n++;
+					}
+				}
+			}
+		};
+		sndReverbParams_t base; base.SetDefaults();
+		base.decayTime=2.0f; base.reflectionsDelay=0.02f; base.lateReverbDelay=0.03f;
+
+		/* 1. decayLFRatio: low band (<=300Hz) tail slope, ratio 0.3 vs 2.0;
+		   burst ends 0.5s, windows at 1.0s and 2.0s */
+		{
+			sndReverbParams_t a1=base; a1.decayLFRatio=0.3f; a1.lfReference=400.0f;
+			sndReverbParams_t a2=base; a2.decayLFRatio=2.0f; a2.lfReference=400.0f;
+			double x0,x1,y0,y1;
+			/* windows right after the burst: r=0.3 reaches the integer
+			   quantization floor within ~0.5s, so late windows would
+			   compare limit-cycle residue with itself */
+			Probe::decayBands(a1, 300.0, 0, 0.55, 1.0, &x0, &x1);
+			Probe::decayBands(a2, 300.0, 0, 0.55, 1.0, &y0, &y1);
+			double s1 = x1/(x0+1e-9), s2 = y1/(y0+1e-9);
+			printf("feature decayLFRatio: low tail slope r=0.3: %.4g  r=2.0: %.4g  %s\n",
+				s1, s2, (s1 < s2*0.5 && y1 > 0) ? "OK" : "FAIL");
+		}
+
+		/* 2. gainHF at 10kHz steady sine (hfReference 5kHz default) */
+		{
+			sndReverbParams_t b1=base; b1.gainHF=1.0f;
+			sndReverbParams_t b2p=base; b2p.gainHF=0.05f;
+			double r1=Probe::sineRMS(b1,10000.0), r2=Probe::sineRMS(b2p,10000.0);
+			printf("feature gainHF: 10kHz wet RMS 1.0: %.4g  0.05: %.4g  %s\n",
+				r1, r2, (r2 < r1*0.5) ? "OK" : "FAIL");
+		}
+
+		/* 3. gainLF at 60Hz steady sine (lfReference 400Hz) */
+		{
+			sndReverbParams_t c1=base; c1.gainLF=1.0f; c1.lfReference=400.0f;
+			sndReverbParams_t c2=base; c2.gainLF=0.05f; c2.lfReference=400.0f;
+			double r1=Probe::sineRMS(c1,60.0), r2=Probe::sineRMS(c2,60.0);
+			printf("feature gainLF: 60Hz wet RMS 1.0: %.4g  0.05: %.4g  %s\n",
+				r1, r2, (r2 < r1*0.5) ? "OK" : "FAIL");
+		}
+
+		/* 4. echo: impulse periodicity via autocorrelation at the period */
+		{
+			sndReverbParams_t e1=base; e1.echoDepth=1.0f; e1.echoTime=0.1f; e1.diffusion=0.0f;
+			static int zi[512], di[1024], si[512];
+			memset(zi,0,sizeof zi); memset(si,0,sizeof si); si[0]=16384;
+			idSoundReverb r; r.Init(); r.SetParams(e1);
+			for (int b=0;b<REVERB_XFADE_BLOCKS+2;b++){ memset(di,0,sizeof di); r.ProcessS16(zi,di,512,0.5f); }
+			static double sig[44100];
+			for (int b=0;b*512<44100;b++){ memset(di,0,sizeof di);
+				r.ProcessS16(b?zi:si,di,512,0.5f);
+				for (int i=0;i<512 && b*512+i<44100;i++) sig[b*512+i]=di[i*2]; }
+			int lag=(int)(0.1*44100), lagOff=(int)(0.073*44100);
+			double acPeriod=0, acOff=0;
+			for (int i=0;i<44100-lag;i++) acPeriod += sig[i]*sig[i+lag];
+			for (int i=0;i<44100-lagOff;i++) acOff += sig[i]*sig[i+lagOff];
+			printf("feature echo: autocorr at period %.4g vs off-period %.4g  %s\n",
+				acPeriod, acOff, (acPeriod > 4.0*fabs(acOff)+1e-9) ? "OK" : "FAIL");
+		}
+
+		/* 5. modulation: steady 882Hz (exactly 50 samples); vibrato
+		   decorrelates the wet output from a one-period shift of itself */
+		{
+			sndReverbParams_t m0=base, m1=base;
+			m1.modulationDepth=1.0f; m1.modulationTime=0.25f;
+			double corr[2];
+			for (int variant=0; variant<2; variant++){
+				static int zi[512], di[1024], si[512];
+				memset(zi,0,sizeof zi);
+				idSoundReverb r; r.Init(); r.SetParams(variant?m1:m0);
+				for (int b=0;b<REVERB_XFADE_BLOCKS+2;b++){ memset(di,0,sizeof di); r.ProcessS16(zi,di,512,0.5f); }
+				static double sig[88200];
+				for (int b=0;b*512<88200;b++){
+					for (int i=0;i<512;i++) si[i]=(int)(12000.0*sin(2*3.14159265*882.0*(b*512+i)/44100.0));
+					memset(di,0,sizeof di);
+					r.ProcessS16(si,di,512,0.5f);
+					for (int i=0;i<512 && b*512+i<88200;i++) sig[b*512+i]=di[i*2];
+				}
+				/* tone purity: energy in the 882Hz bin (Goertzel over the
+				   settled second) vs total. Eight phase-offset vibratos
+				   summed keep rough carrier coherence, so period
+				   correlation misses the effect - sideband spread does not */
+				double w0=2*3.14159265*882.0/44100.0, cw=2*cos(w0);
+				double s0=0,s1=0,s2=0, tot=0; long n3=0;
+				for (int i=44100;i<88200;i++){ s0 = sig[i] + cw*s1 - s2; s2=s1; s1=s0; tot+=sig[i]*sig[i]; n3++; }
+				double binP = (s1*s1 + s2*s2 - cw*s1*s2)/(double)n3;
+				corr[variant]= binP/(tot/(double)n3+1e-9);
+			}
+			printf("feature modulation: tone purity off=%.4f on=%.4f  %s\n",
+				corr[0], corr[1], (corr[1] < 0.5*corr[0]) ? "OK" : "FAIL");
+		}
+
+		/* 6. density: shorter effective taps -> more energy in the first
+		   100 ms of the late field */
+		{
+			static int zi[512], di[1024], si[512];
+			double e[2];
+			for (int variant=0; variant<2; variant++){
+				sndReverbParams_t dp=base; dp.density = variant? 0.05f : 1.0f;
+				memset(zi,0,sizeof zi); memset(si,0,sizeof si); si[0]=16384;
+				idSoundReverb r; r.Init(); r.SetParams(dp);
+				/* warm past the crossfade AND the read-tap slew (worst-case
+				   retarget ~1.5s at REVERB_TAP_SLEW_Q16) */
+				for (int b=0;b*512<44100*5/2;b++){ memset(di,0,sizeof di); r.ProcessS16(zi,di,512,0.5f); }
+				double ee=0;
+				for (int b=0;b*512<4410;b++){ memset(di,0,sizeof di);
+					r.ProcessS16(b?zi:si,di,512,0.5f);
+					for (int i=0;i<1024;i++) ee+=(double)di[i]*di[i]; }
+				e[variant]=ee;
+			}
+			printf("feature density: first-100ms energy d=1: %.4g  d=0.05: %.4g  %s\n",
+				e[0], e[1], (e[1] > e[0]*1.05) ? "OK" : "FAIL");
+		}
+
+		/* 7. decayHFLimit: high band (>=6kHz) tail with decayHFRatio 2 and
+		   maximum air absorption: the limit must steepen the decay */
+		{
+			sndReverbParams_t f1=base; f1.decayTime=8.0f; f1.decayHFRatio=2.0f;
+			f1.airAbsorptionGainHF=0.892f; f1.decayHFLimit=0;
+			sndReverbParams_t f2=f1; f2.decayHFLimit=1;
+			double x0,x1,y0,y1;
+			/* split low (3kHz) and window early (0.6s/1.4s): the integer
+			   tail quantizes to zero before late windows open */
+			Probe::decayBands(f1, 3000.0, 1, 0.6, 1.4, &x0, &x1);
+			Probe::decayBands(f2, 3000.0, 1, 0.6, 1.4, &y0, &y1);
+			double s1=x1/(x0+1e-9), s2=y1/(y0+1e-9);
+			printf("feature decayHFLimit: high tail slope off=%.4g on=%.4g  %s\n",
+				s1, s2, (s2 < s1*0.6 && x1 > 0) ? "OK" : "FAIL");
+		}
+
+		/* 8. stability: worst-case params, int path, long run: tail -> 0 */
+		{
+			sndReverbParams_t w=base; w.decayTime=20.0f; w.decayLFRatio=2.0f;
+			w.modulationDepth=1.0f; w.modulationTime=0.04f; w.echoDepth=1.0f;
+			w.density=0.05f; w.diffusion=1.0f;
+			static int zi[512], di[1024], si[512];
+			memset(zi,0,sizeof zi); memset(si,0,sizeof si); si[0]=32767;
+			idSoundReverb r; r.Init(); r.SetParams(w);
+			for (int b=0;b<REVERB_XFADE_BLOCKS+2;b++){ memset(di,0,sizeof di); r.ProcessS16(zi,di,512,0.5f); }
+			long long lastE=0;
+			for (int b=0;b*512<44100*80;b++){ memset(di,0,sizeof di);
+				r.ProcessS16(b?zi:si,di,512,0.5f);
+				if (b*512 > 44100*78){ for (int i=0;i<1024;i++) lastE += (long long)di[i]*di[i]; }
+			}
+			printf("feature stability: worst-case int tail energy after 78s: %lld  %s\n",
+				lastE, lastE==0 ? "OK (decayed to exact zero)" : (lastE<100 ? "OK (below noise)" : "FAIL"));
+		}
+	}
 	return 0;
 }
 static int _rt = reverb_test();
