@@ -113,7 +113,6 @@ const double  com_preciseFrameLengthMS = 1000.0 / 60.0;
 double com_preciseFrameTimeMS = 0; // like com_frameTime but as double: time (since start) for the current frame in milliseconds
 
 int				com_frameTime;			// time (since start) for the current frame in milliseconds
-int				com_frameNumber;		// variable frame number
 volatile int	com_ticNumber;			// 60 hz tics
 int				com_editors;			// currently opened editor(s)
 bool			com_editorActive;		//  true if an editor has focus
@@ -271,12 +270,10 @@ void Com_SetFrameSchedule( int framerateHz ) {
 // within a frame: the session's loading pumps call this repeatedly inside
 // one retro_run() and must not fabricate extra tics.
 void Com_UpdateTicNumber() {
-	D3P_CPUSampleFn();
 	static uint64_t lastFrame = (uint64_t)-1;
 	uint64_t f = Core_FrameCount();
-	if ( f == lastFrame ) {
+	if ( f == lastFrame )
 		return;
-	}
 	uint64_t n = ( lastFrame == (uint64_t)-1 ) ? 1 : ( f - lastFrame );
 	lastFrame = f;
 
@@ -1053,16 +1050,13 @@ Writes key bindings and archived cvars to config file if modified
 ===============
 */
 void idCommonLocal::WriteConfiguration( void ) {
-	D3P_ScopedCPUSample(WriteConfiguration);
 	// if we are quiting without fully initializing, make sure
 	// we don't write out anything
-	if ( !com_fullyInitialized ) {
+	if ( !com_fullyInitialized )
 		return;
-	}
 
-	if ( !( cvarSystem->GetModifiedFlags() & CVAR_ARCHIVE ) ) {
+	if ( !( cvarSystem->GetModifiedFlags() & CVAR_ARCHIVE ) )
 		return;
-	}
 	cvarSystem->ClearModifiedFlags( CVAR_ARCHIVE );
 
 	// disable printing out the "Writing to:" message
@@ -2268,7 +2262,6 @@ idCommonLocal::Frame
 =================
 */
 void idCommonLocal::Frame( void ) {
-	D3P_ScopedCPUSample(Common_Frame);
 	try {
 		// DG: update tic number here for ticNumAtStart (used below to decide whether to sleep before next frame)
 		Com_UpdateTicNumber();
@@ -2308,13 +2301,6 @@ void idCommonLocal::Frame( void ) {
 			// normal, in-sequence screen update
 			session->UpdateScreen( false );
 		}
-
-		com_frameNumber++;
-
-		// set idLib frame number for frame based memory dumps
-		idLib::frameNumber = com_frameNumber;
-
-D3P_FRAMEMARK // tell profiler (tracy) that this is the end of a frame
 	}
 
 	catch( idException & )

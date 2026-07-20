@@ -40,9 +40,6 @@ If you have questions concerning this license or the applicable additional terms
 	should be set before using idLib. The pointers stored here should not
 	be used by any part of the engine except for idLib.
 
-	The frameNumber should be continuously set to the number of the current
-	frame if frame base memory logging is required.
-
 ===============================================================================
 */
 
@@ -84,7 +81,6 @@ public:
 	static class idCommon *		common;
 	static class idCVarSystem *	cvarSystem;
 	static class idFileSystem *	fileSystem;
-	static int			frameNumber;
 
 	static void			Init( void );
 	static void			ShutDown( void );

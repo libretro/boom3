@@ -1215,8 +1215,6 @@ idSessionLocal::GuiFrameEvents
 =================
 */
 void idSessionLocal::GuiFrameEvents() {
-	D3P_ScopedCPUSample(Session_GuiFrameEvents);
-
 	const char	*cmd;
 	sysEvent_t  ev;
 	idUserInterface	*gui;

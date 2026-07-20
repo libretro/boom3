@@ -175,11 +175,10 @@ idEventLoop::RunEventLoop
 ===============
 */
 int idEventLoop::RunEventLoop( bool commandExecution ) {
-	D3P_ScopedCPUSample(RunEventLoop);
 	sysEvent_t	ev;
 
-	while ( 1 ) {
-
+	while ( 1 )
+	{
 		if ( commandExecution ) {
 			// execute any bound commands before processing another event
 			cmdSystem->ExecuteCommandBuffer();
@@ -188,9 +187,8 @@ int idEventLoop::RunEventLoop( bool commandExecution ) {
 		ev = GetEvent();
 
 		// if no more events are available
-		if ( ev.evType == SE_NONE ) {
+		if ( ev.evType == SE_NONE )
 			return 0;
-		}
 		ProcessEvent( ev );
 	}
 

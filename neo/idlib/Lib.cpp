@@ -60,7 +60,6 @@ idSys *			idLib::sys			= NULL;
 idCommon *		idLib::common		= NULL;
 idCVarSystem *	idLib::cvarSystem	= NULL;
 idFileSystem *	idLib::fileSystem	= NULL;
-int				idLib::frameNumber	= 0;
 
 /*
 ================

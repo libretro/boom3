@@ -2764,7 +2764,6 @@ idSessionLocal::Draw
 ===============
 */
 void idSessionLocal::Draw() {
-	D3P_ScopedCPUSample(Session_Draw);
 	bool fullConsole = false;
 
 	if ( insideExecuteMapChange ) {
@@ -2870,7 +2869,6 @@ void idSessionLocal::UpdateScreen( bool outOfSequence ) {
 		return;
 	}
 
-	D3P_ScopedCPUSample(Session_UpdateScreen);
 #ifdef _WIN32
 	if ( com_editors )
 		return;
@@ -2880,9 +2878,7 @@ void idSessionLocal::UpdateScreen( bool outOfSequence ) {
 
 	insideUpdateScreen = true;
 
-	D3P_BeginCPUSample(Render_BeginFrame);
 	renderSystem->BeginFrame( renderSystem->GetScreenWidth(), renderSystem->GetScreenHeight() );
-	D3P_EndCPUSample(Render_BeginFrame);
 
 	// draw everything
 	Draw();
@@ -2898,8 +2894,6 @@ idSessionLocal::Frame
 ===============
 */
 void idSessionLocal::Frame() {
-	D3P_ScopedCPUSample(Session_Frame);
-
 	// libretro: all sound mixing happens per-frame in retro_run via
 	// MixFrameFloat/MixFrameS16; there is no async update, no wall clock
 	// and no device to babysit.
@@ -3093,7 +3087,6 @@ idSessionLocal::RunGameTic
 ================
 */
 void idSessionLocal::RunGameTic() {
-	D3P_ScopedCPUSample(Session_RunGameTic);
 	logCmd_t	logCmd;
 	usercmd_t	cmd;
 
