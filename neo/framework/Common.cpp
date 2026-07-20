@@ -84,7 +84,6 @@ idCVar com_skipRenderer( "com_skipRenderer", "0", CVAR_BOOL|CVAR_SYSTEM, "skip t
 idCVar com_machineSpec( "com_machineSpec", "-1", CVAR_INTEGER | CVAR_ARCHIVE | CVAR_SYSTEM, "hardware classification, -1 = not detected, 0 = low quality, 1 = medium quality, 2 = high quality, 3 = ultra quality" );
 idCVar com_purgeAll( "com_purgeAll", "0", CVAR_BOOL | CVAR_ARCHIVE | CVAR_SYSTEM, "purge everything between level loads" );
 idCVar com_memoryMarker( "com_memoryMarker", "-1", CVAR_INTEGER | CVAR_SYSTEM | CVAR_INIT, "used as a marker for memory stats" );
-idCVar com_preciseTic( "com_preciseTic", "1", CVAR_BOOL|CVAR_SYSTEM, "run one game tick every async thread update" );
 #define ASYNCSOUND_INFO "0: mix sound inline, 1 or 3: async update every 16ms 2: async update about every 100ms (original behavior)"
 idCVar com_asyncSound( "com_asyncSound", "1", CVAR_INTEGER|CVAR_SYSTEM, ASYNCSOUND_INFO, 0, 3 );
 idCVar com_forceGenericSIMD( "com_forceGenericSIMD", "0", CVAR_BOOL | CVAR_SYSTEM | CVAR_NOCHEAT, "force generic platform independent SIMD" );
@@ -103,14 +102,6 @@ idCVar com_dbgClientAdr( "com_dbgClientAdr", "localhost", CVAR_SYSTEM | CVAR_ARC
 idCVar com_dbgServerAdr( "com_dbgServerAdr", "localhost", CVAR_SYSTEM | CVAR_ARCHIVE, "debugger server address" );
 
 idCVar com_product_lang_ext( "com_product_lang_ext", "1", CVAR_INTEGER | CVAR_SYSTEM | CVAR_ARCHIVE, "Extension to use when creating language files." );
-
-// in the high-fps branch, the next three values will be set based on com_gameHz
-// here (in the old 60fps-only code) they're const and just to reduce difference to the other branch
-//const int    com_gameHzVal = 60;
-//const int    com_gameFrameLengthMS = 16; // length of one frame in msec, 1000 / com_gameHz
-const double  com_preciseFrameLengthMS = 1000.0 / 60.0;
-
-double com_preciseFrameTimeMS = 0; // like com_frameTime but as double: time (since start) for the current frame in milliseconds
 
 int				com_frameTime;			// time (since start) for the current frame in milliseconds
 volatile int	com_ticNumber;			// 60 hz tics
@@ -303,12 +294,10 @@ float Com_GetTicFraction( void ) {
 }
 
 // DG: updates com_frameTime based on the current tic number (which is also updated if necessary)
-//     and com_preciseFrameLengthMS
 void Com_UpdateFrameTime() {
 	Com_UpdateTicNumber();
 	// derived, not accumulated: no floating-point drift
-	com_preciseFrameTimeMS = (double)com_ticNumber * com_preciseFrameLengthMS;
-	com_frameTime = idMath::Rint( com_preciseFrameTimeMS );
+	com_frameTime = idMath::Rint( (double)com_ticNumber * (1000.0 / 60.0) );
 }
 
 
