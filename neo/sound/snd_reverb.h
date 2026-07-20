@@ -81,10 +81,28 @@ typedef struct sndReverbParams_s {
 	}
 } sndReverbParams_t;
 
-#define REVERB_FS				44100
+/*
+   The reverb runs at the output rate. REVERB_FS was a compile-time 44100;
+   it is now the live rate, and the FDN delay lines are re-derived whenever it
+   changes so the reverb keeps the same delay times in milliseconds.
+
+   Declared here rather than relying on snd_local.h: this header is included
+   from it, so the accessor is not visible yet at this point.
+*/
+extern int snd_sampleRate;
+static ID_INLINE int snd_SampleRate( void ) { return snd_sampleRate; }
+
+#define REVERB_FS				( snd_SampleRate() )
 #define REVERB_LINES			8
 #define REVERB_PREDELAY_LEN		16384	// ~371 ms, power of two (wrap by mask)
-#define REVERB_MAX_LINE			8192	// per-FDN-line max, power of two
+/*
+   Per-FDN-line max, power of two. Sized for the longest line at the highest
+   supported rate: the ~97ms line is 4297 samples at 44.1kHz but 9371 at
+   96kHz, so 8192 is not enough there. Costs 0.5 MB more on the single
+   idSoundReverb instance and nothing at all at 44.1/48kHz, where the lines
+   are unchanged in length.
+*/
+#define REVERB_MAX_LINE			16384
 #define REVERB_XFADE_BLOCKS		24		// parameter crossfade span (~0.4 s at 60fps)
 #define REVERB_EARLY_TAPS		6
 
@@ -149,14 +167,38 @@ static inline short Snd_ReverbCoefQ15( float v ) {
 
 ID_INLINE void idSoundReverb::Init( void ) {
 	memset( this, 0, sizeof( *this ) );
-	// mutually coprime line lengths, ~37..97 ms at 44.1kHz, all < REVERB_MAX_LINE
-	static const int lens[REVERB_LINES] = { 1637, 1913, 2251, 2707, 3169, 3571, 4001, 4297 };
+	/*
+	   Mutually coprime line lengths, ~37..97 ms, all < REVERB_MAX_LINE.
+
+	   These are primes, which makes them pairwise coprime by construction -
+	   an FDN needs that for diffusion, and simply scaling the 44.1kHz set by
+	   the rate ratio does not preserve it (scaling to 96kHz yields 18
+	   non-coprime pairs). The tables below are the next prime at or above
+	   each scaled length, so the delay times match to within 0.2 ms across
+	   all three rates.
+	*/
+	static const int lens44[REVERB_LINES] = { 1637, 1913, 2251, 2707, 3169, 3571, 4001, 4297 };
+	static const int lens48[REVERB_LINES] = { 1783, 2083, 2459, 2953, 3449, 3889, 4357, 4679 };
+	static const int lens96[REVERB_LINES] = { 3571, 4177, 4903, 5897, 6899, 7789, 8713, 9371 };
+	static const int apl44[2] = { 331, 449 };
+	static const int apl48[2] = { 359, 487 };
+	static const int apl96[2] = { 719, 977 };
+	static const int eofs44[REVERB_EARLY_TAPS] = { 353, 907, 1409, 1861, 2311, 3079 };
+	static const int eofs48[REVERB_EARLY_TAPS] = { 383, 991, 1531, 2027, 2521, 3347 };
+	static const int eofs96[REVERB_EARLY_TAPS] = { 769, 1979, 3067, 4051, 5039, 6703 };
+
+	const int *lens = lens44, *apl = apl44, *eofs = eofs44;
+	if ( snd_SampleRate() == 96000 ) {
+		lens = lens96; apl = apl96; eofs = eofs96;
+	} else if ( snd_SampleRate() == 48000 ) {
+		lens = lens48; apl = apl48; eofs = eofs48;
+	}
+
 	for ( int i = 0; i < REVERB_LINES; i++ ) {
 		lineLen[i] = lens[i];
 	}
-	apLen[0] = 331; apLen[1] = 449;
+	apLen[0] = apl[0]; apLen[1] = apl[1];
 	// early reflection tap offsets (~8..70 ms), alternate L/R at use site
-	static const int eofs[REVERB_EARLY_TAPS] = { 353, 907, 1409, 1861, 2311, 3079 };
 	for ( int i = 0; i < REVERB_EARLY_TAPS; i++ ) {
 		earlyOfs[i] = eofs[i];
 		earlyTapGain[i]  = 1.0f - (float)i / ( REVERB_EARLY_TAPS + 1 );

@@ -486,9 +486,27 @@ int idSampleDecoderLocal::DecodeOGG( idSoundSample *sample, int sampleOffset44k,
 			break;
 		}
 
+		/*
+		   Ogg assets stay at their authored rate (the sound cache resamples
+		   PCM at load time but deliberately leaves Ogg encoded, since
+		   resampling it there would force a full decode into memory). When the
+		   output rate differs, ask the decoder for proportionally fewer source
+		   frames and interpolate up, or the stream plays at the wrong pitch -
+		   8.8% fast at 48kHz, 118% fast at 96kHz.
+		*/
+		const int srcRate = sample->objectInfo.nSamplesPerSec;
+		const int dstRate = snd_SampleRate();
+		int srcWanted = reqSamples;
+		if ( srcRate != dstRate ) {
+			srcWanted = (int)( ( (int64_t)reqSamples * srcRate ) / dstRate );
+			if ( srcWanted < 1 ) {
+				srcWanted = 1;
+			}
+		}
+
 		size_t framesGot = 0;
 		int ret = audio_transfer_read_f32( atHandle, AUDIO_TYPE_VORBIS,
-				interleaved, (size_t)reqSamples, &framesGot );
+				interleaved, (size_t)srcWanted, &framesGot );
 		if ( ret == AUDIO_PROCESS_ERROR || ret == AUDIO_PROCESS_ERROR_END ) {
 			failed = true;
 			break;
@@ -499,6 +517,33 @@ int idSampleDecoderLocal::DecodeOGG( idSoundSample *sample, int sampleOffset44k,
 			break;
 		}
 
+		if ( srcRate != dstRate ) {
+			/*
+			   Linear interpolation, matching what the rest of this path does
+			   in spirit - the SIMD upsamplers are nearest-neighbour sample
+			   duplication. Held in a fixed 16.16 accumulator so the result
+			   depends only on the frame index, not on any running state.
+			*/
+			static float resampled[MIXBUFFER_SAMPLES * 2];
+			int outFrames = (int)( ( (int64_t)framesGot * dstRate ) / srcRate );
+			if ( outFrames > MIXBUFFER_SAMPLES ) {
+				outFrames = MIXBUFFER_SAMPLES;
+			}
+			for ( int i = 0; i < outFrames; i++ ) {
+				int64_t pos  = ( (int64_t)i * srcRate << 16 ) / dstRate;
+				int     idx  = (int)( pos >> 16 );
+				float   frac = (float)( pos & 0xFFFF ) * ( 1.0f / 65536.0f );
+				int     idx1 = ( idx + 1 < (int)framesGot ) ? idx + 1 : (int)framesGot - 1;
+				for ( int c = 0; c < ch; c++ ) {
+					float a = interleaved[idx  * ch + c];
+					float b = interleaved[idx1 * ch + c];
+					resampled[i * ch + c] = a + ( b - a ) * frac;
+				}
+			}
+			memcpy( interleaved, resampled, outFrames * ch * sizeof( float ) );
+			framesGot = (size_t)outFrames;
+		}
+
 		// de-interleave into the planar layout UpSampleOGGTo44kHz expects
 		for ( int i = 0; i < (int)framesGot; i++ ) {
 			for ( int c = 0; c < ch; c++ ) {
@@ -507,8 +552,12 @@ int idSampleDecoderLocal::DecodeOGG( idSoundSample *sample, int sampleOffset44k,
 		}
 
 		int gotInterleaved = (int)framesGot * ch;
+		/* already at the output rate after the conversion above, so tell the
+		   upsampler 44100 (its 1:1 passthrough case) rather than the asset's
+		   authored rate, which would make it duplicate samples again */
 		SIMDProcessor->UpSampleOGGTo44kHz( dest + ( readSamples << shift ), planar,
-				gotInterleaved, sample->objectInfo.nSamplesPerSec, sample->objectInfo.nChannels );
+				gotInterleaved, ( srcRate != dstRate ) ? 44100 : sample->objectInfo.nSamplesPerSec,
+				sample->objectInfo.nChannels );
 
 		readSamples += gotInterleaved;
 		totalSamples -= gotInterleaved;

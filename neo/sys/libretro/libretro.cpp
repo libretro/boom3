@@ -65,7 +65,12 @@ extern "C" {
 
 
 #define RETRO_AUDIO_BUFFER_SIZE 2048
-#define SAMPLE_RATE   	44100
+/* Output sample rate, chosen once at startup from the doom_sound_samplerate
+   core option. retro_get_system_av_info() is queried once, so it cannot change
+   afterwards. 44100 is what Doom 3's assets are authored at. */
+#define SAMPLE_RATE_DEFAULT	44100
+static unsigned sample_rate = SAMPLE_RATE_DEFAULT;
+#define SAMPLE_RATE		(sample_rate)
 #define BUFFER_SIZE 	32768
 
 #define RETRO_DEVICE_MODERN  RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_ANALOG, 2)
@@ -281,6 +286,25 @@ static void update_variables(bool startup)
 {
 	struct retro_variable var;
 	
+	var.key = "doom_sound_samplerate";
+	var.value = NULL;
+
+	if (startup)
+	{
+		if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+		{
+			unsigned hz = (unsigned)atoi(var.value);
+			if (hz == 44100 || hz == 48000 || hz == 96000)
+				sample_rate = hz;
+			else
+				sample_rate = SAMPLE_RATE_DEFAULT;
+		}
+		else
+			sample_rate = SAMPLE_RATE_DEFAULT;
+
+		snd_SetSampleRate((int)sample_rate);
+	}
+
 	var.key = "doom_framerate";
 	var.value = NULL;
 	

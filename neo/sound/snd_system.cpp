@@ -73,6 +73,27 @@ idCVar idSoundSystemLocal::s_decompressionLimit( "s_decompressionLimit", "6", CV
 
 
 idSoundSystemLocal	soundSystemLocal;
+
+/*
+   The active output rate. Set once from the core option before the sound
+   system initialises; everything downstream reads it through snd_SampleRate().
+   Defaults to the rate Doom 3's assets are authored at, so a frontend that
+   never calls snd_SetSampleRate() behaves exactly as before.
+*/
+int snd_sampleRate = PRIMARYFREQ;
+
+void snd_SetSampleRate( int hz ) {
+	/*
+	   Only rates that are integer multiples or simple ratios of the asset
+	   rates are worth offering. 44100 is native; 48000 and 96000 are what
+	   modern devices actually run at, so picking one of those lets the
+	   frontend skip a resampling stage.
+	*/
+	if ( hz != 44100 && hz != 48000 && hz != 96000 ) {
+		hz = PRIMARYFREQ;
+	}
+	snd_sampleRate = hz;
+}
 idSoundSystem	*soundSystem  = &soundSystemLocal;
 
 
@@ -702,7 +723,14 @@ idSoundSystemLocal::SamplesToMilliseconds
 ===================
 */
 int idSoundSystemLocal::SamplesToMilliseconds( int samples ) const {
-	return ( samples / (PRIMARYFREQ/1000) );
+	/*
+	   Was samples / (PRIMARYFREQ/1000). That integer division truncates 44.1
+	   to 44, a 0.23% error in every millisecond<->sample conversion: 2.3ms of
+	   drift per second, 136ms over a one-minute fade. Do the division at full
+	   precision instead. 48000 and 96000 divide exactly, so this only changes
+	   the result at 44100 - where it was wrong.
+	*/
+	return (int)( ( (int64_t)samples * 1000 ) / snd_SampleRate() );
 }
 
 /*
@@ -711,7 +739,8 @@ idSoundSystemLocal::SamplesToMilliseconds
 ===================
 */
 int idSoundSystemLocal::MillisecondsToSamples( int ms ) const {
-	return ( ms * (PRIMARYFREQ/1000) );
+	/* see SamplesToMilliseconds above */
+	return (int)( ( (int64_t)ms * snd_SampleRate() ) / 1000 );
 }
 
 /*
@@ -841,7 +870,7 @@ void SoundFX_Lowpass::ProcessSample( float* in, float* out ) {
 
 	Initialize();
 
-	c = 1.0 / idMath::Tan16( idMath::PI * cutoffFrequency / 44100 );
+	c = 1.0 / idMath::Tan16( idMath::PI * cutoffFrequency / snd_SampleRate() );
 
 	// compute coefs
 	a1 = 1.0 / ( 1.0 + resonance * c + c * c );
@@ -867,7 +896,7 @@ void SoundFX_LowpassFast::SetParms( float p1, float p2, float p3 ) {
 	res = p2;
 
 	// precompute the coefs
-	c = 1.0 / idMath::Tan( idMath::PI * freq / 44100 );
+	c = 1.0 / idMath::Tan( idMath::PI * freq / snd_SampleRate() );
 
 	// compute coefs
 	a1 = 1.0 / ( 1.0 + res * c + c * c );

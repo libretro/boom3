@@ -429,7 +429,7 @@ void idSoundSample::MakeDefault( void ) {
 
 	objectInfo.nChannels = 1;
 	objectInfo.wBitsPerSample = 16;
-	objectInfo.nSamplesPerSec = 44100;
+	objectInfo.nSamplesPerSec = snd_SampleRate();
 
 	objectSize = MIXBUFFER_SAMPLES * 2;
 	objectMemSize = objectSize * sizeof( short );
@@ -483,11 +483,11 @@ to *outFrames. Returns NULL on failure (caller keeps the native-rate data).
 ===================
 */
 static short *ResamplePCMTo44k( const short *src, int srcFrames, int channels, int srcRate, int *outFrames ) {
-	if ( srcRate >= 44100 || srcFrames <= 0 ) {
+	if ( srcRate >= snd_SampleRate() || srcFrames <= 0 ) {
 		return NULL;	// nothing to do
 	}
 
-	double ratio = 44100.0 / (double)srcRate;
+	double ratio = (double)snd_SampleRate() / (double)srcRate;
 
 	// the int16 sinc resampler works on interleaved stereo; feed it 2ch.
 	// For mono we duplicate to stereo, resample, then take one channel back.
@@ -707,7 +707,7 @@ haveData:
 	// alone (it stays encoded and streams; resampling it here would force a
 	// full decode into memory). objectInfo.wFormatTag is PCM for .wav.
 	if ( objectInfo.wFormatTag == WAVE_FORMAT_TAG_PCM
-			&& objectInfo.nSamplesPerSec < 44100
+			&& objectInfo.nSamplesPerSec < snd_SampleRate()
 			&& objectSize > 0 ) {
 		int srcFrames = objectSize / objectInfo.nChannels;
 		int outFrames = 0;
@@ -718,8 +718,8 @@ haveData:
 			nonCacheData = (byte *)resampled;
 			objectSize = outFrames * objectInfo.nChannels;
 			objectMemSize = objectSize * sizeof( short );
-			objectInfo.nSamplesPerSec = 44100;
-			objectInfo.nAvgBytesPerSec = 44100 * objectInfo.nChannels * sizeof( short );
+			objectInfo.nSamplesPerSec = snd_SampleRate();
+			objectInfo.nAvgBytesPerSec = snd_SampleRate() * objectInfo.nChannels * sizeof( short );
 		}
 	}
 

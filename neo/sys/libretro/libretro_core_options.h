@@ -97,6 +97,23 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "auto"
    },
    {
+      "doom_sound_samplerate",
+      "Sound Sample Rate (Hint) (Restart Required)",
+      NULL,
+      "Output sample rate. Doom 3's assets are authored at 44.1kHz; 48kHz and "
+      "96kHz let the frontend and audio device skip a resampling stage, at the "
+      "cost of resampling the assets instead. Applied at startup.",
+      NULL,
+      NULL,
+      {
+         { "44100",       "44.1kHz (native)" },
+         { "48000",       "48kHz" },
+         { "96000",       "96kHz" },
+         { NULL, NULL },
+      },
+      "44100"
+   },
+   {
       "doom_resolution",
       "Internal resolution (Restart Required)",
       NULL,

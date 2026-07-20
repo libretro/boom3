@@ -672,12 +672,12 @@ void idSoundWorldLocal::PlaceListener( const idVec3& origin, const idMat3& axis,
 	// which would make sounds (like long character speaches) continue from the
 	// old time.  Fix this by killing all non-looping sounds
 	if ( gameTime > gameMsec + 500 ) {
-		OffsetSoundTime( - ( gameTime - gameMsec ) * 0.001f * 44100.0f );
+		OffsetSoundTime( - ( gameTime - gameMsec ) * 0.001f * (float)snd_SampleRate() );
 	}
 
 	gameMsec = gameTime;
 	// the normal 16 msec / frame
-	game44kHz = idMath::FtoiFast( gameMsec * 0.001f * 44100.0f );
+	game44kHz = idMath::FtoiFast( gameMsec * 0.001f * (float)snd_SampleRate() );
 
 	listenerPrivateId = listenerId;
 

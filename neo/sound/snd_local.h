@@ -51,7 +51,21 @@ typedef enum {
 const int SOUND_MAX_CHANNELS		= 8;
 const int SOUND_DECODER_FREE_DELAY	= 1000 * MIXBUFFER_SAMPLES / USERCMD_MSEC;		// four seconds
 
-const int PRIMARYFREQ			= 44100;		// samples per second
+/*
+   Output sample rate. Chosen once at startup from the core option and fixed
+   for the lifetime of the core, because retro_get_system_av_info() is queried
+   once and the frontend's resampler is configured from it.
+
+   PRIMARYFREQ was a compile-time constant; everything that needs the rate now
+   reads snd_SampleRate() instead. The name is kept as the default so the few
+   places that legitimately mean "the rate Doom 3 shipped at" - notably the
+   on-disk sample format, which is always 11025/22050/44100 - still say so.
+*/
+const int PRIMARYFREQ			= 44100;		// native rate of the game's assets
+
+/* snd_sampleRate / snd_SampleRate() are declared in snd_reverb.h, which is
+   included above and needs them for its delay-line tables. */
+void snd_SetSampleRate( int hz );
 const float SND_EPSILON			= 1.0f / 32768.0f;	// if volume is below this, it will always multiply to zero
 
 const int ROOM_SLICES_IN_BUFFER		= 10;
