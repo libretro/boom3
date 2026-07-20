@@ -489,8 +489,18 @@ int idSampleDecoderLocal::DecodeOGG( idSoundSample *sample, int sampleOffset44k,
 	totalSamples = sampleCount;
 	readSamples = 0;
 	do {
-		float interleaved[MIXBUFFER_SAMPLES * 2];
-		float planarBuf[2][MIXBUFFER_SAMPLES];
+		/*
+		   Static rather than stack: these are sized for the mix cap
+		   (MIXBUFFER_SAMPLES, 4096 frames - what 96kHz at the 30fps floor
+		   needs), so as locals they put 64KB on the stack and DecodeOGG is
+		   reached from inside AddChannelContribution, which already has 49KB
+		   of its own. 115KB of stack in the mix chain is a real problem on
+		   targets with small thread stacks. Safe because the decoder runs only
+		   on the main thread from a single call site and is not re-entrant -
+		   the resampled buffer below was already static for the same reason.
+		*/
+		static float interleaved[MIXBUFFER_SAMPLES * 2];
+		static float planarBuf[2][MIXBUFFER_SAMPLES];
 		float *planar[2] = { planarBuf[0], planarBuf[1] };
 		int ch = sample->objectInfo.nChannels;
 		int reqSamples = Min( MIXBUFFER_SAMPLES, totalSamples / ch );

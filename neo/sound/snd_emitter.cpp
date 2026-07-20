@@ -1137,7 +1137,10 @@ idSlowChannel::GenerateSlowChannel
 */
 void idSlowChannel::GenerateSlowChannel( FracTime& playPos, int sampleCount44k, float* finalBuffer ) {
 	idSoundWorldLocal *sw = static_cast<idSoundWorldLocal*>( soundSystemLocal.GetPlayingSoundWorld() );
-	float in[MIXBUFFER_SAMPLES+3], out[MIXBUFFER_SAMPLES+3], *src, *spline, slowmoSpeed;
+	/* static, not stack: 32KB for the pair. Single call path from
+	   GatherChannelSamples on the main thread, not recursive. */
+	static float in[MIXBUFFER_SAMPLES+3], out[MIXBUFFER_SAMPLES+3];
+	float *src, *spline, slowmoSpeed;
 	int i, neededSamples, zeroedPos, count = 0;
 
 	src = in + 2;

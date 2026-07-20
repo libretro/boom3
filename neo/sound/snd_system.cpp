@@ -945,8 +945,23 @@ idSoundSystemLocal::DoEnviroSuit
 ===================
 */
 void idSoundSystemLocal::DoEnviroSuit( float* samples, int numSamples, int numSpeakers ) {
-	float out[10000], *out_p = out + 2;
-	float in[10000], *in_p = in + 2;
+	/*
+	   These were float[10000] on the stack - 80KB for the pair, and a magic
+	   number with no stated relationship to anything the caller passes.
+	   numSamples is numFrames * numSpeakers, and numFrames is bounded by
+	   MIXBUFFER_SAMPLES, so size them from that instead: the bound is then
+	   checked by the compiler rather than assumed. Static because this runs
+	   only on the main thread from a single call site in MixLoop.
+
+	   The old size happened to fit the one caller (2 speakers at 96kHz needs
+	   6400) but would have overrun at 6 speakers, silently.
+	*/
+	static float out[MIXBUFFER_SAMPLES * 2 + 4], *out_p = out + 2;
+	static float in[MIXBUFFER_SAMPLES * 2 + 4], *in_p = in + 2;
+
+	if ( numSamples > MIXBUFFER_SAMPLES * 2 ) {
+		numSamples = MIXBUFFER_SAMPLES * 2;
+	}
 
 
 	if ( !fxList.Num() ) {

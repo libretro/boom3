@@ -1479,7 +1479,10 @@ void idSoundWorldLocal::AddChannelContribution( idSoundEmitterLocal *sound, idSo
 	// fetch the sound from the cache as 44kHz, 16 bit samples
 	//
 	int offset = current44kHz - chan->trigger44kHzTime;
-	float inputSamples[MIXBUFFER_SAMPLES*2+16];
+	/* static, not stack: 32KB here plus 16KB for srcS16 below, and this is
+	   the frame that DecodeOGG is reached from. Single call path on the main
+	   thread, not recursive. */
+	static float inputSamples[MIXBUFFER_SAMPLES*2+16];
 	float *alignedInputSamples = (float *) ( ( ( (intptr_t)inputSamples ) + 15 ) & ~15 );
 
 	if ( true ) {
@@ -1569,7 +1572,7 @@ void idSoundWorldLocal::AddChannelContribution( idSoundEmitterLocal *sound, idSo
 		   over the same block a second time. Measured 1.64x on the s16 reverb
 		   path (177us -> 108us per frame at 32 active voices).
 		*/
-		short srcS16[MIXBUFFER_SAMPLES*2];
+		static short srcS16[MIXBUFFER_SAMPLES*2];
 		bool haveS16 = false;
 
 		if ( soundSystemLocal.outputIsFloat ) {
