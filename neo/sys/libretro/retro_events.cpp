@@ -75,23 +75,6 @@ struct mouse_poll_t {
 	}
 };
 
-struct joystick_poll_t
-{
-	int axis;
-	int value;
-	
-	joystick_poll_t()
-	{
-	}
-	
-	joystick_poll_t( int a, int v )
-	{
-		axis = a;
-		value = v;
-	}
-};
-
-static idList<joystick_poll_t> joystick_polls;
 static idList<kbd_poll_t> kbd_polls;
 static idList<mouse_poll_t> mouse_polls;
 
@@ -110,7 +93,6 @@ Sys_InitInput
 void Sys_InitInput() {
 	kbd_polls.SetGranularity(64);
 	mouse_polls.SetGranularity(64);
-	joystick_polls.SetGranularity(64);
 
 	touch_w = glConfig.vidWidth;
 	touch_h = glConfig.vidHeight;
@@ -127,7 +109,6 @@ Sys_ShutdownInput
 void Sys_ShutdownInput() {
 	kbd_polls.Clear();
 	mouse_polls.Clear();
-	joystick_polls.Clear();
 }
 
 void Sys_ShowWindow( bool show ) {
@@ -328,7 +309,6 @@ Sys_ClearEvents
 void Sys_ClearEvents() {
 	kbd_polls.SetNum(0, false);
 	mouse_polls.SetNum(0, false);
-	joystick_polls.SetNum(0, false);
 }
 
 /*
@@ -375,25 +355,16 @@ void Sys_EndKeyboardInputEvents() {
 
 /*
 ================
-Sys_PollJoystickInputEvents
-================
-*/
-int Sys_PollJoystickInputEvents() {
-	return joystick_polls.Num();
-}
-
-/*
-================
 Sys_ReturnJoystickInputEvent
 ================
 */
 int Sys_ReturnJoystickInputEvent(const int n, int &axis, int &value) {
-	if (n >= joystick_polls.Num())
-		return 0;
-
-	axis = joystick_polls[n].axis;
-	value = joystick_polls[n].value;
-	return 1;
+	// Never reached: Sys_PollJoystickInputEvents() (stubs.cpp) returns 0, so
+	// idUsercmdGenLocal::Joystick()'s loop body does not run. Gamepad input
+	// arrives as key events through Sys_SetKeys() instead, which is why there
+	// is no axis queue to read here. Kept because the symbol is linked.
+	(void)n; (void)axis; (void)value;
+	return 0;
 }
 
 /*
@@ -402,7 +373,7 @@ Sys_EndJoystickInputEvents
 ================
 */
 void Sys_EndJoystickInputEvents() {
-	joystick_polls.SetNum(0, false);
+	// nothing queued - see Sys_ReturnJoystickInputEvent above
 }
 
 /*
