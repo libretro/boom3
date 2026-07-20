@@ -3212,7 +3212,25 @@ idSIMD_Generic::CreateVertexProgramShadowCache
 ============
 */
 int VPCALL idSIMD_Generic::CreateVertexProgramShadowCache( idVec4 *vertexCache, const idDrawVert *verts, const int numVerts ) {
-	for ( int i = 0; i < numVerts; i++ ) {
+	int i = 0;
+
+#if defined(SIMD_POINTCULL_SSE2) || defined(SIMD_POINTCULL_NEON)
+	{
+		const simdTriPlane_t maskXYZ = SIMD_SHADOW_MASKXYZ();
+		const simdTriPlane_t w1      = SIMD_SHADOW_W1();
+
+		for ( ; i < numVerts; i++ ) {
+			/* reads xyz plus st[0]; the mask discards the fourth lane */
+			simdTriPlane_t xyz0 = SIMD_SHADOW_AND(
+				SIMD_TRIPLANE_LOAD( (const float *)&verts[i].xyz ), maskXYZ );
+			SIMD_TRIPLANE_STORE( (float *)&vertexCache[i*2+0], SIMD_SHADOW_OR( xyz0, w1 ) );
+			SIMD_TRIPLANE_STORE( (float *)&vertexCache[i*2+1], xyz0 );
+		}
+		return numVerts * 2;
+	}
+#endif
+
+	for ( ; i < numVerts; i++ ) {
 		const float *v = verts[i].xyz.ToFloatPtr();
 		vertexCache[i*2+0][0] = v[0];
 		vertexCache[i*2+1][0] = v[0];

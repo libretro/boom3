@@ -171,6 +171,17 @@ ID_INLINE __m128 SIMD_TRIPLANE_NEGATE( __m128 v ) {
 #define SIMD_TRIPLANE_STORE( p, v )	_mm_storeu_ps( (p), (v) )
 typedef __m128 simdTriPlane_t;
 
+/*
+   Shadow cache helpers. A 4-float load at &xyz reads xyz plus st[0], so the
+   fourth lane must be masked off before the w component is written - the
+   masks below do that. No arithmetic is involved in
+   CreateVertexProgramShadowCache, so it is exact by inspection.
+*/
+#define SIMD_SHADOW_MASKXYZ()	_mm_castsi128_ps( _mm_setr_epi32( -1, -1, -1, 0 ) )
+#define SIMD_SHADOW_W1()		_mm_setr_ps( 0.0f, 0.0f, 0.0f, 1.0f )
+#define SIMD_SHADOW_AND( a, b )	_mm_and_ps( (a), (b) )
+#define SIMD_SHADOW_OR( a, b )	_mm_or_ps( (a), (b) )
+
 #elif defined(SIMD_POINTCULL_NEON)
 
 ID_INLINE float32x4_t SIMD_TRIPLANE_RSQRT( float32x4_t x ) {
@@ -193,6 +204,19 @@ ID_INLINE float32x4_t SIMD_TRIPLANE_NEGATE( float32x4_t v ) {
 #define SIMD_TRIPLANE_LOAD( p )		vld1q_f32( p )
 #define SIMD_TRIPLANE_STORE( p, v )	vst1q_f32( (p), (v) )
 typedef float32x4_t simdTriPlane_t;
+
+ID_INLINE float32x4_t SIMD_SHADOW_MASKXYZ( void ) {
+	static const uint32_t m[4] = { 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0u };
+	return vreinterpretq_f32_u32( vld1q_u32( m ) );
+}
+ID_INLINE float32x4_t SIMD_SHADOW_W1( void ) {
+	static const float w[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+	return vld1q_f32( w );
+}
+#define SIMD_SHADOW_AND( a, b )	vreinterpretq_f32_u32( vandq_u32( \
+		vreinterpretq_u32_f32( a ), vreinterpretq_u32_f32( b ) ) )
+#define SIMD_SHADOW_OR( a, b )	vreinterpretq_f32_u32( vorrq_u32( \
+		vreinterpretq_u32_f32( a ), vreinterpretq_u32_f32( b ) ) )
 
 #endif
 
