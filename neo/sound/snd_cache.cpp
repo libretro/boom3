@@ -418,14 +418,19 @@ int idSoundSample::LengthIn44kHzSamples( void ) const {
 	   sound is treated as 2.18x shorter than it is, cutting playback short
 	   and confusing the looping and completion checks.
 	*/
-	if ( objectInfo.nSamplesPerSec == 11025 ) {
-		return objectSize << 2;
-	} else if ( objectInfo.nSamplesPerSec == 22050 ) {
-		return objectSize << 1;
-	} else if ( objectInfo.nSamplesPerSec != snd_SampleRate() ) {
+	/*
+	   The historical << 2 / << 1 branches were the 11025/22050 -> 44100
+	   expansions, i.e. the general ratio below with the output rate fixed
+	   at 44100 - at which they are exactly equal (44100/11025 == 4,
+	   44100/22050 == 2). At 48kHz/96kHz output they under-reported the
+	   length of every sub-44.1kHz Ogg (PCM never gets here mismatched: it
+	   is resampled to the output rate at load), cutting looping and
+	   completion checks short. One ratio covers every rate pair.
+	*/
+	if ( objectInfo.nSamplesPerSec != snd_SampleRate() ) {
 		return (int)( ( (int64_t)objectSize * snd_SampleRate() ) / objectInfo.nSamplesPerSec );
 	} else {
-		return objectSize << 0;
+		return objectSize;
 	}
 }
 
