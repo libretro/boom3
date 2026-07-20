@@ -1770,26 +1770,25 @@ void idAsyncClient::RunFrame( void ) {
 
 	gameTimeResidual += msec;
 
-	// spin in place processing incoming packets until enough time lapsed to run a new game frame
+	// libretro: see the matching comment in idAsyncServer::RunFrame. The
+	// original loop blocked in select() and spun until USERCMD_MSEC of wall
+	// clock had elapsed, stalling retro_run for a frame. The frontend already
+	// calls us once per frame, so drain what has arrived and let the residual
+	// carry over; the prediction loop further down is guarded by its own
+	// gameTimeResidual + clientPredictTime test and does nothing until enough
+	// time has accumulated.
 	do {
+		newPacket = clientPort.GetPacket( from, msgBuf, size, sizeof( msgBuf ) );
+		if ( newPacket ) {
+			msg.Init( msgBuf, sizeof( msgBuf ) );
+			msg.SetSize( size );
+			msg.BeginReading();
+			ProcessMessage( from, msg );
+		}
+	} while( newPacket );
 
-		do {
-
-			// blocking read with game time residual timeout
-			newPacket = clientPort.GetPacketBlocking( from, msgBuf, size, sizeof( msgBuf ), USERCMD_MSEC - ( gameTimeResidual + clientPredictTime ) - 1 );
-			if ( newPacket ) {
-				msg.Init( msgBuf, sizeof( msgBuf ) );
-				msg.SetSize( size );
-				msg.BeginReading();
-				ProcessMessage( from, msg );
-			}
-
-			msec = UpdateTime( 100 );
-			gameTimeResidual += msec;
-
-		} while( newPacket );
-
-	} while( gameTimeResidual + clientPredictTime < USERCMD_MSEC );
+	msec = UpdateTime( 100 );
+	gameTimeResidual += msec;
 
 	// update server list
 	serverList.RunFrame();

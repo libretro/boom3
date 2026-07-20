@@ -2376,28 +2376,36 @@ void idAsyncServer::RunFrame( void ) {
 
 	gameTimeResidual += msec;
 
-	// spin in place processing incoming packets until enough time lapsed to run a new game frame
+	// libretro: the original loop blocked in select() and spun here until
+	// USERCMD_MSEC of wall clock had elapsed, so one call could stall for a
+	// frame. retro_run is already called once per frame by the frontend, so
+	// the pacing is supplied from outside - drain whatever has arrived and
+	// return, leaving the residual to accumulate across frames.
+	//
+	// Clamping the old timeout to 0 was tried and is worse: with select
+	// returning immediately the outer condition still waits on the wall
+	// clock, so the same ~16ms is spent in a busy loop. Measured 15.56ms /
+	// 719 select() calls blocking, against 15.84ms / 33638 calls at a zero
+	// timeout - identical stall, 47x the syscalls.
 	do {
-
-		do {
-
-			// blocking read with game time residual timeout
-			newPacket = serverPort.GetPacketBlocking( from, msgBuf, size, sizeof( msgBuf ), USERCMD_MSEC - gameTimeResidual - 1 );
-			if ( newPacket ) {
-				msg.Init( msgBuf, sizeof( msgBuf ) );
-				msg.SetSize( size );
-				msg.BeginReading();
-				if ( ProcessMessage( from, msg ) ) {
-					return;	// return because rcon was used
-				}
+		newPacket = serverPort.GetPacket( from, msgBuf, size, sizeof( msgBuf ) );
+		if ( newPacket ) {
+			msg.Init( msgBuf, sizeof( msgBuf ) );
+			msg.SetSize( size );
+			msg.BeginReading();
+			if ( ProcessMessage( from, msg ) ) {
+				return;	// return because rcon was used
 			}
+		}
+	} while( newPacket );
 
-			msec = UpdateTime( 100 );
-			gameTimeResidual += msec;
+	msec = UpdateTime( 100 );
+	gameTimeResidual += msec;
 
-		} while( newPacket );
-
-	} while( gameTimeResidual < USERCMD_MSEC );
+	// no early return here: the heartbeat, client timeout checks and cvar
+	// sync below have to run every call, and the game tic further down is
+	// already guarded by its own while( gameTimeResidual >= USERCMD_MSEC ),
+	// which simply does nothing on a frame that has not accumulated enough.
 
 	// send heart beat to master servers
 	MasterHeartbeat();

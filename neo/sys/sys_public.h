@@ -248,7 +248,6 @@ public:
 	void		Close();
 
 	bool		GetPacket( netadr_t &from, void *data, int &size, int maxSize );
-	bool		GetPacketBlocking( netadr_t &from, void *data, int &size, int maxSize, int timeout );
 	void		SendPacket( const netadr_t to, const void *data, int size );
 
 	int			packetsRead;

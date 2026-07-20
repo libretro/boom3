@@ -407,58 +407,6 @@ bool idPort::GetPacket( netadr_t &net_from, void *data, int &size, int maxSize )
 
 /*
 ==================
-idPort::GetPacketBlocking
-==================
-*/
-bool idPort::GetPacketBlocking( netadr_t &net_from, void *data, int &size, int maxSize, int timeout ) {
-	fd_set				set;
-	struct timeval		tv;
-	int					ret;
-
-	if ( !netSocket ) {
-		return false;
-	}
-
-	if ( timeout < 0 ) {
-		return GetPacket( net_from, data, size, maxSize );
-	}
-
-	FD_ZERO( &set );
-	FD_SET( netSocket, &set );
-
-	tv.tv_sec = timeout / 1000;
-	tv.tv_usec = ( timeout % 1000 ) * 1000;
-	ret = select( netSocket+1, &set, NULL, NULL, &tv );
-	if ( ret == -1 ) {
-		if ( errno == EINTR ) {
-			common->DPrintf( "idPort::GetPacketBlocking: select EINTR\n" );
-			return false;
-		} else {
-			common->Error( "idPort::GetPacketBlocking: select failed: %s\n", strerror( errno ) );
-		}
-	}
-
-	if ( ret == 0 ) {
-		// timed out
-		return false;
-	}
-	struct sockaddr_in from;
-	int fromlen;
-	fromlen = sizeof( from );
-	ret = recvfrom( netSocket, (char *)data, maxSize, 0, (struct sockaddr *)&from, (socklen_t *)&fromlen );
-	if ( ret == -1 ) {
-		// there should be no blocking errors once select declares things are good
-		common->DPrintf( "idPort::GetPacketBlocking: %s\n", strerror( errno ) );
-		return false;
-	}
-	assert( ret < maxSize );
-	SockadrToNetadr( &from, &net_from );
-	size = ret;
-	return true;
-}
-
-/*
-==================
 idPort::SendPacket
 ==================
 */
