@@ -88,6 +88,12 @@ void snd_SetSampleRate( int hz ) {
 	   rates are worth offering. 44100 is native; 48000 and 96000 are what
 	   modern devices actually run at, so picking one of those lets the
 	   frontend skip a resampling stage.
+
+	   96000 is also the ceiling the libretro layer's audio budget is checked
+	   against: it mixes sampleRate/framerate frames per retro_run into arrays
+	   sized by MIXBUFFER_SAMPLES, and a static assertion there covers
+	   96000 / 30fps = 3200 <= 4096. Adding a higher rate here means raising
+	   MIXBUFFER_SAMPLES to match, and that assertion will say so.
 	*/
 	if ( hz != 32000 && hz != 44100 && hz != 48000 && hz != 96000 ) {
 		hz = PRIMARYFREQ;

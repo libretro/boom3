@@ -71,6 +71,32 @@ extern "C" {
 #define SAMPLE_RATE_DEFAULT	44100
 static unsigned sample_rate = SAMPLE_RATE_DEFAULT;
 #define SAMPLE_RATE		(sample_rate)
+
+/* Largest number of output frames per retro_run. No ring buffer: every
+ * retro_run mixes exactly the frames it outputs and hands them straight to
+ * the frontend, so the per-call demand is simply sampleRate / framerate and
+ * the audio latency is one video frame regardless of rate.
+ *
+ * That demand is bounded by three values that live in three different files:
+ *
+ *   AUDIO_MIN_FRAMERATE   30      here, the clamp in update_variables()
+ *   AUDIO_MAX_SAMPLERATE  96000   snd_SetSampleRate() in snd_system.cpp
+ *   MIXBUFFER_SAMPLES     4096    idlib/math/Simd.h, sizes fixed arrays
+ *
+ * The worst case is 96000/30 = 3200 frames, which fits in 4096 with room to
+ * spare - but nothing tied the three together, and the frames > MAX_FRAME_
+ * SAMPLES clamp below silently DROPS audio rather than failing if they ever
+ * stop fitting. Lowering the framerate floor to 20, or adding a 192kHz
+ * option, would quietly break playback. Assert the relationship instead. */
+#define AUDIO_MIN_FRAMERATE   30
+#define AUDIO_MAX_SAMPLERATE  96000
+#define MAX_FRAME_SAMPLES     MIXBUFFER_SAMPLES
+
+/* If this fires, either raise MIXBUFFER_SAMPLES in idlib/math/Simd.h (it
+ * sizes fixed arrays, several on the stack - check the cost), or keep the
+ * framerate floor and sample-rate ceiling where they are. */
+typedef char audio_frame_budget_fits[
+	( AUDIO_MAX_SAMPLERATE / AUDIO_MIN_FRAMERATE <= MAX_FRAME_SAMPLES ) ? 1 : -1 ];
 #define BUFFER_SIZE 	32768
 
 #define RETRO_DEVICE_MODERN  RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_ANALOG, 2)
@@ -364,9 +390,11 @@ static void update_variables(bool startup)
 		else
 			framerate    = 60;
 
-		// keep per-frame audio demand within the fixed buffers in audio_callback()
-		if (framerate < 30)
-			framerate = 30;
+		/* Keep per-frame audio demand within the fixed buffers: the floor is
+		 * what the MAX_FRAME_SAMPLES static assertion above is checked
+		 * against, so the two must stay in step. */
+		if (framerate < AUDIO_MIN_FRAMERATE)
+			framerate = AUDIO_MIN_FRAMERATE;
 		else if (framerate > 240)
 			framerate = 240;
 
@@ -1059,12 +1087,6 @@ void Sys_SetMouse() {
 
 #define MAX_CHANNELS 2
 
-/* Largest number of output frames per retro_run: 44100/30fps = 1470 frames
- * at the minimum supported framerate; MIXBUFFER_SAMPLES (4096) is the hard
- * engine-side cap on a single mix block. No ring buffer: every retro_run
- * mixes exactly the frames it outputs and hands them straight to the
- * frontend. */
-#define MAX_FRAME_SAMPLES MIXBUFFER_SAMPLES
 
 /* Float output negotiation (RETRO_ENVIRONMENT_GET_AUDIO_SAMPLE_BATCH_FLOAT):
  * decided once per loaded game; never mix formats afterwards. */
