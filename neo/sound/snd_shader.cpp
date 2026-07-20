@@ -497,13 +497,11 @@ idSoundShader::GetSound
 */
 const char *idSoundShader::GetSound( int index ) const {
 	if ( index >= 0 ) {
-		if ( index < numLeadins ) {
+		if ( index < numLeadins )
 			return leadins[index]->name.c_str();
-		}
 		index -= numLeadins;
-		if ( index < numEntries ) {
+		if ( index < numEntries )
 			return entries[index]->name.c_str();
-		}
 	}
 	return "";
 }

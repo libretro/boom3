@@ -3236,11 +3236,6 @@ void idPlayer::DrawHUD( idUserInterface *_hud ) {
 
 	_hud->SetStateString( "weapicon", weapon.GetEntity()->Icon() );
 
-	// FIXME: this is temp to allow the sound meter to show up in the hud
-	// it should be commented out before shipping but the code can remain
-	// for mod developers to enable for the same functionality
-	_hud->SetStateInt( "s_debug", cvarSystem->GetCVarInteger( "s_showLevelMeter" ) );
-
 	weapon.GetEntity()->UpdateGUI();
 
 	_hud->Redraw( gameLocal.realClientTime );

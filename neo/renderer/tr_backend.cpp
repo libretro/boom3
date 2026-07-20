@@ -341,9 +341,7 @@ void GL_State( int stateBits ) {
 		}
 	}
 
-	//
 	// check colormask
-	//
 	if ( diff & (GLS_REDMASK|GLS_GREENMASK|GLS_BLUEMASK|GLS_ALPHAMASK) ) {
 		GLboolean		r, g, b, a;
 		r = ( stateBits & GLS_REDMASK ) ? 0 : 1;
@@ -353,9 +351,7 @@ void GL_State( int stateBits ) {
 		qglColorMask( r, g, b, a );
 	}
 
-	//
 	// fill/line mode
-	//
 #ifndef HAVE_OPENGLES
 	if ( diff & GLS_POLYMODE_LINE ) {
 		if ( stateBits & GLS_POLYMODE_LINE ) {
@@ -365,9 +361,7 @@ void GL_State( int stateBits ) {
 		}
 	}
 
-	//
 	// alpha test
-	//
 	if ( diff & GLS_ATEST_BITS ) {
 		switch ( stateBits & GLS_ATEST_BITS ) {
 		case 0:
@@ -487,9 +481,6 @@ void RB_ShowImages( void ) {
 	int		start, end;
 
 	RB_SetGL2D();
-
-	//qglClearColor( 0.2, 0.2, 0.2, 1 );
-	//qglClear( GL_COLOR_BUFFER_BIT );
 
 	qglFinish();
 
@@ -647,7 +638,6 @@ smp extensions, or asyncronously by another thread.
 */
 int		backEndStartTime, backEndFinishTime;
 void RB_ExecuteBackEndCommands( const emptyCommand_t *cmds ) {
-	// r_debugRenderToTexture
 	int	c_draw3d = 0, c_draw2d = 0, c_setBuffers = 0, c_swapBuffers = 0, c_copyRenders = 0;
 
 	if ( cmds->commandId == RC_NOP && !cmds->next ) {
@@ -700,9 +690,4 @@ void RB_ExecuteBackEndCommands( const emptyCommand_t *cmds ) {
 	// stop rendering on this thread
 	backEndFinishTime = Core_Milliseconds();
 	backEnd.pc.msec = backEndFinishTime - backEndStartTime;
-
-	if ( r_debugRenderToTexture.GetInteger() == 1 ) {
-		common->Printf( "3d: %i, 2d: %i, SetBuf: %i, SwpBuf: %i, CpyRenders: %i, CpyFrameBuf: %i\n", c_draw3d, c_draw2d, c_setBuffers, c_swapBuffers, c_copyRenders, backEnd.c_copyFrameBuffer );
-		backEnd.c_copyFrameBuffer = 0;
-	}
 }

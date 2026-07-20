@@ -361,7 +361,8 @@ void idSliderWindow::Activate(bool activate, idStr &act) {
 idSliderWindow::InitCvar
 ============
 */
-void idSliderWindow::InitCvar( ) {
+void idSliderWindow::InitCvar( )
+{
 	if ( cvarStr[0] == '\0' ) {
 		if ( !buddyWin ) {
 			common->Warning( "idSliderWindow::InitCvar: gui '%s' window '%s' has an empty cvar string", gui->GetSourceFile(), name.c_str() );
@@ -372,12 +373,8 @@ void idSliderWindow::InitCvar( ) {
 	}
 
 	cvar = cvarSystem->Find( cvarStr );
-	if ( !cvar ) {
-		if (strcmp(cvarStr.c_str(), "r_fullscreen") && strcmp(cvarStr.c_str(), "r_swapInterval"))
-			common->Warning( "idSliderWindow::InitCvar: gui '%s' window '%s' references undefined cvar '%s'", gui->GetSourceFile(), name.c_str(), cvarStr.c_str() );
+	if ( !cvar )
 		cvar_init = true;
-		return;
-	}
 }
 
 /*

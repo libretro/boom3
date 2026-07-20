@@ -59,11 +59,9 @@ src:  mono samples, numFrames floats
 Ramps lastV -> currentV linearly over the block.
 ====================
 */
-static inline void Snd_MixTwoSpeakerMono( float *dest, const float *src, int numFrames,
-                                          const float lastV[2], const float currentV[2] ) {
-	if ( numFrames <= 0 ) {
+static inline void Snd_MixTwoSpeakerMono( float *dest, const float *src, int numFrames, const float lastV[2], const float currentV[2] ) {
+	if ( numFrames <= 0 )
 		return;
-	}
 	const float incL = ( currentV[0] - lastV[0] ) / numFrames;
 	const float incR = ( currentV[1] - lastV[1] ) / numFrames;
 	float sL = lastV[0];
@@ -133,11 +131,9 @@ dest: interleaved stereo accumulation buffer, numFrames*2 floats
 src:  interleaved stereo samples, numFrames*2 floats
 ====================
 */
-static inline void Snd_MixTwoSpeakerStereo( float *dest, const float *src, int numFrames,
-                                            const float lastV[2], const float currentV[2] ) {
-	if ( numFrames <= 0 ) {
+static inline void Snd_MixTwoSpeakerStereo( float *dest, const float *src, int numFrames, const float lastV[2], const float currentV[2] ) {
+	if ( numFrames <= 0 )
 		return;
-	}
 	const float incL = ( currentV[0] - lastV[0] ) / numFrames;
 	const float incR = ( currentV[1] - lastV[1] ) / numFrames;
 	float sL = lastV[0];
@@ -276,11 +272,9 @@ Snd_MixTwoSpeakerMonoS16
 dest: int32 stereo accumulator, numFrames*2; src: mono s16
 ====================
 */
-static inline void Snd_MixTwoSpeakerMonoS16( int *dest, const short *src, int numFrames,
-                                             const short lastQ15[2], const short currentQ15[2] ) {
-	if ( numFrames <= 0 ) {
+static inline void Snd_MixTwoSpeakerMonoS16( int *dest, const short *src, int numFrames, const short lastQ15[2], const short currentQ15[2] ) {
+	if ( numFrames <= 0 )
 		return;
-	}
 	const int baseL = (int)lastQ15[0] << 8;
 	const int baseR = (int)lastQ15[1] << 8;
 	const int incL  = ( ( (int)currentQ15[0] - lastQ15[0] ) << 8 ) / numFrames;

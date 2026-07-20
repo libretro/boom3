@@ -272,14 +272,14 @@ public:
 typedef struct {
 	idStr					name;
 	idStr					format;
-	int						numChannels;
-	int						numSamplesPerSecond;
-	int						num44kHzSamples;
-	int						numBytes;
+	int					numChannels;
+	int					numSamplesPerSecond;
+	int					num44kHzSamples;
+	int					numBytes;
 	bool					looping;
 	float					lastVolume;
-	int						start44kHzTime;
-	int						current44kHzTime;
+	int					start44kHzTime;
+	int					current44kHzTime;
 } soundDecoderInfo_t;
 
 
@@ -310,13 +310,13 @@ public:
 	virtual cinData_t		ImageForTime( const int milliseconds, const bool waveform ) = 0;
 
 	// get sound decoder info
-	virtual int				GetSoundDecoderInfo( int index, soundDecoderInfo_t &decoderInfo ) = 0;
+	virtual int			GetSoundDecoderInfo( int index, soundDecoderInfo_t &decoderInfo ) = 0;
 
 	// if rw == NULL, no portal occlusion or rendered debugging is available
 	virtual idSoundWorld *	AllocSoundWorld( idRenderWorld *rw ) = 0;
 
 	// specifying NULL will cause silence to be played
-	virtual void			SetPlayingSoundWorld( idSoundWorld *soundWorld ) = 0;
+	virtual void		SetPlayingSoundWorld( idSoundWorld *soundWorld ) = 0;
 
 	// some tools, like the sound dialog, may be used in both the game and the editor
 	// This can return NULL, so check!

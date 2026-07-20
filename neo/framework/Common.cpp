@@ -90,24 +90,16 @@ idCVar com_allowConsole( "com_allowConsole", "0", CVAR_BOOL | CVAR_SYSTEM | CVAR
 idCVar com_showMemoryUsage( "com_showMemoryUsage", "0", CVAR_BOOL|CVAR_SYSTEM|CVAR_NOCHEAT, "show total and per frame memory usage" );
 idCVar com_showAsyncStats( "com_showAsyncStats", "0", CVAR_BOOL|CVAR_SYSTEM|CVAR_NOCHEAT, "show async network stats" );
 idCVar com_showSoundDecoders( "com_showSoundDecoders", "0", CVAR_BOOL|CVAR_SYSTEM|CVAR_NOCHEAT, "show sound decoders" );
-idCVar com_timestampPrints( "com_timestampPrints", "0", CVAR_SYSTEM, "print time with each console print, 1 = msec, 2 = sec", 0, 2, idCmdSystem::ArgCompletion_Integer<0,2> );
 idCVar com_timescale( "timescale", "1", CVAR_SYSTEM | CVAR_FLOAT, "scales the time", 0.1f, 10.0f );
 idCVar com_makingBuild( "com_makingBuild", "0", CVAR_BOOL | CVAR_SYSTEM, "1 when making a build" );
 idCVar com_updateLoadSize( "com_updateLoadSize", "0", CVAR_BOOL | CVAR_SYSTEM | CVAR_NOCHEAT, "update the load size after loading a map" );
 
-idCVar com_enableDebuggerServer( "com_enableDebuggerServer", "0", CVAR_BOOL | CVAR_SYSTEM, "toggle debugger server and try to connect to com_dbgClientAdr" );
-idCVar com_dbgClientAdr( "com_dbgClientAdr", "localhost", CVAR_SYSTEM | CVAR_ARCHIVE, "debuggerApp client address" );
-idCVar com_dbgServerAdr( "com_dbgServerAdr", "localhost", CVAR_SYSTEM | CVAR_ARCHIVE, "debugger server address" );
-
 idCVar com_product_lang_ext( "com_product_lang_ext", "1", CVAR_INTEGER | CVAR_SYSTEM | CVAR_ARCHIVE, "Extension to use when creating language files." );
 
-int				com_frameTime;			// time (since start) for the current frame in milliseconds
+int		com_frameTime;			// time (since start) for the current frame in milliseconds
 volatile int	com_ticNumber;			// 60 hz tics
-int				com_editors;			// currently opened editor(s)
-bool			com_editorActive;		//  true if an editor has focus
-
-// writes si_version to the config file - in a kinda obfuscated way
-//#define ID_WRITE_VERSION
+int		com_editors;			// currently opened editor(s)
+bool		com_editorActive;		//  true if an editor has focus
 
 class idCommonLocal : public idCommon {
 public:
@@ -200,11 +192,6 @@ private:
 	idStrList					errorList;
 
 	idLangDict					languageDict;
-
-#ifdef ID_WRITE_VERSION
-	idCompressor *				config_compressor;
-#endif
-
 };
 
 idCommonLocal	commonLocal;
@@ -309,11 +296,6 @@ idCommonLocal::idCommonLocal( void ) {
 	rd_buffer = NULL;
 	rd_buffersize = 0;
 	rd_flush = NULL;
-
-#ifdef ID_WRITE_VERSION
-	config_compressor = NULL;
-#endif
-
 }
 
 /*
@@ -365,25 +347,11 @@ A raw string should NEVER be passed as fmt, because of "%f" type crashes.
 */
 void idCommonLocal::VPrintf( const char *fmt, va_list args ) {
 	char		msg[MAX_PRINT_MSG_SIZE];
-	int			timeLength;
+	int			timeLength = 0;
 
 	// if the cvar system is not initialized
-	if ( !cvarSystem->IsInitialized() ) {
+	if ( !cvarSystem->IsInitialized() )
 		return;
-	}
-
-	// optionally put a timestamp at the beginning of each print,
-	// so we can see how long different init sections are taking
-	if ( com_timestampPrints.GetInteger() ) {
-		int	t = Core_Milliseconds();
-		if ( com_timestampPrints.GetInteger() == 1 ) {
-			t /= 1000;
-		}
-		sprintf( msg, "[%i]", t );
-		timeLength = strlen( msg );
-	} else {
-		timeLength = 0;
-	}
 
 	// don't overflow
 	if ( idStr::vsnPrintf( msg+timeLength, MAX_PRINT_MSG_SIZE-timeLength-1, fmt, args ) < 0 ) {
@@ -406,17 +374,7 @@ void idCommonLocal::VPrintf( const char *fmt, va_list args ) {
 	// remove any color codes
 	idStr::RemoveColors( msg );
 
-	if ( com_enableDebuggerServer.GetBool( ) ) 	{
-		// print to script debugger server
-		if ( com_editors & EDITOR_DEBUGGER )
-			DebuggerServerPrint( msg );
-		else
-			// only echo to dedicated console and early console when debugger is not running so no 
-			// deadlocks occur if engine functions called from the debuggerthread trace stuff..
-			Sys_Printf( "%s", msg );
-	}
-	else
-		Sys_Printf( "%s", msg );
+	Sys_Printf( "%s", msg );
 
 	// don't trigger any updates if we are in the process of doing a fatal error
 	if ( com_errorEntered != ERP_FATAL ) {
@@ -631,9 +589,8 @@ void idCommonLocal::Error( const char *fmt, ... ) {
 	}
 
 	// if we don't have GL running, make it a fatal error
-	if ( !renderSystem->IsOpenGLRunning() ) {
+	if ( !renderSystem->IsOpenGLRunning() )
 		code = ERP_FATAL;
-	}
 
 	// if we got a recursive error, make it fatal
 	if ( com_errorEntered ) {
@@ -642,9 +599,8 @@ void idCommonLocal::Error( const char *fmt, ... ) {
 		// process immediately, which will prevent a
 		// full screen rendering window covering the
 		// error dialog
-		if ( com_errorEntered == ERP_FATAL ) {
+		if ( com_errorEntered == ERP_FATAL )
 			Sys_Quit();
-		}
 		code = ERP_FATAL;
 	}
 
@@ -944,32 +900,11 @@ idCommonLocal::WriteConfigToFile
 ==================
 */
 void idCommonLocal::WriteConfigToFile( const char *filename ) {
-	idFile *f;
-#ifdef ID_WRITE_VERSION
-	ID_TIME_T t;
-	char *curtime;
-	idStr runtag;
-	idFile_Memory compressed( "compressed" );
-	idBase64 out;
-#endif
-
-	f = fileSystem->OpenFileWrite( filename, "fs_configpath" );
+	idFile *f = fileSystem->OpenFileWrite( filename, "fs_configpath" );
 	if ( !f ) {
 		Printf ("Couldn't write %s.\n", filename );
 		return;
 	}
-
-#ifdef ID_WRITE_VERSION
-	assert( config_compressor );
-	t = time( NULL );
-	curtime = ctime( &t );
-	sprintf( runtag, "%s - %s", cvarSystem->GetCVarString( "si_version" ), curtime );
-	config_compressor->Init( &compressed, true, 8 );
-	config_compressor->Write( runtag.c_str(), runtag.Length() );
-	config_compressor->FinishCompress( );
-	out.Encode( (const byte *)compressed.GetDataPtr(), compressed.Length() );
-	f->Printf( "// %s\n", out.c_str() );
-#endif
 
 	idKeyInput::WriteBindings( f );
 	cvarSystem->WriteFlaggedVariables( CVAR_ARCHIVE, "seta", f );
@@ -2210,14 +2145,6 @@ void idCommonLocal::Frame( void ) {
 			InitSIMD();
 		}
 
-		if ( com_enableDebuggerServer.IsModified() ) {
-			if ( com_enableDebuggerServer.GetBool() ) {
-				DebuggerServerInit();
-			} else {
-				DebuggerServerShutdown();
-			}
-		}
-
 		eventLoop->RunEventLoop();
 
 		Com_UpdateFrameTime(); // DG: put updating com_frameTime into a function
@@ -2398,10 +2325,6 @@ void idCommonLocal::Init( int argc, char **argv ) {
 		// init commands
 		InitCommands();
 
-#ifdef ID_WRITE_VERSION
-		config_compressor = idCompressor::AllocArithmetic();
-#endif
-
 		// game specific initialization
 		InitGame();
 
@@ -2469,11 +2392,6 @@ void idCommonLocal::Shutdown( void ) {
 
 	// shut down the console command system
 	cmdSystem->Shutdown();
-
-#ifdef ID_WRITE_VERSION
-	delete config_compressor;
-	config_compressor = NULL;
-#endif
 
 	// free any buffered warning messages
 	ClearWarnings( GAME_NAME " shutdown" );
@@ -2636,10 +2554,6 @@ void idCommonLocal::InitGame( void ) {
 	if ( game != NULL )
 		game->Init();
 
-	// startup the script debugger
-	if ( com_enableDebuggerServer.GetBool( ) )
-		DebuggerServerInit( );
-
 	PrintLoadingMessage( common->GetLanguageDict()->GetString( "#str_04351" ) );
 
 	// init the session
@@ -2666,13 +2580,8 @@ void idCommonLocal::ShutdownGame( bool reloading ) {
 
 	// kill sound first
 	idSoundWorld *sw = soundSystem->GetPlayingSoundWorld();
-	if ( sw ) {
+	if ( sw )
 		sw->StopAllSounds();
-	}
-
-	// shutdown the script debugger
-	if ( com_enableDebuggerServer.GetBool() )	
-		DebuggerServerShutdown();
 
 	idAsyncNetwork::client.Shutdown();
 

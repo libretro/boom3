@@ -39,7 +39,6 @@ idCVar idSoundSystemLocal::s_drawSounds( "s_drawSounds", "0", CVAR_SOUND | CVAR_
 idCVar idSoundSystemLocal::s_showStartSound( "s_showStartSound", "0", CVAR_SOUND | CVAR_BOOL, "" );
 idCVar idSoundSystemLocal::s_useOcclusion( "s_useOcclusion", "1", CVAR_SOUND | CVAR_BOOL, "" );
 idCVar idSoundSystemLocal::s_maxSoundsPerShader( "s_maxSoundsPerShader", "0", CVAR_SOUND | CVAR_ARCHIVE, "", 0, 10, idCmdSystem::ArgCompletion_Integer<0,10> );
-idCVar idSoundSystemLocal::s_showLevelMeter( "s_showLevelMeter", "0", CVAR_SOUND | CVAR_BOOL, "" );
 idCVar idSoundSystemLocal::s_constantAmplitude( "s_constantAmplitude", "-1", CVAR_SOUND | CVAR_FLOAT, "" );
 idCVar idSoundSystemLocal::s_minVolume6( "s_minVolume6", "0", CVAR_SOUND | CVAR_FLOAT, "" );
 idCVar idSoundSystemLocal::s_dotbias6( "s_dotbias6", "0.8", CVAR_SOUND | CVAR_FLOAT, "" );
@@ -418,16 +417,13 @@ sized to it); the libretro layer never asks for more (44100/30fps = 1470).
 */
 void idSoundSystemLocal::MixFrameFloat( float *dest, int numFrames ) {
 	outputIsFloat = true;	// authoritative: this entry point IS the float pipeline
-	if ( numFrames > MIXBUFFER_SAMPLES ) {
+	if ( numFrames > MIXBUFFER_SAMPLES )
 		numFrames = MIXBUFFER_SAMPLES;
-	}
 	memset( dest, 0, numFrames * 2 * sizeof( float ) );
-	if ( !isInitialized || shutdown || numFrames <= 0 ) {
+	if ( !isInitialized || shutdown || numFrames <= 0 )
 		return;
-	}
-	if ( !muted && currentSoundWorld ) {
+	if ( !muted && currentSoundWorld )
 		currentSoundWorld->MixLoop( CurrentSoundTime, numFrames, dest );
-	}
 	// saturate: the sum of channels is deliberately unclamped during mixing
 	// (Doom 3's mix runs hot); every previous pipeline saturated at the final
 	// int16 conversion, and the frontend's float chain expects [-1,1]
@@ -440,21 +436,17 @@ void idSoundSystemLocal::MixFrameS16( short *dest, int numFrames ) {
 
 	outputIsFloat = false;	// authoritative: this entry point IS the s16 pipeline
 
-	if ( numFrames > MIXBUFFER_SAMPLES ) {
+	if ( numFrames > MIXBUFFER_SAMPLES )
 		numFrames = MIXBUFFER_SAMPLES;
-	}
-	if ( numFrames <= 0 ) {
+	if ( numFrames <= 0 )
 		return;
-	}
 	memset( accum, 0, numFrames * 2 * sizeof( int ) );
-	if ( isInitialized && !shutdown && !muted && currentSoundWorld ) {
+	if ( isInitialized && !shutdown && !muted && currentSoundWorld )
 		// s16 mode: MixLoop's destination is the int32 accumulator
 		currentSoundWorld->MixLoop( CurrentSoundTime, numFrames, (float *)accum );
-	}
 	Snd_SumToS16( dest, accum, numFrames * 2 );
-	if ( isInitialized && !shutdown ) {
+	if ( isInitialized && !shutdown )
 		CurrentSoundTime += numFrames;
-	}
 }
 
 

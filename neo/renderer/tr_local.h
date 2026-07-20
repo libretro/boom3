@@ -858,7 +858,6 @@ extern glconfig_t			glConfig;		// outside of TR since it shouldn't be cleared du
 //
 extern idCVar r_mode;					// video mode number
 extern idCVar r_multiSamples;			// number of antialiasing samples
-extern idCVar r_windowResizable;		// DG: allow resizing and maximizing the window
 
 extern idCVar r_ignore;					// used for random debugging without defining new vars
 extern idCVar r_ignore2;				// used for random debugging without defining new vars
@@ -1024,8 +1023,6 @@ extern idCVar r_debugArrowStep;			// step size of arrow cone line rotation in de
 extern idCVar r_debugPolygonFilled;
 
 extern idCVar r_materialOverride;		// override all materials
-
-extern idCVar r_debugRenderToTexture;
 
 extern idCVar r_glDebugContext; // DG: use debug context to call logging callbacks on GL errors
 extern idCVar r_enableDepthCapture; // DG: disable capturing depth buffer, used for soft particles

@@ -69,14 +69,11 @@ extern idCVar		com_showAsyncStats;
 extern idCVar		com_showSoundDecoders;
 extern idCVar		com_makingBuild;
 extern idCVar		com_updateLoadSize;
-extern idCVar		com_enableDebuggerServer;
-extern idCVar		com_dbgClientAdr;
-extern idCVar		com_dbgServerAdr;
 
-extern int			com_frameTime;			// time for the current frame in milliseconds
+extern int		com_frameTime;			// time for the current frame in milliseconds
 extern volatile int	com_ticNumber;			// 60 hz tics, incremented by async function
-extern int			com_editors;			// current active editor(s)
-extern bool			com_editorActive;		// true if an editor has focus
+extern int		com_editors;			// current active editor(s)
+extern bool		com_editorActive;		// true if an editor has focus
 
 struct MemInfo_t {
 	idStr			filebase;

@@ -55,15 +55,7 @@ extern "C" {
 
 #define Z_BZIP2ED 12
 
-#if defined(STRICTUNZIP) || defined(STRICTZIPUNZIP)
-/* like the STRICT of WIN32, we define a pointer that cannot be converted
-    from (void*) without cast */
-typedef struct TagunzFile__ { int unused; } unzFile__;
-typedef unzFile__ *unzFile;
-#else
 typedef voidp unzFile;
-#endif
-
 
 #define UNZ_OK                          (0)
 #define UNZ_END_OF_LIST_OF_FILE         (-100)

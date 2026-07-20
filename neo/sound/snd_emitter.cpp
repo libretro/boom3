@@ -50,18 +50,15 @@ idSoundFade::FadeDbAt44kHz
 ===================
 */
 float idSoundFade::FadeDbAt44kHz( int current44kHz ) {
-	float	fadeDb;
-
-	if ( current44kHz >= fadeEnd44kHz ) {
-		fadeDb = fadeEndVolume;
-	} else if ( current44kHz > fadeStart44kHz ) {
+	if ( current44kHz >= fadeEnd44kHz )
+		return fadeEndVolume;
+	if ( current44kHz > fadeStart44kHz )
+	{
 		float fraction = ( fadeEnd44kHz - fadeStart44kHz );
 		float over = ( current44kHz - fadeStart44kHz );
-		fadeDb = fadeStartVolume + ( fadeEndVolume - fadeStartVolume ) * over / fraction;
-	} else {
-		fadeDb = fadeStartVolume;
+		return fadeStartVolume + ( fadeEndVolume - fadeStartVolume ) * over / fraction;
 	}
-	return fadeDb;
+	return fadeStartVolume;
 }
 
 //========================================================================

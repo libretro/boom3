@@ -207,24 +207,6 @@ private:
 /*
 ===================================================================================
 
-Encapsulates functionality of a DirectSound buffer.
-
-===================================================================================
-*/
-
-class idAudioBuffer {
-public:
-	virtual int		Play( dword dwPriority=0, dword dwFlags=0 ) = 0;
-	virtual int			Stop( void ) = 0;
-	virtual int			Reset( void ) = 0;
-	virtual bool		IsSoundPlaying( void ) = 0;
-	virtual void		SetVolume( float x ) = 0;
-};
-
-
-/*
-===================================================================================
-
 idSoundEmitterLocal
 
 ===================================================================================
@@ -239,8 +221,8 @@ typedef enum {
 
 class idSoundFade {
 public:
-	int					fadeStart44kHz;
-	int					fadeEnd44kHz;
+	int				fadeStart44kHz;
+	int				fadeEnd44kHz;
 	float				fadeStartVolume;		// in dB
 	float				fadeEndVolume;			// in dB
 
@@ -252,8 +234,8 @@ class SoundFX {
 protected:
 	bool				initialized;
 
-	int					channel;
-	int					maxlen;
+	int				channel;
+	int				maxlen;
 
 	float*				buffer;
 	float				continuitySamples[4];
@@ -267,13 +249,13 @@ public:
 	virtual void		Initialize()									{ };
 	virtual void		ProcessSample( float* in, float* out ) = 0;
 
-	void				SetChannel( int chan )							{ channel = chan; };
-	int					GetChannel()									{ return channel; };
+	void			SetChannel( int chan )							{ channel = chan; };
+	int			GetChannel()									{ return channel; };
 
-	void				SetContinuitySamples( float in1, float in2, float out1, float out2 )		{ continuitySamples[0] = in1; continuitySamples[1] = in2; continuitySamples[2] = out1; continuitySamples[3] = out2; };		// FIXME?
-	void				GetContinuitySamples( float& in1, float& in2, float& out1, float& out2 )	{ in1 = continuitySamples[0]; in2 = continuitySamples[1]; out1 = continuitySamples[2]; out2 = continuitySamples[3]; };
+	void			SetContinuitySamples( float in1, float in2, float out1, float out2 )		{ continuitySamples[0] = in1; continuitySamples[1] = in2; continuitySamples[2] = out1; continuitySamples[3] = out2; };		// FIXME?
+	void			GetContinuitySamples( float& in1, float& in2, float& out1, float& out2 )	{ in1 = continuitySamples[0]; in2 = continuitySamples[1]; out1 = continuitySamples[2]; out2 = continuitySamples[3]; };
 
-	void				SetParameter( float val )						{ param = val; };
+	void			SetParameter( float val )						{ param = val; };
 };
 
 class SoundFX_Lowpass : public SoundFX {
@@ -643,10 +625,10 @@ public:
 	virtual void			MixFrameS16( short *dest, int numFrames );
 	virtual void			SetOutputFloat( bool isFloat ) { outputIsFloat = isFloat; }
 
-	bool					outputIsFloat;
+	bool				outputIsFloat;
 
-	idEFXFile				EFXDatabase;
-	bool					efxloaded;
+	idEFXFile			EFXDatabase;
+	bool				efxloaded;
 	static idCVar			s_useReverb;
 	static idCVar			s_reverbGain;
 
@@ -654,30 +636,30 @@ public:
 
 	idSoundWorldLocal *		currentSoundWorld;	// the one to mix each frame
 
-	bool					isInitialized;
-	bool					muted;
-	bool					shutdown;
+	bool				isInitialized;
+	bool				muted;
+	bool				shutdown;
 
-	int						meterTops[256];
-	int						meterTopsTime[256];
+	int				meterTops[256];
+	int				meterTopsTime[256];
 
-	float					volumesDB[1200];		// dB to float volume conversion
+	float				volumesDB[1200];		// dB to float volume conversion
 	idList<SoundFX*>		fxList;
 
-	int						CurrentSoundTime;		// master 44kHz sample clock, advanced only by MixFrame*
+	int				CurrentSoundTime;		// master 44kHz sample clock, advanced only by MixFrame*
 
-	float					realAccum[6*MIXBUFFER_SAMPLES+16];
-	float *					finalMixBuffer;			// points inside realAccum at a 16 byte aligned boundary
+	float				realAccum[6*MIXBUFFER_SAMPLES+16];
+	float *				finalMixBuffer;			// points inside realAccum at a 16 byte aligned boundary
 
-	s_stats					soundStats;				// NOTE: updated throughout the code, not displayed anywhere
+	s_stats				soundStats;				// NOTE: updated throughout the code, not displayed anywhere
 
-	dword *					graph;
+	dword *				graph;
 
 	virtual void			SetMute( bool mute );
 
 	virtual cinData_t		ImageForTime( const int milliseconds, const bool waveform );
 
-	int						GetSoundDecoderInfo( int index, soundDecoderInfo_t &decoderInfo );
+	int				GetSoundDecoderInfo( int index, soundDecoderInfo_t &decoderInfo );
 
 	// if rw == NULL, no portal occlusion or rendered debugging is available
 	virtual idSoundWorld	*AllocSoundWorld( idRenderWorld *rw );
@@ -702,18 +684,15 @@ public:
 
 	//-------------------------
 
-	int						GetCurrent44kHzTime( void ) const;
-	float					dB2Scale( const float val ) const;
-	int						SamplesToMilliseconds( int samples ) const;
-	int						MillisecondsToSamples( int ms ) const;
+	int				GetCurrent44kHzTime( void ) const;
+	float				dB2Scale( const float val ) const;
+	int				SamplesToMilliseconds( int samples ) const;
+	int				MillisecondsToSamples( int ms ) const;
 
-	void					DoEnviroSuit( float* samples, int numSamples, int numSpeakers );
+	void				DoEnviroSuit( float* samples, int numSamples, int numSpeakers );
 
-
-
-
-							// latches
-							// mark available during initialization, or through an explicit test
+					// latches
+					// mark available during initialization, or through an explicit test
 
 
 	// DG: for CheckDeviceAndRecoverIfNeeded()
@@ -729,7 +708,6 @@ public:
 	static idCVar			s_showStartSound;
 	static idCVar			s_maxSoundsPerShader;
 	static idCVar			s_reverse;
-	static idCVar			s_showLevelMeter;
 	static idCVar			s_meterTopTime;
 	static idCVar			s_volume;
 	static idCVar			s_constantAmplitude;
@@ -778,29 +756,29 @@ const int SCACHE_SIZE = MIXBUFFER_SAMPLES*20;	// 1/2 of a second (aroundabout)
 
 class idSoundSample {
 public:
-							idSoundSample();
-							~idSoundSample();
+					idSoundSample();
+					~idSoundSample();
 
-	idStr					name;						// name of the sample file
-	ID_TIME_T					timestamp;					// the most recent of all images used in creation, for reloadImages command
+	idStr				name;						// name of the sample file
+	ID_TIME_T			timestamp;					// the most recent of all images used in creation, for reloadImages command
 
 	waveformatex_t			objectInfo;					// what are we caching
-	int						objectSize;					// size of waveform in samples, excludes the header
-	int						objectMemSize;				// object size in memory
-	byte *					nonCacheData;				// if it's not cached
-	byte *					amplitudeData;				// precomputed min,max amplitude pairs
-	bool					defaultSound;
-	bool					onDemand;
-	bool					purged;
-	bool					levelLoadReferenced;		// so we can tell which samples aren't needed any more
+	int				objectSize;					// size of waveform in samples, excludes the header
+	int				objectMemSize;				// object size in memory
+	byte *				nonCacheData;				// if it's not cached
+	byte *				amplitudeData;				// precomputed min,max amplitude pairs
+	bool				defaultSound;
+	bool				onDemand;
+	bool				purged;
+	bool				levelLoadReferenced;		// so we can tell which samples aren't needed any more
 
-	int						LengthIn44kHzSamples() const;
-	ID_TIME_T					GetNewTimeStamp( void ) const;
-	void					MakeDefault();				// turns it into a beep
-	void					Load();						// loads the current sound based on name
-	void					Reload( bool force );		// reloads if timestamp has changed, or always if force
-	void					PurgeSoundSample();			// frees all data
-	bool					FetchFromCache( int offset, const byte **output, int *position, int *size, const bool allowIO );
+	int				LengthIn44kHzSamples() const;
+	ID_TIME_T			GetNewTimeStamp( void ) const;
+	void				MakeDefault();				// turns it into a beep
+	void				Load();						// loads the current sound based on name
+	void				Reload( bool force );		// reloads if timestamp has changed, or always if force
+	void				PurgeSoundSample();			// frees all data
+	bool				FetchFromCache( int offset, const byte **output, int *position, int *size, const bool allowIO );
 };
 
 
@@ -814,18 +792,18 @@ public:
 
 class idSampleDecoder {
 public:
-	static void				Init( void );
-	static void				Shutdown( void );
+	static void			Init( void );
+	static void			Shutdown( void );
 	static idSampleDecoder *Alloc( void );
-	static void				Free( idSampleDecoder *decoder );
-	static int				GetNumUsedBlocks( void );
-	static int				GetUsedBlockMemory( void );
+	static void			Free( idSampleDecoder *decoder );
+	static int			GetNumUsedBlocks( void );
+	static int			GetUsedBlockMemory( void );
 
-	virtual					~idSampleDecoder( void ) {}
+	virtual				~idSampleDecoder( void ) {}
 	virtual void			Decode( idSoundSample *sample, int sampleOffset44k, int sampleCount44k, float *dest ) = 0;
 	virtual void			ClearDecoder( void ) = 0;
 	virtual idSoundSample *	GetSample( void ) const = 0;
-	virtual int				GetLastDecodeTime( void ) const = 0;
+	virtual int			GetLastDecodeTime( void ) const = 0;
 };
 
 
@@ -839,27 +817,27 @@ public:
 
 class idSoundCache {
 public:
-							idSoundCache();
-							~idSoundCache();
+				idSoundCache();
+				~idSoundCache();
 
-	idSoundSample *			FindSound( const idStr &fname, bool loadOnDemandOnly );
+	idSoundSample *		FindSound( const idStr &fname, bool loadOnDemandOnly );
 
-	const int				GetNumObjects( void ) { return listCache.Num(); }
+	const int		GetNumObjects( void ) { return listCache.Num(); }
 	const idSoundSample *	GetObject( const int index ) const;
 
-	void					ReloadSounds( bool force );
+	void			ReloadSounds( bool force );
 
-	void					BeginLevelLoad();
+	void			BeginLevelLoad();
 	// Level-load sound residency is spread across frames so retro_run()
 	// returns every frame (mirrors idImageManager). EndLevelLoadStart()
 	// purges unreferenced samples and collects the referenced-but-purged
 	// ones; EndLevelLoadStep() loads up to maxSamples and returns true while
 	// more remain; EndLevelLoadFinish() frees empty base blocks. EndLevelLoad()
 	// is kept as a blocking convenience (Start + drain-all + Finish).
-	void					EndLevelLoad();
-	void					EndLevelLoadStart();
-	bool					EndLevelLoadStep( int maxSamples );
-	void					EndLevelLoadFinish();
+	void			EndLevelLoad();
+	void			EndLevelLoadStart();
+	bool			EndLevelLoadStep( int maxSamples );
+	void			EndLevelLoadFinish();
 
 	// Lightweight defer control for the post-load warmup frames: the settle
 	// frames run entity scripts that may reference (and would otherwise inline-
@@ -869,16 +847,16 @@ public:
 	// before gameplay proper, so those first-moment sounds don't hitch
 	// individually. Unlike BeginLevelLoad(), this does NOT touch reference
 	// flags, so already-resident samples are unaffected.
-	void					SetDeferLoads( bool defer ) { insideLevelLoad = defer; }
-	void					DrainPending();
+	void			SetDeferLoads( bool defer ) { insideLevelLoad = defer; }
+	void			DrainPending();
 
-	void					PrintMemInfo( MemInfo_t *mi );
+	void			PrintMemInfo( MemInfo_t *mi );
 
 private:
-	bool					insideLevelLoad;
+	bool			insideLevelLoad;
 	idList<idSoundSample*>	listCache;
 	idList<idSoundSample*>	levelLoadPending;	// samples to Load() during the pump
-	int						levelLoadCursor;	// drain position in levelLoadPending
+	int			levelLoadCursor;	// drain position in levelLoadPending
 };
 
 #endif /* !__SND_LOCAL_H__ */

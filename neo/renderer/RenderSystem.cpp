@@ -265,9 +265,6 @@ static void R_CheckCvars( void ) {
 			R_SetColorMappings();
 		}
 	}
-
-	if ( r_windowResizable.IsModified() )
-		r_windowResizable.ClearModified();
 }
 
 /*

@@ -52,8 +52,6 @@ idDynamicBlockAlloc<byte, 1<<20, 128>		decoderMemoryAllocator;
 
 const int MIN_OGGVORBIS_MEMORY				= 768 * 1024;
 
-
-
 /*
 ===================================================================================
 
@@ -72,9 +70,8 @@ int idWaveFile::OpenOGG( const char* strFileName, waveformatex_t *pwfx ) {
 	memset( pwfx, 0, sizeof( waveformatex_t ) );
 
 	mhmmio = fileSystem->OpenFileRead( strFileName );
-	if ( !mhmmio ) {
+	if ( !mhmmio )
 		return -1;
-	}
 
 	Sys_EnterCriticalSection( CRITICAL_SECTION_ONE );
 
@@ -361,9 +358,8 @@ void idSampleDecoderLocal::Decode( idSoundSample *sample, int sampleOffset44k, i
 
 	Sys_LeaveCriticalSection( CRITICAL_SECTION_ONE );
 
-	if ( readSamples44k < sampleCount44k ) {
+	if ( readSamples44k < sampleCount44k )
 		memset( dest + readSamples44k, 0, ( sampleCount44k - readSamples44k ) * sizeof( dest[0] ) );
-	}
 }
 
 /*
