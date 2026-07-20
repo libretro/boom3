@@ -51,6 +51,16 @@ void idSoundWorldLocal::Init( idRenderWorld *renderWorld ) {
 	reverbCachedArea = -2;		// no area resolved yet; -1 is the valid "outside world" value
 	reverbCachedGen = -1;
 	listenerAreaName = "Undefined";
+	/*
+	   The reverb had no Init call anywhere: its delay-line lengths, allpass
+	   lengths and active flag were whatever the allocator handed over.
+	   Latent since the FDN landed - it never fired because no shipped test
+	   content carries an efxs/ file, so IsActive() read uninitialized-but-
+	   usually-zero memory and the process loops (which divide by the line
+	   lengths) never ran. The first real .efx load made it a division by
+	   zero on the first wet mix block.
+	*/
+	reverb.Init();
 
 
 	gameMsec = 0;
