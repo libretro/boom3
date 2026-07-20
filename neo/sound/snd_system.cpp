@@ -160,7 +160,7 @@ void ListSounds_f( const idCmdArgs &args ) {
 		const char *defaulted = ( sample->defaultSound ? "(DEFAULTED)" : sample->purged ? "(PURGED)" : "" );
 
 		common->Printf( "%s %dkHz %6dms %5dkB %4s %s%s\n", stereo, sample->objectInfo.nSamplesPerSec / 1000,
-					soundSystemLocal.SamplesToMilliseconds( sample->LengthIn44kHzSamples() ),
+					soundSystemLocal.SamplesToMilliseconds( sample->LengthInOutputSamples() ),
 					sample->objectMemSize >> 10, format, sample->name.c_str(), defaulted );
 
 		if ( !sample->purged ) {
@@ -237,8 +237,8 @@ void ListSoundDecoders_f( const idCmdArgs &args ) {
 
 			const char *format = ( sample->objectInfo.wFormatTag == WAVE_FORMAT_TAG_OGG ) ? "OGG" : "WAV";
 
-			int localTime = soundSystemLocal.GetCurrent44kHzTime() - chan->trigger44kHzTime;
-			int sampleTime = sample->LengthIn44kHzSamples() * sample->objectInfo.nChannels;
+			int localTime = soundSystemLocal.GetCurrentSampleTime() - chan->triggerSampleTime;
+			int sampleTime = sample->LengthInOutputSamples() * sample->objectInfo.nChannels;
 			int percent;
 			if ( localTime > sampleTime ) {
 				if ( chan->parms.soundShaderFlags & SSF_LOOPING )
@@ -419,11 +419,11 @@ bool idSoundSystemLocal::ShutdownHW() {
 
 /*
 ===============
-idSoundSystemLocal::GetCurrent44kHzTime
+idSoundSystemLocal::GetCurrentSampleTime
 ===============
 */
-int idSoundSystemLocal::GetCurrent44kHzTime( void ) const {
-	// CurrentSoundTime is the master 44kHz sample clock, advanced only by
+int idSoundSystemLocal::GetCurrentSampleTime( void ) const {
+	// CurrentSoundTime is the master output-rate sample clock, advanced only by
 	// MixFrame(). Before the sound system is initialized nothing has been
 	// mixed, so the clock is simply 0 - the old fallback derived a value
 	// from Core_Milliseconds()*176.4 (wall clock, and 4x the real sample
@@ -435,7 +435,7 @@ int idSoundSystemLocal::GetCurrent44kHzTime( void ) const {
 ===================
 idSoundSystemLocal::MixFrameFloat / MixFrameS16
 
-libretro: render exactly numFrames stereo frames and advance the 44kHz
+libretro: render exactly numFrames stereo frames and advance the output
 sample clock. Called once per retro_run from the frontend's thread; there
 is no other mixing path, no wall clock, no backend cursor, no thread.
 numFrames is capped at MIXBUFFER_SAMPLES (per-channel gather buffers are
@@ -686,12 +686,12 @@ int idSoundSystemLocal::GetSoundDecoderInfo( int index, soundDecoderInfo_t &deco
 			decoderInfo.format = ( sample->objectInfo.wFormatTag == WAVE_FORMAT_TAG_OGG ) ? "OGG" : "WAV";
 			decoderInfo.numChannels = sample->objectInfo.nChannels;
 			decoderInfo.numSamplesPerSecond = sample->objectInfo.nSamplesPerSec;
-			decoderInfo.num44kHzSamples = sample->LengthIn44kHzSamples();
+			decoderInfo.numOutputSamples = sample->LengthInOutputSamples();
 			decoderInfo.numBytes = sample->objectMemSize;
 			decoderInfo.looping = ( chan->parms.soundShaderFlags & SSF_LOOPING ) != 0;
 			decoderInfo.lastVolume = chan->lastVolume;
-			decoderInfo.start44kHzTime = chan->trigger44kHzTime;
-			decoderInfo.current44kHzTime = soundSystemLocal.GetCurrent44kHzTime();
+			decoderInfo.startSampleTime = chan->triggerSampleTime;
+			decoderInfo.currentSampleTime = soundSystemLocal.GetCurrentSampleTime();
 
 			return ( i * SOUND_MAX_CHANNELS + j );
 		}

@@ -52,8 +52,8 @@ void idSoundWorldLocal::Init( idRenderWorld *renderWorld ) {
 
 
 	gameMsec = 0;
-	game44kHz = 0;
-	pause44kHz = -1;
+	gameSampleTime = 0;
+	pauseSampleTime = -1;
 
 	for ( int i = 0 ; i < SOUND_MAX_CLASSES ; i++ ) {
 		soundClassFade[i].Clear();
@@ -393,7 +393,7 @@ float idSoundWorldLocal::CurrentShakeAmplitudeForPosition( const int time, const
 		return 0.0f;
 	}
 
-	localTime = soundSystemLocal.GetCurrent44kHzTime();
+	localTime = soundSystemLocal.GetCurrentSampleTime();
 
 	for ( int i = 1; i < emitters.Num(); i++ ) {
 		idSoundEmitterLocal *sound = emitters[i];
@@ -420,7 +420,7 @@ system's negotiated output format.
 called once per retro_run from MixFrameFloat/MixFrameS16
 ===================
 */
-void idSoundWorldLocal::MixLoop( int current44kHz, int numFrames, float *finalMixBuffer ) {
+void idSoundWorldLocal::MixLoop( int currentSampleTime, int numFrames, float *finalMixBuffer ) {
 	int i, j;
 	idSoundEmitterLocal *sound;
 
@@ -472,7 +472,7 @@ void idSoundWorldLocal::MixLoop( int current44kHz, int numFrames, float *finalMi
 					continue;
 				}
 
-				AddChannelContribution( sound, chan, current44kHz, numFrames, finalMixBuffer );
+				AddChannelContribution( sound, chan, currentSampleTime, numFrames, finalMixBuffer );
 			}
 		}
 		return;
@@ -497,7 +497,7 @@ void idSoundWorldLocal::MixLoop( int current44kHz, int numFrames, float *finalMi
 				continue;
 			}
 
-			AddChannelContribution( sound, chan, current44kHz, numFrames, finalMixBuffer );
+			AddChannelContribution( sound, chan, currentSampleTime, numFrames, finalMixBuffer );
 		}
 	}
 
@@ -645,13 +645,13 @@ idSoundWorldLocal::PlaceListener
 void idSoundWorldLocal::PlaceListener( const idVec3& origin, const idMat3& axis,
 									const int listenerId, const int gameTime, const idStr& areaName  ) {
 
-	int current44kHzTime;
+	int currentSampleTime;
 
 	if ( !soundSystemLocal.isInitialized ) {
 		return;
 	}
 
-	if ( pause44kHz >= 0 ){
+	if ( pauseSampleTime >= 0 ){
 		return;
 	}
 
@@ -664,11 +664,11 @@ void idSoundWorldLocal::PlaceListener( const idVec3& origin, const idMat3& axis,
 		writeDemo->WriteInt( gameTime );
 	}
 
-	current44kHzTime = soundSystemLocal.GetCurrent44kHzTime();
+	currentSampleTime = soundSystemLocal.GetCurrentSampleTime();
 
 	// we usually expect gameTime to be increasing by 16 or 32 msec, but when
 	// a cinematic is fast-forward skipped through, it can jump by a significant
-	// amount, while the hardware 44kHz position will not have changed accordingly,
+	// amount, while the output sample position will not have changed accordingly,
 	// which would make sounds (like long character speaches) continue from the
 	// old time.  Fix this by killing all non-looping sounds
 	if ( gameTime > gameMsec + 500 ) {
@@ -677,7 +677,7 @@ void idSoundWorldLocal::PlaceListener( const idVec3& origin, const idMat3& axis,
 
 	gameMsec = gameTime;
 	// the normal 16 msec / frame
-	game44kHz = idMath::FtoiFast( gameMsec * 0.001f * (float)snd_SampleRate() );
+	gameSampleTime = idMath::FtoiFast( gameMsec * 0.001f * (float)snd_SampleRate() );
 
 	listenerPrivateId = listenerId;
 
@@ -697,7 +697,7 @@ void idSoundWorldLocal::PlaceListener( const idVec3& origin, const idMat3& axis,
 		return;
 	}
 
-	ForegroundUpdate( current44kHzTime );
+	ForegroundUpdate( currentSampleTime );
 }
 
 /*
@@ -705,7 +705,7 @@ void idSoundWorldLocal::PlaceListener( const idVec3& origin, const idMat3& axis,
 idSoundWorldLocal::ForegroundUpdate
 ==================
 */
-void idSoundWorldLocal::ForegroundUpdate( int current44kHzTime ) {
+void idSoundWorldLocal::ForegroundUpdate( int currentSampleTime ) {
 	int j, k;
 	idSoundEmitterLocal	*def;
 
@@ -729,7 +729,7 @@ void idSoundWorldLocal::ForegroundUpdate( int current44kHzTime ) {
 		}
 
 		// see if our last channel just finished
-		def->CheckForCompletion( current44kHzTime );
+		def->CheckForCompletion( currentSampleTime );
 
 		if ( !def->playing ) {
 			continue;
@@ -791,7 +791,7 @@ void idSoundWorldLocal::ForegroundUpdate( int current44kHzTime ) {
 idSoundWorldLocal::OffsetSoundTime
 ===================
 */
-void idSoundWorldLocal::OffsetSoundTime( int offset44kHz ) {
+void idSoundWorldLocal::OffsetSoundTime( int offsetSamples ) {
 	int i, j;
 
 	for ( i = 0; i < emitters.Num(); i++ ) {
@@ -805,7 +805,7 @@ void idSoundWorldLocal::OffsetSoundTime( int offset44kHz ) {
 				continue;
 			}
 
-			chan->trigger44kHzTime += offset44kHz;
+			chan->triggerSampleTime += offsetSamples;
 		}
 	}
 }
@@ -820,10 +820,10 @@ void idSoundWorldLocal::WriteToSaveGame( idFile *savefile ) {
 	const char *name;
 
 	// the game soundworld is always paused at this point, save that time down
-	if ( pause44kHz > 0 ) {
-		currentSoundTime = pause44kHz;
+	if ( pauseSampleTime > 0 ) {
+		currentSoundTime = pauseSampleTime;
 	} else {
-		currentSoundTime = soundSystemLocal.GetCurrent44kHzTime();
+		currentSoundTime = soundSystemLocal.GetCurrentSampleTime();
 	}
 
 	// write listener data
@@ -831,7 +831,7 @@ void idSoundWorldLocal::WriteToSaveGame( idFile *savefile ) {
 	savefile->WriteMat3(listenerAxis);
 	savefile->WriteInt(listenerPrivateId);
 	savefile->WriteInt(gameMsec);
-	savefile->WriteInt(game44kHz);
+	savefile->WriteInt(gameSampleTime);
 	savefile->WriteInt(currentSoundTime);
 
 	num = emitters.Num();
@@ -918,8 +918,8 @@ void idSoundWorldLocal::WriteToSaveGameSoundChannel( idFile *saveGame, idSoundCh
 	saveGame->WriteUnsignedChar( 0 );
 	saveGame->WriteUnsignedChar( 0 );
 	saveGame->WriteUnsignedChar( 0 );
-	saveGame->WriteInt( ch->trigger44kHzTime );
-	saveGame->WriteInt( ch->triggerGame44kHzTime );
+	saveGame->WriteInt( ch->triggerSampleTime );
+	saveGame->WriteInt( ch->triggerGameSampleTime );
 	WriteToSaveGameSoundShaderParams( saveGame, &ch->parms );
 	saveGame->WriteInt( 0 /* ch->leadinSample */ );
 	saveGame->WriteInt( ch->triggerChannel );
@@ -929,8 +929,8 @@ void idSoundWorldLocal::WriteToSaveGameSoundChannel( idFile *saveGame, idSoundCh
 	saveGame->WriteFloat(ch->lastVolume );
 	for (int m = 0; m < 6; m++)
 		saveGame->WriteFloat( ch->lastV[m] );
-	saveGame->WriteInt( ch->channelFade.fadeStart44kHz );
-	saveGame->WriteInt( ch->channelFade.fadeEnd44kHz );
+	saveGame->WriteInt( ch->channelFade.fadeStartSample );
+	saveGame->WriteInt( ch->channelFade.fadeEndSample );
 	saveGame->WriteFloat( ch->channelFade.fadeStartVolume );
 	saveGame->WriteFloat( ch->channelFade.fadeEndVolume );
 }
@@ -954,15 +954,15 @@ void idSoundWorldLocal::ReadFromSaveGame( idFile *savefile ) {
 	savefile->ReadMat3( axis );
 	savefile->ReadInt( listenerId );
 	savefile->ReadInt( gameTime );
-	savefile->ReadInt( game44kHz );
+	savefile->ReadInt( gameSampleTime );
 	savefile->ReadInt( savedSoundTime );
 
 	// we will adjust the sound starting times from those saved with the demo
-	currentSoundTime = soundSystemLocal.GetCurrent44kHzTime();
+	currentSoundTime = soundSystemLocal.GetCurrentSampleTime();
 	soundTimeOffset = currentSoundTime - savedSoundTime;
 
 	// at the end of the level load we unpause the sound world and adjust the sound starting times once more
-	pause44kHz = currentSoundTime;
+	pauseSampleTime = currentSoundTime;
 
 	// place listener
 	PlaceListener( origin, axis, listenerId, gameTime, "Undefined" );
@@ -1036,15 +1036,15 @@ void idSoundWorldLocal::ReadFromSaveGame( idFile *savefile ) {
 			}
 
 			// adjust the hardware start time
-			chan->trigger44kHzTime += soundTimeOffset;
+			chan->triggerSampleTime += soundTimeOffset;
 
 			// make sure the channel restarts mixing
 			chan->triggered = chan->triggerState;
 
 			// adjust the hardware fade time
-			if ( chan->channelFade.fadeStart44kHz != 0 ) {
-				chan->channelFade.fadeStart44kHz += soundTimeOffset;
-				chan->channelFade.fadeEnd44kHz += soundTimeOffset;
+			if ( chan->channelFade.fadeStartSample != 0 ) {
+				chan->channelFade.fadeStartSample += soundTimeOffset;
+				chan->channelFade.fadeEndSample += soundTimeOffset;
 			}
 
 			// next command
@@ -1089,8 +1089,8 @@ void idSoundWorldLocal::ReadFromSaveGameSoundChannel( idFile *saveGame, idSoundC
 	saveGame->ReadChar( tmp );
 	saveGame->ReadChar( tmp );
 	saveGame->ReadChar( tmp );
-	saveGame->ReadInt( ch->trigger44kHzTime );
-	saveGame->ReadInt( ch->triggerGame44kHzTime );
+	saveGame->ReadInt( ch->triggerSampleTime );
+	saveGame->ReadInt( ch->triggerGameSampleTime );
 	ReadFromSaveGameSoundShaderParams( saveGame, &ch->parms );
 	saveGame->ReadInt( i );
 	ch->leadinSample = NULL;
@@ -1103,8 +1103,8 @@ void idSoundWorldLocal::ReadFromSaveGameSoundChannel( idFile *saveGame, idSoundC
 	saveGame->ReadFloat(ch->lastVolume );
 	for (int m = 0; m < 6; m++)
 		saveGame->ReadFloat( ch->lastV[m] );
-	saveGame->ReadInt( ch->channelFade.fadeStart44kHz );
-	saveGame->ReadInt( ch->channelFade.fadeEnd44kHz );
+	saveGame->ReadInt( ch->channelFade.fadeStartSample );
+	saveGame->ReadInt( ch->channelFade.fadeEndSample );
 	saveGame->ReadFloat( ch->channelFade.fadeStartVolume );
 	saveGame->ReadFloat( ch->channelFade.fadeEndVolume );
 }
@@ -1145,12 +1145,12 @@ idSoundWorldLocal::Pause
 ===============
 */
 void idSoundWorldLocal::Pause( void ) {
-	if ( pause44kHz >= 0 ) {
+	if ( pauseSampleTime >= 0 ) {
 		common->Warning( "idSoundWorldLocal::Pause: already paused" );
 		return;
 	}
 
-	pause44kHz = soundSystemLocal.GetCurrent44kHzTime();
+	pauseSampleTime = soundSystemLocal.GetCurrentSampleTime();
 
 	for ( int i = 0; i < emitters.Num(); i++ ) {
 		idSoundEmitterLocal * emitter = emitters[i];
@@ -1169,17 +1169,17 @@ idSoundWorldLocal::UnPause
 ===============
 */
 void idSoundWorldLocal::UnPause( void ) {
-	int offset44kHz;
+	int offsetSamples;
 
-	if ( pause44kHz < 0 ) {
+	if ( pauseSampleTime < 0 ) {
 		common->Warning( "idSoundWorldLocal::UnPause: not paused" );
 		return;
 	}
 
-	offset44kHz = soundSystemLocal.GetCurrent44kHzTime() - pause44kHz;
-	OffsetSoundTime( offset44kHz );
+	offsetSamples = soundSystemLocal.GetCurrentSampleTime() - pauseSampleTime;
+	OffsetSoundTime( offsetSamples );
 
-	pause44kHz = -1;
+	pauseSampleTime = -1;
 
 	for ( int i = 0; i < emitters.Num(); i++ ) {
 		idSoundEmitterLocal * emitter = emitters[i];
@@ -1198,7 +1198,7 @@ idSoundWorldLocal::IsPaused
 ===============
 */
 bool idSoundWorldLocal::IsPaused( void ) {
-	return ( pause44kHz >= 0 );
+	return ( pauseSampleTime >= 0 );
 }
 
 /*
@@ -1237,7 +1237,7 @@ void idSoundWorldLocal::PlayShaderDirectly( const char *shaderName, int channel 
 	localSound->StartSound( shader, ( channel == -1 ) ? SCHANNEL_ONE : channel , diversity, SSF_GLOBAL );
 
 	// in case we are at the console without a game doing updates, force an update
-	ForegroundUpdate( soundSystemLocal.GetCurrent44kHzTime() );
+	ForegroundUpdate( soundSystemLocal.GetCurrentSampleTime() );
 }
 
 /*
@@ -1310,12 +1310,12 @@ idSoundWorldLocal::AddChannelContribution
 Adds the contribution of a single sound channel to finalMixBuffer
 this is called from the async thread
 
-Mixes MIXBUFFER_SAMPLES samples starting at current44kHz sample time into
+Mixes MIXBUFFER_SAMPLES samples starting at currentSampleTime sample time into
 finalMixBuffer
 ===============
 */
 void idSoundWorldLocal::AddChannelContribution( idSoundEmitterLocal *sound, idSoundChannel *chan,
-				   int current44kHz, int numFrames, float *finalMixBuffer ) {
+				   int currentSampleTime, int numFrames, float *finalMixBuffer ) {
 	int j;
 	float volume;
 
@@ -1379,7 +1379,7 @@ void idSoundWorldLocal::AddChannelContribution( idSoundEmitterLocal *sound, idSo
 	// this isn't exactly correct, because the modified volume will get applied to
 	// some initial chunk of the loop as well, because the volume is scaled for the
 	// entire mix buffer
-	if ( shader->leadinVolume && current44kHz - chan->trigger44kHzTime < sample->LengthIn44kHzSamples() ) {
+	if ( shader->leadinVolume && currentSampleTime - chan->triggerSampleTime < sample->LengthInOutputSamples() ) {
 		volume = soundSystemLocal.dB2Scale( shader->leadinVolume );
 	} else {
 		volume = soundSystemLocal.dB2Scale( parms->volume );
@@ -1388,10 +1388,10 @@ void idSoundWorldLocal::AddChannelContribution( idSoundEmitterLocal *sound, idSo
 	// DG: moved global volume scale down to after clamping to 1.0
 
 	// volume fading
-	float	fadeDb = chan->channelFade.FadeDbAt44kHz( current44kHz );
+	float	fadeDb = chan->channelFade.FadeDbAtSampleTime( currentSampleTime );
 	volume *= soundSystemLocal.dB2Scale( fadeDb );
 
-	fadeDb = soundClassFade[parms->soundClass].FadeDbAt44kHz( current44kHz );
+	fadeDb = soundClassFade[parms->soundClass].FadeDbAtSampleTime( currentSampleTime );
 	volume *= soundSystemLocal.dB2Scale( fadeDb );
 
 
@@ -1476,9 +1476,9 @@ void idSoundWorldLocal::AddChannelContribution( idSoundEmitterLocal *sound, idSo
 	chan->lastVolume = volume;
 
 	//
-	// fetch the sound from the cache as 44kHz, 16 bit samples
+	// fetch the sound from the cache as output-rate samples
 	//
-	int offset = current44kHz - chan->trigger44kHzTime;
+	int offset = currentSampleTime - chan->triggerSampleTime;
 	/* static, not stack: 32KB here plus 16KB for srcS16 below, and this is
 	   the frame that DecodeOGG is reached from. Single call path on the main
 	   thread, not recursive. */
@@ -1556,7 +1556,7 @@ void idSoundWorldLocal::AddChannelContribution( idSoundEmitterLocal *sound, idSo
 
 		// if this is the very first mixing block, set the lastV
 		// to the current volume
-		if ( current44kHz == chan->trigger44kHzTime ) {
+		if ( currentSampleTime == chan->triggerSampleTime ) {
 			for ( j = 0 ; j < 6 ; j++ ) {
 				chan->lastV[j] = ears[j];
 			}
@@ -1711,7 +1711,7 @@ float idSoundWorldLocal::FindAmplitude( idSoundEmitterLocal *sound, const int lo
 
 		parms = &chan->parms;
 
-		int	localTriggerTimes = chan->trigger44kHzTime;
+		int	localTriggerTimes = chan->triggerSampleTime;
 
 		bool looping = ( parms->soundShaderFlags & SSF_LOOPING ) != 0;
 		// check for screen shakes
@@ -1770,7 +1770,7 @@ float idSoundWorldLocal::FindAmplitude( idSoundEmitterLocal *sound, const int lo
 				continue;
 
 			int offset = (localTime - localTriggerTimes);	// offset in samples
-			int size = sample->LengthIn44kHzSamples();
+			int size = sample->LengthInOutputSamples();
 			short *amplitudeData = (short *)( sample->amplitudeData );
 			if ( amplitudeData ) {
 				// when the amplitudeData is present use that fill a dummy sourceBuffer
@@ -1839,26 +1839,26 @@ void	idSoundWorldLocal::FadeSoundClasses( const int soundClass, const float to, 
 
 	idSoundFade	*fade = &soundClassFade[ soundClass ];
 
-	int	length44kHz = soundSystemLocal.MillisecondsToSamples( over * 1000 );
+	int	lengthSamples = soundSystemLocal.MillisecondsToSamples( over * 1000 );
 
 	// if it is already fading to this volume at this rate, don't change it
 	if ( fade->fadeEndVolume == to &&
-		fade->fadeEnd44kHz - fade->fadeStart44kHz == length44kHz ) {
+		fade->fadeEndSample - fade->fadeStartSample == lengthSamples ) {
 		return;
 	}
 
-	int	start44kHz;
+	int	startSampleTime;
 
 	// per-frame mixing: the next mix pass starts exactly at the current
 	// sample clock, so fades take effect on the very next frame (the old
 	// +MIXBUFFER_SAMPLES lookahead matched the old block-ahead scheduler
 	// and added ~93ms of latency)
-	start44kHz = soundSystemLocal.GetCurrent44kHzTime();
+	startSampleTime = soundSystemLocal.GetCurrentSampleTime();
 
 	// fade it
-	fade->fadeStartVolume = fade->FadeDbAt44kHz( start44kHz );
-	fade->fadeStart44kHz = start44kHz;
-	fade->fadeEnd44kHz = start44kHz + length44kHz;
+	fade->fadeStartVolume = fade->FadeDbAtSampleTime( startSampleTime );
+	fade->fadeStartSample = startSampleTime;
+	fade->fadeEndSample = startSampleTime + lengthSamples;
 	fade->fadeEndVolume = to;
 }
 

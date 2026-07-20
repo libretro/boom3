@@ -401,10 +401,10 @@ idSoundSample::~idSoundSample() {
 
 /*
 ===================
-idSoundSample::LengthIn44kHzSamples
+idSoundSample::LengthInOutputSamples
 ===================
 */
-int idSoundSample::LengthIn44kHzSamples( void ) const {
+int idSoundSample::LengthInOutputSamples( void ) const {
 	/*
 	   objectSize is in source samples; the caller wants the length in OUTPUT
 	   samples (the mixer's clock domain).
@@ -494,14 +494,14 @@ ID_TIME_T idSoundSample::GetNewTimeStamp( void ) const {
 
 /*
 ===================
-ResamplePCMTo44k
+ResamplePCMToOutput
 
 Resamples interleaved 16-bit PCM from srcRate to 44100 Hz. Returns a newly
 soundCacheAllocator'd buffer and writes the output sample-count (per channel)
 to *outFrames. Returns NULL on failure (caller keeps the native-rate data).
 ===================
 */
-static short *ResamplePCMTo44k( const short *src, int srcFrames, int channels, int srcRate, int *outFrames ) {
+static short *ResamplePCMToOutput( const short *src, int srcFrames, int channels, int srcRate, int *outFrames ) {
 	if ( srcRate >= snd_SampleRate() || srcFrames <= 0 ) {
 		return NULL;	// nothing to do
 	}
@@ -730,7 +730,7 @@ haveData:
 			&& objectSize > 0 ) {
 		int srcFrames = objectSize / objectInfo.nChannels;
 		int outFrames = 0;
-		short *resampled = ResamplePCMTo44k( (const short *)nonCacheData, srcFrames,
+		short *resampled = ResamplePCMToOutput( (const short *)nonCacheData, srcFrames,
 				objectInfo.nChannels, objectInfo.nSamplesPerSec, &outFrames );
 		if ( resampled != NULL ) {
 			soundCacheAllocator.Free( nonCacheData );

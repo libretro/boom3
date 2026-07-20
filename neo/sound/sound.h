@@ -274,12 +274,12 @@ typedef struct {
 	idStr					format;
 	int					numChannels;
 	int					numSamplesPerSecond;
-	int					num44kHzSamples;
+	int					numOutputSamples;
 	int					numBytes;
 	bool					looping;
 	float					lastVolume;
-	int					start44kHzTime;
-	int					current44kHzTime;
+	int					startSampleTime;
+	int					currentSampleTime;
 } soundDecoderInfo_t;
 
 
@@ -348,7 +348,7 @@ public:
 
 	// direct mixing for OSes that support it
 	// libretro: render exactly numFrames interleaved stereo frames of the
-	// current sound world and advance the 44kHz sample clock by numFrames.
+	// current sound world and advance the output sample clock by numFrames.
 	// Fully deterministic: output is a pure function of the trigger history
 	// and the sequence of frame counts. The output format is fixed once at
 	// load time by float-audio negotiation with the frontend:

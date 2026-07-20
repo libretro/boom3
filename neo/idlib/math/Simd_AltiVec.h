@@ -239,8 +239,8 @@ public:
 
 #ifdef ENABLE_SOUND_ROUTINES
 	// Sound upsampling and mixing routines, works for aligned and unaligned data
-	virtual void VPCALL UpSamplePCMTo44kHz( float *dest, const short *pcm, const int numSamples, const int kHz, const int numChannels );
-	virtual void VPCALL UpSampleOGGTo44kHz( float *dest, const float * const *ogg, const int numSamples, const int kHz, const int numChannels );
+	virtual void VPCALL UpSamplePCMToOutput( float *dest, const short *pcm, const int numSamples, const int kHz, const int numChannels );
+	virtual void VPCALL UpSampleOGGToOutput( float *dest, const float * const *ogg, const int numSamples, const int kHz, const int numChannels );
 	virtual void VPCALL MixSoundTwoSpeakerMono( float *mixBuffer, const float *samples, const int numSamples, const float lastV[2], const float currentV[2] );
 	virtual void VPCALL MixSoundTwoSpeakerStereo( float *mixBuffer, const float *samples, const int numSamples, const float lastV[2], const float currentV[2] );
 	virtual void VPCALL MixSoundSixSpeakerMono( float *mixBuffer, const float *samples, const int numSamples, const float lastV[6], const float currentV[6] );

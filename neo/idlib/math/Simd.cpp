@@ -3266,16 +3266,16 @@ void TestSoundUpSampling( void ) {
 			bestClocksGeneric = 0;
 			for ( i = 0; i < NUMTESTS; i++ ) {
 				StartRecordTime( start );
-				p_generic->UpSamplePCMTo44kHz( samples1, pcm, MIXBUFFER_SAMPLES*numSpeakers*kHz/44100, kHz, numSpeakers );
+				p_generic->UpSamplePCMToOutput( samples1, pcm, MIXBUFFER_SAMPLES*numSpeakers*kHz/44100, kHz, numSpeakers );
 				StopRecordTime( end );
 				GetBest( start, end, bestClocksGeneric );
 			}
-			PrintClocks( va( "generic->UpSamplePCMTo44kHz( %d, %d )", kHz, numSpeakers ), MIXBUFFER_SAMPLES*numSpeakers*kHz/44100, bestClocksGeneric );
+			PrintClocks( va( "generic->UpSamplePCMToOutput( %d, %d )", kHz, numSpeakers ), MIXBUFFER_SAMPLES*numSpeakers*kHz/44100, bestClocksGeneric );
 
 			bestClocksSIMD = 0;
 			for ( i = 0; i < NUMTESTS; i++ ) {
 				StartRecordTime( start );
-				p_simd->UpSamplePCMTo44kHz( samples2, pcm, MIXBUFFER_SAMPLES*numSpeakers*kHz/44100, kHz, numSpeakers );
+				p_simd->UpSamplePCMToOutput( samples2, pcm, MIXBUFFER_SAMPLES*numSpeakers*kHz/44100, kHz, numSpeakers );
 				StopRecordTime( end );
 				GetBest( start, end, bestClocksSIMD );
 			}
@@ -3286,7 +3286,7 @@ void TestSoundUpSampling( void ) {
 				}
 			}
 			result = ( i >= MIXBUFFER_SAMPLES*numSpeakers ) ? "ok" :  S_COLOR_RED "X";
-			PrintClocks( va( "   simd->UpSamplePCMTo44kHz( %d, %d ) %s", kHz, numSpeakers, result ), MIXBUFFER_SAMPLES*numSpeakers*kHz/44100, bestClocksSIMD, bestClocksGeneric );
+			PrintClocks( va( "   simd->UpSamplePCMToOutput( %d, %d ) %s", kHz, numSpeakers, result ), MIXBUFFER_SAMPLES*numSpeakers*kHz/44100, bestClocksSIMD, bestClocksGeneric );
 		}
 	}
 
@@ -3296,16 +3296,16 @@ void TestSoundUpSampling( void ) {
 			bestClocksGeneric = 0;
 			for ( i = 0; i < NUMTESTS; i++ ) {
 				StartRecordTime( start );
-				p_generic->UpSampleOGGTo44kHz( samples1, ogg, MIXBUFFER_SAMPLES*numSpeakers*kHz/44100, kHz, numSpeakers );
+				p_generic->UpSampleOGGToOutput( samples1, ogg, MIXBUFFER_SAMPLES*numSpeakers*kHz/44100, kHz, numSpeakers );
 				StopRecordTime( end );
 				GetBest( start, end, bestClocksGeneric );
 			}
-			PrintClocks( va( "generic->UpSampleOGGTo44kHz( %d, %d )", kHz, numSpeakers ), MIXBUFFER_SAMPLES*numSpeakers*kHz/44100, bestClocksGeneric );
+			PrintClocks( va( "generic->UpSampleOGGToOutput( %d, %d )", kHz, numSpeakers ), MIXBUFFER_SAMPLES*numSpeakers*kHz/44100, bestClocksGeneric );
 
 			bestClocksSIMD = 0;
 			for ( i = 0; i < NUMTESTS; i++ ) {
 				StartRecordTime( start );
-				p_simd->UpSampleOGGTo44kHz( samples2, ogg, MIXBUFFER_SAMPLES*numSpeakers*kHz/44100, kHz, numSpeakers );
+				p_simd->UpSampleOGGToOutput( samples2, ogg, MIXBUFFER_SAMPLES*numSpeakers*kHz/44100, kHz, numSpeakers );
 				StopRecordTime( end );
 				GetBest( start, end, bestClocksSIMD );
 			}
@@ -3316,7 +3316,7 @@ void TestSoundUpSampling( void ) {
 				}
 			}
 			result = ( i >= MIXBUFFER_SAMPLES ) ? "ok" :  S_COLOR_RED "X";
-			PrintClocks( va( "   simd->UpSampleOGGTo44kHz( %d, %d ) %s", kHz, numSpeakers, result ), MIXBUFFER_SAMPLES*numSpeakers*kHz/44100, bestClocksSIMD, bestClocksGeneric );
+			PrintClocks( va( "   simd->UpSampleOGGToOutput( %d, %d ) %s", kHz, numSpeakers, result ), MIXBUFFER_SAMPLES*numSpeakers*kHz/44100, bestClocksSIMD, bestClocksGeneric );
 		}
 	}
 }

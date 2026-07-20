@@ -9077,7 +9077,7 @@ int VPCALL idSIMD_AltiVec::CreateVertexProgramShadowCache( idVec4 *vertexCache, 
 #ifdef SOUND_DEST_ALIGNED
 /*
 ============
-idSIMD_AltiVec::UpSamplePCMTo44kHz
+idSIMD_AltiVec::UpSamplePCMToOutput
 
   Duplicate samples for 44kHz output.
 
@@ -9085,7 +9085,7 @@ idSIMD_AltiVec::UpSamplePCMTo44kHz
 		Assumes that dest starts at aligned address
 ============
 */
-void idSIMD_AltiVec::UpSamplePCMTo44kHz( float *dest, const short *src, const int numSamples, const int kHz, const int numChannels ) {
+void idSIMD_AltiVec::UpSamplePCMToOutput( float *dest, const short *src, const int numSamples, const int kHz, const int numChannels ) {
 
 	// dest is aligned
 	assert( IS_16BYTE_ALIGNED( dest[0] ) );
@@ -9276,7 +9276,7 @@ void idSIMD_AltiVec::UpSamplePCMTo44kHz( float *dest, const short *src, const in
 
 /*
 ============
-idSIMD_AltiVec::UpSamplePCMTo44kHz
+idSIMD_AltiVec::UpSamplePCMToOutput
 
   Duplicate samples for 44kHz output.
 
@@ -9284,7 +9284,7 @@ idSIMD_AltiVec::UpSamplePCMTo44kHz
 		No assumptions
 ============
 */
-void idSIMD_AltiVec::UpSamplePCMTo44kHz( float *dest, const short *src, const int numSamples, const int kHz, const int numChannels ) {
+void idSIMD_AltiVec::UpSamplePCMToOutput( float *dest, const short *src, const int numSamples, const int kHz, const int numChannels ) {
 
 	vector signed short vs0, vs1;
 	register vector signed int vi0, vi1;
@@ -9544,7 +9544,7 @@ void idSIMD_AltiVec::UpSamplePCMTo44kHz( float *dest, const short *src, const in
 #ifdef SOUND_DEST_ALIGNED
 /*
 ============
-idSIMD_AltiVec::UpSampleOGGTo44kHz
+idSIMD_AltiVec::UpSampleOGGToOutput
 
   Duplicate samples for 44kHz output.
 
@@ -9552,7 +9552,7 @@ idSIMD_AltiVec::UpSampleOGGTo44kHz
 		Assumes that dest starts at aligned address
 ============
 */
-void idSIMD_AltiVec::UpSampleOGGTo44kHz( float *dest, const float * const *ogg, const int numSamples, const int kHz, const int numChannels ) {
+void idSIMD_AltiVec::UpSampleOGGToOutput( float *dest, const float * const *ogg, const int numSamples, const int kHz, const int numChannels ) {
 	// dest is aligned
 	assert( IS_16BYTE_ALIGNED( dest[0] ) );
 
@@ -9829,7 +9829,7 @@ void idSIMD_AltiVec::UpSampleOGGTo44kHz( float *dest, const float * const *ogg, 
 
 /*
 ============
-idSIMD_AltiVec::UpSampleOGGTo44kHz
+idSIMD_AltiVec::UpSampleOGGToOutput
 
   Duplicate samples for 44kHz output.
 
@@ -9837,7 +9837,7 @@ idSIMD_AltiVec::UpSampleOGGTo44kHz
 		No assumptions
 ============
 */
-void idSIMD_AltiVec::UpSampleOGGTo44kHz( float *dest, const float * const *ogg, const int numSamples, const int kHz, const int numChannels ) {
+void idSIMD_AltiVec::UpSampleOGGToOutput( float *dest, const float * const *ogg, const int numSamples, const int kHz, const int numChannels ) {
 
 	register vector float oggVec1, oggVec2, oggVec3, oggVec4, oggVec5, oggVec6, oggVec7, oggVec8;
 	register vector float constVec, zeroVector;

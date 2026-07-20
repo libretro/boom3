@@ -317,8 +317,8 @@ float SCR_DrawSoundDecoders( float y ) {
 	index = -1;
 	numActiveDecoders = 0;
 	while( ( index = soundSystem->GetSoundDecoderInfo( index, decoderInfo ) ) != -1 ) {
-		int localTime = decoderInfo.current44kHzTime - decoderInfo.start44kHzTime;
-		int sampleTime = decoderInfo.num44kHzSamples / decoderInfo.numChannels;
+		int localTime = decoderInfo.currentSampleTime - decoderInfo.startSampleTime;
+		int sampleTime = decoderInfo.numOutputSamples / decoderInfo.numChannels;
 		int percent;
 		if ( localTime > sampleTime ) {
 			if ( decoderInfo.looping ) {

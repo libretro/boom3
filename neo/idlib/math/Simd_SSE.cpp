@@ -16928,10 +16928,10 @@ int VPCALL idSIMD_SSE::CreateVertexProgramShadowCache( idVec4 *vertexCache, cons
 
 /*
 ============
-SSE_UpSample11kHzMonoPCMTo44kHz
+SSE_UpSample11kHzMonoPCMToOutput
 ============
 */
-static void SSE_UpSample11kHzMonoPCMTo44kHz( float *dest, const short *src, const int numSamples ) {
+static void SSE_UpSample11kHzMonoPCMToOutput( float *dest, const short *src, const int numSamples ) {
 	__asm {
 		mov			esi, src
 		mov			edi, dest
@@ -16979,10 +16979,10 @@ static void SSE_UpSample11kHzMonoPCMTo44kHz( float *dest, const short *src, cons
 
 /*
 ============
-SSE_UpSample11kHzStereoPCMTo44kHz
+SSE_UpSample11kHzStereoPCMToOutput
 ============
 */
-static void SSE_UpSample11kHzStereoPCMTo44kHz( float *dest, const short *src, const int numSamples ) {
+static void SSE_UpSample11kHzStereoPCMToOutput( float *dest, const short *src, const int numSamples ) {
 	__asm {
 		mov			esi, src
 		mov			edi, dest
@@ -17020,10 +17020,10 @@ static void SSE_UpSample11kHzStereoPCMTo44kHz( float *dest, const short *src, co
 
 /*
 ============
-SSE_UpSample22kHzMonoPCMTo44kHz
+SSE_UpSample22kHzMonoPCMToOutput
 ============
 */
-static void SSE_UpSample22kHzMonoPCMTo44kHz( float *dest, const short *src, const int numSamples ) {
+static void SSE_UpSample22kHzMonoPCMToOutput( float *dest, const short *src, const int numSamples ) {
 	__asm {
 		mov			esi, src
 		mov			edi, dest
@@ -17068,10 +17068,10 @@ static void SSE_UpSample22kHzMonoPCMTo44kHz( float *dest, const short *src, cons
 
 /*
 ============
-SSE_UpSample22kHzStereoPCMTo44kHz
+SSE_UpSample22kHzStereoPCMToOutput
 ============
 */
-static void SSE_UpSample22kHzStereoPCMTo44kHz( float *dest, const short *src, const int numSamples ) {
+static void SSE_UpSample22kHzStereoPCMToOutput( float *dest, const short *src, const int numSamples ) {
 	__asm {
 		mov			esi, src
 		mov			edi, dest
@@ -17106,10 +17106,10 @@ static void SSE_UpSample22kHzStereoPCMTo44kHz( float *dest, const short *src, co
 
 /*
 ============
-SSE_UpSample44kHzMonoPCMTo44kHz
+SSE_UpSample44kHzMonoPCMToOutput
 ============
 */
-static void SSE_UpSample44kHzMonoPCMTo44kHz( float *dest, const short *src, const int numSamples ) {
+static void SSE_UpSample44kHzMonoPCMToOutput( float *dest, const short *src, const int numSamples ) {
 	__asm {
 		mov			esi, src
 		mov			edi, dest
@@ -17151,26 +17151,26 @@ static void SSE_UpSample44kHzMonoPCMTo44kHz( float *dest, const short *src, cons
 
 /*
 ============
-idSIMD_SSE::UpSamplePCMTo44kHz
+idSIMD_SSE::UpSamplePCMToOutput
 
   Duplicate samples for 44kHz output.
 ============
 */
-void idSIMD_SSE::UpSamplePCMTo44kHz( float *dest, const short *src, const int numSamples, const int kHz, const int numChannels ) {
+void idSIMD_SSE::UpSamplePCMToOutput( float *dest, const short *src, const int numSamples, const int kHz, const int numChannels ) {
 	if ( kHz == 11025 ) {
 		if ( numChannels == 1 ) {
-			SSE_UpSample11kHzMonoPCMTo44kHz( dest, src, numSamples );
+			SSE_UpSample11kHzMonoPCMToOutput( dest, src, numSamples );
 		} else {
-			SSE_UpSample11kHzStereoPCMTo44kHz( dest, src, numSamples );
+			SSE_UpSample11kHzStereoPCMToOutput( dest, src, numSamples );
 		}
 	} else if ( kHz == 22050 ) {
 		if ( numChannels == 1 ) {
-			SSE_UpSample22kHzMonoPCMTo44kHz( dest, src, numSamples );
+			SSE_UpSample22kHzMonoPCMToOutput( dest, src, numSamples );
 		} else {
-			SSE_UpSample22kHzStereoPCMTo44kHz( dest, src, numSamples );
+			SSE_UpSample22kHzStereoPCMToOutput( dest, src, numSamples );
 		}
 	} else if ( kHz == 44100 ) {
-		SSE_UpSample44kHzMonoPCMTo44kHz( dest, src, numSamples );
+		SSE_UpSample44kHzMonoPCMToOutput( dest, src, numSamples );
 	} else {
 		assert( 0 );
 	}
@@ -17182,10 +17182,10 @@ void idSIMD_SSE::UpSamplePCMTo44kHz( float *dest, const short *src, const int nu
 #if 0
 /*
 ============
-SSE_UpSample11kHzMonoOGGTo44kHz
+SSE_UpSample11kHzMonoOGGToOutput
 ============
 */
-static void SSE_UpSample11kHzMonoOGGTo44kHz( float *dest, const float *src, const int numSamples ) {
+static void SSE_UpSample11kHzMonoOGGToOutput( float *dest, const float *src, const int numSamples ) {
 	float constant = 32768.0f;
 	__asm {
 		mov			esi, src
@@ -17236,10 +17236,10 @@ static void SSE_UpSample11kHzMonoOGGTo44kHz( float *dest, const float *src, cons
 
 /*
 ============
-SSE_UpSample11kHzStereoOGGTo44kHz
+SSE_UpSample11kHzStereoOGGToOutput
 ============
 */
-static void SSE_UpSample11kHzStereoOGGTo44kHz( float *dest, const float * const *src, const int numSamples ) {
+static void SSE_UpSample11kHzStereoOGGToOutput( float *dest, const float * const *src, const int numSamples ) {
 	float constant = 32768.0f;
 	__asm {
 		mov			esi, src
@@ -17297,10 +17297,10 @@ static void SSE_UpSample11kHzStereoOGGTo44kHz( float *dest, const float * const 
 
 /*
 ============
-SSE_UpSample22kHzMonoOGGTo44kHz
+SSE_UpSample22kHzMonoOGGToOutput
 ============
 */
-static void SSE_UpSample22kHzMonoOGGTo44kHz( float *dest, const float *src, const int numSamples ) {
+static void SSE_UpSample22kHzMonoOGGToOutput( float *dest, const float *src, const int numSamples ) {
 	float constant = 32768.0f;
 	__asm {
 		mov			esi, src
@@ -17345,10 +17345,10 @@ static void SSE_UpSample22kHzMonoOGGTo44kHz( float *dest, const float *src, cons
 
 /*
 ============
-SSE_UpSample22kHzStereoOGGTo44kHz
+SSE_UpSample22kHzStereoOGGToOutput
 ============
 */
-static void SSE_UpSample22kHzStereoOGGTo44kHz( float *dest, const float * const *src, const int numSamples ) {
+static void SSE_UpSample22kHzStereoOGGToOutput( float *dest, const float * const *src, const int numSamples ) {
 	float constant = 32768.0f;
 	__asm {
 		mov			esi, src
@@ -17400,20 +17400,20 @@ static void SSE_UpSample22kHzStereoOGGTo44kHz( float *dest, const float * const 
 
 /*
 ============
-SSE_UpSample44kHzMonoOGGTo44kHz
+SSE_UpSample44kHzMonoOGGToOutput
 ============
 */
-static void SSE_UpSample44kHzMonoOGGTo44kHz( float *dest, const float *src, const int numSamples ) {
+static void SSE_UpSample44kHzMonoOGGToOutput( float *dest, const float *src, const int numSamples ) {
 	float constant = 32768.0f;
 	KFLOAT_CA( mul, dest, src, constant, numSamples )
 }
 
 /*
 ============
-SSE_UpSample44kHzStereoOGGTo44kHz
+SSE_UpSample44kHzStereoOGGToOutput
 ============
 */
-static void SSE_UpSample44kHzStereoOGGTo44kHz( float *dest, const float * const *src, const int numSamples ) {
+static void SSE_UpSample44kHzStereoOGGToOutput( float *dest, const float * const *src, const int numSamples ) {
 	float constant = 32768.0f;
 	__asm {
 		mov			esi, src
@@ -17462,29 +17462,29 @@ static void SSE_UpSample44kHzStereoOGGTo44kHz( float *dest, const float * const 
 
 /*
 ============
-idSIMD_SSE::UpSampleOGGTo44kHz
+idSIMD_SSE::UpSampleOGGToOutput
 
   Duplicate samples for 44kHz output.
 ============
 */
-void idSIMD_SSE::UpSampleOGGTo44kHz( float *dest, const float * const *ogg, const int numSamples, const int kHz, const int numChannels ) {
+void idSIMD_SSE::UpSampleOGGToOutput( float *dest, const float * const *ogg, const int numSamples, const int kHz, const int numChannels ) {
 	if ( kHz == 11025 ) {
 		if ( numChannels == 1 ) {
-			SSE_UpSample11kHzMonoOGGTo44kHz( dest, ogg[0], numSamples );
+			SSE_UpSample11kHzMonoOGGToOutput( dest, ogg[0], numSamples );
 		} else {
-			SSE_UpSample11kHzStereoOGGTo44kHz( dest, ogg, numSamples );
+			SSE_UpSample11kHzStereoOGGToOutput( dest, ogg, numSamples );
 		}
 	} else if ( kHz == 22050 ) {
 		if ( numChannels == 1 ) {
-			SSE_UpSample22kHzMonoOGGTo44kHz( dest, ogg[0], numSamples );
+			SSE_UpSample22kHzMonoOGGToOutput( dest, ogg[0], numSamples );
 		} else {
-			SSE_UpSample22kHzStereoOGGTo44kHz( dest, ogg, numSamples );
+			SSE_UpSample22kHzStereoOGGToOutput( dest, ogg, numSamples );
 		}
 	} else if ( kHz == 44100 ) {
 		if ( numChannels == 1 ) {
-			SSE_UpSample44kHzMonoOGGTo44kHz( dest, ogg[0], numSamples );
+			SSE_UpSample44kHzMonoOGGToOutput( dest, ogg[0], numSamples );
 		} else {
-			SSE_UpSample44kHzStereoOGGTo44kHz( dest, ogg, numSamples );
+			SSE_UpSample44kHzStereoOGGToOutput( dest, ogg, numSamples );
 		}
 	} else {
 		assert( 0 );

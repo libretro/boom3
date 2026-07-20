@@ -235,13 +235,13 @@ typedef enum {
 
 class idSoundFade {
 public:
-	int				fadeStart44kHz;
-	int				fadeEnd44kHz;
+	int				fadeStartSample;
+	int				fadeEndSample;
 	float				fadeStartVolume;		// in dB
 	float				fadeEndVolume;			// in dB
 
 	void				Clear();
-	float				FadeDbAt44kHz( int current44kHz );
+	float				FadeDbAtSampleTime( int currentSampleTime );
 };
 
 class SoundFX {
@@ -334,7 +334,7 @@ class idSlowChannel {
 	SoundFX_LowpassFast		lowpass;
 
 	// functions
-	void					GenerateSlowChannel( FracTime& playPos, int sampleCount44k, float* finalBuffer );
+	void					GenerateSlowChannel( FracTime& playPos, int outputCount, float* finalBuffer );
 
 	float					GetSlowmoSpeed();
 
@@ -343,7 +343,7 @@ public:
 	void					AttachSoundChannel( const idSoundChannel *chan );
 	void					Reset();
 
-	void					GatherChannelSamples( int sampleOffset44k, int sampleCount44k, float *dest );
+	void					GatherChannelSamples( int outputOffset, int outputCount, float *dest );
 
 	bool					IsActive()				{ return active; };
 	FracTime				GetCurrentPosition()	{ return curPosition; };
@@ -357,11 +357,11 @@ public:
 	void				Clear( void );
 	void				Start( void );
 	void				Stop( void );
-	void				GatherChannelSamples( int sampleOffset44k, int sampleCount44k, float *dest ) const;
+	void				GatherChannelSamples( int outputOffset, int outputCount, float *dest ) const;
 
 	bool				triggerState;
-	int					trigger44kHzTime;		// hardware time sample the channel started
-	int					triggerGame44kHzTime;	// game time sample time the channel started
+	int					triggerSampleTime;		// hardware time sample the channel started
+	int					triggerGameSampleTime;	// game time sample time the channel started
 	soundShaderParms_t	parms;					// combines the shader parms and the per-channel overrides
 	idSoundSample *		leadinSample;			// if not looped, this is the only sample
 	s_channelType		triggerChannel;
@@ -422,7 +422,7 @@ public:
 	void				UnPauseAll( void ); // DG: to resume active OpenAL sources when leaving menu etc
 
 	void				OverrideParms( const soundShaderParms_t *base, const soundShaderParms_t *over, soundShaderParms_t *out );
-	void				CheckForCompletion( int current44kHzTime );
+	void				CheckForCompletion( int currentSampleTime );
 	void				Spatialize( idVec3 listenerPos, int listenerArea, idRenderWorld *rw );
 
 	idSoundWorldLocal *	soundWorld;				// the world that holds this emitter
@@ -559,13 +559,13 @@ public:
 
 	// update
 	void					ForegroundUpdate( int currentTime );
-	void					OffsetSoundTime( int offset44kHz );
+	void					OffsetSoundTime( int offsetSamples );
 
 	idSoundEmitterLocal *	AllocLocalSoundEmitter();
 	void					CalcEars( int numSpeakers, idVec3 realOrigin, idVec3 listenerPos, idMat3 listenerAxis, float ears[6], float spatialize );
 	void					AddChannelContribution( idSoundEmitterLocal *sound, idSoundChannel *chan,
-												int current44kHz, int numFrames, float *finalMixBuffer );
-	void					MixLoop( int current44kHz, int numFrames, float *finalMixBuffer );
+												int currentSampleTime, int numFrames, float *finalMixBuffer );
+	void					MixLoop( int currentSampleTime, int numFrames, float *finalMixBuffer );
 	void					ResolveOrigin( const int stackDepth, const soundPortalTrace_t *prevStack, const int soundArea, const float dist, const idVec3& soundOrigin, idSoundEmitterLocal *def );
 	float					FindAmplitude( idSoundEmitterLocal *sound, const int localTime, const idVec3 *listenerPosition, const s_channelType channel, bool shakesOnly );
 
@@ -591,8 +591,8 @@ public:
 	bool					listenerAreFiltersInitialized;
 
 	int						gameMsec;
-	int						game44kHz;
-	int						pause44kHz;
+	int						gameSampleTime;
+	int						pauseSampleTime;
 
 	idList<idSoundEmitterLocal *>emitters;
 
@@ -660,7 +660,7 @@ public:
 	float				volumesDB[1200];		// dB to float volume conversion
 	idList<SoundFX*>		fxList;
 
-	int				CurrentSoundTime;		// master 44kHz sample clock, advanced only by MixFrame*
+	int				CurrentSoundTime;		// master output-rate sample clock, advanced only by MixFrame*
 
 	float				realAccum[6*MIXBUFFER_SAMPLES+16];
 	float *				finalMixBuffer;			// points inside realAccum at a 16 byte aligned boundary
@@ -698,7 +698,7 @@ public:
 
 	//-------------------------
 
-	int				GetCurrent44kHzTime( void ) const;
+	int				GetCurrentSampleTime( void ) const;
 	float				dB2Scale( const float val ) const;
 	int				SamplesToMilliseconds( int samples ) const;
 	int				MillisecondsToSamples( int ms ) const;
@@ -786,7 +786,7 @@ public:
 	bool				purged;
 	bool				levelLoadReferenced;		// so we can tell which samples aren't needed any more
 
-	int				LengthIn44kHzSamples() const;
+	int				LengthInOutputSamples() const;
 	ID_TIME_T			GetNewTimeStamp( void ) const;
 	void				MakeDefault();				// turns it into a beep
 	void				Load();						// loads the current sound based on name
@@ -814,7 +814,7 @@ public:
 	static int			GetUsedBlockMemory( void );
 
 	virtual				~idSampleDecoder( void ) {}
-	virtual void			Decode( idSoundSample *sample, int sampleOffset44k, int sampleCount44k, float *dest ) = 0;
+	virtual void			Decode( idSoundSample *sample, int outputOffset, int outputCount, float *dest ) = 0;
 	virtual void			ClearDecoder( void ) = 0;
 	virtual idSoundSample *	GetSample( void ) const = 0;
 	virtual int			GetLastDecodeTime( void ) const = 0;

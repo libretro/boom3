@@ -38,24 +38,24 @@ idSoundFade::Clear
 ===================
 */
 void idSoundFade::Clear() {
-	fadeStart44kHz = 0;
-	fadeEnd44kHz = 0;
+	fadeStartSample = 0;
+	fadeEndSample = 0;
 	fadeStartVolume = 0;
 	fadeEndVolume = 0;
 }
 
 /*
 ===================
-idSoundFade::FadeDbAt44kHz
+idSoundFade::FadeDbAtSampleTime
 ===================
 */
-float idSoundFade::FadeDbAt44kHz( int current44kHz ) {
-	if ( current44kHz >= fadeEnd44kHz )
+float idSoundFade::FadeDbAtSampleTime( int currentSampleTime ) {
+	if ( currentSampleTime >= fadeEndSample )
 		return fadeEndVolume;
-	if ( current44kHz > fadeStart44kHz )
+	if ( currentSampleTime > fadeStartSample )
 	{
-		float fraction = ( fadeEnd44kHz - fadeStart44kHz );
-		float over = ( current44kHz - fadeStart44kHz );
+		float fraction = ( fadeEndSample - fadeStartSample );
+		float over = ( currentSampleTime - fadeStartSample );
 		return fadeStartVolume + ( fadeEndVolume - fadeStartVolume ) * over / fraction;
 	}
 	return fadeStartVolume;
@@ -175,7 +175,7 @@ void idSoundChannel::Clear( void ) {
 	channelFade.Clear();
 	diversity = 0.0f;
 	leadinSample = NULL;
-	trigger44kHzTime = 0;
+	triggerSampleTime = 0;
 	stopped = false;
 	for( j = 0; j < 6; j++ ) {
 		lastV[j] = 0.0f;
@@ -216,53 +216,53 @@ void idSoundChannel::Stop( void ) {
 ===================
 idSoundChannel::GatherChannelSamples
 
-Will always return 44kHz samples for the given range, even if it deeply looped or
+Will always return output-rate samples for the given range, even if it deeply looped or
 out of the range of the unlooped samples.  Handles looping between multiple different
 samples and leadins
 ===================
 */
-void idSoundChannel::GatherChannelSamples( int sampleOffset44k, int sampleCount44k, float *dest ) const {
+void idSoundChannel::GatherChannelSamples( int outputOffset, int outputCount, float *dest ) const {
 	float	*dest_p = dest;
 	int		len;
 
-//Sys_DebugPrintf( "msec:%i sample:%i : %i : %i\n", Core_Milliseconds(), soundSystemLocal.GetCurrent44kHzTime(), sampleOffset44k, sampleCount44k );	//!@#
+//Sys_DebugPrintf( "msec:%i sample:%i : %i : %i\n", Core_Milliseconds(), soundSystemLocal.GetCurrentSampleTime(), outputOffset, outputCount );	//!@#
 
 	// negative offset times will just zero fill
-	if ( sampleOffset44k < 0 ) {
-		len = -sampleOffset44k;
-		if ( len > sampleCount44k ) {
-			len = sampleCount44k;
+	if ( outputOffset < 0 ) {
+		len = -outputOffset;
+		if ( len > outputCount ) {
+			len = outputCount;
 		}
 		memset( dest_p, 0, len * sizeof( dest_p[0] ) );
 		dest_p += len;
-		sampleCount44k -= len;
-		sampleOffset44k += len;
+		outputCount -= len;
+		outputOffset += len;
 	}
 
 	// grab part of the leadin sample
 	idSoundSample *leadin = leadinSample;
-	if ( !leadin || sampleOffset44k < 0 || sampleCount44k <= 0 ) {
-		memset( dest_p, 0, sampleCount44k * sizeof( dest_p[0] ) );
+	if ( !leadin || outputOffset < 0 || outputCount <= 0 ) {
+		memset( dest_p, 0, outputCount * sizeof( dest_p[0] ) );
 		return;
 	}
 
-	if ( sampleOffset44k < leadin->LengthIn44kHzSamples() ) {
-		len = leadin->LengthIn44kHzSamples() - sampleOffset44k;
-		if ( len > sampleCount44k ) {
-			len = sampleCount44k;
+	if ( outputOffset < leadin->LengthInOutputSamples() ) {
+		len = leadin->LengthInOutputSamples() - outputOffset;
+		if ( len > outputCount ) {
+			len = outputCount;
 		}
 
 		// decode the sample
-		decoder->Decode( leadin, sampleOffset44k, len, dest_p );
+		decoder->Decode( leadin, outputOffset, len, dest_p );
 
 		dest_p += len;
-		sampleCount44k -= len;
-		sampleOffset44k += len;
+		outputCount -= len;
+		outputOffset += len;
 	}
 
 	// if not looping, zero fill any remaining spots
 	if ( !soundShader || !( parms.soundShaderFlags & SSF_LOOPING ) ) {
-		memset( dest_p, 0, sampleCount44k * sizeof( dest_p[0] ) );
+		memset( dest_p, 0, outputCount * sizeof( dest_p[0] ) );
 		return;
 	}
 
@@ -270,28 +270,28 @@ void idSoundChannel::GatherChannelSamples( int sampleOffset44k, int sampleCount4
 	idSoundSample *loop = soundShader->entries[0];
 
 	if ( !loop ) {
-		memset( dest_p, 0, sampleCount44k * sizeof( dest_p[0] ) );
+		memset( dest_p, 0, outputCount * sizeof( dest_p[0] ) );
 		return;
 	}
 
-	sampleOffset44k -= leadin->LengthIn44kHzSamples();
+	outputOffset -= leadin->LengthInOutputSamples();
 
-	while( sampleCount44k > 0 ) {
-		int totalLen = loop->LengthIn44kHzSamples();
+	while( outputCount > 0 ) {
+		int totalLen = loop->LengthInOutputSamples();
 
-		sampleOffset44k %= totalLen;
+		outputOffset %= totalLen;
 
-		len = totalLen - sampleOffset44k;
-		if ( len > sampleCount44k ) {
-			len = sampleCount44k;
+		len = totalLen - outputOffset;
+		if ( len > outputCount ) {
+			len = outputCount;
 		}
 
 		// decode the sample
-		decoder->Decode( loop, sampleOffset44k, len, dest_p );
+		decoder->Decode( loop, outputOffset, len, dest_p );
 
 		dest_p += len;
-		sampleCount44k -= len;
-		sampleOffset44k += len;
+		outputCount -= len;
+		outputOffset += len;
 	}
 }
 
@@ -392,7 +392,7 @@ Checks to see if all the channels have completed, clearing the playing flag if n
 Sets the playing and shakes bools.
 ==================
 */
-void idSoundEmitterLocal::CheckForCompletion( int current44kHzTime ) {
+void idSoundEmitterLocal::CheckForCompletion( int currentSampleTime ) {
 	bool hasActive;
 	int i;
 
@@ -416,14 +416,14 @@ void idSoundEmitterLocal::CheckForCompletion( int current44kHzTime ) {
 				idSlowChannel slow = GetSlowChannel( chan );
 
 				if ( soundWorld->slowmoActive && slow.IsActive() ) {
-					if ( slow.GetCurrentPosition().time >= chan->leadinSample->LengthIn44kHzSamples() / 2 ) {
+					if ( slow.GetCurrentPosition().time >= chan->leadinSample->LengthInOutputSamples() / 2 ) {
 						chan->Stop();
 						// if this was an onDemand sound, purge the sample now
 						if ( chan->leadinSample->onDemand ) {
 							chan->leadinSample->PurgeSoundSample();
 						}
 					}
-				} else if ( ( chan->trigger44kHzTime + chan->leadinSample->LengthIn44kHzSamples() < current44kHzTime ) || ( chan->stopped ) ) {
+				} else if ( ( chan->triggerSampleTime + chan->leadinSample->LengthInOutputSamples() < currentSampleTime ) || ( chan->stopped ) ) {
 					chan->Stop();
 
 					// free hardware resources
@@ -436,7 +436,7 @@ void idSoundEmitterLocal::CheckForCompletion( int current44kHzTime ) {
 			}
 
 			// free decoder memory if no sound was decoded for a while
-			if ( chan->decoder != NULL && chan->decoder->GetLastDecodeTime() < current44kHzTime - SOUND_DECODER_FREE_DELAY ) {
+			if ( chan->decoder != NULL && chan->decoder->GetLastDecodeTime() < currentSampleTime - SOUND_DECODER_FREE_DELAY ) {
 				chan->decoder->ClearDecoder();
 			}
 
@@ -640,13 +640,13 @@ int idSoundEmitterLocal::StartSound( const idSoundShader *shader, const s_channe
 	}
 
 	// this is the sample time it will be first mixed
-	int start44kHz;
+	int startSampleTime;
 
 	// per-frame mixing: the sound starts on the very next mix pass, which
 	// begins exactly at the current sample clock. The old +MIXBUFFER_SAMPLES
 	// lookahead matched the old 4096-sample block-ahead scheduler and was
 	// responsible for ~93ms of trigger-to-output latency.
-	start44kHz = soundSystemLocal.GetCurrent44kHzTime();
+	startSampleTime = soundSystemLocal.GetCurrentSampleTime();
 
 	//
 	// pick which sound to play from the shader
@@ -699,7 +699,7 @@ int idSoundEmitterLocal::StartSound( const idSoundShader *shader, const s_channe
 	// if they are on different channels
 	for( i = 0; i < SOUND_MAX_CHANNELS; i++ ) {
 		idSoundChannel	*chan = &channels[i];
-		if ( chan->triggerState && chan->soundShader == shader && chan->trigger44kHzTime == start44kHz ) {
+		if ( chan->triggerState && chan->soundShader == shader && chan->triggerSampleTime == startSampleTime ) {
 			if ( idSoundSystemLocal::s_showStartSound.GetInteger() ) {
 				common->Printf( "already started this frame\n" );
 			}
@@ -762,7 +762,7 @@ int idSoundEmitterLocal::StartSound( const idSoundShader *shader, const s_channe
 		int		end = Core_Milliseconds();
 		session->TimeHitch( end - start );
 		// note: with the deterministic clock, on-demand loading consumes no
-		// sample time within the frame, so start44kHz needs no recalculation
+		// sample time within the frame, so startSampleTime needs no recalculation
 	}
 
 	if ( idSoundSystemLocal::s_showStartSound.GetInteger() ) {
@@ -779,9 +779,9 @@ int idSoundEmitterLocal::StartSound( const idSoundShader *shader, const s_channe
 
 	// the sound will start mixing in the next async mix block
 	chan->triggered = true;
-	chan->trigger44kHzTime = start44kHz;
+	chan->triggerSampleTime = startSampleTime;
 	chan->parms = chanParms;
-	chan->triggerGame44kHzTime = soundWorld->game44kHz;
+	chan->triggerGameSampleTime = soundWorld->gameSampleTime;
 	chan->soundShader = shader;
 	chan->triggerChannel = channel;
 	chan->stopped = false;
@@ -795,7 +795,7 @@ int idSoundEmitterLocal::StartSound( const idSoundShader *shader, const s_channe
 	Spatialize( soundWorld->listenerPos, soundWorld->listenerArea, soundWorld->rw );
 
 	// return length of sound in milliseconds
-	int length = chan->leadinSample->LengthIn44kHzSamples();
+	int length = chan->leadinSample->LengthInOutputSamples();
 
 	if ( chan->leadinSample->objectInfo.nChannels == 2 ) {
 		length /= 2;	// stereo samples
@@ -803,15 +803,15 @@ int idSoundEmitterLocal::StartSound( const idSoundShader *shader, const s_channe
 
 	// adjust the start time based on diversity for looping sounds, so they don't all start
 	// at the same point
-	if ( chan->parms.soundShaderFlags & SSF_LOOPING && !chan->leadinSample->LengthIn44kHzSamples() ) {
-		chan->trigger44kHzTime -= diversity * length;
-		chan->trigger44kHzTime &= ~7;		// so we don't have to worry about the 22kHz and 11kHz expansions
+	if ( chan->parms.soundShaderFlags & SSF_LOOPING && !chan->leadinSample->LengthInOutputSamples() ) {
+		chan->triggerSampleTime -= diversity * length;
+		chan->triggerSampleTime &= ~7;		// so we don't have to worry about the 22kHz and 11kHz expansions
 											// starting in fractional samples
-		chan->triggerGame44kHzTime -= diversity * length;
-		chan->triggerGame44kHzTime &= ~7;
+		chan->triggerGameSampleTime -= diversity * length;
+		chan->triggerGameSampleTime &= ~7;
 	}
 
-	/* length is in OUTPUT samples (LengthIn44kHzSamples returns the output
+	/* length is in OUTPUT samples (LengthInOutputSamples returns the output
 	   domain), so convert with the output rate, not the asset rate. Using
 	   PRIMARYFREQ here made every computed duration 2.18x wrong at 96kHz. */
 	length *= 1000 / (float)snd_SampleRate();
@@ -975,15 +975,15 @@ void idSoundEmitterLocal::FadeSound( const s_channelType channel, float to, floa
 		soundWorld->writeDemo->WriteFloat( over );
 	}
 
-	int	start44kHz;
+	int	startSampleTime;
 
 	// per-frame mixing: the sound starts on the very next mix pass, which
 	// begins exactly at the current sample clock. The old +MIXBUFFER_SAMPLES
 	// lookahead matched the old 4096-sample block-ahead scheduler and was
 	// responsible for ~93ms of trigger-to-output latency.
-	start44kHz = soundSystemLocal.GetCurrent44kHzTime();
+	startSampleTime = soundSystemLocal.GetCurrentSampleTime();
 
-	int	length44kHz = soundSystemLocal.MillisecondsToSamples( over * 1000 );
+	int	lengthSamples = soundSystemLocal.MillisecondsToSamples( over * 1000 );
 
 	for( int i = 0; i < SOUND_MAX_CHANNELS ; i++ ) {
 		idSoundChannel	*chan = &channels[i];
@@ -997,14 +997,14 @@ void idSoundEmitterLocal::FadeSound( const s_channelType channel, float to, floa
 
 		// if it is already fading to this volume at this rate, don't change it
 		if ( chan->channelFade.fadeEndVolume == to &&
-			chan->channelFade.fadeEnd44kHz - chan->channelFade.fadeStart44kHz == length44kHz ) {
+			chan->channelFade.fadeEndSample - chan->channelFade.fadeStartSample == lengthSamples ) {
 			continue;
 		}
 
 		// fade it
-		chan->channelFade.fadeStartVolume = chan->channelFade.FadeDbAt44kHz( start44kHz );
-		chan->channelFade.fadeStart44kHz = start44kHz;
-		chan->channelFade.fadeEnd44kHz = start44kHz + length44kHz;
+		chan->channelFade.fadeStartVolume = chan->channelFade.FadeDbAtSampleTime( startSampleTime );
+		chan->channelFade.fadeStartSample = startSampleTime;
+		chan->channelFade.fadeEndSample = startSampleTime + lengthSamples;
 		chan->channelFade.fadeEndVolume = to;
 	}
 }
@@ -1044,7 +1044,7 @@ float idSoundEmitterLocal::CurrentAmplitude( void ) {
 		return 0.0;
 	}
 
-	int localTime = soundSystemLocal.GetCurrent44kHzTime();
+	int localTime = soundSystemLocal.GetCurrentSampleTime();
 
 	// see if we can use our cached value
 	if ( ampTime == localTime ) {
@@ -1135,7 +1135,7 @@ float idSlowChannel::GetSlowmoSpeed() {
 idSlowChannel::GenerateSlowChannel
 ===================
 */
-void idSlowChannel::GenerateSlowChannel( FracTime& playPos, int sampleCount44k, float* finalBuffer ) {
+void idSlowChannel::GenerateSlowChannel( FracTime& playPos, int outputCount, float* finalBuffer ) {
 	idSoundWorldLocal *sw = static_cast<idSoundWorldLocal*>( soundSystemLocal.GetPlayingSoundWorld() );
 	/* static, not stack: 32KB for the pair. Single call path from
 	   GatherChannelSamples on the main thread, not recursive. */
@@ -1153,7 +1153,7 @@ void idSlowChannel::GenerateSlowChannel( FracTime& playPos, int sampleCount44k, 
 		slowmoSpeed = 1;
 	}
 
-	neededSamples = sampleCount44k * slowmoSpeed + 4;
+	neededSamples = outputCount * slowmoSpeed + 4;
 
 	// get the channel's samples
 	chan->GatherChannelSamples( playPos.time * 2, neededSamples, src );
@@ -1165,7 +1165,7 @@ void idSlowChannel::GenerateSlowChannel( FracTime& playPos, int sampleCount44k, 
 	zeroedPos = playPos.time;
 	playPos.time = 0;
 
-	for ( i = 0; i < sampleCount44k >> 1; i++, count += 2 ) {
+	for ( i = 0; i < outputCount >> 1; i++, count += 2 ) {
 		float val;
 		val = spline[playPos.time];
 		src[i] = val;
@@ -1174,7 +1174,7 @@ void idSlowChannel::GenerateSlowChannel( FracTime& playPos, int sampleCount44k, 
 
 	// lowpass filter
 	float *in_p = in + 2, *out_p = out + 2;
-	int numSamples = sampleCount44k >> 1;
+	int numSamples = outputCount >> 1;
 
 	lowpass.GetContinuitySamples( in_p[-1], in_p[-2], out_p[-1], out_p[-2] );
 	lowpass.SetParms( slowmoSpeed * 15000, 1.2f );
@@ -1194,12 +1194,12 @@ void idSlowChannel::GenerateSlowChannel( FracTime& playPos, int sampleCount44k, 
 idSlowChannel::GatherChannelSamples
 ===================
 */
-void idSlowChannel::GatherChannelSamples( int sampleOffset44k, int sampleCount44k, float *dest ) {
+void idSlowChannel::GatherChannelSamples( int outputOffset, int outputCount, float *dest ) {
 	int state = 0;
 
 	// setup chan
 	active = true;
-	newSampleOffset = sampleOffset44k >> 1;
+	newSampleOffset = outputOffset >> 1;
 
 	// set state
 	if ( newSampleOffset < curSampleOffset ) {
@@ -1217,7 +1217,7 @@ void idSlowChannel::GatherChannelSamples( int sampleOffset44k, int sampleCount44
 	newPosition = curPosition;
 
 	// do the slow processing
-	GenerateSlowChannel( newPosition, sampleCount44k, dest );
+	GenerateSlowChannel( newPosition, outputCount, dest );
 
 	// finish off
 	if ( state == PLAYBACK_ADVANCING )

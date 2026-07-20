@@ -183,14 +183,14 @@ int idWaveFile::CloseOGG( void ) {
 
 class idSampleDecoderLocal : public idSampleDecoder {
 public:
-	virtual void			Decode( idSoundSample *sample, int sampleOffset44k, int sampleCount44k, float *dest );
+	virtual void			Decode( idSoundSample *sample, int outputOffset, int outputCount, float *dest );
 	virtual void			ClearDecoder( void );
 	virtual idSoundSample *	GetSample( void ) const;
 	virtual int				GetLastDecodeTime( void ) const;
 
 	void					Clear( void );
-	int						DecodePCM( idSoundSample *sample, int sampleOffset44k, int sampleCount44k, float *dest );
-	int						DecodeOGG( idSoundSample *sample, int sampleOffset44k, int sampleCount44k, float *dest );
+	int						DecodePCM( idSoundSample *sample, int outputOffset, int outputCount, float *dest );
+	int						DecodeOGG( idSoundSample *sample, int outputOffset, int outputCount, float *dest );
 
 private:
 	bool					failed;				// set if decoding failed
@@ -368,8 +368,8 @@ int idSampleDecoderLocal::GetLastDecodeTime( void ) const {
 idSampleDecoderLocal::Decode
 ====================
 */
-void idSampleDecoderLocal::Decode( idSoundSample *sample, int sampleOffset44k, int sampleCount44k, float *dest ) {
-	int readSamples44k;
+void idSampleDecoderLocal::Decode( idSoundSample *sample, int outputOffset, int outputCount, float *dest ) {
+	int readSamplesOut;
 
 	if ( sample->objectInfo.wFormatTag != lastFormat || sample != lastSample ) {
 		ClearDecoder();
@@ -378,7 +378,7 @@ void idSampleDecoderLocal::Decode( idSoundSample *sample, int sampleOffset44k, i
 	lastDecodeTime = soundSystemLocal.CurrentSoundTime;
 
 	if ( failed ) {
-		memset( dest, 0, sampleCount44k * sizeof( dest[0] ) );
+		memset( dest, 0, outputCount * sizeof( dest[0] ) );
 		return;
 	}
 
@@ -387,23 +387,23 @@ void idSampleDecoderLocal::Decode( idSoundSample *sample, int sampleOffset44k, i
 
 	switch( sample->objectInfo.wFormatTag ) {
 		case WAVE_FORMAT_TAG_PCM: {
-			readSamples44k = DecodePCM( sample, sampleOffset44k, sampleCount44k, dest );
+			readSamplesOut = DecodePCM( sample, outputOffset, outputCount, dest );
 			break;
 		}
 		case WAVE_FORMAT_TAG_OGG: {
-			readSamples44k = DecodeOGG( sample, sampleOffset44k, sampleCount44k, dest );
+			readSamplesOut = DecodeOGG( sample, outputOffset, outputCount, dest );
 			break;
 		}
 		default: {
-			readSamples44k = 0;
+			readSamplesOut = 0;
 			break;
 		}
 	}
 
 	Sys_LeaveCriticalSection( CRITICAL_SECTION_ONE );
 
-	if ( readSamples44k < sampleCount44k )
-		memset( dest + readSamples44k, 0, ( sampleCount44k - readSamples44k ) * sizeof( dest[0] ) );
+	if ( readSamplesOut < outputCount )
+		memset( dest + readSamplesOut, 0, ( outputCount - readSamplesOut ) * sizeof( dest[0] ) );
 }
 
 /*
@@ -411,16 +411,20 @@ void idSampleDecoderLocal::Decode( idSoundSample *sample, int sampleOffset44k, i
 idSampleDecoderLocal::DecodePCM
 ====================
 */
-int idSampleDecoderLocal::DecodePCM( idSoundSample *sample, int sampleOffset44k, int sampleCount44k, float *dest ) {
+int idSampleDecoderLocal::DecodePCM( idSoundSample *sample, int outputOffset, int outputCount, float *dest ) {
 	const byte *first;
 	int pos, size, readSamples;
 
 	lastFormat = WAVE_FORMAT_TAG_PCM;
 	lastSample = sample;
 
+	/* source-domain view of the request. shift is 0 in the common case
+	   (the sample was resampled to the output rate at load); the nonzero
+	   values only serve the allocation-failure fallback that kept the
+	   asset at its authored 11025/22050 rate. */
 	int shift = 22050 / sample->objectInfo.nSamplesPerSec;
-	int sampleOffset = sampleOffset44k >> shift;
-	int sampleCount = sampleCount44k >> shift;
+	int srcOffset = outputOffset >> shift;
+	int srcCount = outputCount >> shift;
 
 	if ( sample->nonCacheData == NULL ) {
 		//assert( false );	// this should never happen ( note: I've seen that happen with the main thread down in idGameLocal::MapClear clearing entities - TTimo )
@@ -430,15 +434,15 @@ int idSampleDecoderLocal::DecodePCM( idSoundSample *sample, int sampleOffset44k,
 		return 0;
 	}
 
-	if ( !sample->FetchFromCache( sampleOffset * sizeof( short ), &first, &pos, &size, false ) ) {
+	if ( !sample->FetchFromCache( srcOffset * sizeof( short ), &first, &pos, &size, false ) ) {
 		failed = true;
 		return 0;
 	}
 
-	if ( size - pos < sampleCount * sizeof( short ) ) {
+	if ( size - pos < srcCount * sizeof( short ) ) {
 		readSamples = ( size - pos ) / sizeof( short );
 	} else {
-		readSamples = sampleCount;
+		readSamples = srcCount;
 	}
 
 	/*
@@ -453,7 +457,7 @@ int idSampleDecoderLocal::DecodePCM( idSoundSample *sample, int sampleOffset44k,
 	   duplication is exact, at other rates it is a wrong-pitch fallback -
 	   degraded, but it plays.
 	*/
-	SIMDProcessor->UpSamplePCMTo44kHz( dest, (const short *)(first+pos), readSamples,
+	SIMDProcessor->UpSamplePCMToOutput( dest, (const short *)(first+pos), readSamples,
 			sample->objectInfo.nSamplesPerSec == snd_SampleRate() ? 44100 : sample->objectInfo.nSamplesPerSec,
 			sample->objectInfo.nChannels );
 
@@ -473,16 +477,16 @@ idSampleDecoderLocal::DecodeOGG
 Ogg Vorbis decode via libretro-common audio_transfer (rvorbis): open-once,
 seek on offset change, decode in <=MIXBUFFER_SAMPLES chunks with
 audio_transfer_read_f32 (the float path - no int<->float round-trip), then
-UpSampleOGGTo44kHz to 44.1kHz.
+UpSampleOGGToOutput to 44.1kHz.
 ====================
 */
-int idSampleDecoderLocal::DecodeOGG( idSoundSample *sample, int sampleOffset44k, int sampleCount44k, float *dest ) {
+int idSampleDecoderLocal::DecodeOGG( idSoundSample *sample, int outputOffset, int outputCount, float *dest ) {
 	int readSamples, totalSamples;
 
 	/*
 	   Everything in this function is in OUTPUT samples (the mixer's clock
 	   domain). The old pipeline counted in SOURCE samples and expanded by
-	   << shift at the end because UpSampleOGGTo44kHz did the 11/22kHz ->
+	   << shift at the end because UpSampleOGGToOutput did the 11/22kHz ->
 	   44.1kHz duplication. The streaming resampler below replaced that
 	   duplication - it already produces output-rate frames - so the shift
 	   accounting on top of it double-converted: a 22050 mono asset had its
@@ -494,8 +498,6 @@ int idSampleDecoderLocal::DecodeOGG( idSoundSample *sample, int sampleOffset44k,
 	   that survives is the seek below, where the file is addressed in
 	   source frames.
 	*/
-	int sampleOffset = sampleOffset44k;
-	int sampleCount = sampleCount44k;
 
 	// open OGG if not yet opened
 	if ( lastSample == NULL ) {
@@ -532,7 +534,7 @@ int idSampleDecoderLocal::DecodeOGG( idSoundSample *sample, int sampleOffset44k,
 	/*
 	   Seek if the requested offset isn't where we are.
 
-	   sampleOffset is in OUTPUT samples, but audio_transfer_seek() addresses
+	   outputOffset is in OUTPUT samples, but audio_transfer_seek() addresses
 	   the file in SOURCE frames. Those are the same thing only when the asset
 	   rate matches the output rate. When they differ - Ogg is left encoded at
 	   its authored rate and resampled per block below - the offset has to be
@@ -540,15 +542,15 @@ int idSampleDecoderLocal::DecodeOGG( idSoundSample *sample, int sampleOffset44k,
 	   96kHz output with a 44.1kHz asset it overshoots by 2.18x, which is
 	   audible as the stream constantly jumping forward.
 	*/
-	if ( sampleOffset != lastSampleOffset ) {
-		uint64_t srcFrame = (uint64_t)( sampleOffset / sample->objectInfo.nChannels );
+	if ( outputOffset != lastSampleOffset ) {
+		uint64_t srcFrame = (uint64_t)( outputOffset / sample->objectInfo.nChannels );
 		if ( sample->objectInfo.nSamplesPerSec != snd_SampleRate() ) {
 			srcFrame = ( srcFrame * (uint64_t)sample->objectInfo.nSamplesPerSec )
 					/ (uint64_t)snd_SampleRate();
 		}
 		if ( !audio_transfer_seek( atHandle, AUDIO_TYPE_VORBIS, srcFrame ) ) {
 			common->Warning( "idSampleDecoderLocal::DecodeOGG() seek(%d) for %s failed\n",
-					sampleOffset / sample->objectInfo.nChannels, sample->name.c_str() );
+					outputOffset / sample->objectInfo.nChannels, sample->name.c_str() );
 			failed = true;
 			return 0;
 		}
@@ -569,10 +571,10 @@ int idSampleDecoderLocal::DecodeOGG( idSoundSample *sample, int sampleOffset44k,
 		}
 	}
 
-	lastSampleOffset = sampleOffset;
+	lastSampleOffset = outputOffset;
 
 	// decode
-	totalSamples = sampleCount;
+	totalSamples = outputCount;
 	readSamples = 0;
 	do {
 		/*
@@ -749,7 +751,7 @@ int idSampleDecoderLocal::DecodeOGG( idSoundSample *sample, int sampleOffset44k,
 			gotFrames = filled;
 		}
 
-		// de-interleave into the planar layout UpSampleOGGTo44kHz expects
+		// de-interleave into the planar layout UpSampleOGGToOutput expects
 		for ( int i = 0; i < gotFrames; i++ ) {
 			for ( int c = 0; c < ch; c++ ) {
 				planarBuf[c][i] = interleaved[i * ch + c];
@@ -763,7 +765,7 @@ int idSampleDecoderLocal::DecodeOGG( idSoundSample *sample, int sampleOffset44k,
 		   the upsampler's 1:1 passthrough case. Passing the asset's authored
 		   rate would make it duplicate samples on top of the conversion.
 		*/
-		SIMDProcessor->UpSampleOGGTo44kHz( dest + readSamples, planar,
+		SIMDProcessor->UpSampleOGGToOutput( dest + readSamples, planar,
 				gotInterleaved, 44100, sample->objectInfo.nChannels );
 
 		readSamples += gotInterleaved;

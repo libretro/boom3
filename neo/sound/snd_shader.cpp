@@ -409,14 +409,14 @@ void idSoundShader::List() const {
 	for( int k = 0; k < numLeadins ; k++ ) {
 		const idSoundSample *objectp = leadins[k];
 		if ( objectp ) {
-			common->Printf( "      %5dms %4dKb %s (LEADIN)\n", soundSystemLocal.SamplesToMilliseconds(objectp->LengthIn44kHzSamples()), (objectp->objectMemSize/1024)
+			common->Printf( "      %5dms %4dKb %s (LEADIN)\n", soundSystemLocal.SamplesToMilliseconds(objectp->LengthInOutputSamples()), (objectp->objectMemSize/1024)
 				,objectp->name.c_str() );
 		}
 	}
 	for( int k = 0; k < numEntries; k++ ) {
 		const idSoundSample *objectp = entries[k];
 		if ( objectp ) {
-			common->Printf( "      %5dms %4dKb %s\n", soundSystemLocal.SamplesToMilliseconds(objectp->LengthIn44kHzSamples()), (objectp->objectMemSize/1024)
+			common->Printf( "      %5dms %4dKb %s\n", soundSystemLocal.SamplesToMilliseconds(objectp->LengthInOutputSamples()), (objectp->objectMemSize/1024)
 				,objectp->name.c_str() );
 		}
 	}

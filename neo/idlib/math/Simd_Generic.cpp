@@ -3409,12 +3409,12 @@ int VPCALL idSIMD_Generic::CreateVertexProgramShadowCache( idVec4 *vertexCache, 
 
 /*
 ============
-idSIMD_Generic::UpSamplePCMTo44kHz
+idSIMD_Generic::UpSamplePCMToOutput
 
   Duplicate samples for 44kHz output.
 ============
 */
-void idSIMD_Generic::UpSamplePCMTo44kHz( float *dest, const short *src, const int numSamples, const int kHz, const int numChannels ) {
+void idSIMD_Generic::UpSamplePCMToOutput( float *dest, const short *src, const int numSamples, const int kHz, const int numChannels ) {
 	if ( kHz == 11025 ) {
 		if ( numChannels == 1 ) {
 			for ( int i = 0; i < numSamples; i++ ) {
@@ -3448,12 +3448,12 @@ void idSIMD_Generic::UpSamplePCMTo44kHz( float *dest, const short *src, const in
 
 /*
 ============
-idSIMD_Generic::UpSampleOGGTo44kHz
+idSIMD_Generic::UpSampleOGGToOutput
 
   Duplicate samples for 44kHz output.
 ============
 */
-void idSIMD_Generic::UpSampleOGGTo44kHz( float *dest, const float * const *ogg, const int numSamples, const int kHz, const int numChannels ) {
+void idSIMD_Generic::UpSampleOGGToOutput( float *dest, const float * const *ogg, const int numSamples, const int kHz, const int numChannels ) {
 	if ( kHz == 11025 ) {
 		if ( numChannels == 1 ) {
 			for ( int i = 0; i < numSamples; i++ ) {
