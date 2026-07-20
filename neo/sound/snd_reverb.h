@@ -49,23 +49,23 @@ typedef struct sndReverbParams_s {
 	float	diffusion;			// 0..1
 	float	gain;				// master wet gain 0..1
 	float	gainHF;				// 0..1
-	float	gainLF;				// 0..1  (unused by this topology)
+	float	gainLF;				// 0..1, output low band below lfReference
 	float	decayTime;			// 0.1..20 s
 	float	decayHFRatio;		// 0.1..2
-	float	decayLFRatio;		// (unused)
+	float	decayLFRatio;		// 0.1..2, LF decay via in-loop low-shelf
 	float	reflectionsGain;	// 0..3.16
 	float	reflectionsDelay;	// 0..0.3 s
 	float	lateReverbGain;		// 0..10
 	float	lateReverbDelay;	// 0..0.1 s
-	float	echoTime;			// (unused)
-	float	echoDepth;			// (unused)
-	float	modulationTime;		// (unused)
-	float	modulationDepth;	// (unused)
-	float	airAbsorptionGainHF;// (unused)
+	float	echoTime;			// 0.075..0.25 s, parallel comb period
+	float	echoDepth;			// 0..1, comb output blend
+	float	modulationTime;		// 0.04..4 s, read-tap LFO period
+	float	modulationDepth;	// 0..1, LFO excursion
+	float	airAbsorptionGainHF;// 0.892..1, send loss per meter (gain-only approx)
 	float	hfReference;		// Hz
-	float	lfReference;		// (unused)
-	float	roomRolloffFactor;	// (unused)
-	int		decayHFLimit;		// 0/1
+	float	lfReference;		// Hz, low band split point
+	float	roomRolloffFactor;	// wet-path inverse-distance factor
+	int		decayHFLimit;		// 0/1, caps HF decay at the air-absorption limit
 
 	void SetDefaults( void ) {	// EFX_REVERB_PRESET_GENERIC
 		density = 1.0f; diffusion = 1.0f;
@@ -105,6 +105,52 @@ static ID_INLINE int snd_SampleRate( void ) { return snd_sampleRate; }
 #define REVERB_MAX_LINE			16384
 #define REVERB_XFADE_BLOCKS		24		// parameter crossfade span (~0.4 s at 60fps)
 #define REVERB_EARLY_TAPS		6
+/*
+   Echo comb length: EAXREVERB echo time tops out at 0.25 s, which is 24000
+   samples at 96kHz; power of two for mask wrapping. 256 KB across both
+   format twins on the single instance.
+*/
+#define REVERB_ECHO_LEN			32768
+// density read-tap slew: 1/64 sample per sample. 1.56% instantaneous pitch
+// deviation on the wet tail while an area transition retargets the taps,
+// reaching a worst-case small-room retarget in ~1.5s; the artifact rides
+// under the simultaneous gain/decay crossfade of the same area change
+#define REVERB_TAP_SLEW_Q16		1024
+
+/*
+   Q15 quarter-wave-symmetric sine for the modulation LFO, 64 entries per
+   quarter. A static literal table, not computed at Init: identical bytes on
+   every compiler and architecture, so the fixed path stays bit-exact.
+   Generated once with round-half-away from sin(pi/2 * i/64)*32767.
+*/
+static const short snd_reverbSinQ15[65] = {
+	    0,   804,  1608,  2410,  3212,  4011,  4808,  5602,  6393,  7179,
+	 7962,  8739,  9512, 10278, 11039, 11793, 12539, 13279, 14010, 14732,
+	15446, 16151, 16846, 17530, 18204, 18868, 19519, 20159, 20787, 21403,
+	22005, 22594, 23170, 23731, 24279, 24811, 25329, 25832, 26319, 26790,
+	27245, 27683, 28105, 28510, 28898, 29268, 29621, 29956, 30273, 30571,
+	30852, 31113, 31356, 31580, 31785, 31971, 32137, 32285, 32412, 32521,
+	32609, 32678, 32728, 32757, 32767
+};
+// full-wave sine, phase in [0,256) Q8, output Q15
+static inline int Snd_ReverbSinQ15( unsigned ph ) {
+	unsigned q = ( ph >> 6 ) & 3, i = ph & 63;
+	switch ( q ) {
+	case 0: return  snd_reverbSinQ15[i];
+	case 1: return  snd_reverbSinQ15[64 - i];
+	case 2: return -snd_reverbSinQ15[i];
+	default: return -snd_reverbSinQ15[64 - i];
+	}
+}
+// sine with 16-bit phase (Q8 index + Q8 fraction linearly interpolated):
+// 256 raw LFO steps would jump the read tap by whole samples at once and
+// zipper; the interpolation keeps successive tap deltas fractional
+static inline int Snd_ReverbSinQ15i( unsigned ph16 ) {
+	int a = Snd_ReverbSinQ15( ( ph16 >> 8 ) & 255u );
+	int b = Snd_ReverbSinQ15( ( ( ph16 >> 8 ) + 1u ) & 255u );
+	int f = (int)( ph16 & 255u );
+	return a + ( ( ( b - a ) * f ) >> 8 );
+}
 
 class idSoundReverb {
 public:
@@ -118,6 +164,9 @@ public:
 	void	ProcessS16( const int *send, int *destAccum, int numFrames, float wetScale );
 	bool	IsActive( void ) const { return active; }
 	void	Deactivate( void ) { active = false; }
+	// resolved preset for the send side (air absorption / room rolloff are
+	// per-source distance terms, applied where the send gain is computed)
+	const sndReverbParams_t &Params( void ) const { return target; }
 
 private:
 	void	StepBlockParams( void );	// advance crossfade, derive coefficients
@@ -137,16 +186,47 @@ private:
 	short	fbGainQ[REVERB_LINES], dampCoefQ, apGainQ;
 	short	earlyGainQ, lateGainQ;
 
+	// LF band: per-line low-shelf in the loop (decayLFRatio) and an output
+	// band split (gainLF / mid / gainHF). adjLF is the shelf's LP-component
+	// gain delta; the DC loop gain fbGain*(1+adjLF) is clamped below 1 in
+	// StepBlockParams, which is what keeps the decay proof intact.
+	float	lfLoopCoef, lfAdj;
+	short	lfLoopCoefQ, lfAdjQ;
+	float	osLowCoef, osHighCoef, osGainLF, osGainHF;
+	short	osLowCoefQ, osHighCoefQ, osGainLFQ, osGainHFQ;
+
+	// echo: parallel feedback comb at echoTime, RT60-derived feedback,
+	// output blended by echoDepth (depth 0 skips the whole stage)
+	int		echoLen;
+	float	echoFbGain, echoOutGain;
+	short	echoFbGainQ, echoOutGainQ;
+
+	// modulation + density: both act on the FDN read tap. densityTapQ16 is
+	// the slewed per-line base tap (Q16 samples, == lineLen<<16 at density
+	// 1, which is the exact legacy read); modDepthQ16 is the LFO excursion,
+	// subtractive only, so the tap never exceeds the line's history.
+	unsigned modPhase, modPhaseInc;		// Q32 phase accumulator
+	int		modDepthQ16;
+	unsigned densityTapQ16[REVERB_LINES], densityTargetQ16[REVERB_LINES];
+
 	// --- state: float path ---
 	float	preF[REVERB_PREDELAY_LEN];
 	float	apF[2][512];
 	float	lineF[REVERB_LINES][REVERB_MAX_LINE];
 	float	dampF[REVERB_LINES];
+	float	lfLoopF[REVERB_LINES];		// per-line low-shelf state
+	float	echoF[REVERB_ECHO_LEN];
+	float	osLowF[2], osHighF[2];		// output split states, L/R (1st pole)
+	float	osLow2F[2], osHigh2F[2];	// 2nd pole: 12dB/oct band split
 	// --- state: fixed path (int16-scale samples in int32) ---
 	int		preI[REVERB_PREDELAY_LEN];
 	int		apI[2][512];
 	int		lineI[REVERB_LINES][REVERB_MAX_LINE];
 	int		dampI[REVERB_LINES];
+	int		lfLoopI[REVERB_LINES];
+	int		echoI[REVERB_ECHO_LEN];
+	int		osLowI[2], osHighI[2];
+	int		osLow2I[2], osHigh2I[2];
 	// --- shared indices/lengths ---
 	unsigned prePos;
 	unsigned apPos[2];
@@ -225,6 +305,9 @@ ID_INLINE void idSoundReverb::Init( void ) {
 		earlyTapGain[i]  = 1.0f - (float)i / ( REVERB_EARLY_TAPS + 1 );
 		earlyTapGainQ[i] = Snd_ReverbCoefQ15( earlyTapGain[i] );
 	}
+	for ( int i = 0; i < REVERB_LINES; i++ ) {
+		densityTapQ16[i] = densityTargetQ16[i] = (unsigned)lineLen[i] << 16;
+	}
 	cur.SetDefaults();
 	target = cur;
 	xfadeBlocksLeft = 0;
@@ -243,17 +326,41 @@ ID_INLINE void idSoundReverb::StepBlockParams( void ) {
 		const float a = 1.0f / xfadeBlocksLeft;
 		#define RVB_LERP(f) cur.f += ( target.f - cur.f ) * a
 		RVB_LERP(density); RVB_LERP(diffusion); RVB_LERP(gain); RVB_LERP(gainHF);
-		RVB_LERP(decayTime); RVB_LERP(decayHFRatio);
+		RVB_LERP(gainLF);
+		RVB_LERP(decayTime); RVB_LERP(decayHFRatio); RVB_LERP(decayLFRatio);
 		RVB_LERP(reflectionsGain); RVB_LERP(reflectionsDelay);
 		RVB_LERP(lateReverbGain); RVB_LERP(lateReverbDelay);
-		RVB_LERP(hfReference);
+		RVB_LERP(echoTime); RVB_LERP(echoDepth);
+		RVB_LERP(modulationTime); RVB_LERP(modulationDepth);
+		RVB_LERP(airAbsorptionGainHF);
+		RVB_LERP(hfReference); RVB_LERP(lfReference);
+		RVB_LERP(roomRolloffFactor);
 		#undef RVB_LERP
+		cur.decayHFLimit = target.decayHFLimit;	// 0/1 flag: snap, no lerp
 		xfadeBlocksLeft--;
 	}
 
 	// clamp inputs defensively (efx files are data)
 	float decay = cur.decayTime   < 0.1f ? 0.1f : ( cur.decayTime > 20.0f ? 20.0f : cur.decayTime );
 	float hfr   = cur.decayHFRatio< 0.1f ? 0.1f : ( cur.decayHFRatio > 2.0f ? 2.0f : cur.decayHFRatio );
+	float lfr   = cur.decayLFRatio< 0.1f ? 0.1f : ( cur.decayLFRatio > 2.0f ? 2.0f : cur.decayLFRatio );
+
+	/*
+	   decayHFLimit: when set (and air absorption is actually absorbing),
+	   cap the HF decay so it never exceeds what propagation through the
+	   room's air would allow: solving the decay equation for the distance
+	   at which air absorption alone gives -60 dB and converting through
+	   the speed of sound, limitRatio = -3 / (c * log10(g) * T60). The
+	   line length cancels, so one clamp covers all lines. Same
+	   relationship the EAX spec defines and OpenAL Soft implements.
+	*/
+	if ( cur.decayHFLimit && cur.airAbsorptionGainHF < 0.9999f ) {
+		float lg = log10f( cur.airAbsorptionGainHF < 0.892f ? 0.892f : cur.airAbsorptionGainHF );
+		float limitRatio = -3.0f / ( 343.3f * lg * decay );
+		if ( limitRatio < hfr ) {
+			hfr = limitRatio < 0.1f ? 0.1f : limitRatio;
+		}
+	}
 
 	// per-line loop gain from RT60: g = 10^(-3*L/(T60*fs))
 	for ( int i = 0; i < REVERB_LINES; i++ ) {
@@ -278,7 +385,120 @@ ID_INLINE void idSoundReverb::StepBlockParams( void ) {
 	apGain  = 0.15f + 0.55f * ( cur.diffusion < 0.0f ? 0.0f : ( cur.diffusion > 1.0f ? 1.0f : cur.diffusion ) );
 	apGainQ = Snd_ReverbCoefQ15( apGain );
 
-	earlyGain  = cur.gain * cur.gainHF * cur.reflectionsGain;
+	/*
+	   LF decay band: a first-order low-shelf inside each feedback line.
+	   The shelf passes the sample and adds lfAdj times its low-passed
+	   component, so the per-line loop gain is fbGain at HF and
+	   fbGain*(1+lfAdj) at DC. lfAdj is derived from the ratio of the LF
+	   target gain to the mid gain for a representative line and clamped so
+	   the worst-case DC loop gain stays at or below the same 0.9995 the
+	   mid band is held to - that inequality is the entire stability proof
+	   for the integer path, so it is enforced here, not assumed.
+	*/
+	{
+		float gMidRep = powf( 10.0f, -3.0f * lineLen[REVERB_LINES/2] / ( decay * REVERB_FS ) );
+		float gLFRep  = powf( 10.0f, -3.0f * lineLen[REVERB_LINES/2] / ( decay * lfr * REVERB_FS ) );
+		float adj = ( gMidRep > 0.0001f ) ? ( gLFRep / gMidRep - 1.0f ) : 0.0f;
+		float worstMid = fbGain[REVERB_LINES-1] > fbGain[0] ? fbGain[REVERB_LINES-1] : fbGain[0];
+		if ( adj > 0.0f && worstMid * ( 1.0f + adj ) > 0.9995f ) {
+			adj = 0.9995f / worstMid - 1.0f;
+			if ( adj < 0.0f ) adj = 0.0f;
+		}
+		if ( adj < -0.95f ) adj = -0.95f;
+		lfAdj  = adj;
+		lfAdjQ = Snd_ReverbCoefQ15( adj > 0.999f ? 0.999f : adj );
+		// one-pole coefficient at lfReference (see the damping mapping above
+		// for the same first-order approximation style)
+		float lref = cur.lfReference < 20.0f ? 20.0f : ( cur.lfReference > 1000.0f ? 1000.0f : cur.lfReference );
+		// exact one-pole design: c = exp(-2*pi*fc/fs). The small-angle
+		// form 1 - 2*pi*fc/fs drifts sharply above ~1kHz (a 5kHz corner
+		// lands near 8.7kHz), which mattered for the output split below.
+		float c = expf( -6.2831853f * lref / REVERB_FS );
+		if ( c < 0.0f ) c = 0.0f;
+		if ( c > 0.9995f ) c = 0.9995f;
+		lfLoopCoef  = c;
+		lfLoopCoefQ = Snd_ReverbCoefQ15( c );
+	}
+
+	/*
+	   Output band split for gainLF / gainHF: low = one-pole LP at
+	   lfReference, high = signal minus one-pole LP at hfReference, mid the
+	   remainder; out = gainLF*low + mid + gainHF*high. This replaces the
+	   old broadband gainHF fold into earlyGain, which attenuated the whole
+	   wet signal instead of its high band.
+	*/
+	{
+		float lref = cur.lfReference < 20.0f ? 20.0f : ( cur.lfReference > 1000.0f ? 1000.0f : cur.lfReference );
+		float href = cur.hfReference < 1000.0f ? 1000.0f : ( cur.hfReference > 20000.0f ? 20000.0f : cur.hfReference );
+		float cl = expf( -6.2831853f * lref / REVERB_FS );
+		float ch = expf( -6.2831853f * href / REVERB_FS );
+		if ( cl < 0.0f ) cl = 0.0f; if ( cl > 0.9995f ) cl = 0.9995f;
+		if ( ch < 0.0f ) ch = 0.0f; if ( ch > 0.9995f ) ch = 0.9995f;
+		osLowCoef = cl; osHighCoef = ch;
+		osGainLF = cur.gainLF < 0.0f ? 0.0f : ( cur.gainLF > 1.0f ? 1.0f : cur.gainLF );
+		osGainHF = cur.gainHF < 0.0f ? 0.0f : ( cur.gainHF > 1.0f ? 1.0f : cur.gainHF );
+		osLowCoefQ = Snd_ReverbCoefQ15( cl ); osHighCoefQ = Snd_ReverbCoefQ15( ch );
+		osGainLFQ = Snd_ReverbCoefQ15( osGainLF ); osGainHFQ = Snd_ReverbCoefQ15( osGainHF );
+	}
+
+	/*
+	   Echo: parallel feedback comb at echoTime, feedback set from the same
+	   RT60 relationship as the FDN lines so the pulses die with the room,
+	   output weighted by echoDepth. Depth 0 skips the stage entirely in
+	   the process loops.
+	*/
+	{
+		float et = cur.echoTime < 0.075f ? 0.075f : ( cur.echoTime > 0.25f ? 0.25f : cur.echoTime );
+		echoLen = (int)( et * REVERB_FS );
+		if ( echoLen > REVERB_ECHO_LEN - 2 ) echoLen = REVERB_ECHO_LEN - 2;
+		if ( echoLen < 64 ) echoLen = 64;
+		float g = powf( 10.0f, -3.0f * echoLen / ( decay * REVERB_FS ) );
+		if ( g > 0.9995f ) g = 0.9995f;
+		echoFbGain  = g;
+		echoFbGainQ = Snd_ReverbCoefQ15( g );
+		float d = cur.echoDepth < 0.0f ? 0.0f : ( cur.echoDepth > 1.0f ? 1.0f : cur.echoDepth );
+		echoOutGain  = d;
+		echoOutGainQ = Snd_ReverbCoefQ15( d > 0.999f ? 0.999f : d );
+	}
+
+	/*
+	   Modulation: LFO on the FDN read taps. Depth in samples follows the
+	   EAXREVERB scale (0.05/4 * modulationTime * depth * fs, the OpenAL
+	   Soft relationship); the excursion is subtractive only so the tap
+	   never asks for more history than the line holds. Phase advances by a
+	   Q32 integer increment - a pure function of the parameters and the
+	   frame index, so the fixed path stays bit-exact.
+
+	   Density scales the same read taps: cbrt(density) of the line length
+	   (delay-length multiplier per EFX, applied downward within our fixed
+	   prime buffers rather than upward with reallocation), slewed at
+	   REVERB_TAP_SLEW_Q16 per sample. density 1 with modulation off gives
+	   a whole-sample tap equal to the line length: the exact legacy read,
+	   bit-identical to the pre-feature reverb.
+	*/
+	{
+		float mt = cur.modulationTime < 0.04f ? 0.04f : ( cur.modulationTime > 4.0f ? 4.0f : cur.modulationTime );
+		float md = cur.modulationDepth < 0.0f ? 0.0f : ( cur.modulationDepth > 1.0f ? 1.0f : cur.modulationDepth );
+		modPhaseInc = (unsigned)( 4294967296.0 / ( (double)mt * REVERB_FS ) );
+		modDepthQ16 = (int)( ( 0.05f / 4.0f ) * mt * md * REVERB_FS * 65536.0f );
+		float dens = cur.density < 0.001f ? 0.001f : ( cur.density > 1.0f ? 1.0f : cur.density );
+		float mult = cbrtf( dens );
+		if ( mult < 0.35f ) mult = 0.35f;
+		for ( int i = 0; i < REVERB_LINES; i++ ) {
+			unsigned t = (unsigned)( (double)lineLen[i] * mult * 65536.0 );
+			// keep the tap inside [16 samples, lineLen], and leave room for
+			// the modulation excursion plus the interpolation neighbour
+			int maxT = ( lineLen[i] << 16 );
+			int minT = ( 16 << 16 ) + modDepthQ16;
+			if ( (int)t > maxT ) t = (unsigned)maxT;
+			if ( (int)t < minT ) t = (unsigned)( minT < maxT ? minT : maxT );
+			densityTargetQ16[i] = t;
+		}
+	}
+
+	// gainHF no longer folded in broadband: the output band split applies
+	// it to the high band only, which is what the parameter means
+	earlyGain  = cur.gain * cur.reflectionsGain;
 	if ( earlyGain > 1.0f ) earlyGain = 1.0f;
 	float lg   = cur.gain * cur.lateReverbGain * 0.25f;	// FDN sum headroom
 	if ( lg > 1.0f ) lg = 1.0f;
@@ -307,6 +527,9 @@ ID_INLINE void idSoundReverb::ProcessFloat( const float *send, float *dest, int 
 	const float lG    = lateGainL * norm;
 	const unsigned preMask = REVERB_PREDELAY_LEN - 1;
 
+	const bool echoOn = echoOutGain > 0.0001f;
+	const bool modOn  = modDepthQ16 > 0;
+
 	for ( int i = 0; i < numFrames; i++ ) {
 		preF[prePos & preMask] = send[i];
 
@@ -327,12 +550,50 @@ ID_INLINE void idSoundReverb::ProcessFloat( const float *send, float *dest, int 
 			x = y;
 		}
 
-		// FDN: read line outputs, damp, Householder feedback
+		// FDN: read line outputs at the (slewed, possibly modulated)
+		// fractional tap, low-shelf for the LF decay band, one-pole damp
+		// for the HF band, Householder feedback
 		float out[REVERB_LINES]; float sum = 0.0f;
 		for ( int l = 0; l < REVERB_LINES; l++ ) {
-			unsigned p = linePos[l] % (unsigned)lineLen[l];
-			float v = lineF[l][p];
-			dampF[l] += dampCoef * ( v - dampF[l] );	// one-pole LP in the loop
+			unsigned tap = densityTapQ16[l];
+			if ( tap != densityTargetQ16[l] ) {
+				if ( tap < densityTargetQ16[l] ) {
+					tap += REVERB_TAP_SLEW_Q16;
+					if ( tap > densityTargetQ16[l] ) tap = densityTargetQ16[l];
+				} else {
+					tap -= REVERB_TAP_SLEW_Q16;
+					if ( tap < densityTargetQ16[l] ) tap = densityTargetQ16[l];
+				}
+				densityTapQ16[l] = tap;
+			}
+			if ( modOn ) {
+				// per-line phase offset decorrelates the lines; excursion
+				// is (1+sin)/2 * depth, subtractive only
+				unsigned ph = ( ( modPhase >> 16 ) + (unsigned)l * 8192u ) & 65535u;
+				int sq = Snd_ReverbSinQ15i( ph );
+				tap -= (unsigned)( ( (long long)modDepthQ16 * ( 32768 + sq ) ) >> 16 );
+			}
+			int intD = (int)( tap >> 16 );
+			unsigned frac = tap & 0xffffu;
+			unsigned base = linePos[l] + (unsigned)lineLen[l];
+			float v;
+			float a0 = lineF[l][( base - (unsigned)intD ) % (unsigned)lineLen[l]];
+			if ( frac == 0 ) {
+				v = a0;		// whole-sample tap: the exact legacy read
+			} else {
+				float b0 = lineF[l][( base - (unsigned)intD - 1u ) % (unsigned)lineLen[l]];
+				v = a0 + ( b0 - a0 ) * ( frac * ( 1.0f / 65536.0f ) );
+			}
+			// LF decay shelf: pass v, add lfAdj times its low band
+			lfLoopF[l] += ( 1.0f - lfLoopCoef ) * ( v - lfLoopF[l] );
+			v += lfAdj * lfLoopF[l];
+			// one-pole LP in the loop; alpha = 1-dampCoef so dampCoef 0
+			// means transparent (out follows v exactly), not silent. The
+			// original used dampCoef as the alpha directly, which inverted
+			// the "higher = darker" mapping and, at the clamp value 0
+			// (any decayHFRatio >= 1), froze the state at zero and gated
+			// the whole late reverb - unexercised until efx content ran.
+			dampF[l] += ( 1.0f - dampCoef ) * ( v - dampF[l] );
 			out[l] = dampF[l];
 			sum += out[l];
 		}
@@ -346,10 +607,37 @@ ID_INLINE void idSoundReverb::ProcessFloat( const float *send, float *dest, int 
 		float lL = out[0] + out[2] + out[4] + out[6];
 		float lR = out[1] + out[3] + out[5] + out[7];
 
-		dest[i*2+0] += eL * eG + lL * lG;
-		dest[i*2+1] += eR * eG + lR * lG;
+		if ( echoOn ) {
+			unsigned p = (unsigned)( prePos % (unsigned)echoLen );
+			float e = echoF[p];
+			echoF[p] = x + echoFbGain * e;
+			lL += e * echoOutGain;
+			lR += e * echoOutGain;
+		}
+
+		float wL = eL * eG + lL * lG;
+		float wR = eR * eG + lR * lG;
+
+		// output band split, two cascaded one-poles per side (12 dB/oct):
+		// a single pole leaks so much of a 10kHz tone into the mid band
+		// that gainHF could only ever cut it by half
+		osLowF[0]   += ( 1.0f - osLowCoef )  * ( wL - osLowF[0] );
+		osLowF[1]   += ( 1.0f - osLowCoef )  * ( wR - osLowF[1] );
+		osLow2F[0]  += ( 1.0f - osLowCoef )  * ( osLowF[0] - osLow2F[0] );
+		osLow2F[1]  += ( 1.0f - osLowCoef )  * ( osLowF[1] - osLow2F[1] );
+		osHighF[0]  += ( 1.0f - osHighCoef ) * ( wL - osHighF[0] );
+		osHighF[1]  += ( 1.0f - osHighCoef ) * ( wR - osHighF[1] );
+		osHigh2F[0] += ( 1.0f - osHighCoef ) * ( osHighF[0] - osHigh2F[0] );
+		osHigh2F[1] += ( 1.0f - osHighCoef ) * ( osHighF[1] - osHigh2F[1] );
+		float loL = osLow2F[0], loR = osLow2F[1];
+		float hiL = wL - osHigh2F[0], hiR = wR - osHigh2F[1];
+		float midL = wL - loL - hiL, midR = wR - loR - hiR;
+
+		dest[i*2+0] += osGainLF * loL + midL + osGainHF * hiL;
+		dest[i*2+1] += osGainLF * loR + midR + osGainHF * hiR;
 		prePos++;
 		apPos[0]++; apPos[1]++;
+		modPhase += modPhaseInc;
 	}
 }
 
@@ -376,6 +664,9 @@ ID_INLINE void idSoundReverb::ProcessS16( const int *send, int *destAccum, int n
 	#define QMUL(x,g) ( (x) >= 0 ? (int)( ( (long long)(x) * (g) ) >> 15 ) \
 	                             : -(int)( ( -(long long)(x) * (g) ) >> 15 ) )
 
+	const bool echoOn = echoOutGainQ > 0;
+	const bool modOn  = modDepthQ16 > 0;
+
 	for ( int i = 0; i < numFrames; i++ ) {
 		preI[prePos & preMask] = send[i];
 
@@ -396,9 +687,49 @@ ID_INLINE void idSoundReverb::ProcessS16( const int *send, int *destAccum, int n
 
 		int out[REVERB_LINES]; long long sum = 0;
 		for ( int l = 0; l < REVERB_LINES; l++ ) {
-			unsigned p = linePos[l] % (unsigned)lineLen[l];
-			int v = lineI[l][p];
-			dampI[l] += QMUL( v - dampI[l], dampCoefQ );
+			unsigned tap = densityTapQ16[l];
+			if ( tap != densityTargetQ16[l] ) {
+				if ( tap < densityTargetQ16[l] ) {
+					tap += REVERB_TAP_SLEW_Q16;
+					if ( tap > densityTargetQ16[l] ) tap = densityTargetQ16[l];
+				} else {
+					tap -= REVERB_TAP_SLEW_Q16;
+					if ( tap < densityTargetQ16[l] ) tap = densityTargetQ16[l];
+				}
+				densityTapQ16[l] = tap;
+			}
+			if ( modOn ) {
+				unsigned ph = ( ( modPhase >> 16 ) + (unsigned)l * 8192u ) & 65535u;
+				int sq = Snd_ReverbSinQ15i( ph );
+				tap -= (unsigned)( ( (long long)modDepthQ16 * ( 32768 + sq ) ) >> 16 );
+			}
+			int intD = (int)( tap >> 16 );
+			unsigned frac = tap & 0xffffu;
+			unsigned base = linePos[l] + (unsigned)lineLen[l];
+			int a0 = lineI[l][( base - (unsigned)intD ) % (unsigned)lineLen[l]];
+			int v;
+			if ( frac == 0 ) {
+				v = a0;		// whole-sample tap: the exact legacy read
+			} else {
+				/*
+				   Linear interpolation between two history samples is a
+				   convex combination: |v| <= max(|a0|,|b0|) regardless of
+				   the delta rounding, so the read cannot expand the loop -
+				   the contraction proof needs no new argument here. The
+				   delta product truncates toward zero, matching QMUL.
+				*/
+				int b0 = lineI[l][( base - (unsigned)intD - 1u ) % (unsigned)lineLen[l]];
+				int d = b0 - a0;
+				int step = d >= 0 ? (int)( ( (long long)d * frac ) >> 16 )
+				                  : -(int)( ( -(long long)d * frac ) >> 16 );
+				v = a0 + step;
+			}
+			// LF decay shelf: one-pole low band, added at lfAdj. Loop gain
+			// at DC = fbGain*(1+lfAdj) <= 0.9995 (enforced in
+			// StepBlockParams), QMUL truncation keeps the contraction.
+			lfLoopI[l] += QMUL( v - lfLoopI[l], (short)( 32767 - lfLoopCoefQ ) );
+			v += QMUL( lfLoopI[l], lfAdjQ );
+			dampI[l] += QMUL( v - dampI[l], (short)( 32767 - dampCoefQ ) );
 			out[l] = dampI[l];
 			sum += out[l];
 		}
@@ -412,10 +743,39 @@ ID_INLINE void idSoundReverb::ProcessS16( const int *send, int *destAccum, int n
 		int lL = out[0] + out[2] + out[4] + out[6];
 		int lR = out[1] + out[3] + out[5] + out[7];
 
-		destAccum[i*2+0] += QMUL( QMUL( eL, earlyGainQ ) + QMUL( lL, lateGainQ ), wetQ );
-		destAccum[i*2+1] += QMUL( QMUL( eR, earlyGainQ ) + QMUL( lR, lateGainQ ), wetQ );
+		if ( echoOn ) {
+			unsigned p = (unsigned)( prePos % (unsigned)echoLen );
+			int e = echoI[p];
+			echoI[p] = x + QMUL( e, echoFbGainQ );	// toward-zero: contracts
+			lL += QMUL( e, echoOutGainQ );
+			lR += QMUL( e, echoOutGainQ );
+		}
+
+		int wL = QMUL( eL, earlyGainQ ) + QMUL( lL, lateGainQ );
+		int wR = QMUL( eR, earlyGainQ ) + QMUL( lR, lateGainQ );
+
+		// output band split, two cascaded one-poles per side (12 dB/oct);
+		// feed-forward only, no stability interaction
+		osLowI[0]   += QMUL( wL - osLowI[0],  (short)( 32767 - osLowCoefQ ) );
+		osLowI[1]   += QMUL( wR - osLowI[1],  (short)( 32767 - osLowCoefQ ) );
+		osLow2I[0]  += QMUL( osLowI[0] - osLow2I[0],  (short)( 32767 - osLowCoefQ ) );
+		osLow2I[1]  += QMUL( osLowI[1] - osLow2I[1],  (short)( 32767 - osLowCoefQ ) );
+		osHighI[0]  += QMUL( wL - osHighI[0], (short)( 32767 - osHighCoefQ ) );
+		osHighI[1]  += QMUL( wR - osHighI[1], (short)( 32767 - osHighCoefQ ) );
+		osHigh2I[0] += QMUL( osHighI[0] - osHigh2I[0], (short)( 32767 - osHighCoefQ ) );
+		osHigh2I[1] += QMUL( osHighI[1] - osHigh2I[1], (short)( 32767 - osHighCoefQ ) );
+		int loL = osLow2I[0], loR = osLow2I[1];
+		int hiL = wL - osHigh2I[0], hiR = wR - osHigh2I[1];
+		int midL = wL - loL - hiL, midR = wR - loR - hiR;
+
+		int oL = QMUL( loL, osGainLFQ ) + midL + QMUL( hiL, osGainHFQ );
+		int oR = QMUL( loR, osGainLFQ ) + midR + QMUL( hiR, osGainHFQ );
+
+		destAccum[i*2+0] += QMUL( oL, wetQ );
+		destAccum[i*2+1] += QMUL( oR, wetQ );
 		prePos++;
 		apPos[0]++; apPos[1]++;
+		modPhase += modPhaseInc;
 	}
 	#undef QMUL
 }

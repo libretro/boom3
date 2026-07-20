@@ -1427,6 +1427,7 @@ void idSoundWorldLocal::AddChannelContribution( idSoundEmitterLocal *sound, idSo
 	// it's not affected by distance or occlusion
 	//
 	float	spatialize = 1;
+	float	sendDist = 0.0f;	// meters; stays 0 for global sounds
 	idVec3 spatializedOriginInMeters;
 	if ( !global ) {
 		float	dlen;
@@ -1440,6 +1441,8 @@ void idSoundWorldLocal::AddChannelContribution( idSoundEmitterLocal *sound, idSo
 			spatializedOriginInMeters = sound->spatializedOrigin * DOOM_TO_METERS;
 			dlen = sound->distance;
 		}
+
+		sendDist = dlen;
 
 		// reduce volume based on distance
 		if ( dlen >= maxd ) {
@@ -1639,7 +1642,37 @@ void idSoundWorldLocal::AddChannelContribution( idSoundEmitterLocal *sound, idSo
 		// sounds, matching the character of the old per-source EFX send.
 		if ( idSoundSystemLocal::s_useReverb.GetBool() && soundSystemLocal.efxloaded
 		     && !( chan->parms.soundShaderFlags & ( SSF_GLOBAL | SSF_PRIVATE_SOUND ) ) ) {
-			const float sendVol = ( ears[0] + ears[1] ) * 0.5f;
+			float sendVol = ( ears[0] + ears[1] ) * 0.5f;
+
+			/*
+			   Per-source distance terms on the wet send, from the resolved
+			   preset:
+
+			   - roomRolloffFactor: an additional inverse-distance law on
+			     the room path only, gain = mind / (mind + rrf*(d - mind))
+			     - the standard EAX/OpenAL room rolloff model. The dry path
+			     keeps the game's own attenuation, which sendVol already
+			     carries.
+			   - airAbsorptionGainHF: per EAX this is an HF-only loss of
+			     airAbs^meters on the way to the room. A true per-source
+			     filter would add a state per channel; this applies it as a
+			     frequency-independent attenuation of the send instead - a
+			     documented approximation that captures the level effect
+			     (distant sources drive the room less) without the
+			     spectral tilt.
+			*/
+			const sndReverbParams_t &rp = reverb.Params();
+			if ( sendDist > 0.0f ) {
+				float mind = parms->minDistance > 0.01f ? parms->minDistance : 0.01f;
+				if ( rp.roomRolloffFactor > 0.0f && sendDist > mind ) {
+					sendVol *= mind / ( mind + rp.roomRolloffFactor * ( sendDist - mind ) );
+				}
+				if ( rp.airAbsorptionGainHF < 0.9999f ) {
+					float aa = powf( rp.airAbsorptionGainHF, sendDist );
+					if ( aa < 0.05f ) aa = 0.05f;
+					sendVol *= aa;
+				}
+			}
 			if ( soundSystemLocal.outputIsFloat ) {
 				if ( stereoSample ) {
 					for ( int k = 0; k < numFrames; k++ ) {
