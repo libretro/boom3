@@ -43,29 +43,9 @@ If you have questions concerning this license or the applicable additional terms
 #include "framework/CVarSystem.h"
 #include "sys/sys_public.h"
 
-#define	WINDOW_STYLE	(WS_OVERLAPPED|WS_BORDER|WS_CAPTION|WS_VISIBLE | WS_THICKFRAME)
-
 void	Sys_CreateConsole( void );
 void	Sys_DestroyConsole( void );
 
-void	Win_SetErrorText( const char *text );
-
-const unsigned char *Win_GetScanTable( void );
-int		Win_MapKey (int key);
-
 void Conbuf_AppendText( const char *msg );
-
-struct Win32Vars_t {
-	HWND			hWnd;
-	HINSTANCE		hInstance;
-
-	OSVERSIONINFOEX	osversion;
-
-	static idCVar	win_outputDebugString;
-	static idCVar	win_outputEditString;
-	static idCVar	win_viewlog;
-};
-
-extern Win32Vars_t	win32;
 
 #endif /* !__WIN_LOCAL_H__ */

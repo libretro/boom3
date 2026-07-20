@@ -30,7 +30,12 @@ If you have questions concerning this license or the applicable additional terms
 #include <sys/stat.h>
 #include <errno.h>
 #include <dirent.h>
+#ifdef _WIN32
+#include <direct.h>
+#include <io.h>
+#else
 #include <unistd.h>
+#endif
 #include <sys/time.h>
 
 #include "sys/platform.h"
@@ -43,7 +48,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "sys/libretro/retro_public.h"
 
 extern "C" {
-#include "../libretro-common/include/file/file_path.h"
+#include <file/file_path.h>
 }
 
 #define					COMMAND_HISTORY 64
@@ -55,9 +60,6 @@ idEditField				history_backup;				// the base edit line
 
 // terminal support
 idCVar in_tty( "in_tty", "1", CVAR_BOOL | CVAR_INIT | CVAR_SYSTEM, "terminal tab-completion and history" );
-
-// pid - useful when you attach to gdb..
-idCVar com_pid( "com_pid", "0", CVAR_INTEGER | CVAR_INIT | CVAR_SYSTEM, "process id" );
 
 // exit - quit - error --------------------------------------------------------
 
@@ -106,16 +108,14 @@ otherwise, push it for execution at exit
 NOTE: might even want to add a small delay?
 ==================
 */
-void idSysLocal::StartProcess( const char *exeName, bool quit ) {
-	if ( quit ) {
+void idSysLocal::StartProcess( const char *exeName, bool quit )
+{
+	if ( quit )
+	{
 		common->DPrintf( "Sys_StartProcess %s (delaying until final exit)\n", exeName );
 		LibRetro_SetExitSpawn( exeName );
 		cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "quit\n" );
-		return;
 	}
-
-	common->DPrintf( "Sys_StartProcess %s\n", exeName );
-	Sys_DoStartProcess( exeName );
 }
 
 /*
@@ -164,10 +164,10 @@ int Sys_ListFiles( const char *directory, const char *extension, idStrList &list
 
 	// search
 	// NOTE: case sensitivity of directory path can screw us up here
-	if ((fdir = opendir(directory)) == NULL) {
-		if (debug) {
+	if ((fdir = opendir(directory)) == NULL)
+	{
+		if (debug)
 			common->Printf("Sys_ListFiles: opendir %s failed\n", directory);
-		}
 		return -1;
 	}
 
@@ -222,8 +222,6 @@ Sys_Init
 */
 void Sys_Init( void ) {
 	LibRetro_InitConsoleInput();
-	com_pid.SetInteger( getpid() );
-	common->Printf( "pid: %d\n", com_pid.GetInteger() );
 	common->Printf( "%d MB System Memory\n", Sys_GetSystemRam() );
 }
 
@@ -299,33 +297,39 @@ void Sys_SetClipboardData( const char *string ) {
 Sys_LockMemory
 ================
 */
-#ifndef _WIN32
 bool Sys_LockMemory( void *ptr, int bytes ) {
+#ifdef _WIN32
+	return ( VirtualLock( ptr, (SIZE_T)bytes ) != FALSE );
+#else
 	return true;
-}
 #endif
+}
 
 /*
 ================
 Sys_UnlockMemory
 ================
 */
-#ifndef _WIN32
 bool Sys_UnlockMemory( void *ptr, int bytes ) {
+#ifdef _WIN32
+	return ( VirtualUnlock( ptr, (SIZE_T)bytes ) != FALSE );
+#else
 	return true;
-}
 #endif
+}
 
 /*
 ================
 Sys_SetPhysicalWorkMemory
 ================
 */
-#ifndef _WIN32
 void Sys_SetPhysicalWorkMemory( int minBytes, int maxBytes ) {
+#ifdef _WIN32
+	::SetProcessWorkingSetSize( GetCurrentProcess(), minBytes, maxBytes );
+#else
 	common->DPrintf( "TODO: Sys_SetPhysicalWorkMemory\n" );
-}
 #endif
+}
 
 /*
 ===========
@@ -333,12 +337,20 @@ Sys_GetDriveFreeSpace
 return in MegaBytes
 ===========
 */
-#ifndef _WIN32
 int Sys_GetDriveFreeSpace( const char *path ) {
+#ifdef _WIN32
+	DWORDLONG lpFreeBytesAvailable;
+	DWORDLONG lpTotalNumberOfBytes;
+	DWORDLONG lpTotalNumberOfFreeBytes;
+	//FIXME: see why this is failing on some machines
+	if ( ::GetDiskFreeSpaceEx( path, (PULARGE_INTEGER)&lpFreeBytesAvailable, (PULARGE_INTEGER)&lpTotalNumberOfBytes, (PULARGE_INTEGER)&lpTotalNumberOfFreeBytes ) )
+		return ( double )( lpFreeBytesAvailable ) / ( 1024.0 * 1024.0 );
+	return 26;
+#else
 	common->DPrintf( "TODO: Sys_GetDriveFreeSpace\n" );
 	return 1000 * 1024;
-}
 #endif
+}
 
 /*
 ===============

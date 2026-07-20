@@ -2472,9 +2472,6 @@ void idCommonLocal::Init( int argc, char **argv ) {
 		// init CVar system
 		cvarSystem->Init();
 
-		// start file logging right away, before early console or whatever
-		StartupVariable( "win_outputDebugString", false );
-
 		// register all static CVars
 		idCVar::RegisterStaticVars();
 

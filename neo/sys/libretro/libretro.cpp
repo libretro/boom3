@@ -475,43 +475,30 @@ Sys_GetSystemRam
 returns in megabytes
 ================
 */
-#ifndef _WIN32
 int Sys_GetSystemRam( void ) {
 #ifdef __linux__
-	long	count, page_size;
-	int		mb;
-
-	count = sysconf( _SC_PHYS_PAGES );
-	if ( count == -1 ) {
-		common->Printf( "GetSystemRam: sysconf _SC_PHYS_PAGES failed\n" );
+	int mb;
+	long page_size;
+	long count = sysconf( _SC_PHYS_PAGES );
+	if ( count == -1 )
 		return 512;
-	}
 	page_size = sysconf( _SC_PAGE_SIZE );
-	if ( page_size == -1 ) {
-		common->Printf( "GetSystemRam: sysconf _SC_PAGE_SIZE failed\n" );
+	if ( page_size == -1 )
 		return 512;
-	}
-	mb= (int)( (double)count * (double)page_size / ( 1024 * 1024 ) );
+	mb = (int)( (double)count * (double)page_size / ( 1024 * 1024 ) );
 	// round to the nearest 16Mb
-	mb = ( mb + 8 ) & ~15;
-	return mb;
+	return ( mb + 8 ) & ~15;
+#elif defined(_WIN32)
+        int physRam;
+	MEMORYSTATUSEX statex;
+	statex.dwLength = sizeof ( statex );
+	GlobalMemoryStatusEx (&statex);
+	physRam = statex.ullTotalPhys / ( 1024 * 1024 );
+	// HACK: For some reason, ullTotalPhys is sometimes off by a meg or two, so we round up to the nearest 16 megs
+	return ( physRam + 8 ) & ~15;
 #else
 	return 1024;
 #endif
-}
-#endif
-
-/*
-==================
-Sys_DoStartProcess
-if we don't fork, this function never returns
-the no-fork lets you keep the terminal when you're about to spawn an installer
-
-if the command contains spaces, system() is used. Otherwise the more straightforward execl ( system() blows though )
-==================
-*/
-void Sys_DoStartProcess( const char *exeName, bool dofork ) {
-	printf( "Sys_DoStartProcess: unimplemented\n" );
 }
 
 /*
