@@ -355,29 +355,6 @@ void Sys_EndKeyboardInputEvents() {
 
 /*
 ================
-Sys_ReturnJoystickInputEvent
-================
-*/
-int Sys_ReturnJoystickInputEvent(const int n, int &axis, int &value) {
-	// Never reached: Sys_PollJoystickInputEvents() (stubs.cpp) returns 0, so
-	// idUsercmdGenLocal::Joystick()'s loop body does not run. Gamepad input
-	// arrives as key events through Sys_SetKeys() instead, which is why there
-	// is no axis queue to read here. Kept because the symbol is linked.
-	(void)n; (void)axis; (void)value;
-	return 0;
-}
-
-/*
-================
-Sys_EndJoystickInputEvents
-================
-*/
-void Sys_EndJoystickInputEvents() {
-	// nothing queued - see Sys_ReturnJoystickInputEvent above
-}
-
-/*
-================
 Sys_PollMouseInputEvents
 ================
 */

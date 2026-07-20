@@ -42,16 +42,6 @@ typedef enum {
 } cpuidSimd_t;
 
 typedef enum {
-	AXIS_LEFT_X,
-	AXIS_LEFT_Y,
-	AXIS_RIGHT_X,
-	AXIS_RIGHT_Y,
-	AXIS_LEFT_TRIG,
-	AXIS_RIGHT_TRIG,
-	MAX_JOYSTICK_AXIS
-} joystickAxis_t;
-
-typedef enum {
 	SE_NONE,				// evTime is still valid
 	SE_KEY,					// evValue is a key code, evValue2 is the down flag
 	SE_CHAR,				// evValue is a "High ASCII" (ISO-8859-1) char
@@ -74,48 +64,6 @@ typedef enum {
 	M_DELTAY,
 	M_DELTAZ
 } sys_mEvents;
-
-typedef enum {
-	J_ACTION_FIRST,
-	// these names are similar to the SDL3 SDL_GamepadButton names
-	J_BTN_SOUTH = J_ACTION_FIRST, // bottom face button, like Xbox A
-	J_BTN_EAST,  // right face button, like Xbox B
-	J_BTN_WEST,  // left face button, like Xbox X
-	J_BTN_NORTH, // top face button, like Xbox Y
-	J_BTN_BACK,
-	J_BTN_GUIDE, // Note: this one should probably not be used?
-	J_BTN_START,
-	J_BTN_LSTICK, // press left stick
-	J_BTN_RSTICK, // press right stick
-	J_BTN_LSHOULDER,
-	J_BTN_RSHOULDER,
-
-	J_DPAD_UP,
-	J_DPAD_DOWN,
-	J_DPAD_LEFT,
-	J_DPAD_RIGHT,
-
-	J_BTN_MISC1, // Additional button (e.g. Xbox Series X share button, PS5 microphone button, Nintendo Switch Pro capture button, Amazon Luna microphone button)
-	J_BTN_RPADDLE1, // Upper or primary paddle, under your right hand (e.g. Xbox Elite paddle P1)
-	J_BTN_LPADDLE1, // Upper or primary paddle, under your left hand (e.g. Xbox Elite paddle P3)
-	J_BTN_RPADDLE2, // Lower or secondary paddle, under your right hand (e.g. Xbox Elite paddle P2)
-	J_BTN_LPADDLE2, //  Lower or secondary paddle, under your left hand (e.g. Xbox Elite paddle P4)
-
-	J_ACTION_MAX = J_BTN_LPADDLE2,
-	// leaving some space here for about 12 additional J_ACTIONs, if needed
-
-	J_AXIS_MIN = 32,
-	J_AXIS_LEFT_X = J_AXIS_MIN + AXIS_LEFT_X,
-	J_AXIS_LEFT_Y = J_AXIS_MIN + AXIS_LEFT_Y,
-	J_AXIS_RIGHT_X = J_AXIS_MIN + AXIS_RIGHT_X,
-	J_AXIS_RIGHT_Y = J_AXIS_MIN + AXIS_RIGHT_Y,
-	J_AXIS_LEFT_TRIG = J_AXIS_MIN + AXIS_LEFT_TRIG,
-	J_AXIS_RIGHT_TRIG = J_AXIS_MIN + AXIS_RIGHT_TRIG,
-
-	J_AXIS_MAX = J_AXIS_MIN + MAX_JOYSTICK_AXIS - 1,
-
-	MAX_JOY_EVENT
-} sys_jEvents;
 
 struct sysEvent_t {
 	sysEventType_t	evType;
@@ -243,12 +191,6 @@ void			Sys_EndKeyboardInputEvents( void );
 int				Sys_PollMouseInputEvents( void );
 int				Sys_ReturnMouseInputEvent( const int n, int &action, int &value );
 void			Sys_EndMouseInputEvents( void );
-
-// joystick input polling
-void			Sys_SetRumble( int device, int low, int hi );
-int				Sys_PollJoystickInputEvents( int deviceNum );
-int				Sys_ReturnJoystickInputEvent( const int n, int &action, int &value );
-void			Sys_EndJoystickInputEvents();
 
 // DG: added this for an ungodly hack for gamepad support
 // active = true means "currently a GUI with a cursor is active/focused"
