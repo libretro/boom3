@@ -48,7 +48,10 @@ idSIMD_SSE2::GetName
 ============
 */
 const char * idSIMD_SSE2::GetName( void ) const {
-	return "MMX & SSE & SSE2";
+	/* CmpLT is the only SSE2 routine that survives the __GNUC__ guard; the
+	   rest of this file is MSVC 32-bit only. Everything else is inherited
+	   from idSIMD_SSE and idSIMD_Generic. */
+	return "SSE2 (CmpLT) + SSE (3 routines) + generic";
 }
 
 /*

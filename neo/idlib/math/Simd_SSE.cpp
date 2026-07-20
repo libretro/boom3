@@ -58,7 +58,11 @@ idSIMD_SSE::GetName
 ============
 */
 const char * idSIMD_SSE::GetName( void ) const {
-	return "MMX & SSE";
+	/* Only three routines below survive the __GNUC__ guard - Dot(plane,
+	   drawVert), Dot(vec3, plane) and MinMax(drawVert). Everything else in
+	   this file is MSVC 32-bit inline asm and is not compiled here, and
+	   there is no MMX code at all. Report what actually runs. */
+	return "SSE (3 routines) + generic";
 }
 
 /*

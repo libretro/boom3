@@ -44,7 +44,11 @@ idSIMD_SSE3::GetName
 ============
 */
 const char * idSIMD_SSE3::GetName( void ) const {
-	return "MMX & SSE & SSE2 & SSE3";
+	/* This class contributes no routines outside MSVC 32-bit: the only SSE3
+	   code in this file is TransformVerts, which lives in the _MSC_VER
+	   branch. On every other toolchain idSIMD_SSE3 is idSIMD_SSE2 with a
+	   different name, so do not claim SSE3 is doing any work. */
+	return "SSE2 (CmpLT) + SSE (3 routines) + generic";
 }
 
 #elif defined(_MSC_VER) && defined(_M_IX86)
