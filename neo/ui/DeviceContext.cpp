@@ -1160,81 +1160,9 @@ const idMaterial *idDeviceContext::GetScrollBarImage(int index) {
 	return scrollBarImages[SCROLLBAR_HBACK];
 }
 
-// this only supports left aligned text
-idRegion *idDeviceContext::GetTextRegion(const char *text, float textScale, idRectangle rectDraw, float xStart, float yStart) {
-#if 0
-	const char	*p, *textPtr, *newLinePtr;
-	char		buff[1024];
-	int			len, textWidth, newLine, newLineWidth;
-	float		y;
-
-	float charSkip = MaxCharWidth(textScale) + 1;
-	float lineSkip = MaxCharHeight(textScale);
-
-	textWidth = 0;
-	newLinePtr = NULL;
-#endif
-	return NULL;
-/*
-	if (text == NULL) {
-		return;
-	}
-
-	textPtr = text;
-	if (*textPtr == '\0') {
-		return;
-	}
-
-	y = lineSkip + rectDraw.y + yStart;
-	len = 0;
-	buff[0] = '\0';
-	newLine = 0;
-	newLineWidth = 0;
-	p = textPtr;
-
-	textWidth = 0;
-	while (p) {
-		if (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\0') {
-			newLine = len;
-			newLinePtr = p + 1;
-			newLineWidth = textWidth;
-		}
-
-		if ((newLine && textWidth > rectDraw.w) || *p == '\n' || *p == '\0') {
-			if (len) {
-
-				float x = rectDraw.x ;
-
-				buff[newLine] = '\0';
-				DrawText(x, y, textScale, color, buff, 0, 0, 0);
-				if (!wrap) {
-					return;
-				}
-			}
-
-			if (*p == '\0') {
-				break;
-			}
-
-			y += lineSkip + 5;
-			p = newLinePtr;
-			len = 0;
-			newLine = 0;
-			newLineWidth = 0;
-			continue;
-		}
-
-		buff[len++] = *p++;
-		buff[len] = '\0';
-		textWidth = TextWidth( buff, textScale, -1 );
-	}
-*/
-}
-
 void idDeviceContext::DrawEditCursor( float x, float y, float scale ) {
-	if ( (int)( com_ticNumber >> 4 ) & 1 ) {
+	if ( (int)( com_ticNumber >> 4 ) & 1 )
 		return;
-	}
 	SetFontByScale(scale);
 	float useScale = scale * useFont->glyphScale;
 	const glyphInfo_t *glyph2 = &useFont->glyphs[overStrikeMode ? int('_') : int('|')];

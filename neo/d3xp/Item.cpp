@@ -810,14 +810,12 @@ void idItemTeam::Think( void ) {
 		gameRenderWorld->UpdateLightDef( itemGlowHandle, &itemGlow );
 	}*/
 
-#if 1
 	// should only the server do this?
 	if ( gameLocal.isServer && nuggetName && carried && ( !lastNuggetDrop || (gameLocal.time - lastNuggetDrop) >  spawnArgs.GetInt("nugget_frequency") ) ) {
 
 		SpawnNugget( GetPhysics()->GetOrigin() );
 		lastNuggetDrop = gameLocal.time;
 	}
-#endif
 
 	// return dropped flag after si_flagDropTimeLimit seconds
 	if ( dropped && !carried && lastDrop != 0 && (gameLocal.time - lastDrop) > ( si_flagDropTimeLimit.GetInteger()*1000 )  ) {

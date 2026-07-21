@@ -2373,13 +2373,8 @@ void idImage::UploadScratch( const byte *data, int cols, int rows ) {
 		// these probably should be clamp, but we have a lot of issues with editor
 		// geometry coming out with texcoords slightly off one side, resulting in
 		// a smear across the entire polygon
-#if 1
 		qglTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT );
 		qglTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT );
-#else
-		qglTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
-		qglTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
-#endif
 	}
 }
 

@@ -185,9 +185,9 @@ idQuat &idQuat::Slerp( const idQuat &from, const idQuat &to, float t ) {
 	if ( cosom < 0.0f ) {
 		temp = -to;
 		cosom = -cosom;
-	} else {
-		temp = to;
 	}
+	else
+		temp = to;
 
 	if ( ( 1.0f - cosom ) > 1e-6f ) {
 #if 0

@@ -130,13 +130,8 @@ void idTarget_EndLevel::Draw() {
 	renderView.fov_y = gameLocal.CalcFovY( renderView.fov_x );
 	renderView.time = gameLocal.time;
 
-#if 0
-	renderView.vieworg = initialViewOrg;
-	renderView.viewaxis = idAngles(initialViewAngles).toMat3();
-#else
 	renderView.vieworg = renderEntity.origin;
 	renderView.viewaxis = renderEntity.axis;
-#endif
 
 	gameRenderWorld->RenderScene( &renderView );
 

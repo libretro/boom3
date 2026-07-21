@@ -1473,45 +1473,27 @@ idCompressor_Arithmetic::ProbabilityForCount
 ================
 */
 int idCompressor_Arithmetic::ProbabilityForCount( unsigned int count ) {
-#if 1
-
-	int len, mid, offset, res;
-
-	len = (1<<AC_WORD_LENGTH);
-	mid = len;
-	offset = 0;
-	res = 0;
-	while( mid > 0 ) {
+	int len    = (1<<AC_WORD_LENGTH);
+	int mid    = len;
+	int offset = 0;
+	int res    = 0;
+	while( mid > 0 )
+	{
 		mid = len >> 1;
 		if ( count >= probabilities[offset+mid].high ) {
 			offset += mid;
 			len -= mid;
 			res = 1;
 		}
-		else if ( count < probabilities[offset+mid].low ) {
+		else if ( count < probabilities[offset+mid].low )
+		{
 			len -= mid;
 			res = 0;
-		} else {
-			return offset+mid;
 		}
+		else
+			return offset+mid;
 	}
 	return offset+res;
-
-#else
-
-	int j;
-
-	for( j = 0; j < (1<<AC_WORD_LENGTH); j++ ) {
-		if ( count >= probabilities[ j ].low && count < probabilities[ j ].high ) {
-			return j;
-		}
-	}
-
-	assert( false );
-
-	return 0;
-
-#endif
 }
 
 /*

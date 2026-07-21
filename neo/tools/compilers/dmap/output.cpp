@@ -32,20 +32,6 @@ If you have questions concerning this license or the applicable additional terms
 
 //=================================================================================
 
-
-#if 0
-
-should we try and snap values very close to 0.5, 0.25, 0.125, etc?
-
-  do we write out normals, or just a "smooth shade" flag?
-resolved: normals.  otherwise adjacent facet shaded surfaces get their
-		  vertexes merged, and they would have to be split apart before drawing
-
-  do we save out "wings" for shadow silhouette info?
-
-
-#endif
-
 static	idFile	*procFile;
 
 #define	AREANUM_DIFFERENT	-2

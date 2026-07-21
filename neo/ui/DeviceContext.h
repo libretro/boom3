@@ -74,8 +74,6 @@ public:
 	int					FindFont( const char *name );
 	void				SetupFonts();
 
-	idRegion			*GetTextRegion(const char *text, float textScale, idRectangle rectDraw, float xStart, float yStart);
-
 	void				SetSize(float width, float height);
 
 	//#modified-fva; BEGIN

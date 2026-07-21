@@ -248,22 +248,7 @@ Can be used for profiling, but will be journaled accurately
 ================
 */
 int idEventLoop::Milliseconds( void ) {
-#if 1	// FIXME!
 	return Core_Milliseconds() - initialTimeOffset;
-#else
-	sysEvent_t	ev;
-
-	// get events and push them until we get a null event with the current time
-	do {
-
-		ev = Com_GetRealEvent();
-		if ( ev.evType != SE_NONE ) {
-			Com_PushEvent( &ev );
-		}
-	} while ( ev.evType != SE_NONE );
-
-	return ev.evTime;
-#endif
 }
 
 /*

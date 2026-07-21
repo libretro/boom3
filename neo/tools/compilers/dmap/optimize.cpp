@@ -832,20 +832,14 @@ IsTriangleDegenerate
 Returns false if it is either front or back facing
 =================
 */
-static bool IsTriangleDegenerate( const optVertex_t *v1, const optVertex_t *v2, const optVertex_t *v3 ) {
-#if 1
-	idVec3	d1, d2, normal;
-
-	d1 = v2->pv - v1->pv;
-	d2 = v3->pv - v1->pv;
-	normal = d1.Cross( d2 );
-	if ( normal[2] == 0 ) {
+static bool IsTriangleDegenerate( const optVertex_t *v1, const optVertex_t *v2, const optVertex_t *v3 )
+{
+	idVec3 d1     = v2->pv - v1->pv;
+	idVec3 d2     = v3->pv - v1->pv;
+	idVec3 normal = d1.Cross( d2 );
+	if ( normal[2] == 0 )
 		return true;
-	}
 	return false;
-#else
-	return (bool)!IsTriangleValid( v1, v2, v3 );
-#endif
 }
 
 
