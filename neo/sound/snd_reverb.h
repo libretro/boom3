@@ -62,6 +62,8 @@ typedef struct sndReverbParams_s {
 	float	modulationTime;		// 0.04..4 s, read-tap LFO period
 	float	modulationDepth;	// 0..1, LFO excursion
 	float	airAbsorptionGainHF;// 0.892..1, per-meter HF loss on the send (per-channel shelf)
+	float	reflectionsPan[3];	// listener-space pan of the early energy, |v|<=1
+	float	lateReverbPan[3];	// listener-space pan of the late energy, |v|<=1
 	float	hfReference;		// Hz
 	float	lfReference;		// Hz, low band split point
 	float	roomRolloffFactor;	// wet-path inverse-distance factor
@@ -72,6 +74,8 @@ typedef struct sndReverbParams_s {
 		gain = 0.3162f; gainHF = 0.8913f; gainLF = 1.0f;
 		decayTime = 1.49f; decayHFRatio = 0.83f; decayLFRatio = 1.0f;
 		reflectionsGain = 0.05f; reflectionsDelay = 0.007f;
+		reflectionsPan[0] = reflectionsPan[1] = reflectionsPan[2] = 0.0f;
+		lateReverbPan[0] = lateReverbPan[1] = lateReverbPan[2] = 0.0f;
 		lateReverbGain = 1.2589f; lateReverbDelay = 0.011f;
 		echoTime = 0.25f; echoDepth = 0.0f;
 		modulationTime = 0.25f; modulationDepth = 0.0f;
@@ -251,7 +255,8 @@ private:
 	int		preDelaySamps, lateDelaySamps;
 	// Q15 twins, quantized once per block through one choke point
 	short	fbGainQ[REVERB_LINES], dampCoefQ, apGainQ;
-	short	earlyGainQ, lateGainQ;
+	float	earlyGainL, earlyGainR;
+	short	earlyGainQL, earlyGainQR, lateGainQL, lateGainQR;
 
 	// LF band: per-line low-shelf in the loop (decayLFRatio) and an output
 	// band split (gainLF / mid / gainHF). adjLF is the shelf's LP-component
@@ -397,6 +402,9 @@ ID_INLINE void idSoundReverb::StepBlockParams( void ) {
 		RVB_LERP(gainLF);
 		RVB_LERP(decayTime); RVB_LERP(decayHFRatio); RVB_LERP(decayLFRatio);
 		RVB_LERP(reflectionsGain); RVB_LERP(reflectionsDelay);
+		// only component [0] is consumed (the stereo projection); [1],[2]
+		// snap with the struct copy when the crossfade completes
+		RVB_LERP(reflectionsPan[0]); RVB_LERP(lateReverbPan[0]);
 		RVB_LERP(lateReverbGain); RVB_LERP(lateReverbDelay);
 		RVB_LERP(echoTime); RVB_LERP(echoDepth);
 		RVB_LERP(modulationTime); RVB_LERP(modulationDepth);
@@ -586,9 +594,30 @@ ID_INLINE void idSoundReverb::StepBlockParams( void ) {
 	if ( earlyGain > 1.0f ) earlyGain = 1.0f;
 	float lg   = cur.gain * cur.lateReverbGain * 0.25f;	// FDN sum headroom
 	if ( lg > 1.0f ) lg = 1.0f;
-	lateGainL = lateGainR = lg;
-	earlyGainQ = Snd_ReverbCoefQ15( earlyGain );
-	lateGainQ  = Snd_ReverbCoefQ15( lg );
+
+	/*
+	   reflectionsPan / lateReverbPan: EAX gives each a listener-space
+	   vector whose magnitude focuses the energy and whose direction
+	   points at it. A stereo output can only render the lateral axis, so
+	   the vector projects to its x component; y (up) and z (front/back)
+	   have nowhere to go in two channels and drop out. The energy-
+	   preserving split g = sqrt(1 -/+ b) keeps gL^2+gR^2 constant and -
+	   deliberately - evaluates to exactly 1.0f at b = 0, so an unpanned
+	   preset multiplies by bit-identical gains and every existing
+	   zero-pan capture stays byte-exact.
+	*/
+	float eb = cur.reflectionsPan[0];
+	if ( eb < -1.0f ) eb = -1.0f; if ( eb > 1.0f ) eb = 1.0f;
+	float lb = cur.lateReverbPan[0];
+	if ( lb < -1.0f ) lb = -1.0f; if ( lb > 1.0f ) lb = 1.0f;
+	earlyGainL = earlyGain * sqrtf( 1.0f - eb );
+	earlyGainR = earlyGain * sqrtf( 1.0f + eb );
+	lateGainL  = lg * sqrtf( 1.0f - lb );
+	lateGainR  = lg * sqrtf( 1.0f + lb );
+	earlyGainQL = Snd_ReverbCoefQ15( earlyGainL );
+	earlyGainQR = Snd_ReverbCoefQ15( earlyGainR );
+	lateGainQL  = Snd_ReverbCoefQ15( lateGainL );
+	lateGainQR  = Snd_ReverbCoefQ15( lateGainR );
 
 	preDelaySamps  = (int)( cur.reflectionsDelay * REVERB_FS );
 	lateDelaySamps = preDelaySamps + (int)( cur.lateReverbDelay * REVERB_FS );
@@ -607,8 +636,10 @@ ID_INLINE void idSoundReverb::ProcessFloat( const float *send, float *dest, int 
 	StepBlockParams();
 
 	const float norm  = wetScale / 32768.0f;	// wet is mixed into the normalized buffer
-	const float eG    = earlyGain * norm;
-	const float lG    = lateGainL * norm;
+	const float eGL   = earlyGainL * norm;
+	const float eGR   = earlyGainR * norm;
+	const float lGL   = lateGainL * norm;
+	const float lGR   = lateGainR * norm;
 	const unsigned preMask = REVERB_PREDELAY_LEN - 1;
 
 	const bool echoOn = echoOutGain > 0.0001f;
@@ -699,8 +730,8 @@ ID_INLINE void idSoundReverb::ProcessFloat( const float *send, float *dest, int 
 			lR += e * echoOutGain;
 		}
 
-		float wL = eL * eG + lL * lG;
-		float wR = eR * eG + lR * lG;
+		float wL = eL * eGL + lL * lGL;
+		float wR = eR * eGR + lR * lGR;
 
 		// output band split, two cascaded one-poles per side (12 dB/oct):
 		// a single pole leaks so much of a 10kHz tone into the mid band
@@ -928,8 +959,8 @@ ID_INLINE void idSoundReverb::ProcessS16( const int *send, int *destAccum, int n
 			lR += QMUL( e, echoOutGainQ );
 		}
 
-		int wL = QMUL( eL, earlyGainQ ) + QMUL( lL, lateGainQ );
-		int wR = QMUL( eR, earlyGainQ ) + QMUL( lR, lateGainQ );
+		int wL = QMUL( eL, earlyGainQL ) + QMUL( lL, lateGainQL );
+		int wR = QMUL( eR, earlyGainQR ) + QMUL( lR, lateGainQR );
 
 		// output band split, two cascaded one-poles per side (12 dB/oct);
 		// feed-forward only, no stability interaction

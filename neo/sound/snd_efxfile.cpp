@@ -91,13 +91,17 @@ bool idEFXFile::ReadEffect( idLexer &src, idSoundEffect *effect ) {
 		} else if ( token == "reflections delay" ) {
 			p.reflectionsDelay = src.ParseFloat();
 		} else if ( token == "reflections pan" ) {
-			src.ParseFloat(); src.ParseFloat(); src.ParseFloat();	// unused
+			p.reflectionsPan[0] = src.ParseFloat();
+			p.reflectionsPan[1] = src.ParseFloat();
+			p.reflectionsPan[2] = src.ParseFloat();
 		} else if ( token == "reverb" ) {
 			p.lateReverbGain = mB_to_gain_clamped( src.ParseInt(), 0.0f, 10.0f );
 		} else if ( token == "reverb delay" ) {
 			p.lateReverbDelay = src.ParseFloat();
 		} else if ( token == "reverb pan" ) {
-			src.ParseFloat(); src.ParseFloat(); src.ParseFloat();	// unused
+			p.lateReverbPan[0] = src.ParseFloat();
+			p.lateReverbPan[1] = src.ParseFloat();
+			p.lateReverbPan[2] = src.ParseFloat();
 		} else if ( token == "echo time" ) {
 			p.echoTime = src.ParseFloat();
 		} else if ( token == "echo depth" ) {

@@ -329,6 +329,32 @@ int reverb_test() {
 			mism2 ? "FAIL" : "bit-exact");
 	}
 
+	/* ---- reverb pan vectors (appended with the pan implementation) ---- */
+	{
+		/* late pan hard right vs unpanned: R wet energy must dominate L */
+		for (int pan = 0; pan < 2; pan++) {
+			idSoundReverb rv; rv.Init();
+			sndReverbParams_t pp; pp.SetDefaults();
+			pp.lateReverbGain = 1.0f; pp.reflectionsGain = 0.2f;
+			if (pan) { pp.lateReverbPan[0] = 1.0f; pp.reflectionsPan[0] = 1.0f; }
+			rv.SetParams(pp);
+			static int send[512], out[1024];
+			double eL=0, eR=0; unsigned rng=77;
+			for (int b=0;b<160;b++){
+				for (int i=0;i<512;i++){ rng=rng*1664525u+1013904223u; send[i]=(b<80)?((int)(rng>>18)-8192):0; }
+				memset(out,0,sizeof out);
+				rv.ProcessS16(send,out,512,1.0f);
+				if (b>30){ for(int i=0;i<512;i++){ eL+=(double)out[i*2]*out[i*2]; eR+=(double)out[i*2+1]*out[i*2+1]; } }
+			}
+			if (!pan)
+				printf("reverb pan zero: L %.3g R %.3g ratio %.2f %s\n", eL, eR, eR/(eL+1),
+					(eR/(eL+1)>0.5 && eR/(eL+1)<2.0)?"OK (balanced)":"FAIL");
+			else
+				printf("reverb pan +1 (hard right): L %.3g R %.3g ratio %.1f %s\n", eL, eR, eR/(eL+1),
+					(eR>eL*20)?"OK (right-dominant)":"FAIL");
+		}
+	}
+
 	/* ---- enviro-suit chain (appended with the ROE suit port) ---- */
 	{
 		static float sf[1024]; static int si[1024];
