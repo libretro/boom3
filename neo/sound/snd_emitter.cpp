@@ -1153,6 +1153,21 @@ void idSlowChannel::GenerateSlowChannel( FracTime& playPos, int outputCount, flo
 		slowmoSpeed = 1;
 	}
 
+	/*
+	   The gather target is a fixed static buffer with MIXBUFFER_SAMPLES+1
+	   usable slots past the two history samples. Stock d3xp only slows
+	   time (slowmoMsec / USERCMD_MSEC <= 1), but the speed is game data:
+	   a mod passing > (MIXBUFFER_SAMPLES-3)/outputCount overruns the
+	   buffer - at 96kHz/30fps that is anything above ~1.28. Clamp to the
+	   capacity the buffer actually has.
+	*/
+	{
+		float maxSpeed = (float)( MIXBUFFER_SAMPLES - 3 ) / ( outputCount > 0 ? outputCount : 1 );
+		if ( slowmoSpeed > maxSpeed ) {
+			slowmoSpeed = maxSpeed;
+		}
+	}
+
 	neededSamples = outputCount * slowmoSpeed + 4;
 
 	// get the channel's samples
@@ -1184,7 +1199,29 @@ void idSlowChannel::GenerateSlowChannel( FracTime& playPos, int outputCount, flo
 		finalBuffer[count] = finalBuffer[count+1] = out[i];
 	}
 
-	lowpass.SetContinuitySamples( in_p[numSamples-2], in_p[numSamples-3], out_p[numSamples-2], out_p[numSamples-3] );
+	/*
+	   The pairing loops cover outputCount only when it is even. The
+	   per-frame block at 44.1kHz/60fps is 735 samples - odd - so the last
+	   sample of every block stayed whatever the gather buffer held from
+	   the previous channel: a stale sample per block, a 60Hz artifact for
+	   the whole of helltime at that rate. Duplicate the final filtered
+	   sample into the tail, which is exactly the scheme's existing 2x
+	   duplication applied one more time. (48kHz/60 and 96kHz/30 blocks
+	   are even and never hit this.)
+	*/
+	if ( ( outputCount & 1 ) && outputCount > 1 ) {
+		finalBuffer[outputCount - 1] = out_p[numSamples - 1];
+	}
+
+	/*
+	   Continuity history off by one, inherited from the original id code:
+	   the last ProcessSample call reads in[-1]/in[-2] relative to index
+	   numSamples-1, so the next block needs samples numSamples-1 and
+	   numSamples-2 as its history - not numSamples-2 and numSamples-3,
+	   which restarted every block one sample in the past and put a small
+	   discontinuity in the filter state at every block boundary.
+	*/
+	lowpass.SetContinuitySamples( in_p[numSamples-1], in_p[numSamples-2], out_p[numSamples-1], out_p[numSamples-2] );
 
 	playPos.time += zeroedPos;
 }
