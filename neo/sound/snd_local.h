@@ -205,16 +205,12 @@ private:
 	short *			mpbDataCur;
 	dword			mulDataSize;
 
-	void *			ogg;			// only !NULL when !s_realTimeDecoding
-	byte*			oggData; // the contents of the .ogg for stbi_vorbis (it doesn't support custom reading callbacks)
 	bool			isOgg;
 
 private:
 	int				ReadMMIO( void );
 
 	int				OpenOGG( const char* strFileName, waveformatex_t* pwfx = NULL );
-	int				ReadOGG( byte* pBuffer, int dwSizeToRead, int *pdwSizeRead );
-	int				CloseOGG( void );
 };
 
 

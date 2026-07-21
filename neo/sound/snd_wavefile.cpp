@@ -44,9 +44,7 @@ idWaveFile::idWaveFile( void ) {
 	mseekBase	= 0;
 	mbIsReadingFromMemory = false;
 	mpbData		= NULL;
-	ogg			= NULL;
 	isOgg		= false;
-	oggData		= NULL;
 }
 
 //-----------------------------------------------------------------------------
@@ -254,9 +252,7 @@ int idWaveFile::ResetFile( void )
 //-----------------------------------------------------------------------------
 int idWaveFile::Read( byte* pBuffer, int dwSizeToRead, int *pdwSizeRead ) {
 
-	if ( ogg != NULL )
-		return ReadOGG( pBuffer, dwSizeToRead, pdwSizeRead );
-	else if ( mbIsReadingFromMemory )
+	if ( mbIsReadingFromMemory )
 	{
 
 		if( mpbDataCur == NULL )
@@ -303,8 +299,16 @@ int idWaveFile::Read( byte* pBuffer, int dwSizeToRead, int *pdwSizeRead ) {
 // Desc: Closes the wave file
 //-----------------------------------------------------------------------------
 int idWaveFile::Close( void ) {
-	if ( ogg != NULL ) {
-		return CloseOGG();
+	/*
+	   An OGG opened by OpenOGG serves the cache read from the probe's own
+	   in-memory copy of the file; that buffer is owned here, unlike the
+	   OpenFromMemory case where the caller owns it.
+	*/
+	if ( isOgg && mbIsReadingFromMemory && mpbData != NULL ) {
+		Mem_Free( (void *)mpbData );
+		mpbData = NULL;
+		mpbDataCur = NULL;
+		mbIsReadingFromMemory = false;
 	}
 	if( mhmmio != NULL ) {
 		fileSystem->CloseFile( mhmmio );
@@ -318,11 +322,7 @@ int idWaveFile::Close( void ) {
 //-----------------------------------------------------------------------------
 int idWaveFile::Seek( int offset ) {
 
-	if ( ogg != NULL ) {
-
-		common->FatalError( "idWaveFile::Seek: cannot seek on an OGG file\n" );
-
-	} else if( mbIsReadingFromMemory ) {
+	if( mbIsReadingFromMemory ) {
 
 		mpbDataCur = mpbData + offset;
 

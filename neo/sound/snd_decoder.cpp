@@ -124,12 +124,22 @@ int idWaveFile::OpenOGG( const char* strFileName, waveformatex_t *pwfx ) {
 		audio_transfer_free( at, AUDIO_TYPE_VORBIS );
 		fileSystem->CloseFile( mhmmio );
 		mhmmio = NULL;
-		Mem_Free( oggFileData );
 
+		/*
+		   The probe just read the whole file into oggFileData; the cache's
+		   Read() wants exactly those bytes. The old path freed the buffer,
+		   reopened the file and read it from the filesystem a second time,
+		   which for pk4 content decompresses every OGG's zip entry twice
+		   per level load - 1253 entries in the demo alone. Serve the read
+		   from the copy already in memory instead; Close() owns and frees
+		   it (see idWaveFile::Close).
+		*/
 		mpwfx.Format.wFormatTag = WAVE_FORMAT_TAG_OGG;
-		mhmmio = fileSystem->OpenFileRead( strFileName );
-		mMemSize = mhmmio->Length();
-
+		mpbData = (short *)oggFileData;
+		mpbDataCur = mpbData;
+		mulDataSize = fileSize;
+		mbIsReadingFromMemory = true;
+		mMemSize = fileSize;
 	}
 
 	memcpy( pwfx, &mpwfx, sizeof( waveformatex_t ) );
@@ -140,35 +150,6 @@ int idWaveFile::OpenOGG( const char* strFileName, waveformatex_t *pwfx ) {
 
 	return 0;
 }
-
-/*
-====================
-idWaveFile::ReadOGG
-====================
-*/
-int idWaveFile::ReadOGG( byte* pBuffer, int dwSizeToRead, int *pdwSizeRead ) {
-	// Dead path: OpenOGG() stores the encoded OGG and decodes on demand via
-	// the sample decoder (audio_transfer/rvorbis); it never leaves an open
-	// streaming handle here, so 'ogg' is always NULL. Kept as a stub so the
-	// idWaveFile::Read() dispatch stays well-formed.
-	(void)pBuffer; (void)dwSizeToRead;
-	if ( pdwSizeRead != NULL ) {
-		*pdwSizeRead = 0;
-	}
-	return -1;
-}
-
-/*
-====================
-idWaveFile::CloseOGG
-====================
-*/
-int idWaveFile::CloseOGG( void ) {
-	// Dead path (see ReadOGG): 'ogg' is never set, so there's nothing to
-	// close. Kept as a stub for the idWaveFile::Close() dispatch.
-	return -1;
-}
-
 
 /*
 ===================================================================================
