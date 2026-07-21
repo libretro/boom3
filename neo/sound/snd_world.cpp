@@ -1953,6 +1953,10 @@ float idSoundWorldLocal::FindAmplitude( idSoundEmitterLocal *sound, const int lo
 			if ( sample == NULL ) // DG: this happens if sound is disabled (s_noSound 1)
 				continue;
 
+			// build the min/max table on first query so this path never
+			// touches the channel's decoder (see EnsureAmplitudeData)
+			sample->EnsureAmplitudeData();
+
 			int offset = (localTime - localTriggerTimes);	// offset in samples
 			int size = sample->LengthInOutputSamples();
 			short *amplitudeData = (short *)( sample->amplitudeData );

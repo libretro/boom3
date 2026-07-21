@@ -384,6 +384,7 @@ idSoundSample::idSoundSample() {
 	objectMemSize = 0;
 	nonCacheData = NULL;
 	amplitudeData = NULL;
+	amplitudeBuildFailed = false;
 	defaultSound = false;
 	onDemand = false;
 	purged = false;
@@ -432,6 +433,81 @@ int idSoundSample::LengthInOutputSamples( void ) const {
 	} else {
 		return objectSize;
 	}
+}
+
+/*
+===================
+idSoundSample::EnsureAmplitudeData
+
+Build the per-512-output-samples min/max table that FindAmplitude's fast
+path reads. Built lazily on the first amplitude query of a sample and
+kept until purge, so material sound registers and screen shakes stop
+decoding through the CHANNEL's decoder: that fought the mixer for the
+stream position, and on Ogg every position change is a vorbis seek plus
+a resampler-history reset - two of them per frame while an actor talks,
+which is a frame-rate collapse on weak hosts.
+
+The build decodes the whole sample once, sequentially, through its own
+decoder, so the mixer's decoder state is never touched. A failed build
+marks the sample and FindAmplitude falls back to the old path rather
+than retrying every query.
+===================
+*/
+void idSoundSample::EnsureAmplitudeData( void ) {
+	if ( amplitudeData != NULL || amplitudeBuildFailed || defaultSound || purged ) {
+		return;
+	}
+	int len = LengthInOutputSamples();
+	if ( len <= 0 ) {
+		amplitudeBuildFailed = true;
+		return;
+	}
+	const int blocks = ( len + 511 ) / 512;
+	short *table = (short *)soundCacheAllocator.Alloc( blocks * 2 * sizeof( short ) );
+	if ( table == NULL ) {
+		amplitudeBuildFailed = true;
+		return;
+	}
+	idSampleDecoder *dec = idSampleDecoder::Alloc();
+	if ( dec == NULL ) {
+		soundCacheAllocator.Free( (byte *)table );
+		amplitudeBuildFailed = true;
+		return;
+	}
+	const int CHUNK = 4096;
+	float buf[CHUNK];
+	int block = 0;
+	for ( int off = 0; off < len && block < blocks; off += CHUNK ) {
+		int want = len - off < CHUNK ? len - off : CHUNK;
+		dec->Decode( this, off, want, buf );
+		int i = 0;
+		while ( i < want && block < blocks ) {
+			int span = 512 - ( ( off + i ) & 511 );
+			if ( span > want - i ) {
+				span = want - i;
+			}
+			float mx = -32768.0f, mn = 32767.0f;
+			for ( int k = 0; k < span; k++ ) {
+				float v = buf[i + k];
+				if ( v > mx ) mx = v;
+				if ( v < mn ) mn = v;
+			}
+			if ( ( ( off + i ) & 511 ) == 0 && span > 0 ) {
+				table[block * 2 + 0] = (short)idMath::ClampFloat( -32768.0f, 32767.0f, mx );
+				table[block * 2 + 1] = (short)idMath::ClampFloat( -32768.0f, 32767.0f, mn );
+			} else if ( span > 0 ) {
+				// continuing a block begun in the previous chunk
+				if ( (short)mx > table[block * 2 + 0] ) table[block * 2 + 0] = (short)idMath::ClampFloat( -32768.0f, 32767.0f, mx );
+				if ( (short)mn < table[block * 2 + 1] ) table[block * 2 + 1] = (short)idMath::ClampFloat( -32768.0f, 32767.0f, mn );
+			}
+			i += span;
+			if ( ( ( off + i ) & 511 ) == 0 ) {
+				block++;
+			}
+		}
+	}
+	idSampleDecoder::Free( dec );
+	amplitudeData = (byte *)table;
 }
 
 /*
@@ -759,6 +835,7 @@ void idSoundSample::PurgeSoundSample() {
 		soundCacheAllocator.Free( amplitudeData );
 		amplitudeData = NULL;
 	}
+	amplitudeBuildFailed = false;
 
 	if ( nonCacheData ) {
 		soundCacheAllocator.Free( nonCacheData );

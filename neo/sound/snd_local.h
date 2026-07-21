@@ -787,6 +787,8 @@ public:
 	int				objectMemSize;				// object size in memory
 	byte *				nonCacheData;				// if it's not cached
 	byte *				amplitudeData;				// precomputed min,max amplitude pairs
+	bool				amplitudeBuildFailed;		// don't retry a failed build every query
+	void				EnsureAmplitudeData( void );// lazy build, own decoder - never the channel's
 	bool				defaultSound;
 	bool				onDemand;
 	bool				purged;
