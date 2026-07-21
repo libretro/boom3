@@ -321,6 +321,20 @@ CXXFLAGS += -DHAVE_RTGA -DHAVE_RDDS -DHAVE_RJPEG
 CFLAGS   += -DHAVE_RVORBIS -DHAVE_RWAV
 CXXFLAGS += -DHAVE_RVORBIS -DHAVE_RWAV
 CXXFLAGS += -Wall $(fpic) -fpermissive -std=gnu++11
+# Float determinism + aliasing, C++ side. The CFLAGS block above carries
+# -ffast-math -fno-unsafe-math-optimizations -ffp-contract=off
+# -fno-strict-aliasing, but nothing ever copied it into CXXFLAGS, so the
+# entire engine - including every snd_*.cpp of the deterministic mixer -
+# compiled with GCC's default -ffp-contract=fast (FMA contraction on
+# aarch64 and any -mfma x86) and strict aliasing at -O3. The x86 arch
+# comment above reasons about -ffp-contract=off as if it were in effect
+# engine-wide; it was only in effect for C.
+#
+# Deliberately NOT copying -ffast-math to C++: it implies
+# -ffinite-math-only, which licenses the compiler to delete the engine's
+# idMath NaN checks. The vendored C code doesn't lean on NaN semantics;
+# the engine does.
+CXXFLAGS += -ffp-contract=off -fno-strict-aliasing
 # idlib deliberately memset()s/memcpy()s POD-ish structs and classes that the
 # compiler considers non-trivial only because they have constructors; rewriting
 # ~60 of those to value-initialisation would be churn with no runtime benefit.
