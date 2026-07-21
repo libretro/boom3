@@ -373,7 +373,15 @@ public:
 	   first block to compute.
 	*/
 	float				occCacheG, occCacheDetour, occCacheHfG;
-	float				airCacheAbs, airCacheDist, airCacheHfG;				// last calculated volume for each speaker, so we can smoothly fade
+	float				airCacheAbs, airCacheDist, airCacheHfG;
+	/*
+	   Savestate stream-state blob, parked on the CHANNEL because the
+	   decoder object is not stable between the state restore and the
+	   first mix; the channel hands it to whichever decoder actually
+	   gathers, which arms it for the resampler-branch apply.
+	*/
+	mutable byte *		pendStream;
+	mutable int			pendStreamSize;				// last calculated volume for each speaker, so we can smoothly fade
 	idSoundFade			channelFade;
 	bool				triggered;
 	bool				stopped;
@@ -588,6 +596,12 @@ public:
 	// environmental reverb (replaces the OpenAL EFX slot): per-world DSP,
 	// preset selected by listener area, mono send accumulated during the
 	// channel loop in whichever format the mixer is running
+	// savestate-only DSP snapshot (libretro state blob section; the
+	// on-disk savegame format is untouched). Same-binary contract like
+	// any savestate: raw object images, validated by size.
+	void					WriteDSPState( idFile *f );
+	void					ReadDSPState( idFile *f );
+
 	idSoundReverb			reverb;
 	idEnviroSuitFX			enviroFX;	// ROE suit muffling, gated on enviroSuitActive
 	idStr					reverbEffectName;	// currently applied preset
@@ -825,6 +839,10 @@ public:
 	virtual void			Decode( idSoundSample *sample, int outputOffset, int outputCount, float *dest ) = 0;
 	virtual void			ClearDecoder( void ) = 0;
 	virtual idSoundSample *	GetSample( void ) const = 0;
+	// savestate support: write the resampler stream state; arm a pending
+	// copy that the decode path applies after its natural post-restore seek
+	virtual void			WriteStreamState( idFile *f ) = 0;
+	virtual void			ArmPendingStreamState( idFile *f ) = 0;
 	virtual int			GetLastDecodeTime( void ) const = 0;
 };
 

@@ -1610,6 +1610,20 @@ static bool RetroBuildState(void)
 	retro_savestate_active = true;
 	bool ok = sessLocal.SaveGame(RETRO_STATE_NAME, true, NULL, &mem);
 	retro_savestate_active = false;
+	if (ok) {
+		/* Append the mixer's DSP section (see WriteDSPState) with a
+		 * trailing [size]['SND2'] footer. LoadGame reads its own chunks
+		 * and ignores trailing bytes, so the savegame parser is
+		 * untouched; unserialize locates the section from the footer. */
+		idSoundWorldLocal *sw = static_cast<idSoundWorldLocal *>(soundSystem->GetPlayingSoundWorld());
+		if (sw) {
+			int before = mem.Length();
+			sw->WriteDSPState(&mem);
+			int payload = mem.Length() - before;
+			mem.WriteInt(payload);
+			mem.WriteInt(0x32444E53);	/* 'SND2' */
+		}
+	}
 	if (!ok || mem.Length() <= 0) {
 		if (log_cb) log_cb(RETRO_LOG_INFO, "[boom3] state: SaveGame ok=%d len=%d\n", (int)ok, mem.Length());
 		return false;
@@ -1652,6 +1666,21 @@ bool retro_unserialize(const void *data_, size_t size)
 	retro_savestate_active = true;
 	bool ok = sessLocal.LoadGame(RETRO_STATE_NAME, mem);
 	retro_savestate_active = false;
+
+	if (ok && size >= 8) {
+		/* apply the DSP section after LoadGame has rebuilt the emitters */
+		const unsigned char *bytes = (const unsigned char *)data_;
+		int magic, payload;
+		memcpy(&magic,   bytes + size - 4, 4);
+		memcpy(&payload, bytes + size - 8, 4);
+		if (magic == 0x32444E53 && payload > 0 && (size_t)payload <= size - 8) {
+			idSoundWorldLocal *sw = static_cast<idSoundWorldLocal *>(soundSystem->GetPlayingSoundWorld());
+			if (sw) {
+				idFile_Memory dsp("dsp", (const char *)(bytes + size - 8 - payload), payload);
+				sw->ReadDSPState(&dsp);
+			}
+		}
+	}
 
 	// state changed out from under the cache
 	retro_state_cache_tic = -1;

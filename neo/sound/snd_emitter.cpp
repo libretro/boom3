@@ -148,6 +148,7 @@ idSoundChannel::idSoundChannel
 */
 idSoundChannel::idSoundChannel( void ) {
 	decoder = NULL;
+	pendStream = NULL;
 	Clear();
 }
 
@@ -174,6 +175,11 @@ void idSoundChannel::Clear( void ) {
 	occLpF = 0.0f;
 	occCacheG = occCacheDetour = airCacheAbs = airCacheDist = -1.0f;
 	occCacheHfG = airCacheHfG = 1.0f;
+	if ( pendStream != NULL ) {
+		Mem_Free( pendStream );
+		pendStream = NULL;
+	}
+	pendStreamSize = 0;
 	soundShader = NULL;
 	lastVolume = 0.0f;
 	triggerChannel = SCHANNEL_ANY;
@@ -229,6 +235,21 @@ samples and leadins
 void idSoundChannel::GatherChannelSamples( int outputOffset, int outputCount, float *dest ) const {
 	float	*dest_p = dest;
 	int		len;
+
+	/*
+	   Savestate stream continuity: hand a parked stream-state blob to the
+	   decoder that is actually about to gather - only here is the decoder
+	   object guaranteed to be the one that decodes. Members are mutable:
+	   this is lazy materialization of restored state, not an audible
+	   state change.
+	*/
+	if ( pendStream != NULL && decoder != NULL ) {
+		idFile_Memory pf( "pendStream", (const char *)pendStream, pendStreamSize );
+		decoder->ArmPendingStreamState( &pf );
+		Mem_Free( pendStream );
+		pendStream = NULL;
+		pendStreamSize = 0;
+	}
 
 //Sys_DebugPrintf( "msec:%i sample:%i : %i : %i\n", Core_Milliseconds(), soundSystemLocal.GetCurrentSampleTime(), outputOffset, outputCount );	//!@#
 

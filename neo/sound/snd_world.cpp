@@ -2076,3 +2076,103 @@ idSoundWorldLocal::SetEnviroSuit
 void idSoundWorldLocal::SetEnviroSuit( bool active ) {
 	enviroSuitActive = active;
 }
+
+/*
+===================
+idSoundWorldLocal::WriteDSPState / ReadDSPState
+
+Savestate-only snapshot of the mixer's filter memories - everything that
+carries audio history across blocks and is deliberately NOT in the
+on-disk savegame: the reverb (delay lines, allpass/predelay/echo
+buffers, modulation phase, crossfade position - the whole object), the
+enviro-suit chain (biquad and comb state), and the per-channel occlusion
+and air shelves. Without this a restore keeps the lines' future-time
+tails (rewind) or zeroes them (cross-session), so post-restore audio
+diverges from an uninterrupted run at full audibility; with it the
+round trip is byte-reproducible.
+
+Raw object images guarded by size fields: savestates already carry a
+same-binary contract, and a size mismatch skips the section cleanly.
+The per-channel powf caches and the reverb's derivedClean flag are NOT
+saved: they are pure functions of saved inputs and re-derive to
+bit-identical values.
+===================
+*/
+static const int SND_DSP_VERSION = 1;
+
+void idSoundWorldLocal::WriteDSPState( idFile *f ) {
+	f->WriteInt( SND_DSP_VERSION );
+	f->WriteInt( (int)sizeof( reverb ) );
+	f->Write( &reverb, sizeof( reverb ) );
+	f->WriteInt( (int)sizeof( enviroFX ) );
+	f->Write( &enviroFX, sizeof( enviroFX ) );
+
+	int count = 0;
+	for ( int e = 0; e < emitters.Num(); e++ ) {
+		if ( emitters[e] ) count++;
+	}
+	f->WriteInt( count );
+	for ( int e = 0; e < emitters.Num(); e++ ) {
+		idSoundEmitterLocal *emitter = emitters[e];
+		if ( !emitter ) continue;
+		f->WriteInt( emitter->index );
+		for ( int c = 0; c < SOUND_MAX_CHANNELS; c++ ) {
+			f->WriteFloat( emitter->channels[c].occLpF );
+			f->WriteFloat( emitter->channels[c].airLpF );
+			idSoundChannel *ch = &emitter->channels[c];
+			int hasStream = ( ch->triggerState && ch->decoder != NULL ) ? 1 : 0;
+			if ( hasStream ) {
+				idFile_Memory tmp( "strm" );
+				ch->decoder->WriteStreamState( &tmp );
+				f->WriteInt( tmp.Length() );
+				f->Write( tmp.GetDataPtr(), tmp.Length() );
+			} else {
+				f->WriteInt( 0 );
+			}
+		}
+	}
+}
+
+void idSoundWorldLocal::ReadDSPState( idFile *f ) {
+	int ver = 0, sz = 0;
+	f->ReadInt( ver );
+	if ( ver != SND_DSP_VERSION ) return;
+	f->ReadInt( sz );
+	if ( sz != (int)sizeof( reverb ) ) return;
+	f->Read( &reverb, sizeof( reverb ) );
+	reverb.InvalidateDerived();	// re-derive from restored cur: bit-identical
+	f->ReadInt( sz );
+	if ( sz != (int)sizeof( enviroFX ) ) return;
+	f->Read( &enviroFX, sizeof( enviroFX ) );
+
+	int count = 0;
+	f->ReadInt( count );
+	for ( int i = 0; i < count; i++ ) {
+		int idx = -1;
+		f->ReadInt( idx );
+		idSoundEmitterLocal *emitter = ( idx >= 0 && idx < emitters.Num() ) ? emitters[idx] : NULL;
+		for ( int c = 0; c < SOUND_MAX_CHANNELS; c++ ) {
+			float occ = 0.0f, air = 0.0f;
+			f->ReadFloat( occ );
+			f->ReadFloat( air );
+			if ( emitter ) {
+				emitter->channels[c].occLpF = occ;
+				emitter->channels[c].airLpF = air;
+			}
+			int blobLen = 0;
+			f->ReadInt( blobLen );
+			if ( blobLen > 0 && blobLen < ( 1 << 20 ) ) {
+				byte *blob = (byte *)Mem_Alloc( blobLen );
+				f->Read( blob, blobLen );
+				if ( emitter ) {
+					idSoundChannel *ch = &emitter->channels[c];
+					if ( ch->pendStream ) Mem_Free( ch->pendStream );
+					ch->pendStream = blob;
+					ch->pendStreamSize = blobLen;
+				} else {
+					Mem_Free( blob );
+				}
+			}
+		}
+	}
+}

@@ -167,6 +167,10 @@ public:
 	virtual void			Decode( idSoundSample *sample, int outputOffset, int outputCount, float *dest );
 	virtual void			ClearDecoder( void );
 	virtual idSoundSample *	GetSample( void ) const;
+	virtual void			WriteStreamState( idFile *f );
+	virtual void			ArmPendingStreamState( idFile *f );
+	void					FreePendingStreamState( void );
+	void					InitPendingStreamState( void ) { pendSinc = NULL; pendSincSize = 0; pendCarryFrames = 0; }
 	virtual int				GetLastDecodeTime( void ) const;
 
 	void					Clear( void );
@@ -209,6 +213,12 @@ private:
 	   time instead.
 	*/
 	float					rsCarry[RESAMPLE_CARRY_FRAMES * 2];
+	// pending savestate stream state, applied after the post-restore seek
+	byte *					pendSinc;
+	int						pendSincSize;
+	int						pendSrcRate, pendDstRate;
+	int						pendCarryFrames;
+	float					pendCarry[RESAMPLE_CARRY_FRAMES * 2];
 	int						rsCarryFrames;
 };
 
@@ -291,6 +301,7 @@ idSampleDecoder::Alloc
 */
 idSampleDecoder *idSampleDecoder::Alloc( void ) {
 	idSampleDecoderLocal *decoder = sampleDecoderAllocator.Alloc();
+	decoder->InitPendingStreamState();	// fresh slot: pointer is garbage
 	decoder->Clear();
 	return decoder;
 }
@@ -302,6 +313,7 @@ idSampleDecoder::Free
 */
 void idSampleDecoder::Free( idSampleDecoder *decoder ) {
 	idSampleDecoderLocal *localDecoder = static_cast<idSampleDecoderLocal *>( decoder );
+	localDecoder->FreePendingStreamState();
 	localDecoder->ClearDecoder();
 	sampleDecoderAllocator.Free( localDecoder );
 }
@@ -330,6 +342,11 @@ idSampleDecoderLocal::Clear
 ====================
 */
 void idSampleDecoderLocal::Clear( void ) {
+	/* NOTE: the pending savestate stream state is deliberately NOT
+	   touched here: ClearDecoder ends in Clear(), and the first
+	   post-restore decode clears to establish its format - wiping the
+	   armed state there was exactly the bug. Fresh-slot initialization
+	   happens once in idSampleDecoder::Alloc. */
 	failed = false;
 	lastFormat = WAVE_FORMAT_TAG_PCM;
 	lastSample = NULL;
@@ -348,6 +365,12 @@ idSampleDecoderLocal::ClearDecoder
 ====================
 */
 void idSampleDecoderLocal::ClearDecoder( void ) {
+	/*
+	   NOTE: the armed savestate stream state (pendSinc) deliberately
+	   survives this: the first post-restore Decode clears to establish
+	   the format before the pending state can apply. It is freed on
+	   decoder retirement (idSampleDecoder::Free) or on re-arm.
+	*/
 	Sys_EnterCriticalSection( CRITICAL_SECTION_ONE );
 
 	switch( lastFormat ) {
@@ -380,6 +403,77 @@ void idSampleDecoderLocal::ClearDecoder( void ) {
 idSampleDecoderLocal::GetSample
 ====================
 */
+/*
+====================
+idSampleDecoderLocal::WriteStreamState / ArmPendingStreamState
+
+Savestate stream continuity. The mutable stream state that the natural
+post-restore reopen+seek cannot reproduce is the resampler's ring and
+fractional-time phase plus the carried-over output frames: a fresh
+resampler starts its output grid at phase zero for an arbitrary offset,
+permanently shifting the resampled voice's subsample alignment. Writing
+that state and re-applying it right after the seek's own reset makes the
+restored stream continue bit-exactly. The vorbis side needs nothing: the
+seek is sample-exact, so the PCM feed equals the continuous timeline's.
+====================
+*/
+extern "C" size_t rarch_sinc_resampler_state_size( void *re_ );
+extern "C" void rarch_sinc_resampler_get_state( void *re_, void *out );
+extern "C" void rarch_sinc_resampler_set_state( void *re_, const void *in );
+
+void idSampleDecoderLocal::WriteStreamState( idFile *f ) {
+	int has = ( rsHandle != NULL ) ? 1 : 0;
+	f->WriteInt( has );
+	if ( !has ) {
+		return;
+	}
+	f->WriteInt( rsSrcRate );
+	f->WriteInt( rsDstRate );
+	int sz = (int)rarch_sinc_resampler_state_size( rsHandle );
+	f->WriteInt( sz );
+	byte *tmp = (byte *)_alloca( sz );
+	rarch_sinc_resampler_get_state( rsHandle, tmp );
+	f->Write( tmp, sz );
+	f->WriteInt( rsCarryFrames );
+	if ( rsCarryFrames > 0 ) {
+		f->Write( rsCarry, rsCarryFrames * 2 * sizeof( float ) );
+	}
+}
+
+void idSampleDecoderLocal::FreePendingStreamState( void ) {
+	if ( pendSinc != NULL ) {
+		Mem_Free( pendSinc );
+		pendSinc = NULL;
+	}
+	pendSincSize = 0;
+	pendCarryFrames = 0;
+}
+
+void idSampleDecoderLocal::ArmPendingStreamState( idFile *f ) {
+	FreePendingStreamState();
+	int has = 0;
+	f->ReadInt( has );
+	if ( !has ) {
+		return;
+	}
+	f->ReadInt( pendSrcRate );
+	f->ReadInt( pendDstRate );
+	int sz = 0;
+	f->ReadInt( sz );
+	if ( sz <= 0 || sz > 1 << 20 ) {
+		return;
+	}
+	pendSinc = (byte *)Mem_Alloc( sz );
+	pendSincSize = sz;
+	f->Read( pendSinc, sz );
+	int cf = 0;
+	f->ReadInt( cf );
+	if ( cf > 0 && cf <= RESAMPLE_CARRY_FRAMES ) {
+		f->Read( pendCarry, cf * 2 * sizeof( float ) );
+		pendCarryFrames = cf;
+	}
+}
+
 idSoundSample *idSampleDecoderLocal::GetSample( void ) const {
 	return lastSample;
 }
@@ -682,6 +776,24 @@ int idSampleDecoderLocal::DecodeOGG( idSoundSample *sample, int outputOffset, in
 				}
 				rsSrcRate = srcRate;
 				rsDstRate = dstRate;
+			}
+			/*
+			   Savestate stream continuity: a restore armed the saved
+			   resampler state; apply it once the handle for the same
+			   rate pair exists (right here, after the post-restore
+			   seek's own reset), then the stream continues bit-exactly.
+			*/
+			if ( pendSinc != NULL && pendSrcRate == srcRate && pendDstRate == dstRate
+					&& (int)rarch_sinc_resampler_state_size( rsHandle ) == pendSincSize ) {
+				rarch_sinc_resampler_set_state( rsHandle, pendSinc );
+				if ( pendCarryFrames > 0 ) {
+					memcpy( rsCarry, pendCarry, pendCarryFrames * 2 * sizeof( float ) );
+					rsCarryFrames = pendCarryFrames;
+				}
+				Mem_Free( pendSinc );
+				pendSinc = NULL;
+				pendSincSize = 0;
+				pendCarryFrames = 0;
 			}
 
 			/*

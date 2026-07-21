@@ -249,6 +249,7 @@ public:
 	void	Init( void );
 	// set a new target parameter set; crossfades over REVERB_XFADE_BLOCKS
 	void	SetParams( const sndReverbParams_t &p );
+	void	InvalidateDerived( void ) { derivedClean = false; }	// after a raw state restore
 	// mono send at int16 scale -> stereo wet ADDED to dest.
 	// float dest is the [-1,1] normalized mix buffer; wetScale is the master
 	// (s_reverbGain cvar), applied identically in both paths.

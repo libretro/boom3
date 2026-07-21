@@ -675,6 +675,38 @@ void rarch_sinc_resampler_reset_state(void *re_)
    resamp->time = 0;
 }
 
+/* Local additions for savestate support: the mutable stream state is the
+ * ring (4*taps floats), ptr and time; the rest is the immutable table.
+ * Saving and restoring exactly that set lets a rebuilt handle continue a
+ * stream bit-exactly. */
+size_t rarch_sinc_resampler_state_size(void *re_)
+{
+   rarch_sinc_resampler_t *resamp = (rarch_sinc_resampler_t*)re_;
+   if (!resamp)
+      return 0;
+   return 4 * resamp->taps * sizeof(float) + sizeof(unsigned) + sizeof(uint32_t);
+}
+
+void rarch_sinc_resampler_get_state(void *re_, void *out)
+{
+   rarch_sinc_resampler_t *resamp = (rarch_sinc_resampler_t*)re_;
+   unsigned char *p = (unsigned char*)out;
+   size_t ring = 4 * resamp->taps * sizeof(float);
+   memcpy(p, resamp->buffer_l, ring); p += ring;
+   memcpy(p, &resamp->ptr,  sizeof(unsigned)); p += sizeof(unsigned);
+   memcpy(p, &resamp->time, sizeof(uint32_t));
+}
+
+void rarch_sinc_resampler_set_state(void *re_, const void *in)
+{
+   rarch_sinc_resampler_t *resamp = (rarch_sinc_resampler_t*)re_;
+   const unsigned char *p = (const unsigned char*)in;
+   size_t ring = 4 * resamp->taps * sizeof(float);
+   memcpy(resamp->buffer_l, p, ring); p += ring;
+   memcpy(&resamp->ptr,  p, sizeof(unsigned)); p += sizeof(unsigned);
+   memcpy(&resamp->time, p, sizeof(uint32_t));
+}
+
 static void resampler_sinc_free(void *data)
 {
    rarch_sinc_resampler_t *resamp = (rarch_sinc_resampler_t*)data;
