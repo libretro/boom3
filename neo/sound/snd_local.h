@@ -653,8 +653,6 @@ public:
 	bool				muted;
 	bool				shutdown;
 
-	int				meterTops[256];
-	int				meterTopsTime[256];
 
 	float				volumesDB[1200];		// dB to float volume conversion
 	idList<SoundFX*>		fxList;
@@ -666,11 +664,9 @@ public:
 
 	s_stats				soundStats;				// NOTE: updated throughout the code, not displayed anywhere
 
-	dword *				graph;
 
 	virtual void			SetMute( bool mute );
 
-	virtual cinData_t		ImageForTime( const int milliseconds, const bool waveform );
 
 	int				GetSoundDecoderInfo( int index, soundDecoderInfo_t &decoderInfo );
 
@@ -720,8 +716,6 @@ public:
 	static idCVar			s_spatializationDecay;
 	static idCVar			s_showStartSound;
 	static idCVar			s_maxSoundsPerShader;
-	static idCVar			s_reverse;
-	static idCVar			s_meterTopTime;
 	static idCVar			s_volume;
 	static idCVar			s_constantAmplitude;
 	static idCVar			s_playDefaultSound;
