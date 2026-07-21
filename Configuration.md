@@ -262,18 +262,15 @@ This can be configured with the following CVars:
    standard places (like next to the executable). Especially useful for developing/debugging mod DLLs
    (you can just set `fs_gameDllPath` to the build dir, no need to copy the DLL/.so/.dylib)
 
-- `s_alReverbGain` reduce strength of OpenAL (EAX-like) EFX reverb effects, `0.0` - `1.0` (default `0.5`)
-- `s_alHRTF` Enable [HRTF](https://en.wikipedia.org/w/index.php?title=Head-related_transfer_function)
-   for better surround sound with stereo **headphones**. `0`: Disable, `1`: Enable, `-1`: Let OpenAL decide (default).  
-   *Note* that OpenAL may automatically enable HRTF when it detects headphones, and it can happen that
-   it detects regular stereo speakers as headphones (when they're plugged into a jack that's somehow
-   labeled as headphone jack) - in that case you'll want to explicitly disable it.
-   The *Audio Options* tab of the [dhewm3 Settings Menu](#dhewm3-settings-menu) shows OpenAL Info,
-   including the current HRTF state (if supported by your OpenAL version).
-- `s_alOutputLimiter` Configure OpenAL's output-limiter which temporarily reduces the overall volume
-  when too many too loud sounds play at once, to avoid issues like clipping. `0`: Disable, `1`: Enable, `-1`: Let OpenAL decide (default)
-- `s_scaleDownAndClamp` Clamp and reduce volume of all sounds to prevent clipping or temporary
-  downscaling by OpenAL's output limiter (default `1`)
+- `s_reverbGain` wet gain of the built-in environmental reverb, `0.0` - `1.0` (default `0.5`).
+  Replaces dhewm3's `s_alReverbGain`: this core has no OpenAL, the EFX presets drive an internal
+  reverb instead, and this cvar is its master wet level (the dry path is unaffected). If your old
+  config sets `s_alReverbGain`, move the value here.
+- `s_outputLimiter` soft-knee saturator at the output stage that keeps many simultaneous loud
+  sounds from hard-clipping, `1`: Enable (default), `0`: plain hard clip. Replaces both
+  `s_alOutputLimiter` (never implemented here) and `s_scaleDownAndClamp` (removed - overload is
+  handled at the output stage now, with no permanent volume reduction).
+  There is no HRTF support in this core's stereo mixer; `s_alHRTF` has no equivalent.
 
 - `imgui_scale` Factor to scale ImGui menus by (especially relevant for HighDPI displays).
   Should be a positive factor like `1.5` or `2`; or `-1` (the default) to let dhewm3 automatically
