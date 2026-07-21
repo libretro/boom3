@@ -61,6 +61,7 @@ void idSoundWorldLocal::Init( idRenderWorld *renderWorld ) {
 	   zero on the first wet mix block.
 	*/
 	reverb.Init();
+	enviroFX.Init();
 
 
 	gameMsec = 0;
@@ -526,10 +527,7 @@ void idSoundWorldLocal::MixLoop( int currentSampleTime, int numFrames, float *fi
 		}
 	}
 
-	// TODO port to OpenAL
-	if ( false && enviroSuitActive ) {
-		soundSystemLocal.DoEnviroSuit( finalMixBuffer, numFrames, 2 );
-	}
+
 
 	// environmental reverb: process the accumulated mono send and add the
 	// stereo wet into this block, in whichever format the mixer is running
@@ -539,6 +537,26 @@ void idSoundWorldLocal::MixLoop( int currentSampleTime, int numFrames, float *fi
 			reverb.ProcessFloat( reverbSendF, finalMixBuffer, numFrames, wet );
 		} else {
 			reverb.ProcessS16( reverbSendI, (int *)finalMixBuffer, numFrames, wet );
+		}
+	}
+
+	/*
+	   Enviro-suit muffling (ROE): the suit sits over the listener's ears,
+	   so it processes the final mix after the reverb - the room's wet
+	   energy muffles with everything else. The old call sat before the
+	   reverb existed and was hard-disabled behind 'if ( false && ... )'
+	   with a port-me note; this is that port.
+	*/
+	if ( enviroSuitActive ) {
+		enviroFX.SetParms( idSoundSystemLocal::s_enviroSuitCutoffFreq.GetFloat(),
+		                   idSoundSystemLocal::s_enviroSuitCutoffQ.GetFloat(),
+		                   idSoundSystemLocal::s_enviroSuitVolumeScale.GetFloat(),
+		                   idSoundSystemLocal::s_reverbTime.GetFloat(),
+		                   idSoundSystemLocal::s_reverbFeedback.GetFloat() );
+		if ( soundSystemLocal.outputIsFloat ) {
+			enviroFX.ProcessFloat( finalMixBuffer, numFrames );
+		} else {
+			enviroFX.ProcessS16( (int *)finalMixBuffer, numFrames );
 		}
 	}
 }

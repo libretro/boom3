@@ -237,6 +237,7 @@ int main() {
    defines the variable in snd_system.cpp, the bench provides it here */
 int snd_sampleRate = 44100;
 #include "../neo/sound/snd_reverb.h"
+#include "../neo/sound/snd_envirofx.h"
 /* scalar twin of the same header for SIMD equivalence testing: the include
    guard is reopened inside a namespace with the kernel forced off, giving a
    second, independent instantiation of the identical DSP */
@@ -326,6 +327,49 @@ int reverb_test() {
 		}
 		printf("reverb SSE2-vs-scalar (8s, all features, retargets): %s\n",
 			mism2 ? "FAIL" : "bit-exact");
+	}
+
+	/* ---- enviro-suit chain (appended with the ROE suit port) ---- */
+	{
+		static float sf[1024]; static int si[1024];
+		/* 1. muffling: steady 6kHz must attenuate far more than 400Hz */
+		double rms[2][2];
+		for (int f = 0; f < 2; f++) {
+			double freq = f ? 6000.0 : 400.0;
+			idEnviroSuitFX ef2, ei2; ef2.Init(); ei2.Init();
+			double eEF=0, eEI=0; long n=0;
+			for (int b = 0; b < 200; b++) {
+				for (int i = 0; i < 512; i++) {
+					double v = 9000.0 * sin(2*3.14159265*freq*(b*512+i)/44100.0);
+					sf[i*2] = sf[i*2+1] = (float)(v/32768.0);
+					si[i*2] = si[i*2+1] = (int)v;
+				}
+				ef2.ProcessFloat(sf, 512);
+				ei2.ProcessS16(si, 512);
+				if (b > 60) { for (int i=0;i<1024;i++){ eEF += (double)sf[i]*32768.0*sf[i]*32768.0; eEI += (double)si[i]*si[i]; n++; } }
+			}
+			rms[f][0] = sqrt(eEF/n); rms[f][1] = sqrt(eEI/n);
+		}
+		printf("enviro muffle: 400Hz float %.1f int %.1f | 6kHz float %.1f int %.1f  %s\n",
+			rms[0][0], rms[0][1], rms[1][0], rms[1][1],
+			(rms[1][0] < 0.2*rms[0][0] && rms[1][1] < 0.2*rms[0][1]) ? "OK" : "FAIL");
+		/* 2. float/int agreement on the passband */
+		printf("enviro float/int agreement (400Hz): ratio %.3f  %s\n",
+			rms[0][0]/(rms[0][1]+1e-9),
+			(rms[0][0]/(rms[0][1]+1e-9) > 0.9 && rms[0][0]/(rms[0][1]+1e-9) < 1.1) ? "OK" : "FAIL");
+		/* 3. int replay determinism + tail to exact zero */
+		{
+			idEnviroSuitFX r1, r2; r1.Init(); r2.Init();
+			static int o1[1024], o2[1024]; int mism=0; unsigned rng=0x5EED;
+			for (int b=0;b<200;b++){
+				for (int i=0;i<1024;i++){ rng=rng*1664525u+1013904223u; o1[i]=o2[i]= (b<40) ? (int)(rng>>17)-16384 : 0; }
+				r1.ProcessS16(o1,512); r2.ProcessS16(o2,512);
+				for (int i=0;i<1024;i++) if (o1[i]!=o2[i]) mism++;
+			}
+			long long tail=0; for (int i=0;i<1024;i++) tail += (long long)o1[i]*o1[i];
+			printf("enviro int determinism: %s; tail after 1.9s silence: %lld %s\n",
+				mism?"FAIL":"bit-exact", tail, tail==0?"OK (exact zero)":(tail<100?"OK":"FAIL"));
+		}
 	}
 
 	/* ---- EAXREVERB feature tests: steady-sine and noise-burst probes ----

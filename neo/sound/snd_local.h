@@ -32,6 +32,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "framework/UsercmdGen.h"
 #include "sound/sound.h"
 #include "sound/snd_reverb.h"
+#include "sound/snd_envirofx.h"
 #include "sound/efxlib.h"
 
 // demo sound commands
@@ -268,11 +269,6 @@ public:
 	void			SetParameter( float val )						{ param = val; };
 };
 
-class SoundFX_Lowpass : public SoundFX {
-public:
-	virtual void		ProcessSample( float* in, float* out );
-};
-
 class SoundFX_LowpassFast : public SoundFX {
 	float				freq;
 	float				res;
@@ -288,14 +284,6 @@ public:
 		a1 = a2 = a3 = 0.0f;
 		b1 = b2 = 0.0f;
 	}
-};
-
-class SoundFX_Comb : public SoundFX {
-	int					currentTime;
-
-public:
-	virtual void		Initialize();
-	virtual void		ProcessSample( float* in, float* out );
 };
 
 class FracTime {
@@ -590,6 +578,7 @@ public:
 	// preset selected by listener area, mono send accumulated during the
 	// channel loop in whichever format the mixer is running
 	idSoundReverb			reverb;
+	idEnviroSuitFX			enviroFX;	// ROE suit muffling, gated on enviroSuitActive
 	idStr					reverbEffectName;	// currently applied preset
 	int						reverbCachedArea;	// listener area the preset was resolved for
 	int						reverbCachedGen;	// efxGeneration that resolution belongs to
@@ -666,7 +655,6 @@ public:
 	int				meterTopsTime[256];
 
 	float				volumesDB[1200];		// dB to float volume conversion
-	idList<SoundFX*>		fxList;
 
 	int				CurrentSoundTime;		// master output-rate sample clock, advanced only by MixFrame*
 
@@ -711,7 +699,6 @@ public:
 	int				SamplesToMilliseconds( int samples ) const;
 	int				MillisecondsToSamples( int ms ) const;
 
-	void				DoEnviroSuit( float* samples, int numSamples, int numSpeakers );
 
 					// latches
 					// mark available during initialization, or through an explicit test
