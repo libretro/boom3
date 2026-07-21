@@ -329,6 +329,34 @@ int reverb_test() {
 			mism2 ? "FAIL" : "bit-exact");
 	}
 
+	/* ---- NEON float kernel parity (appended with the float line stage;
+	        tautological where no float SIMD compiles in) ---- */
+	{
+		idSoundReverb rA; rvb_scalar::idSoundReverb rB;
+		rA.Init(); rB.Init();
+		sndReverbParams_t qa; rvb_scalar::sndReverbParams_t qb;
+		qa.SetDefaults(); qa.decayTime=2.2f; qa.decayLFRatio=0.3f; qa.decayHFRatio=0.4f;
+		qa.echoTime=0.09f; qa.echoDepth=0.6f; qa.modulationTime=0.9f; qa.modulationDepth=0.7f;
+		qa.density=0.35f; qa.gainLF=0.4f; qa.gainHF=0.5f; qa.lateReverbPan[0]=0.6f;
+		memcpy(&qb,&qa,sizeof qb);
+		rA.SetParams(qa); rB.SetParams(qb);
+		static float sf2[512], oA[1024], oB[1024];
+		unsigned rng=99; long long mismF=0;
+		for (int b=0;b<300;b++){
+			if (b==120){
+				qa.density=1.0f; qa.modulationDepth=0.0f; qa.decayLFRatio=1.6f; qa.lateReverbPan[0]=-1.0f;
+				memcpy(&qb,&qa,sizeof qb); rA.SetParams(qa); rB.SetParams(qb);
+			}
+			for (int i=0;i<512;i++){ rng=rng*1664525u+1013904223u; sf2[i]=(b<220)?((int)(rng>>17)-16384)/32768.0f:0.0f; }
+			memset(oA,0,sizeof oA); memset(oB,0,sizeof oB);
+			rA.ProcessFloat(sf2,oA,512,0.9f);
+			rB.ProcessFloat(sf2,oB,512,0.9f);
+			for (int i=0;i<1024;i++) if (memcmp(&oA[i],&oB[i],4)) mismF++;
+		}
+		printf("reverb float kernel vs scalar-float (all features, retarget): %s\n",
+			mismF ? "FAIL" : "bit-identical");
+	}
+
 	/* ---- reverb pan vectors (appended with the pan implementation) ---- */
 	{
 		/* late pan hard right vs unpanned: R wet energy must dominate L */

@@ -202,6 +202,27 @@ static inline rvbv Rvb_Sub( rvbv a, rvbv b )       { return vsubq_s32( a, b ); }
 static inline rvbv Rvb_Set1( int v )               { return vdupq_n_s32( v ); }
 static inline rvbv Rvb_Set4( int a, int b, int c, int d ) { int32_t t[4] = { a, b, c, d }; return vld1q_s32( t ); }
 static inline rvbv Rvb_CSign( rvbv x, rvbv m )     { return vsubq_s32( veorq_s32( x, m ), m ); }
+
+/*
+   Float four-lane layer, NEON only: the x86 float path autovectorizes
+   well (83 packed instructions measured) and stays scalar-source, but
+   the aarch64 compiler barely touches it, so the line-stage recursions
+   get explicit lanes there. NEON single-precision ops are IEEE-exact
+   and every operation here is lane-independent with the scalar path's
+   exact operation order (multiply then add, no fused contraction), so
+   the kernel is bit-identical to the scalar float path - asserted, not
+   assumed, by the qemu twin test. The fractional tap read stays scalar
+   with its frac == 0 branch: the unconditional a0 + 0.0f form would
+   quietly turn a -0.0f line sample into +0.0f and break the identity.
+*/
+#define REVERB_SIMD_FLOAT 1
+typedef float32x4_t rvbf;
+static inline rvbf Rf_Load( const float *p )       { return vld1q_f32( p ); }
+static inline void Rf_Store( float *p, rvbf v )    { vst1q_f32( p, v ); }
+static inline rvbf Rf_Add( rvbf a, rvbf b )        { return vaddq_f32( a, b ); }
+static inline rvbf Rf_Sub( rvbf a, rvbf b )        { return vsubq_f32( a, b ); }
+static inline rvbf Rf_Mul( rvbf a, rvbf b )        { return vmulq_f32( a, b ); }
+static inline rvbf Rf_Set1( float v )              { return vdupq_n_f32( v ); }
 template< int SHIFT >
 static inline rvbv Snd_ReverbQmul4( rvbv x, rvbv g ) {
 	int32x4_t s  = vshrq_n_s32( x, 31 );
@@ -669,6 +690,80 @@ ID_INLINE void idSoundReverb::ProcessFloat( const float *send, float *dest, int 
 		// fractional tap, low-shelf for the LF decay band, one-pole damp
 		// for the HF band, Householder feedback
 		float out[REVERB_LINES]; float sum = 0.0f;
+#ifdef REVERB_SIMD_FLOAT
+		/*
+		   NEON float line stage: the tap slew/modulation/read stays
+		   scalar (scattered gathers, and the frac == 0 branch preserves
+		   -0.0f, see the layer comment); the shelf and damp recursions
+		   and the feedback multiply run four lanes at a time. Every
+		   vector op is lane-independent with the scalar operation order,
+		   so the output is bit-identical to the scalar path below -
+		   asserted by the qemu twin.
+		*/
+		float vA[REVERB_LINES];
+		for ( int l = 0; l < REVERB_LINES; l++ ) {
+			unsigned tap = densityTapQ16[l];
+			if ( tap != densityTargetQ16[l] ) {
+				if ( tap < densityTargetQ16[l] ) {
+					tap += REVERB_TAP_SLEW_Q16;
+					if ( tap > densityTargetQ16[l] ) tap = densityTargetQ16[l];
+				} else {
+					tap -= REVERB_TAP_SLEW_Q16;
+					if ( tap < densityTargetQ16[l] ) tap = densityTargetQ16[l];
+				}
+				densityTapQ16[l] = tap;
+			}
+			if ( modOn ) {
+				unsigned ph = ( ( modPhase >> 16 ) + (unsigned)l * 8192u ) & 65535u;
+				int sq = Snd_ReverbSinQ15i( ph );
+				tap -= (unsigned)( ( (long long)modDepthQ16 * ( 32768 + sq ) ) >> 16 );
+			}
+			int intD = (int)( tap >> 16 );
+			unsigned frac = tap & 0xffffu;
+			unsigned base = linePos[l] + (unsigned)lineLen[l];
+			float a0 = lineF[l][( base - (unsigned)intD ) % (unsigned)lineLen[l]];
+			if ( frac == 0 ) {
+				vA[l] = a0;
+			} else {
+				float b0 = lineF[l][( base - (unsigned)intD - 1u ) % (unsigned)lineLen[l]];
+				vA[l] = a0 + ( b0 - a0 ) * ( frac * ( 1.0f / 65536.0f ) );
+			}
+		}
+		{
+			rvbf vv0 = Rf_Load( &vA[0] ),       vv1 = Rf_Load( &vA[4] );
+			rvbf lf0 = Rf_Load( &lfLoopF[0] ),  lf1 = Rf_Load( &lfLoopF[4] );
+			rvbf dm0 = Rf_Load( &dampF[0] ),    dm1 = Rf_Load( &dampF[4] );
+			const rvbf lfA  = Rf_Set1( 1.0f - lfLoopCoef );
+			const rvbf lfG  = Rf_Set1( lfAdj );
+			const rvbf dmA  = Rf_Set1( 1.0f - dampCoef );
+			lf0 = Rf_Add( lf0, Rf_Mul( lfA, Rf_Sub( vv0, lf0 ) ) );
+			lf1 = Rf_Add( lf1, Rf_Mul( lfA, Rf_Sub( vv1, lf1 ) ) );
+			vv0 = Rf_Add( vv0, Rf_Mul( lfG, lf0 ) );
+			vv1 = Rf_Add( vv1, Rf_Mul( lfG, lf1 ) );
+			dm0 = Rf_Add( dm0, Rf_Mul( dmA, Rf_Sub( vv0, dm0 ) ) );
+			dm1 = Rf_Add( dm1, Rf_Mul( dmA, Rf_Sub( vv1, dm1 ) ) );
+			Rf_Store( &lfLoopF[0], lf0 ); Rf_Store( &lfLoopF[4], lf1 );
+			Rf_Store( &dampF[0],   dm0 ); Rf_Store( &dampF[4],   dm1 );
+			Rf_Store( &out[0], dm0 );     Rf_Store( &out[4], dm1 );
+		}
+		for ( int l = 0; l < REVERB_LINES; l++ ) {
+			sum += out[l];	// scalar sequential: keeps the summation order
+		}
+		sum *= 0.25f;	// 2/N, N=8
+		{
+			rvbf sv  = Rf_Set1( sum );
+			rvbf xv  = Rf_Set1( x );
+			rvbf fb0 = Rf_Add( xv, Rf_Mul( Rf_Load( &fbGain[0] ), Rf_Sub( Rf_Load( &out[0] ), sv ) ) );
+			rvbf fb1 = Rf_Add( xv, Rf_Mul( Rf_Load( &fbGain[4] ), Rf_Sub( Rf_Load( &out[4] ), sv ) ) );
+			float fbA[REVERB_LINES];
+			Rf_Store( &fbA[0], fb0 ); Rf_Store( &fbA[4], fb1 );
+			for ( int l = 0; l < REVERB_LINES; l++ ) {
+				unsigned p = linePos[l] % (unsigned)lineLen[l];
+				lineF[l][p] = fbA[l];
+				linePos[l]++;
+			}
+		}
+#else
 		for ( int l = 0; l < REVERB_LINES; l++ ) {
 			unsigned tap = densityTapQ16[l];
 			if ( tap != densityTargetQ16[l] ) {
@@ -718,6 +813,7 @@ ID_INLINE void idSoundReverb::ProcessFloat( const float *send, float *dest, int 
 			lineF[l][p] = x + fbGain[l] * ( out[l] - sum );
 			linePos[l]++;
 		}
+#endif
 
 		float lL = out[0] + out[2] + out[4] + out[6];
 		float lR = out[1] + out[3] + out[5] + out[7];
