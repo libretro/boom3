@@ -789,14 +789,12 @@ void idTarget_SetInfluence::Save( idSaveGame *savefile ) const {
 	savefile->WriteBool( soundFaded );
 	savefile->WriteBool( restoreOnTrigger );
 
-#ifdef _D3XP
 	savefile->WriteInt( savedGuiList.Num() );
-	for( i = 0; i < savedGuiList.Num(); i++ ) {
-		for(int j = 0; j < MAX_RENDERENTITY_GUI; j++) {
+	for( i = 0; i < savedGuiList.Num(); i++ )
+	{
+		for(int j = 0; j < MAX_RENDERENTITY_GUI; j++)
 			savefile->WriteUserInterface(savedGuiList[i].gui[j], savedGuiList[i].gui[j] ? savedGuiList[i].gui[j]->IsUniqued() : false);
-		}
 	}
-#endif
 }
 
 /*
@@ -855,16 +853,13 @@ void idTarget_SetInfluence::Restore( idRestoreGame *savefile ) {
 	savefile->ReadBool( soundFaded );
 	savefile->ReadBool( restoreOnTrigger );
 
-#ifdef _D3XP
 	savefile->ReadInt( num );
 	for( i = 0; i < num; i++ ) {
 		SavedGui_t temp;
-		for(int j = 0; j < MAX_RENDERENTITY_GUI; j++) {
+		for(int j = 0; j < MAX_RENDERENTITY_GUI; j++)
 			savefile->ReadUserInterface(temp.gui[j]);
-		}
 		savedGuiList.Append( temp );
 	}
-#endif
 }
 
 /*
@@ -934,19 +929,15 @@ void idTarget_SetInfluence::Event_GatherEntities() {
 	lightList.Clear();
 	guiList.Clear();
 	soundList.Clear();
-#ifdef _D3XP
 	savedGuiList.Clear();
-#endif
 
-	if ( spawnArgs.GetBool( "effect_all" ) ) {
+	if ( spawnArgs.GetBool( "effect_all" ) )
 		lights = sounds = guis = models = vision = true;
-	}
 
 	if ( targetsOnly ) {
 		listedEntities = targets.Num();
-		for ( i = 0; i < listedEntities; i++ ) {
+		for ( i = 0; i < listedEntities; i++ )
 			entityList[i] = targets[i].GetEntity();
-		}
 	} else {
 		float radius = spawnArgs.GetFloat( "radius" );
 		listedEntities = gameLocal.EntitiesWithinRadius( GetPhysics()->GetOrigin(), radius, entityList, MAX_GENTITIES );
@@ -965,10 +956,8 @@ void idTarget_SetInfluence::Event_GatherEntities() {
 			}
 			if ( guis && ent->GetRenderEntity() && ent->GetRenderEntity()->gui[ 0 ] && ent->spawnArgs.FindKey( "gui_demonic" ) ) {
 				guiList.Append( ent->entityNumber );
-#ifdef _D3XP
 				SavedGui_t temp;
 				savedGuiList.Append(temp);
-#endif
 				continue;
 			}
 			if ( ent->IsType( idStaticEntity::Type ) && ent->spawnArgs.FindKey( "color_demonic" ) ) {
@@ -1105,10 +1094,8 @@ void idTarget_SetInfluence::Event_Activate( idEntity *activator ) {
 
 		for ( j = 0; j < MAX_RENDERENTITY_GUI; j++ ) {
 			if ( ent->GetRenderEntity()->gui[ j ] && ent->spawnArgs.FindKey( j == 0 ? "gui_demonic" : va( "gui_demonic%d", j+1 ) ) ) {
-#ifdef _D3XP
 				//Backup the old one
 				savedGuiList[i].gui[j] = ent->GetRenderEntity()->gui[ j ];
-#endif
 				ent->GetRenderEntity()->gui[ j ] = uiManager->FindGui( ent->spawnArgs.GetString( j == 0 ? "gui_demonic" : va( "gui_demonic%d", j+1 ) ), true );
 				update = true;
 			}
@@ -1232,11 +1219,7 @@ void idTarget_SetInfluence::Event_RestoreInfluence() {
 		update = false;
 		for( j = 0; j < MAX_RENDERENTITY_GUI; j++ ) {
 			if ( ent->GetRenderEntity()->gui[ j ] ) {
-#ifdef _D3XP
 				ent->GetRenderEntity()->gui[ j ] = savedGuiList[i].gui[j];
-#else
-				ent->GetRenderEntity()->gui[ j ] = uiManager->FindGui( ent->spawnArgs.GetString( j == 0 ? "gui" : va( "gui%d", j+1 ) ) );
-#endif
 				update = true;
 			}
 		}

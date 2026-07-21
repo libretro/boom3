@@ -68,11 +68,10 @@ void idLangDict::Clear( void ) {
 idLangDict::Load
 ============
 */
-bool idLangDict::Load( const char *fileName, bool clear /* _D3XP */ ) {
-
-	if ( clear ) {
+bool idLangDict::Load( const char *fileName, bool clear )
+{
+	if ( clear )
 		Clear();
-	}
 
 	const char *buffer = NULL;
 	idLexer src( LEXFL_NOFATALERRORS | LEXFL_NOSTRINGCONCAT | LEXFL_ALLOWMULTICHARLITERALS | LEXFL_ALLOWBACKSLASHSTRINGCONCAT );
@@ -191,9 +190,7 @@ const char *idLangDict::AddString( const char *str ) {
 
 	int id = GetNextId();
 	idLangKeyValue kv;
-	// _D3XP
 	kv.key = va( "#str_%08i", id );
-	// kv.key = va( "#str_%05i", id );
 	kv.value = str;
 	c = args.Append( kv );
 	assert( kv.key.Cmpn( STRTABLE_ID, STRTABLE_ID_LENGTH ) == 0 );

@@ -643,11 +643,9 @@ void WriteOutputFile( void ) {
 	sprintf( qpath, "%s." PROC_FILE_EXT, dmapGlobals.mapFileBase );
 
 	common->Printf( "writing %s\n", qpath.c_str() );
-	// _D3XP used fs_cdpath
 	procFile = fileSystem->OpenFileWrite( qpath, "fs_devpath" );
-	if ( !procFile ) {
+	if ( !procFile )
 		common->Error( "Error opening %s", qpath.c_str() );
-	}
 
 	procFile->WriteFloatString( "%s\n\n", PROC_FILE_ID );
 

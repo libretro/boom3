@@ -199,24 +199,21 @@ bool OSPathToRelativePath( const char *osPath, idStr &qpath, const char *game ) 
 	// which won't match any of our drive letter based search paths
 	base = (char *)strstr( osPath, BASE_GAMEDIR );
 
-	// _D3XP added mod support
-	if ( base == NULL && strlen(game) > 0 ) {
-
+	if ( base == NULL && strlen(game) > 0 )
+	{
 		base = s = (char *)strstr( osPath, game );
-
-		while( s = strstr( s, game ) ) {
+		while( s = strstr( s, game ) )
+		{
 			s += strlen( game );
-			if ( s[0] == '/' || s[0] == '\\' ) {
+			if ( s[0] == '/' || s[0] == '\\' )
 				base = s;
-			}
 		}
 	}
 
 	if ( base ) {
 		s = strstr( base, "/" );
-		if ( !s ) {
+		if ( !s )
 			s = strstr( base, "\\" );
-		}
 		if ( s ) {
 			qpath = s + 1;
 			return true;

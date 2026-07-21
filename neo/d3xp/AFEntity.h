@@ -226,24 +226,18 @@ public:
 	void					Restore( idRestoreGame *savefile );
 	virtual void			Present( void );
 	virtual	void			Damage( idEntity *inflictor, idEntity *attacker, const idVec3 &dir, const char *damageDefName, const float damageScale, const int location );
-#ifdef _D3XP
 	void					SetThrown( bool isThrown );
 	virtual bool			Collide( const trace_t &collision, const idVec3 &velocity );
-#endif
 	virtual void			SpawnGibs( const idVec3 &dir, const char *damageDefName );
 
-#ifdef _D3XP
 	bool					IsGibbed() { return gibbed; };
-#endif
 
 protected:
 	idRenderModel *			skeletonModel;
 	int						skeletonModelDefHandle;
 	bool					gibbed;
 
-#ifdef _D3XP
 	bool					wasThrown;
-#endif
 
 	virtual void			Gib( const idVec3 &dir, const char *damageDefName );
 	void					InitSkeletonModel( void );
@@ -315,11 +309,7 @@ public:
 protected:
 	virtual void			Gib( const idVec3 &dir, const char *damageDefName );
 
-#ifndef _D3XP
-private:
-#else
 public:
-#endif
 	idEntityPtr<idAFAttachment>	head;
 
 	void					Event_Gib( const char *damageDefName );
@@ -425,11 +415,9 @@ public:
 	void					Spawn( void );
 	virtual void			Think( void );
 
-#ifdef _D3XP
 	float					force;
 	float					velocity;
 	float					steerAngle;
-#endif
 
 private:
 	idAFBody *				wheels[6];
@@ -438,7 +426,6 @@ private:
 	float					wheelAngles[6];
 };
 
-#ifdef _D3XP
 /*
 ===============================================================================
 
@@ -468,7 +455,6 @@ private:
 	void		Event_SetSteeringSpeed( float _steeringSpeed );
 	void		Event_SetWayPoint( idEntity *_waypoint );
 };
-#endif
 
 /*
 ===============================================================================
@@ -527,8 +513,6 @@ private:
 	void					Event_SetFingerAngle( float angle );
 	void					Event_StopFingers( void );
 };
-
-#ifdef _D3XP
 
 /**
 * idHarvestable contains all of the code required to turn an entity into a harvestable
@@ -611,6 +595,5 @@ protected:
 	void					Event_SpawnHarvestEntity( void );
 
 };
-#endif
 
 #endif /* !__GAME_AFENTITY_H__ */

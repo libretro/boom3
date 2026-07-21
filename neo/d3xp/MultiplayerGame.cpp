@@ -461,10 +461,8 @@ idMultiplayerGame::UpdateScoreboard
 void idMultiplayerGame::UpdateScoreboard( idUserInterface *scoreBoard, idPlayer *player ) {
 	int i, j, iline, k;
 	idStr gameinfo;
-#ifdef _D3XP
 	idStr livesinfo;
 	idStr timeinfo;
-#endif
 
 	idEntity *ent;
 	idPlayer *p;
@@ -579,11 +577,7 @@ void idMultiplayerGame::UpdateScoreboard( idUserInterface *scoreBoard, idPlayer 
 
 	// clear remaining lines (empty slots)
 	iline++;
-#ifdef _D3XP
 	while ( iline < MAX_CLIENTS ) { //Max players is now 8
-#else
-	while ( iline < 5 ) {
-#endif
 		scoreBoard->SetStateString( va( "player%i", iline ), "" );
 		scoreBoard->SetStateString( va( "player%i_score", iline ), "" );
 		scoreBoard->SetStateString( va( "player%i_tdm_tscore", iline ), "" );
@@ -1673,23 +1667,17 @@ void idMultiplayerGame::ExecuteVote( void ) {
 			break;
 		case VOTE_TIMELIMIT:
 			si_timeLimit.SetInteger( atoi( voteValue ) );
-#ifdef _D3XP
 			needRestart = gameLocal.NeedRestart();
 			cmdSystem->BufferCommandText( CMD_EXEC_NOW, "rescanSI" );
-			if ( needRestart ) {
+			if ( needRestart )
 				cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "nextMap" );
-			}
-#endif
 			break;
 		case VOTE_FRAGLIMIT:
 			si_fragLimit.SetInteger( atoi( voteValue ) );
-#ifdef _D3XP
 			needRestart = gameLocal.NeedRestart();
 			cmdSystem->BufferCommandText( CMD_EXEC_NOW, "rescanSI" );
-			if ( needRestart ) {
+			if ( needRestart )
 				cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "nextMap" );
-			}
-#endif
 			break;
 		case VOTE_GAMETYPE:
 			si_gameType.SetString( voteValue );
@@ -1704,13 +1692,10 @@ void idMultiplayerGame::ExecuteVote( void ) {
 			break;
 		case VOTE_SPECTATORS:
 			si_spectators.SetBool( !si_spectators.GetBool() );
-#ifdef _D3XP
 			needRestart = gameLocal.NeedRestart();
 			cmdSystem->BufferCommandText( CMD_EXEC_NOW, "rescanSI" );
-			if ( needRestart ) {
+			if ( needRestart )
 				cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "nextMap" );
-			}
-#endif
 			break;
 		case VOTE_NEXTMAP:
 			cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "serverNextMap\n" );
@@ -2551,11 +2536,7 @@ void idMultiplayerGame::UpdateHud( idPlayer *player, idUserInterface *hud ) {
 			}
 		}
 	}
-#ifdef _D3XP
 	for ( i = ( gameState == GAMEON ? numRankedPlayers : 0 ) ; i < MAX_CLIENTS; i++ ) {
-#else
-	for ( i = ( gameState == GAMEON ? numRankedPlayers : 0 ) ; i < 5; i++ ) {
-#endif
 		hud->SetStateString( va( "player%i", i+1 ), "" );
 		hud->SetStateString( va( "player%i_score", i+1 ), "" );
 		hud->SetStateInt( va( "rank%i", i+1 ), 0 );
@@ -2674,12 +2655,8 @@ void idMultiplayerGame::DrawChat() {
 	}
 }
 
-#ifdef _D3XP
 //D3XP: Adding one to frag count to allow for the negative flag in numbers greater than 255
 const int ASYNC_PLAYER_FRAG_BITS = -(idMath::BitsForInteger( MP_PLAYER_MAXFRAGS - MP_PLAYER_MINFRAGS )+1);	// player can have negative frags
-#else
-const int ASYNC_PLAYER_FRAG_BITS = -idMath::BitsForInteger( MP_PLAYER_MAXFRAGS - MP_PLAYER_MINFRAGS );	// player can have negative frags
-#endif
 const int ASYNC_PLAYER_WINS_BITS = idMath::BitsForInteger( MP_PLAYER_MAXWINS );
 const int ASYNC_PLAYER_PING_BITS = idMath::BitsForInteger( MP_PLAYER_MAXPING );
 
@@ -4359,7 +4336,6 @@ void idMultiplayerGame::ReloadScoreboard() {
 
 #endif
 
-#ifdef _D3XP
 idStr idMultiplayerGame::GetBestGametype( const char* map, const char* gametype ) {
 
 	int num = declManager->GetNumDecls( DECL_MAPDEF );
@@ -4388,4 +4364,3 @@ idStr idMultiplayerGame::GetBestGametype( const char* map, const char* gametype 
 	//For testing a new map let it play any gametpye
 	return gametype;
 }
-#endif

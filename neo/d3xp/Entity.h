@@ -118,61 +118,59 @@ class idEntity : public idClass {
 public:
 	static const int		MAX_PVS_AREAS = 4;
 
-	int						entityNumber;			// index into the entity list
-	int						entityDefNumber;		// index into the entity def list
+	int				entityNumber;			// index into the entity list
+	int				entityDefNumber;		// index into the entity def list
 
 	idLinkList<idEntity>	spawnNode;				// for being linked into spawnedEntities list
 	idLinkList<idEntity>	activeNode;				// for being linked into activeEntities list
 
 	idLinkList<idEntity>	snapshotNode;			// for being linked into snapshotEntities list
-	int						snapshotSequence;		// last snapshot this entity was in
-	int						snapshotBits;			// number of bits this entity occupied in the last snapshot
+	int				snapshotSequence;		// last snapshot this entity was in
+	int				snapshotBits;			// number of bits this entity occupied in the last snapshot
 
-	idStr					name;					// name of entity
-	idDict					spawnArgs;				// key/value pairs used to spawn and initialize entity
+	idStr				name;					// name of entity
+	idDict				spawnArgs;				// key/value pairs used to spawn and initialize entity
 	idScriptObject			scriptObject;			// contains all script defined data for this entity
 
-	int						thinkFlags;				// TH_? flags
-	int						dormantStart;			// time that the entity was first closed off from player
-	bool					cinematic;				// during cinematics, entity will only think if cinematic is set
+	int				thinkFlags;				// TH_? flags
+	int				dormantStart;			// time that the entity was first closed off from player
+	bool				cinematic;				// during cinematics, entity will only think if cinematic is set
 
 	renderView_t *			renderView;				// for camera views from this entity
-	idEntity *				cameraTarget;			// any remoteRenderMap shaders will use this
+	idEntity *			cameraTarget;			// any remoteRenderMap shaders will use this
 
 	idList< idEntityPtr<idEntity> >	targets;		// when this entity is activated these entities entity are activated
 
-	int						health;					// FIXME: do all objects really need health?
+	int				health;					// FIXME: do all objects really need health?
 
 	struct entityFlags_s {
-		bool				notarget			:1;	// if true never attack or target this entity
-		bool				noknockback			:1;	// if true no knockback from hits
-		bool				takedamage			:1;	// if true this entity can be damaged
-		bool				hidden				:1;	// if true this entity is not visible
-		bool				bindOrientated		:1;	// if true both the master orientation is used for binding
-		bool				solidForTeam		:1;	// if true this entity is considered solid when a physics team mate pushes entities
-		bool				forcePhysicsUpdate	:1;	// if true always update from the physics whether the object moved or not
-		bool				selected			:1;	// if true the entity is selected for editing
-		bool				neverDormant		:1;	// if true the entity never goes dormant
-		bool				isDormant			:1;	// if true the entity is dormant
-		bool				hasAwakened			:1;	// before a monster has been awakened the first time, use full PVS for dormant instead of area-connected
-		bool				networkSync			:1; // if true the entity is synchronized over the network
-		bool				grabbed				:1;	// if true object is currently being grabbed
+		bool			notarget			:1;	// if true never attack or target this entity
+		bool			noknockback			:1;	// if true no knockback from hits
+		bool			takedamage			:1;	// if true this entity can be damaged
+		bool			hidden				:1;	// if true this entity is not visible
+		bool			bindOrientated		:1;	// if true both the master orientation is used for binding
+		bool			solidForTeam		:1;	// if true this entity is considered solid when a physics team mate pushes entities
+		bool			forcePhysicsUpdate	:1;	// if true always update from the physics whether the object moved or not
+		bool			selected			:1;	// if true the entity is selected for editing
+		bool			neverDormant		:1;	// if true the entity never goes dormant
+		bool			isDormant			:1;	// if true the entity is dormant
+		bool			hasAwakened			:1;	// before a monster has been awakened the first time, use full PVS for dormant instead of area-connected
+		bool			networkSync			:1; // if true the entity is synchronized over the network
+		bool			grabbed				:1;	// if true object is currently being grabbed
 	} fl;
 
-#ifdef _D3XP
-	int						timeGroup;
+	int				timeGroup;
 
-	bool					noGrab;
+	bool				noGrab;
 
 	renderEntity_t			xrayEntity;
-	qhandle_t				xrayEntityHandle;
+	qhandle_t			xrayEntityHandle;
 	const idDeclSkin *		xraySkin;
 
-	void					DetermineTimeGroup( bool slowmo );
+	void				DetermineTimeGroup( bool slowmo );
 
-	void					SetGrabbedState( bool grabbed );
-	bool					IsGrabbed();
-#endif
+	void				SetGrabbedState( bool grabbed );
+	bool				IsGrabbed();
 
 public:
 	ABSTRACT_PROTOTYPE( idEntity );
@@ -481,13 +479,11 @@ private:
 	void					Event_HasFunction( const char *name );
 	void					Event_CallFunction( const char *name );
 	void					Event_SetNeverDormant( int enable );
-#ifdef _D3XP
 	void					Event_SetGui( int guiNum, const char *guiName);
 	void					Event_PrecacheGui( const char *guiName );
 	void					Event_GetGuiParm(int guiNum, const char *key);
 	void					Event_GetGuiParmFloat(int guiNum, const char *key);
 	void					Event_GuiNamedEvent(int guiNum, const char *event);
-#endif
 };
 
 /*
@@ -500,9 +496,9 @@ private:
 
 typedef struct damageEffect_s {
 	jointHandle_t			jointNum;
-	idVec3					localOrigin;
-	idVec3					localNormal;
-	int						time;
+	idVec3				localOrigin;
+	idVec3				localNormal;
+	int				time;
 	const idDeclParticle*	type;
 	struct damageEffect_s *	next;
 } damageEffect_t;
@@ -511,27 +507,27 @@ class idAnimatedEntity : public idEntity {
 public:
 	CLASS_PROTOTYPE( idAnimatedEntity );
 
-							idAnimatedEntity();
-							~idAnimatedEntity();
+					idAnimatedEntity();
+					~idAnimatedEntity();
 
-	void					Save( idSaveGame *savefile ) const;
-	void					Restore( idRestoreGame *savefile );
+	void				Save( idSaveGame *savefile ) const;
+	void				Restore( idRestoreGame *savefile );
 
 	virtual void			ClientPredictionThink( void );
 	virtual void			Think( void );
 
-	void					UpdateAnimation( void );
+	void				UpdateAnimation( void );
 
 	virtual idAnimator *	GetAnimator( void );
 	virtual void			SetModel( const char *modelname );
 
-	bool					GetJointWorldTransform( jointHandle_t jointHandle, int currentTime, idVec3 &offset, idMat3 &axis );
-	bool					GetJointTransformForAnim( jointHandle_t jointHandle, int animNum, int currentTime, idVec3 &offset, idMat3 &axis ) const;
+	bool				GetJointWorldTransform( jointHandle_t jointHandle, int currentTime, idVec3 &offset, idMat3 &axis );
+	bool				GetJointTransformForAnim( jointHandle_t jointHandle, int animNum, int currentTime, idVec3 &offset, idMat3 &axis ) const;
 
-	virtual int				GetDefaultSurfaceType( void ) const;
+	virtual int			GetDefaultSurfaceType( void ) const;
 	virtual void			AddDamageEffect( const trace_t &collision, const idVec3 &velocity, const char *damageDefName );
-	void					AddLocalDamageEffect( jointHandle_t jointNum, const idVec3 &localPoint, const idVec3 &localNormal, const idVec3 &localDir, const idDeclEntityDef *def, const idMaterial *collisionMaterial );
-	void					UpdateDamageEffects( void );
+	void				AddLocalDamageEffect( jointHandle_t jointNum, const idVec3 &localPoint, const idVec3 &localNormal, const idVec3 &localDir, const idDeclEntityDef *def, const idMaterial *collisionMaterial );
+	void				UpdateDamageEffects( void );
 
 	virtual bool			ClientReceiveEvent( int event, int time, const idBitMsg &msg );
 
@@ -541,30 +537,29 @@ public:
 	};
 
 protected:
-	idAnimator				animator;
+	idAnimator			animator;
 	damageEffect_t *		damageEffects;
 
 private:
-	void					Event_GetJointHandle( const char *jointname );
-	void					Event_ClearAllJoints( void );
-	void					Event_ClearJoint( jointHandle_t jointnum );
-	void					Event_SetJointPos( jointHandle_t jointnum, jointModTransform_t transform_type, const idVec3 &pos );
-	void					Event_SetJointAngle( jointHandle_t jointnum, jointModTransform_t transform_type, const idAngles &angles );
-	void					Event_GetJointPos( jointHandle_t jointnum );
-	void					Event_GetJointAngle( jointHandle_t jointnum );
+	void				Event_GetJointHandle( const char *jointname );
+	void				Event_ClearAllJoints( void );
+	void				Event_ClearJoint( jointHandle_t jointnum );
+	void				Event_SetJointPos( jointHandle_t jointnum, jointModTransform_t transform_type, const idVec3 &pos );
+	void				Event_SetJointAngle( jointHandle_t jointnum, jointModTransform_t transform_type, const idAngles &angles );
+	void				Event_GetJointPos( jointHandle_t jointnum );
+	void				Event_GetJointAngle( jointHandle_t jointnum );
 };
 
 
-#ifdef _D3XP
 class SetTimeState {
 	bool					activated;
 	bool					previousFast;
 	bool					fast;
 
 public:
-							SetTimeState();
-							SetTimeState( int timeGroup );
-							~SetTimeState();
+						SetTimeState();
+						SetTimeState( int timeGroup );
+						~SetTimeState();
 
 	void					PushState( int timeGroup );
 };
@@ -583,47 +578,41 @@ ID_INLINE SetTimeState::SetTimeState( int timeGroup ) {
 ID_INLINE void SetTimeState::PushState( int timeGroup ) {
 
 	// Don't mess with time in Multiplayer
-	if ( !gameLocal.isMultiplayer ) {
+	if ( !gameLocal.isMultiplayer )
+	{
 
 		activated = true;
 
 		// determine previous fast setting
-		if ( gameLocal.time == gameLocal.slow.time ) {
+		if ( gameLocal.time == gameLocal.slow.time )
 			previousFast = false;
-		}
-		else {
+		else
 			previousFast = true;
-		}
 
 		// determine new fast setting
-		if ( timeGroup ) {
+		if ( timeGroup )
 			fast = true;
-		}
-		else {
+		else
 			fast = false;
-		}
 
 		// set correct time
-		if ( fast ) {
+		if ( fast )
 			gameLocal.fast.Get( gameLocal.time, gameLocal.previousTime, gameLocal.msec, gameLocal.framenum, gameLocal.realClientTime, gameLocal.msecPrecise );
-		}
-		else {
+		else
 			gameLocal.slow.Get( gameLocal.time, gameLocal.previousTime, gameLocal.msec, gameLocal.framenum, gameLocal.realClientTime, gameLocal.msecPrecise );
-		}
 	}
 }
 
-ID_INLINE SetTimeState::~SetTimeState() {
-	if ( activated && !gameLocal.isMultiplayer ) {
+ID_INLINE SetTimeState::~SetTimeState()
+{
+	if ( activated && !gameLocal.isMultiplayer )
+	{
 		// set previous correct time
-		if ( previousFast ) {
+		if ( previousFast )
 			gameLocal.fast.Get( gameLocal.time, gameLocal.previousTime, gameLocal.msec, gameLocal.framenum, gameLocal.realClientTime, gameLocal.msecPrecise );
-		}
-		else {
+		else
 			gameLocal.slow.Get( gameLocal.time, gameLocal.previousTime, gameLocal.msec, gameLocal.framenum, gameLocal.realClientTime, gameLocal.msecPrecise );
-		}
 	}
 }
-#endif
 
 #endif /* !__GAME_ENTITY_H__ */

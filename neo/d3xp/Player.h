@@ -65,11 +65,7 @@ const int	LAND_RETURN_TIME = 300;
 const int	FOCUS_TIME = 300;
 const int	FOCUS_GUI_TIME = 500;
 
-#ifdef _D3XP
 const int MAX_WEAPONS = 32;
-#else
-const int MAX_WEAPONS = 16;
-#endif
 
 const int DEAD_HEARTRATE = 0;			// fall to as you die
 const int LOWHEALTH_HEARTRATE_ADJ = 20; //
@@ -108,13 +104,11 @@ enum {
 	INVISIBILITY,
 	MEGAHEALTH,
 	ADRENALINE,
-#ifdef _D3XP
 	INVULNERABILITY,
 	HELLTIME,
 	ENVIROSUIT,
 	//HASTE,
 	ENVIROTIME,
-#endif
 	MAX_POWERUPS
 };
 
@@ -134,7 +128,6 @@ enum {
 	INFLUENCE_LEVEL3,			// slow player movement
 };
 
-#ifdef _D3XP
 typedef struct {
 	int ammo;
 	int rechargeTime;
@@ -145,7 +138,6 @@ typedef struct {
 	char		name[64];
 	idList<int>	toggleList;
 } WeaponToggle_t;
-#endif
 
 class idInventory {
 public:
@@ -158,9 +150,7 @@ public:
 	int						clip[ MAX_WEAPONS ];
 	int						powerupEndTime[ MAX_POWERUPS ];
 
-#ifdef _D3XP
 	RechargeAmmo_t			rechargeAmmo[ AMMO_NUMTYPES ];
-#endif
 
 	// mp
 	int						ammoPredictTime;
@@ -210,15 +200,13 @@ public:
 	int						WeaponIndexForAmmoClass( const idDict & spawnArgs, const char *ammo_classname ) const;
 	ammo_t					AmmoIndexForWeaponClass( const char *weapon_classname, int *ammoRequired );
 	const char *			AmmoPickupNameForIndex( ammo_t ammonum ) const;
-	void					AddPickupName( const char *name, const char *icon, idPlayer* owner ); //_D3XP
+	void					AddPickupName( const char *name, const char *icon, idPlayer* owner );
 
 	int						HasAmmo( ammo_t type, int amount );
 	bool					UseAmmo( ammo_t type, int amount );
-	int						HasAmmo( const char *weapon_classname, bool includeClip = false, idPlayer* owner = NULL );			// _D3XP
+	int						HasAmmo( const char *weapon_classname, bool includeClip = false, idPlayer* owner = NULL );
 
-#ifdef _D3XP
 	bool					HasEmptyClipCannotRefill(const char *weapon_classname, idPlayer* owner);
-#endif
 
 	void					UpdateArmor( void );
 
@@ -228,11 +216,9 @@ public:
 	idList<idItemInfo>		pickupItemNames;
 	idList<idObjectiveInfo>	objectiveNames;
 
-#ifdef _D3XP
 	void					InitRechargeAmmo(idPlayer *owner);
 	void					RechargeAmmo(idPlayer *owner);
 	bool					CanGive( idPlayer *owner, const idDict &spawnArgs, const char *statname, const char *value, int *idealWeapon );
-#endif
 };
 
 typedef struct {
@@ -253,9 +239,7 @@ public:
 		EVENT_ABORT_TELEPORTER,
 		EVENT_POWERUP,
 		EVENT_SPECTATE,
-#ifdef _D3XP
 		EVENT_PICKUPNAME,
-#endif
 		EVENT_MAXEVENTS
 	};
 
@@ -303,27 +287,25 @@ public:
 	idInventory				inventory;
 
 	idEntityPtr<idWeapon>	weapon;
-	idUserInterface *		hud;				// MP: is NULL if not local player
-	idUserInterface *		objectiveSystem;
+	idUserInterface *		hud; // MP: is NULL if not local player
+	idUserInterface *		        objectiveSystem;
 	bool					objectiveSystemOpen;
 
-	int						weapon_soulcube;
-	int						weapon_pda;
-	int						weapon_fists;
-#ifdef _D3XP
-	int						weapon_bloodstone;
-	int						weapon_bloodstone_active1;
-	int						weapon_bloodstone_active2;
-	int						weapon_bloodstone_active3;
+	int					weapon_soulcube;
+	int					weapon_pda;
+	int					weapon_fists;
+	int					weapon_bloodstone;
+	int					weapon_bloodstone_active1;
+	int					weapon_bloodstone_active2;
+	int					weapon_bloodstone_active3;
 	bool					harvest_lock;
-#endif
 
-	int						heartRate;
+	int					heartRate;
 	idInterpolate<float>	heartInfo;
-	int						lastHeartAdjust;
-	int						lastHeartBeat;
-	int						lastDmgTime;
-	int						deathClearContentsTime;
+	int					lastHeartAdjust;
+	int					lastHeartBeat;
+	int					lastDmgTime;
+	int					deathClearContentsTime;
 	bool					doingDeathSkin;
 	int						lastArmorPulse;		// lastDmgTime if we had armor at time of hit
 	float					stamina;
@@ -338,11 +320,7 @@ public:
 	idEntityPtr<idProjectile> soulCubeProjectile;
 
 	// mp stuff
-#ifdef _D3XP
 	static idVec3			colorBarTable[ 8 ];
-#else
-	static idVec3			colorBarTable[ 5 ];
-#endif
 
 	int						spectator;
 	idVec3					colorBar;			// used for scoreboard and hud display
@@ -390,7 +368,6 @@ public:
 
 	idDragEntity			dragEntity;
 
-#ifdef _D3XP
 	idFuncMountedObject	*	mountedObject;
 	idEntityPtr<idLight>	enviroSuitLight;
 
@@ -403,7 +380,6 @@ public:
 	bool					bloomEnabled;
 	float					bloomSpeed;
 	float					bloomIntensity;
-#endif
 
 public:
 	CLASS_PROTOTYPE( idPlayer );
@@ -532,9 +508,7 @@ public:
 	int						GetBaseHeartRate( void );
 	void					UpdateAir( void );
 
-#ifdef _D3XP
 	void					UpdatePowerupHud();
-#endif
 
 	virtual bool			HandleSingleGuiCommand( idEntity *entityGui, idLexer *src );
 	bool					GuiActive( void ) { return focusGUIent != NULL; }
@@ -601,225 +575,217 @@ public:
 	virtual	void			UpdatePlayerIcons( void );
 	virtual	void			DrawPlayerIcons( void );
 	virtual	void			HidePlayerIcons( void );
-	bool					NeedsIcon( void );
+	bool				NeedsIcon( void );
 
-#ifdef _D3XP
-	void					StartHealthRecharge(int speed);
-	void					StopHealthRecharge();
+	void				StartHealthRecharge(int speed);
+	void				StopHealthRecharge();
 
-	idStr					GetCurrentWeapon();
+	idStr				GetCurrentWeapon();
 
-	bool					CanGive( const char *statname, const char *value );
+	bool				CanGive( const char *statname, const char *value );
 
-	void					StopHelltime( bool quick = true );
-	void					PlayHelltimeStopSound();
-#endif
+	void				StopHelltime( bool quick = true );
+	void				PlayHelltimeStopSound();
 
 #ifdef CTF
-	void					DropFlag( void );	// drop CTF item
-	void					ReturnFlag();
+	void				DropFlag( void );	// drop CTF item
+	void				ReturnFlag();
 	virtual void			FreeModelDef( void );
 #endif
 
-	bool					SelfSmooth( void );
-	void					SetSelfSmooth( bool b );
+	bool				SelfSmooth( void );
+	void				SetSelfSmooth( bool b );
 
 private:
 	jointHandle_t			hipJoint;
 	jointHandle_t			chestJoint;
 	jointHandle_t			headJoint;
 
-	idPhysics_Player		physicsObj;			// player physics
+	idPhysics_Player		physicsObj; // player physics
 
-	idList<aasLocation_t>	aasLocation;		// for AI tracking the player
+	idList<aasLocation_t>	aasLocation; // for AI tracking the player
 
-	int						bobFoot;
-	float					bobFrac;
-	float					bobfracsin;
-	int						bobCycle;			// for view bobbing and footstep generation
-	float					xyspeed;
-	int						stepUpTime;
-	float					stepUpDelta;
-	float					idealLegsYaw;
-	float					legsYaw;
-	bool					legsForward;
-	float					oldViewYaw;
-	idAngles				viewBobAngles;
-	idVec3					viewBob;
-	int						landChange;
-	int						landTime;
+	int				bobFoot;
+	float				bobFrac;
+	float				bobfracsin;
+	int				bobCycle; // for view bobbing and footstep generation
+	float				xyspeed;
+	int				stepUpTime;
+	float				stepUpDelta;
+	float				idealLegsYaw;
+	float				legsYaw;
+	bool				legsForward;
+	float				oldViewYaw;
+	idAngles			viewBobAngles;
+	idVec3				viewBob;
+	int				landChange;
+	int				landTime;
 
-	int						currentWeapon;
-	int						idealWeapon;
-	int						previousWeapon;
-	int						weaponSwitchTime;
-	bool					weaponEnabled;
-	bool					showWeaponViewModel;
+	int				currentWeapon;
+	int				idealWeapon;
+	int				previousWeapon;
+	int				weaponSwitchTime;
+	bool				weaponEnabled;
+	bool				showWeaponViewModel;
 
 	const idDeclSkin *		skin;
 	const idDeclSkin *		powerUpSkin;
-	idStr					baseSkinName;
+	idStr				baseSkinName;
 
-	int						numProjectilesFired;	// number of projectiles fired
-	int						numProjectileHits;		// number of hits on mobs
+	int				numProjectilesFired;	// number of projectiles fired
+	int				numProjectileHits;		// number of hits on mobs
 
-	bool					airless;
-	int						airTics;				// set to pm_airTics at start, drops in vacuum
-	int						lastAirDamage;
+	bool				airless;
+	int				airTics;				// set to pm_airTics at start, drops in vacuum
+	int				lastAirDamage;
 
-	bool					gibDeath;
-	bool					gibsLaunched;
-	idVec3					gibsDir;
+	bool				gibDeath;
+	bool				gibsLaunched;
+	idVec3				gibsDir;
 
 	idInterpolate<float>	zoomFov;
 	idInterpolate<float>	centerView;
-	bool					fxFov;
+	bool				fxFov;
 
-	float					influenceFov;
-	int						influenceActive;		// level of influence.. 1 == no gun or hud .. 2 == 1 + no movement
-	idEntity *				influenceEntity;
+	float				influenceFov;
+	int				influenceActive;		// level of influence.. 1 == no gun or hud .. 2 == 1 + no movement
+	idEntity *			influenceEntity;
 	const idMaterial *		influenceMaterial;
-	float					influenceRadius;
+	float				influenceRadius;
 	const idDeclSkin *		influenceSkin;
 
-	idCamera *				privateCameraView;
+	idCamera *			privateCameraView;
 
 	static const int		NUM_LOGGED_VIEW_ANGLES = 64;		// for weapon turning angle offsets
-	idAngles				loggedViewAngles[NUM_LOGGED_VIEW_ANGLES];	// [gameLocal.framenum&(LOGGED_VIEW_ANGLES-1)]
+	idAngles			loggedViewAngles[NUM_LOGGED_VIEW_ANGLES];	// [gameLocal.framenum&(LOGGED_VIEW_ANGLES-1)]
 	static const int		NUM_LOGGED_ACCELS = 16;			// for weapon turning angle offsets
 	loggedAccel_t			loggedAccel[NUM_LOGGED_ACCELS];	// [currentLoggedAccel & (NUM_LOGGED_ACCELS-1)]
-	int						currentLoggedAccel;
+	int				currentLoggedAccel;
 
 	// if there is a focusGUIent, the attack button will be changed into mouse clicks
-	idEntity *				focusGUIent;
+	idEntity *			focusGUIent;
 	idUserInterface *		focusUI;				// focusGUIent->renderEntity.gui, gui2, or gui3
-	idAI *					focusCharacter;
-	int						talkCursor;				// show the state of the focusCharacter (0 == can't talk/dead, 1 == ready to talk, 2 == busy talking)
-	int						focusTime;
-	idAFEntity_Vehicle *	focusVehicle;
+	idAI *				focusCharacter;
+	int				talkCursor;				// show the state of the focusCharacter (0 == can't talk/dead, 1 == ready to talk, 2 == busy talking)
+	int				focusTime;
+	idAFEntity_Vehicle *	        focusVehicle;
 	idUserInterface *		cursor;
 
 	// full screen guis track mouse movements directly
-	int						oldMouseX;
-	int						oldMouseY;
+	int				oldMouseX;
+	int				oldMouseY;
 
-	idStr					pdaAudio;
-	idStr					pdaVideo;
-	idStr					pdaVideoWave;
+	idStr				pdaAudio;
+	idStr				pdaVideo;
+	idStr				pdaVideoWave;
 
-	bool					tipUp;
-	bool					objectiveUp;
+	bool				tipUp;
+	bool				objectiveUp;
 
-	int						lastDamageDef;
-	idVec3					lastDamageDir;
-	int						lastDamageLocation;
-	int						smoothedFrame;
-	bool					smoothedOriginUpdated;
-	idVec3					smoothedOrigin;
-	idAngles				smoothedAngles;
+	int				lastDamageDef;
+	idVec3				lastDamageDir;
+	int				lastDamageLocation;
+	int				smoothedFrame;
+	bool				smoothedOriginUpdated;
+	idVec3				smoothedOrigin;
+	idAngles			smoothedAngles;
 
-#ifdef _D3XP
 	idHashTable<WeaponToggle_t>	weaponToggles;
 
-	int						hudPowerup;
-	int						lastHudPowerup;
-	int						hudPowerupDuration;
-#endif
+	int				hudPowerup;
+	int				lastHudPowerup;
+	int				hudPowerupDuration;
 
 	// mp
-	bool					ready;					// from userInfo
-	bool					respawning;				// set to true while in SpawnToPoint for telefrag checks
-	bool					leader;					// for sudden death situations
-	int						lastSpectateChange;
-	int						lastTeleFX;
+	bool				ready;					// from userInfo
+	bool				respawning;				// set to true while in SpawnToPoint for telefrag checks
+	bool				leader;					// for sudden death situations
+	int				lastSpectateChange;
+	int				lastTeleFX;
 	unsigned int			lastSnapshotSequence;	// track state hitches on clients
-	bool					weaponCatchup;			// raise up the weapon silently ( state catchups )
-	int						MPAim;					// player num in aim
-	int						lastMPAim;
-	int						lastMPAimTime;			// last time the aim changed
-	int						MPAimFadeTime;			// for GUI fade
-	bool					MPAimHighlight;
-	bool					isTelefragged;			// proper obituaries
+	bool				weaponCatchup; // raise up the weapon silently ( state catchups )
+	int				MPAim;					// player num in aim
+	int				lastMPAim;
+	int				lastMPAimTime; // last time the aim changed
+	int				MPAimFadeTime;			// for GUI fade
+	bool				MPAimHighlight;
+	bool				isTelefragged;			// proper obituaries
 
 	idPlayerIcon			playerIcon;
 
-	bool					selfSmooth;
+	bool				selfSmooth;
 
-	void					LookAtKiller( idEntity *inflictor, idEntity *attacker );
+	void				LookAtKiller( idEntity *inflictor, idEntity *attacker );
 
-	void					StopFiring( void );
-	void					FireWeapon( void );
-	void					Weapon_Combat( void );
-	void					Weapon_NPC( void );
-	void					Weapon_GUI( void );
-	void					UpdateWeapon( void );
-	void					UpdateSpectating( void );
-	void					SpectateFreeFly( bool force );	// ignore the timeout to force when followed spec is no longer valid
-	void					SpectateCycle( void );
-	idAngles				GunTurningOffset( void );
-	idVec3					GunAcceleratingOffset( void );
+	void				StopFiring( void );
+	void				FireWeapon( void );
+	void				Weapon_Combat( void );
+	void				Weapon_NPC( void );
+	void				Weapon_GUI( void );
+	void				UpdateWeapon( void );
+	void				UpdateSpectating( void );
+	void				SpectateFreeFly( bool force );	// ignore the timeout to force when followed spec is no longer valid
+	void				SpectateCycle( void );
+	idAngles			GunTurningOffset( void );
+	idVec3				GunAcceleratingOffset( void );
 
-	void					UseObjects( void );
-	void					CrashLand( const idVec3 &oldOrigin, const idVec3 &oldVelocity );
-	void					BobCycle( const idVec3 &pushVelocity );
-	void					UpdateViewAngles( void );
-	void					EvaluateControls( void );
-	void					AdjustSpeed( void );
-	void					AdjustBodyAngles( void );
-	void					InitAASLocation( void );
-	void					SetAASLocation( void );
-	void					Move( void );
-	void					UpdatePowerUps( void );
-	void					UpdateDeathSkin( bool state_hitch );
-	void					ClearPowerup( int i );
-	void					SetSpectateOrigin( void );
+	void				UseObjects( void );
+	void				CrashLand( const idVec3 &oldOrigin, const idVec3 &oldVelocity );
+	void				BobCycle( const idVec3 &pushVelocity );
+	void				UpdateViewAngles( void );
+	void				EvaluateControls( void );
+	void				AdjustSpeed( void );
+	void				AdjustBodyAngles( void );
+	void				InitAASLocation( void );
+	void				SetAASLocation( void );
+	void				Move( void );
+	void				UpdatePowerUps( void );
+	void				UpdateDeathSkin( bool state_hitch );
+	void				ClearPowerup( int i );
+	void				SetSpectateOrigin( void );
 
-	void					ClearFocus( void );
-	void					UpdateFocus( void );
-	void					UpdateLocation( void );
+	void				ClearFocus( void );
+	void				UpdateFocus( void );
+	void				UpdateLocation( void );
 	idUserInterface *		ActiveGui( void );
-	void					UpdatePDAInfo( bool updatePDASel );
-	int						AddGuiPDAData( const declType_t dataType, const char *listName, const idDeclPDA *src, idUserInterface *gui );
-	void					ExtractEmailInfo( const idStr &email, const char *scan, idStr &out );
-	void					UpdateObjectiveInfo( void );
+	void				UpdatePDAInfo( bool updatePDASel );
+	int				AddGuiPDAData( const declType_t dataType, const char *listName, const idDeclPDA *src, idUserInterface *gui );
+	void				ExtractEmailInfo( const idStr &email, const char *scan, idStr &out );
+	void				UpdateObjectiveInfo( void );
 
-#ifdef _D3XP
-	bool					WeaponAvailable( const char* name );
-#endif
+	bool				WeaponAvailable( const char* name );
 
-	void					UseVehicle( void );
+	void				UseVehicle( void );
 
-	void					Event_GetButtons( void );
-	void					Event_GetMove( void );
-	void					Event_GetViewAngles( void );
-	void					Event_StopFxFov( void );
-	void					Event_EnableWeapon( void );
-	void					Event_DisableWeapon( void );
-	void					Event_GetCurrentWeapon( void );
-	void					Event_GetPreviousWeapon( void );
-	void					Event_SelectWeapon( const char *weaponName );
-	void					Event_GetWeaponEntity( void );
-	void					Event_OpenPDA( void );
-	void					Event_PDAAvailable( void );
-	void					Event_InPDA( void );
-	void					Event_ExitTeleporter( void );
-	void					Event_HideTip( void );
-	void					Event_LevelTrigger( void );
-	void					Event_Gibbed( void );
+	void				Event_GetButtons( void );
+	void				Event_GetMove( void );
+	void				Event_GetViewAngles( void );
+	void				Event_StopFxFov( void );
+	void				Event_EnableWeapon( void );
+	void				Event_DisableWeapon( void );
+	void				Event_GetCurrentWeapon( void );
+	void				Event_GetPreviousWeapon( void );
+	void				Event_SelectWeapon( const char *weaponName );
+	void				Event_GetWeaponEntity( void );
+	void				Event_OpenPDA( void );
+	void				Event_PDAAvailable( void );
+	void				Event_InPDA( void );
+	void				Event_ExitTeleporter( void );
+	void				Event_HideTip( void );
+	void				Event_LevelTrigger( void );
+	void				Event_Gibbed( void );
 
-#ifdef _D3XP //BSM: Event to remove inventory items. Useful with powercells.
-	void					Event_GiveInventoryItem( const char* name );
-	void					Event_RemoveInventoryItem( const char* name );
+	void				Event_GiveInventoryItem( const char* name );
+	void				Event_RemoveInventoryItem( const char* name );
 
-	void					Event_GetIdealWeapon( void );
-	void					Event_WeaponAvailable( const char* name );
-	void					Event_SetPowerupTime( int powerup, int time );
-	void					Event_IsPowerupActive( int powerup );
-	void					Event_StartWarp();
-	void					Event_StopHelltime( int mode );
-	void					Event_ToggleBloom( int on );
-	void					Event_SetBloomParms( float speed, float intensity );
-#endif
+	void				Event_GetIdealWeapon( void );
+	void				Event_WeaponAvailable( const char* name );
+	void				Event_SetPowerupTime( int powerup, int time );
+	void				Event_IsPowerupActive( int powerup );
+	void				Event_StartWarp();
+	void				Event_StopHelltime( int mode );
+	void				Event_ToggleBloom( int on );
+	void				Event_SetBloomParms( float speed, float intensity );
 };
 
 ID_INLINE bool idPlayer::IsReady( void ) {

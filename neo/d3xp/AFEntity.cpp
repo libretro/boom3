@@ -966,9 +966,7 @@ idAFEntity_Gibbable::idAFEntity_Gibbable( void ) {
 	skeletonModel = NULL;
 	skeletonModelDefHandle = -1;
 	gibbed = false;
-#ifdef _D3XP
 	wasThrown = false;
-#endif
 }
 
 /*
@@ -991,9 +989,7 @@ idAFEntity_Gibbable::Save
 void idAFEntity_Gibbable::Save( idSaveGame *savefile ) const {
 	savefile->WriteBool( gibbed );
 	savefile->WriteBool( combatModel != NULL );
-#ifdef _D3XP
 	savefile->WriteBool( wasThrown );
-#endif
 }
 
 /*
@@ -1006,9 +1002,7 @@ void idAFEntity_Gibbable::Restore( idRestoreGame *savefile ) {
 
 	savefile->ReadBool( gibbed );
 	savefile->ReadBool( hasCombatModel );
-#ifdef _D3XP
 	savefile->ReadBool( wasThrown );
-#endif
 
 	InitSkeletonModel();
 
@@ -1027,9 +1021,7 @@ void idAFEntity_Gibbable::Spawn( void ) {
 	InitSkeletonModel();
 
 	gibbed = false;
-#ifdef _D3XP
 	wasThrown = false;
-#endif
 }
 
 /*
@@ -1110,7 +1102,6 @@ void idAFEntity_Gibbable::Damage( idEntity *inflictor, idEntity *attacker, const
 	}
 }
 
-#ifdef _D3XP
 /*
 =====================
 idAFEntity_Gibbable::SetThrown
@@ -1158,7 +1149,6 @@ bool idAFEntity_Gibbable::Collide( const trace_t &collision, const idVec3 &veloc
 
 	return idAFEntity_Base::Collide( collision, velocity );
 }
-#endif
 
 /*
 =====================
@@ -1194,21 +1184,15 @@ void idAFEntity_Gibbable::SpawnGibs( const idVec3 &dir, const char *damageDefNam
 			list[i]->GetPhysics()->UnlinkClip();
 			list[i]->GetPhysics()->PutToRest();
 		} else {
-#ifdef _D3XP
 			list[i]->GetPhysics()->SetContents( 0 );
-#else
-			list[i]->GetPhysics()->SetContents( CONTENTS_CORPSE );
-#endif
 			list[i]->GetPhysics()->SetClipMask( CONTENTS_SOLID );
 			velocity = list[i]->GetPhysics()->GetAbsBounds().GetCenter() - entityCenter;
 			velocity.NormalizeFast();
 			velocity += ( i & 1 ) ? dir : -dir;
 			list[i]->GetPhysics()->SetLinearVelocity( velocity * 75.0f );
 		}
-#ifdef _D3XP
 		// Don't allow grabber to pick up temporary gibs
 		list[i]->noGrab = true;
-#endif
 		list[i]->GetRenderEntity()->noShadow = true;
 		list[i]->GetRenderEntity()->shaderParms[ SHADERPARM_TIME_OF_DEATH ] = gameLocal.time * 0.001f;
 		list[i]->PostEventSec( &EV_Remove, 4.0f );
@@ -1222,19 +1206,15 @@ idAFEntity_Gibbable::Gib
 */
 void idAFEntity_Gibbable::Gib( const idVec3 &dir, const char *damageDefName ) {
 	// only gib once
-	if ( gibbed ) {
+	if ( gibbed )
 		return;
-	}
 
-#ifdef _D3XP
 	// Don't grab this ent after it's been gibbed (and now invisible!)
 	noGrab = true;
-#endif
 
 	const idDict *damageDef = gameLocal.FindEntityDefDict( damageDefName );
-	if ( !damageDef ) {
+	if ( !damageDef )
 		gameLocal.Error( "Unknown damageDef '%s'", damageDefName );
-	}
 
 	if ( damageDef->GetBool( "gibNonSolid" ) ) {
 		GetAFPhysics()->SetContents( 0 );
@@ -1498,13 +1478,11 @@ void idAFEntity_WithAttachedHead::SetupHead( void ) {
 		headEnt->SetCombatModel();
 		head = headEnt;
 
-#ifdef _D3XP
 		idStr xSkin;
 		if ( spawnArgs.GetString( "skin_head_xray", "", xSkin ) ) {
 			headEnt->xraySkin = declManager->FindSkin( xSkin.c_str() );
 			headEnt->UpdateModel();
 		}
-#endif
 		animator.GetJointTransform( joint, gameLocal.time, origin, axis );
 		origin = renderEntity.origin + origin * renderEntity.axis;
 		headEnt->SetOrigin( origin );
@@ -2247,9 +2225,6 @@ idAFEntity_VehicleSixWheels::Think
 */
 void idAFEntity_VehicleSixWheels::Think( void ) {
 	int i;
-#ifndef _D3XP
-	float force = 0.0f, velocity = 0.0f, steerAngle = 0.0f;
-#endif
 	idVec3 origin;
 	idMat3 axis;
 	idRotation rotation;
@@ -2335,7 +2310,6 @@ void idAFEntity_VehicleSixWheels::Think( void ) {
 	}
 }
 
-#ifdef _D3XP
 /*
 ===============================================================================
 
@@ -2528,7 +2502,6 @@ void idAFEntity_VehicleAutomated::Think( void ) {
 
 	idAFEntity_VehicleSixWheels::Think();
 }
-#endif
 
 /*
 ===============================================================================
@@ -3162,8 +3135,6 @@ idRenderModel *idGameEdit::AF_CreateMesh( const idDict &args, idVec3 &meshOrigin
 	return md5->InstantiateDynamicModel( &ent, NULL, NULL );
 }
 
-#ifdef _D3XP
-
 /*
 ===============================================================================
 idHarvestable
@@ -3691,5 +3662,3 @@ void idAFEntity_Harvest::Gib( const idVec3 &dir, const char *damageDefName ) {
 	}
 	idAFEntity_WithAttachedHead::Gib(dir, damageDefName);
 }
-
-#endif

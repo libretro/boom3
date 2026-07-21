@@ -1422,8 +1422,6 @@ void idPVS::ReadPVS( const pvsHandle_t handle, const idBitMsg &msg ) {
 
 #endif
 
-
-#ifdef _D3XP
 /*
 ================
 idPVS::CheckAreasForPortalSky
@@ -1455,4 +1453,3 @@ bool idPVS::CheckAreasForPortalSky( const pvsHandle_t handle, const idVec3 &orig
 
 	return false;
 }
-#endif

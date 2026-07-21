@@ -156,7 +156,6 @@ void Cmd_ReloadScript_f( const idCmdArgs &args ) {
 	// recompile the scripts
 	gameLocal.program.Startup( SCRIPT_DEFAULT );
 
-#ifdef _D3XP
 	// loads a game specific main script file
 	idStr gamedir;
 	int i;
@@ -174,7 +173,6 @@ void Cmd_ReloadScript_f( const idCmdArgs &args ) {
 			}
 		}
 	}
-#endif
 
 	// error out so that the user can rerun the scripts
 	gameLocal.Error( "Exiting map to reload scripts" );
@@ -380,14 +378,11 @@ void Cmd_Give_f( const idCmdArgs &args ) {
 		return;
 	}
 
-#ifdef _D3XP
 	if ( idStr::Icmp( name, "invulnerability" ) == 0 ) {
-		if ( args.Argc() > 2 ) {
+		if ( args.Argc() > 2 )
 			player->GivePowerUp( INVULNERABILITY, atoi( args.Argv( 2 ) ) );
-		}
-		else {
+		else
 			player->GivePowerUp( INVULNERABILITY, 30000 );
-		}
 		return;
 	}
 
@@ -410,7 +405,6 @@ void Cmd_Give_f( const idCmdArgs &args ) {
 		}
 		return;
 	}
-#endif
 	if ( idStr::Icmp( name, "pda" ) == 0 ) {
 		player->GivePDA( args.Argv(2), NULL );
 		return;
@@ -2098,11 +2092,7 @@ static void Cmd_RecordViewNotes_f( const idCmdArgs &args ) {
 	idStr str = args.Argv(1);
 	str.SetFileExtension( ".txt" );
 
-#ifdef _D3XP
 	idFile *file = fileSystem->OpenFileAppend( str, false, "fs_cdpath" );
-#else
-	idFile *file = fileSystem->OpenFileAppend( str );
-#endif
 
 	if ( file ) {
 		file->WriteFloatString( "\"view\"\t( %s )\t( %s )\r\n", origin.ToString(), axis.ToString() );
@@ -2343,7 +2333,6 @@ void Cmd_NextGUI_f( const idCmdArgs &args ) {
 	player->Teleport( origin, angles, NULL );
 }
 
-#ifdef _D3XP
 void Cmd_SetActorState_f( const idCmdArgs &args ) {
 
 	if ( args.Argc() != 3 ) {
@@ -2367,7 +2356,6 @@ void Cmd_SetActorState_f( const idCmdArgs &args ) {
 	idActor* actor = (idActor*)ent;
 	actor->PostEventMS(&AI_SetState, 0, args.Argv(2));
 }
-#endif
 
 static void ArgCompletion_DefFile( const idCmdArgs &args, void(*callback)( const char *s ) ) {
 	cmdSystem->ArgCompletion_FolderExtension( args, callback, "def/", true, ".def", NULL );
@@ -2505,9 +2493,7 @@ void idGameLocal::InitConsoleCommands( void ) {
 	cmdSystem->AddCommand( "nextGUI",				Cmd_NextGUI_f,				CMD_FL_GAME|CMD_FL_CHEAT,	"teleport the player to the next func_static with a gui" );
 	cmdSystem->AddCommand( "testid",				Cmd_TestId_f,				CMD_FL_GAME|CMD_FL_CHEAT,	"output the string for the specified id." );
 
-#ifdef _D3XP
 	cmdSystem->AddCommand( "setActorState",			Cmd_SetActorState_f,		CMD_FL_GAME|CMD_FL_CHEAT,	"Manually sets an actors script state", idGameLocal::ArgCompletion_EntityName );
-#endif
 }
 
 /*

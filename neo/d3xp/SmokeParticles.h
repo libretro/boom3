@@ -59,14 +59,12 @@ If you have questions concerning this license or the applicable additional terms
 
 typedef struct singleSmoke_s {
 	struct singleSmoke_s	 *	next;
-	int							privateStartTime;	// start time for this particular particle
-	int							index;				// particle index in system, 0 <= index < stage->totalParticles
+	int						privateStartTime;	// start time for this particular particle
+	int						index;				// particle index in system, 0 <= index < stage->totalParticles
 	idRandom					random;
 	idVec3						origin;
 	idMat3						axis;
-#ifdef _D3XP
-	int							timeGroup;
-#endif
+	int						timeGroup;
 } singleSmoke_t;
 
 typedef struct {
@@ -79,13 +77,13 @@ class idSmokeParticles {
 public:
 								idSmokeParticles( void );
 
-	// creats an entity covering the entire world that will call back each rendering
+	// creates an entity covering the entire world that will call back each rendering
 	void						Init( void );
 	void						Shutdown( void );
 
 	// spits out a particle, returning false if the system will not emit any more particles in the future
 	bool						EmitSmoke( const idDeclParticle *smoke, const int startTime, const float diversity,
-											const idVec3 &origin, const idMat3 &axis, int timeGroup /*_D3XP*/ );
+											const idVec3 &origin, const idMat3 &axis, int timeGroup);
 
 	// free old smokes
 	void						FreeSmokes( void );

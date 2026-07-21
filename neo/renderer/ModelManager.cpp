@@ -532,20 +532,14 @@ void idRenderModelManagerLocal::EndLevelLoad() {
 
 		if ( !model->IsLevelLoadReferenced() && model->IsLoaded() && model->IsReloadable() ) {
 
-//			common->Printf( "purging %s\n", model->Name() );
-
 			purgeCount++;
 
 			R_CheckForEntityDefsUsingModel( model );
 
 			model->PurgeModel();
-
-		} else {
-
-//			common->Printf( "keeping %s\n", model->Name() );
-
-			keepCount++;
 		}
+		else
+			keepCount++;
 	}
 
 	// purge unused triangle surface memory
@@ -566,7 +560,6 @@ void idRenderModelManagerLocal::EndLevelLoad() {
 		}
 	}
 
-	// _D3XP added this
 	int	end = Core_Milliseconds();
 	common->Printf( "%5i models purged from previous level, ", purgeCount );
 	common->Printf( "%5i models kept.\n", keepCount );
@@ -583,19 +576,15 @@ idRenderModelManagerLocal::PrintMemInfo
 void idRenderModelManagerLocal::PrintMemInfo( MemInfo_t *mi ) {
 	int i, j, totalMem = 0;
 	int *sortIndex;
-	idFile *f;
-
-	f = fileSystem->OpenFileWrite( mi->filebase + "_models.txt" );
-	if ( !f ) {
+	idFile *f = fileSystem->OpenFileWrite( mi->filebase + "_models.txt" );
+	if ( !f )
 		return;
-	}
 
 	// sort first
 	sortIndex = new int[ localModelManager.models.Num()];
 
-	for ( i = 0; i <  localModelManager.models.Num(); i++ ) {
+	for ( i = 0; i <  localModelManager.models.Num(); i++ )
 		sortIndex[i] = i;
-	}
 
 	for ( i = 0; i <  localModelManager.models.Num() - 1; i++ ) {
 		for ( j = i + 1; j <  localModelManager.models.Num(); j++ ) {
@@ -612,9 +601,8 @@ void idRenderModelManagerLocal::PrintMemInfo( MemInfo_t *mi ) {
 		idRenderModel	*model = localModelManager.models[sortIndex[i]];
 		int mem;
 
-		if ( !model->IsLoaded() ) {
+		if ( !model->IsLoaded() )
 			continue;
-		}
 
 		mem = model->Memory();
 		totalMem += mem;

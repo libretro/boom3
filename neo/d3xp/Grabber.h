@@ -29,8 +29,6 @@ If you have questions concerning this license or the applicable additional terms
 #ifndef __GAME_GRABBER_H__
 #define __GAME_GRABBER_H__
 
-#ifdef _D3XP
-
 #include "physics/Force_Grab.h"
 #include "Entity.h"
 
@@ -89,7 +87,5 @@ private:
 	void					UpdateBeams( void );
 	void					ApplyShake( void );
 };
-
-#endif
 
 #endif

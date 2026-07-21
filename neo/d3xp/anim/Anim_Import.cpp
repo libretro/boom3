@@ -241,17 +241,15 @@ bool idModelExport::ConvertMayaToMD5( void ) {
 	}
 
 	// we need to make sure we have a full path, so convert the filename to an OS path
-	// _D3XP :: we work out of the cdpath, at least until we get Alienbrain
 	src = fileSystem->RelativePathToOSPath( src, "fs_cdpath" );
 	dest = fileSystem->RelativePathToOSPath( dest, "fs_cdpath" );
 
 	dest.ExtractFilePath( path );
-	if ( path.Length() ) {
+	if ( path.Length() )
 		fileSystem->CreateOSPath( path );
-	}
 
 	// get the os path in case it needs to create one
-	path = fileSystem->RelativePathToOSPath( "", "fs_cdpath" /* _D3XP */ );
+	path = fileSystem->RelativePathToOSPath( "", "fs_cdpath");
 
 	common->SetRefreshOnPrint( true );
 	Maya_Error = Maya_ConvertModel( path, commandLine );

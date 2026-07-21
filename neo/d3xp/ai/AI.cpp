@@ -351,22 +351,20 @@ idAI::idAI() {
 	shrivel_rate		= 0.0f;
 	shrivel_start		= 0;
 	fl.neverDormant		= false;		// AI's can go dormant
-	current_yaw			= 0.0f;
-	ideal_yaw			= 0.0f;
+	current_yaw		= 0.0f;
+	ideal_yaw		= 0.0f;
 
-#ifdef _D3XP
 	spawnClearMoveables	= false;
-	harvestEnt			= NULL;
-#endif
+	harvestEnt		= NULL;
 
 	num_cinematics		= 0;
 	current_cinematic	= 0;
 
 	allowEyeFocus		= true;
-	allowPain			= true;
+	allowPain		= true;
 	allowJointMod		= true;
-	focusEntity			= NULL;
-	focusTime			= 0;
+	focusEntity		= NULL;
+	focusTime		= 0;
 	alignHeadTime		= 0;
 	forceAlignHeadTime	= 0;
 
@@ -380,15 +378,15 @@ idAI::idAI() {
 	eyeMin.Zero();
 	eyeMax.Zero();
 	muzzleFlashEnd		= 0;
-	flashTime			= 0;
+	flashTime		= 0;
 	flashJointWorld		= INVALID_JOINT;
 
-	focusJoint			= INVALID_JOINT;
+	focusJoint		= INVALID_JOINT;
 	orientationJoint	= INVALID_JOINT;
 	flyTiltJoint		= INVALID_JOINT;
 
 	eyeVerticalOffset	= 0.0f;
-	eyeHorizontalOffset = 0.0f;
+	eyeHorizontalOffset     = 0.0f;
 	eyeFocusRate		= 0.0f;
 	headFocusRate		= 0.0f;
 	focusAlignTime		= 0;
@@ -408,11 +406,8 @@ idAI::~idAI() {
 		worldMuzzleFlashHandle = -1;
 	}
 
-#ifdef _D3XP
-	if ( harvestEnt.GetEntity() ) {
+	if ( harvestEnt.GetEntity() )
 		harvestEnt.GetEntity()->PostEventMS( &EV_Remove, 0 );
-	}
-#endif
 }
 
 /*
@@ -546,7 +541,6 @@ void idAI::Save( idSaveGame *savefile ) const {
 
 	savefile->WriteBool( GetPhysics() == static_cast<const idPhysics *>(&physicsObj) );
 
-#ifdef _D3XP
 	savefile->WriteInt(funcEmitters.Num());
 	for(int i = 0; i < funcEmitters.Num(); i++) {
 		funcEmitter_t* emitter = funcEmitters.GetIndex(i);
@@ -556,7 +550,6 @@ void idAI::Save( idSaveGame *savefile ) const {
 	}
 
 	harvestEnt.Save( savefile);
-#endif
 }
 
 /*
@@ -725,8 +718,6 @@ void idAI::Restore( idRestoreGame *savefile ) {
 		RestorePhysics( &physicsObj );
 	}
 
-#ifdef _D3XP
-
 	//Clean up the emitters
 	for(int i = 0; i < funcEmitters.Num(); i++) {
 		funcEmitter_t* emitter = funcEmitters.GetIndex(i);
@@ -755,11 +746,6 @@ void idAI::Restore( idRestoreGame *savefile ) {
 	}
 
 	harvestEnt.Restore(savefile);
-	//if(harvestEnt.GetEntity()) {
-	//	harvestEnt.GetEntity()->SetParent(this);
-	//}
-
-#endif
 }
 
 /*
@@ -995,22 +981,16 @@ void idAI::Spawn( void ) {
 	// init the move variables
 	StopMove( MOVE_STATUS_DONE );
 
-
-#ifdef _D3XP
 	spawnArgs.GetBool( "spawnClearMoveables", "0", spawnClearMoveables );
-#endif
 }
 
 
-#ifdef _D3XP
 void idAI::Gib( const idVec3 &dir, const char *damageDefName ) {
-	if(harvestEnt.GetEntity()) {
-		//Let the harvest ent know that we gibbed
+	//Let the harvest ent know that we gibbed
+	if(harvestEnt.GetEntity())
 		harvestEnt.GetEntity()->Gib();
-	}
 	idActor::Gib(dir, damageDefName);
 }
-#endif
 
 /*
 ===================
@@ -1232,12 +1212,10 @@ void idAI::Think( void ) {
 	UpdateDamageEffects();
 	LinkCombat();
 
-#ifdef _D3XP
 	if(ai_showHealth.GetBool()) {
 		idVec3 aboveHead(0,0,20);
 		gameRenderWorld->DrawText( va( "%d", ( int )health), this->GetEyePosition()+aboveHead, 0.5f, colorWhite, gameLocal.GetLocalPlayer()->viewAngles.ToMat3() );
 	}
-#endif
 }
 
 /***********************************************************************
@@ -2776,9 +2754,7 @@ void idAI::AnimMove( void ) {
 		}
 	}
 
-#ifdef _D3XP
 	physicsObj.UseFlyMove( false );
-#endif
 	physicsObj.SetDelta( delta );
 	physicsObj.ForceDeltaMove( disableGravity );
 
@@ -3370,7 +3346,7 @@ const idDeclParticle *idAI::SpawnParticlesOnJoint( particleEmitter_t &pe, const 
 			pe.time = gameLocal.time;
 		}
 		pe.particle = static_cast<const idDeclParticle *>( declManager->FindType( DECL_PARTICLE, particleName ) );
-		gameLocal.smokeParticles->EmitSmoke( pe.particle, pe.time, gameLocal.random.CRandomFloat(), origin, axis, timeGroup /*_D3XP*/ );
+		gameLocal.smokeParticles->EmitSmoke( pe.particle, pe.time, gameLocal.random.CRandomFloat(), origin, axis, timeGroup );
 	}
 
 	return pe.particle;
@@ -3454,10 +3430,8 @@ void idAI::Killed( idEntity *inflictor, idEntity *attacker, int damage, const id
 		physicsObj.SetLinearVelocity( vec3_zero );
 		physicsObj.PutToRest();
 		physicsObj.DisableImpact();
-#ifdef _D3XP
 		// No grabbing if "model_death"
 		noGrab = true;
-#endif
 	}
 
 	restartParticles = false;
@@ -3476,13 +3450,6 @@ void idAI::Killed( idEntity *inflictor, idEntity *attacker, int damage, const id
 		kv = spawnArgs.MatchPrefix( "def_drops", kv );
 	}
 
-#ifndef _D3XP
-	if ( ( attacker && attacker->IsType( idPlayer::Type ) ) && ( inflictor && !inflictor->IsType( idSoulCubeMissile::Type ) ) ) {
-		static_cast< idPlayer* >( attacker )->AddAIKill();
-	}
-#endif
-
-#ifdef _D3XP
 	if(spawnArgs.GetBool("harvest_on_death")) {
 		const idDict *harvestDef = gameLocal.FindEntityDefDict( spawnArgs.GetString("def_harvest_type"), false );
 		if ( harvestDef ) {
@@ -3498,7 +3465,6 @@ void idAI::Killed( idEntity *inflictor, idEntity *attacker, int damage, const id
 			harvestEnt.GetEntity()->BecomeActive( TH_THINK );
 		}
 	}
-#endif
 }
 
 /***********************************************************************
@@ -3656,23 +3622,18 @@ idAI::TalkTo
 =====================
 */
 void idAI::TalkTo( idActor *actor ) {
-	if ( talk_state != TALK_OK ) {
+	if ( talk_state != TALK_OK )
 		return;
-	}
 
-#ifdef _D3XP
 	// Wake up monsters that are pretending to be NPC's
-	if ( team == 1 && actor->team != team ) {
+	if ( team == 1 && actor->team != team )
 		ProcessEvent( &EV_Activate, actor );
-	}
-#endif
 
 	talkTarget = actor;
-	if ( actor ) {
+	if ( actor )
 		AI_TALK = true;
-	} else {
+	else
 		AI_TALK = false;
-	}
 }
 
 /*
@@ -4103,12 +4064,10 @@ bool idAI::GetAimDir( const idVec3 &firePos, idEntity *aimAtEnt, const idEntity 
 		targetPos2 = targetPos1;
 	}
 
-#ifdef _D3XP
 	if ( this->team == 0 && !idStr::Cmp( aimAtEnt->GetEntityDefName(), "monster_demon_vulgar" ) ) {
 		targetPos1.z -= 28.f;
 		targetPos2.z -= 12.f;
 	}
-#endif
 
 	// try aiming for chest
 	delta = firePos - targetPos1;
@@ -4208,10 +4167,8 @@ idProjectile *idAI::LaunchProjectile( const char *jointname, idEntity *target, b
 	int					num_projectiles;
 	int					i;
 	idMat3				axis;
-#ifdef _D3XP
 	idMat3				proj_axis;
 	bool				forceMuzzle;
-#endif
 	idVec3				tmp;
 	idProjectile		*lastProjectile;
 
@@ -4224,9 +4181,7 @@ idProjectile *idAI::LaunchProjectile( const char *jointname, idEntity *target, b
 	attack_cone = spawnArgs.GetFloat( "attack_cone", "70" );
 	projectile_spread = spawnArgs.GetFloat( "projectile_spread", "0" );
 	num_projectiles = spawnArgs.GetInt( "num_projectiles", "1" );
-#ifdef _D3XP
 	forceMuzzle = spawnArgs.GetBool( "forceMuzzle", "0" );
-#endif
 
 	GetMuzzle( jointname, muzzle, axis );
 
@@ -4240,20 +4195,19 @@ idProjectile *idAI::LaunchProjectile( const char *jointname, idEntity *target, b
 		tmp = target->GetPhysics()->GetAbsBounds().GetCenter() - muzzle;
 		tmp.Normalize();
 		axis = tmp.ToMat3();
-	} else {
-		axis = viewAxis;
 	}
+	else
+		axis = viewAxis;
 
 	// rotate it because the cone points up by default
 	tmp = axis[2];
 	axis[2] = axis[0];
 	axis[0] = -tmp;
 
-#ifdef _D3XP
 	proj_axis = axis;
-#endif
 
-	if ( !forceMuzzle ) {	// _D3XP
+	if ( !forceMuzzle )
+	{
 		// make sure the projectile starts inside the monster bounding box
 		const idBounds &ownerBounds = physicsObj.GetAbsBounds();
 		projClip = lastProjectile->GetPhysics()->GetClipModel();
@@ -4776,10 +4730,8 @@ void idAI::UpdateParticles( void ) {
 
 		int particlesAlive = 0;
 		for ( int i = 0; i < particles.Num(); i++ ) {
-#ifdef _D3XP
 			// Smoke particles on AI characters will always be "slow", even when held by grabber
 			SetTimeState ts(TIME_GROUP1);
-#endif
 			if ( particles[i].particle && particles[i].time ) {
 				particlesAlive++;
 				if (af.IsActive()) {
@@ -4791,7 +4743,7 @@ void idAI::UpdateParticles( void ) {
 					realVector = physicsObj.GetOrigin() + ( realVector + modelOffset ) * ( viewAxis * physicsObj.GetGravityAxis() );
 				}
 
-				if ( !gameLocal.smokeParticles->EmitSmoke( particles[i].particle, particles[i].time, gameLocal.random.CRandomFloat(), realVector, realAxis, timeGroup /*_D3XP*/ )) {
+				if ( !gameLocal.smokeParticles->EmitSmoke( particles[i].particle, particles[i].time, gameLocal.random.CRandomFloat(), realVector, realAxis, timeGroup )) {
 					if ( restartParticles ) {
 						particles[i].time = gameLocal.time;
 					} else {
@@ -4824,7 +4776,6 @@ void idAI::TriggerParticles( const char *jointName ) {
 	}
 }
 
-#ifdef _D3XP
 void idAI::TriggerFX( const char* joint, const char* fx ) {
 
 	if( !strcmp(joint, "origin") ) {
@@ -4929,9 +4880,6 @@ void idAI::StopEmitter( const char* name ) {
 		funcEmitters.Remove(name);
 	}
 }
-
-#endif
-
 
 /***********************************************************************
 

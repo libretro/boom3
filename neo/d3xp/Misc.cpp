@@ -197,9 +197,7 @@ void idPlayerStart::TeleportPlayer( idPlayer *player ) {
 	const char *viewName = spawnArgs.GetString( "visualView", "" );
 	idEntity *ent = viewName ? gameLocal.FindEntity( viewName ) : NULL;
 
-#ifdef _D3XP
 	SetTimeState ts( player->timeGroup );
-#endif
 
 	if ( f && ent ) {
 		// place in private camera view for some time
@@ -568,7 +566,6 @@ void idDamagable::Killed( idEntity *inflictor, idEntity *attacker, int damage, c
 	BecomeBroken( attacker );
 }
 
-#ifdef _D3XP
 /*
 ================
 idDamagable::Hide
@@ -588,7 +585,6 @@ void idDamagable::Show( void ) {
 	idEntity::Show();
 	GetPhysics()->SetContents( CONTENTS_SOLID );
 }
-#endif
 
 /*
 ================
@@ -1006,10 +1002,8 @@ const idEventDef EV_LaunchMissiles( "launchMissiles", "ssssdf" );
 const idEventDef EV_LaunchMissilesUpdate( "<launchMissiles>", "dddd" );
 const idEventDef EV_AnimDone( "<AnimDone>", "d" );
 const idEventDef EV_StartRagdoll( "startRagdoll" );
-#ifdef _D3XP
 const idEventDef EV_SetAnimation( "setAnimation", "s" );
 const idEventDef EV_GetAnimationLength( "getAnimationLength", NULL, 'f' );
-#endif
 
 CLASS_DECLARATION( idAFEntity_Gibbable, idAnimated )
 	EVENT( EV_Activate,				idAnimated::Event_Activate )
@@ -1021,10 +1015,8 @@ CLASS_DECLARATION( idAFEntity_Gibbable, idAnimated )
 	EVENT( EV_FootstepRight,		idAnimated::Event_Footstep )
 	EVENT( EV_LaunchMissiles,		idAnimated::Event_LaunchMissiles )
 	EVENT( EV_LaunchMissilesUpdate,	idAnimated::Event_LaunchMissilesUpdate )
-#ifdef _D3XP
 	EVENT( EV_SetAnimation,			idAnimated::Event_SetAnimation )
 	EVENT( EV_GetAnimationLength,	idAnimated::Event_GetAnimationLength )
-#endif
 END_CLASS
 
 /*
@@ -1454,7 +1446,6 @@ void idAnimated::Event_LaunchMissiles( const char *projectilename, const char *s
 	ProcessEvent( &EV_LaunchMissilesUpdate, launch, target, numshots - 1, framedelay );
 }
 
-#ifdef _D3XP
 /*
 =====================
 idAnimated::Event_SetAnimation
@@ -1485,7 +1476,6 @@ void idAnimated::Event_GetAnimationLength() {
 
 	idThread::ReturnFloat(length);
 }
-#endif
 
 /*
 ===============================================================================
@@ -1995,10 +1985,11 @@ void idFuncSmoke::Think( void ) {
 	}
 
 	if ( ( thinkFlags & TH_UPDATEPARTICLES) && !IsHidden() ) {
-		if ( !gameLocal.smokeParticles->EmitSmoke( smoke, smokeTime, gameLocal.random.CRandomFloat(), GetPhysics()->GetOrigin(), GetPhysics()->GetAxis(), timeGroup /*_D3XP*/ ) ) {
-			if ( restart ) {
+		if ( !gameLocal.smokeParticles->EmitSmoke( smoke, smokeTime, gameLocal.random.CRandomFloat(), GetPhysics()->GetOrigin(), GetPhysics()->GetAxis(), timeGroup ) ) {
+			if ( restart )
 				smokeTime = gameLocal.time;
-			} else {
+			else
+			{
 				smokeTime = 0;
 				BecomeInactive( TH_UPDATEPARTICLES );
 			}
@@ -3303,7 +3294,6 @@ void idPhantomObjects::Think( void ) {
 	}
 }
 
-#ifdef _D3XP
 /*
 ===============================================================================
 
@@ -3847,4 +3837,3 @@ idPortalSky::Event_Activate
 void idPortalSky::Event_Activate( idEntity *activator ) {
 	gameLocal.SetPortalSkyEnt( this );
 }
-#endif /* _D3XP */

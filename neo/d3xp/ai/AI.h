@@ -151,12 +151,10 @@ extern const idEventDef AI_MuzzleFlash;
 extern const idEventDef AI_CreateMissile;
 extern const idEventDef AI_AttackMissile;
 extern const idEventDef AI_FireMissileAtTarget;
-#ifdef _D3XP
 extern const idEventDef AI_LaunchProjectile;
 extern const idEventDef AI_TriggerFX;
 extern const idEventDef AI_StartEmitter;
 extern const idEventDef AI_StopEmitter;
-#endif
 extern const idEventDef AI_AttackMelee;
 extern const idEventDef AI_DirectDamage;
 extern const idEventDef AI_JumpFrame;
@@ -180,13 +178,11 @@ typedef struct particleEmitter_s {
 	jointHandle_t		joint;
 } particleEmitter_t;
 
-#ifdef _D3XP
 typedef struct funcEmitter_s {
 	char				name[64];
 	idFuncEmitter*		particle;
 	jointHandle_t		joint;
 } funcEmitter_t;
-#endif
 
 class idMoveState {
 public:
@@ -293,9 +289,7 @@ public:
 							// Finds the best collision free trajectory for a clip model.
 	static bool				PredictTrajectory( const idVec3 &firePos, const idVec3 &target, float projectileSpeed, const idVec3 &projGravity, const idClipModel *clip, int clipmask, float max_height, const idEntity *ignore, const idEntity *targetEntity, int drawtime, idVec3 &aimDir );
 
-#ifdef _D3XP
 	virtual void			Gib( const idVec3 &dir, const char *damageDefName );
-#endif
 
 protected:
 	// navigation
@@ -344,88 +338,86 @@ protected:
 	bool					af_push_moveables;			// allow the articulated figure to push moveable objects
 
 	// weapon/attack vars
-	bool					lastHitCheckResult;
-	int						lastHitCheckTime;
-	int						lastAttackTime;
-	float					melee_range;
-	float					projectile_height_to_distance_ratio;	// calculates the maximum height a projectile can be thrown
-	idList<idVec3>			missileLaunchOffset;
+	bool			lastHitCheckResult;
+	int			lastHitCheckTime;
+	int			lastAttackTime;
+	float			melee_range;
+	float			projectile_height_to_distance_ratio;	// calculates the maximum height a projectile can be thrown
+	idList<idVec3>		missileLaunchOffset;
 
-	const idDict *			projectileDef;
-	mutable idClipModel		*projectileClipModel;
-	float					projectileRadius;
-	float					projectileSpeed;
-	idVec3					projectileVelocity;
-	idVec3					projectileGravity;
+	const idDict *		projectileDef;
+	mutable idClipModel	*projectileClipModel;
+	float			projectileRadius;
+	float			projectileSpeed;
+	idVec3			projectileVelocity;
+	idVec3			projectileGravity;
 	idEntityPtr<idProjectile> projectile;
-	idStr					attack;
+	idStr			attack;
 
 	// chatter/talking
-	const idSoundShader		*chat_snd;
-	int						chat_min;
-	int						chat_max;
-	int						chat_time;
-	talkState_t				talk_state;
+	const idSoundShader	*chat_snd;
+	int			chat_min;
+	int			chat_max;
+	int			chat_time;
+	talkState_t		talk_state;
 	idEntityPtr<idActor>	talkTarget;
 
 	// cinematics
-	int						num_cinematics;
-	int						current_cinematic;
+	int			num_cinematics;
+	int			current_cinematic;
 
-	bool					allowJointMod;
+	bool			allowJointMod;
 	idEntityPtr<idEntity>	focusEntity;
-	idVec3					currentFocusPos;
-	int						focusTime;
-	int						alignHeadTime;
-	int						forceAlignHeadTime;
-	idAngles				eyeAng;
-	idAngles				lookAng;
-	idAngles				destLookAng;
-	idAngles				lookMin;
-	idAngles				lookMax;
+	idVec3			currentFocusPos;
+	int			focusTime;
+	int			alignHeadTime;
+	int			forceAlignHeadTime;
+	idAngles		eyeAng;
+	idAngles		lookAng;
+	idAngles		destLookAng;
+	idAngles		lookMin;
+	idAngles		lookMax;
 	idList<jointHandle_t>	lookJoints;
-	idList<idAngles>		lookJointAngles;
-	float					eyeVerticalOffset;
-	float					eyeHorizontalOffset;
-	float					eyeFocusRate;
-	float					headFocusRate;
-	int						focusAlignTime;
+	idList<idAngles>	lookJointAngles;
+	float			eyeVerticalOffset;
+	float			eyeHorizontalOffset;
+	float			eyeFocusRate;
+	float			headFocusRate;
+	int			focusAlignTime;
 
 	// special fx
-	float					shrivel_rate;
-	int						shrivel_start;
+	float			shrivel_rate;
+	int			shrivel_start;
 
-	bool					restartParticles;			// should smoke emissions restart
-	bool					useBoneAxis;				// use the bone vs the model axis
+	bool			restartParticles;			// should smoke emissions restart
+	bool			useBoneAxis;				// use the bone vs the model axis
 	idList<particleEmitter_t> particles;				// particle data
 
-	renderLight_t			worldMuzzleFlash;			// positioned on world weapon bone
-	int						worldMuzzleFlashHandle;
-	jointHandle_t			flashJointWorld;
-	int						muzzleFlashEnd;
-	int						flashTime;
+	renderLight_t		worldMuzzleFlash;			// positioned on world weapon bone
+	int			worldMuzzleFlashHandle;
+	jointHandle_t		flashJointWorld;
+	int			muzzleFlashEnd;
+	int			flashTime;
 
 	// joint controllers
-	idAngles				eyeMin;
-	idAngles				eyeMax;
-	jointHandle_t			focusJoint;
-	jointHandle_t			orientationJoint;
+	idAngles		eyeMin;
+	idAngles		eyeMax;
+	jointHandle_t		focusJoint;
+	jointHandle_t		orientationJoint;
 
 	// enemy variables
 	idEntityPtr<idActor>	enemy;
-	idVec3					lastVisibleEnemyPos;
-	idVec3					lastVisibleEnemyEyeOffset;
-	idVec3					lastVisibleReachableEnemyPos;
-	idVec3					lastReachableEnemyPos;
-	bool					wakeOnFlashlight;
+	idVec3			lastVisibleEnemyPos;
+	idVec3			lastVisibleEnemyEyeOffset;
+	idVec3			lastVisibleReachableEnemyPos;
+	idVec3			lastReachableEnemyPos;
+	bool			wakeOnFlashlight;
 
-#ifdef _D3XP
-	bool					spawnClearMoveables;
+	bool			spawnClearMoveables;
 
 	idHashTable<funcEmitter_t> funcEmitters;
 
 	idEntityPtr<idHarvestable>	harvestEnt;
-#endif
 
 	// script variables
 	idScriptBool			AI_TALK;
@@ -557,12 +549,10 @@ protected:
 	void					UpdateParticles( void );
 	void					TriggerParticles( const char *jointName );
 
-#ifdef _D3XP
 	void					TriggerFX( const char* joint, const char* fx );
 	idEntity*				StartEmitter( const char* name, const char* joint, const char* particle );
 	idEntity*				GetEmitter( const char* name );
 	void					StopEmitter( const char* name );
-#endif
 
 	// AI script state management
 	void					LinkScriptVariables( void );
@@ -585,9 +575,7 @@ protected:
 	void					Event_AttackMissile( const char *jointname );
 	void					Event_FireMissileAtTarget( const char *jointname, const char *targetname );
 	void					Event_LaunchMissile( const idVec3 &muzzle, const idAngles &ang );
-#ifdef _D3XP
 	void					Event_LaunchProjectile( const char *entityDefName );
-#endif
 	void					Event_AttackMelee( const char *meleeDefName );
 	void					Event_DirectDamage( idEntity *damageTarget, const char *damageDefName );
 	void					Event_RadiusDamageFromJoint( const char *jointname, const char *damageDefName );
@@ -702,7 +690,6 @@ protected:
 	void					Event_CanReachEntity( idEntity *ent );
 	void					Event_CanReachEnemy( void );
 	void					Event_GetReachableEntityPosition( idEntity *ent );
-#ifdef _D3XP
 	void					Event_MoveToPositionDirect( const idVec3 &pos );
 	void					Event_AvoidObstacles( int ignore);
 	void					Event_TriggerFX( const char* joint, const char* fx );
@@ -710,7 +697,6 @@ protected:
 	void					Event_StartEmitter( const char* name, const char* joint, const char* particle );
 	void					Event_GetEmitter( const char* name );
 	void					Event_StopEmitter( const char* name );
-#endif
 };
 
 class idCombatNode : public idEntity {

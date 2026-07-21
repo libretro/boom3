@@ -51,9 +51,7 @@ const idEventDef AI_CreateMissile( "createMissile", "s", 'e' );
 const idEventDef AI_AttackMissile( "attackMissile", "s", 'e' );
 const idEventDef AI_FireMissileAtTarget( "fireMissileAtTarget", "ss", 'e' );
 const idEventDef AI_LaunchMissile( "launchMissile", "vv", 'e' );
-#ifdef _D3XP
 const idEventDef AI_LaunchProjectile( "launchProjectile", "s" );
-#endif
 const idEventDef AI_AttackMelee( "attackMelee", "s", 'd' );
 const idEventDef AI_DirectDamage( "directDamage", "es" );
 const idEventDef AI_RadiusDamageFromJoint( "radiusDamageFromJoint", "ss" );
@@ -165,7 +163,6 @@ const idEventDef AI_CanReachPosition( "canReachPosition", "v", 'd' );
 const idEventDef AI_CanReachEntity( "canReachEntity", "E", 'd' );
 const idEventDef AI_CanReachEnemy( "canReachEnemy", NULL, 'd' );
 const idEventDef AI_GetReachableEntityPosition( "getReachableEntityPosition", "e", 'v' );
-#ifdef _D3XP
 const idEventDef AI_MoveToPositionDirect( "moveToPositionDirect", "v" );
 const idEventDef AI_AvoidObstacles( "avoidObstacles", "d" );
 const idEventDef AI_TriggerFX( "triggerFX", "ss" );
@@ -173,8 +170,6 @@ const idEventDef AI_StartEmitter( "startEmitter", "sss", 'e' );
 const idEventDef AI_GetEmitter( "getEmitter", "s", 'e' );
 const idEventDef AI_StopEmitter( "stopEmitter", "s" );
 
-
-#endif
 
 CLASS_DECLARATION( idActor, idAI )
 	EVENT( EV_Activate,							idAI::Event_Activate )
@@ -191,9 +186,7 @@ CLASS_DECLARATION( idActor, idAI )
 	EVENT( AI_AttackMissile,					idAI::Event_AttackMissile )
 	EVENT( AI_FireMissileAtTarget,				idAI::Event_FireMissileAtTarget )
 	EVENT( AI_LaunchMissile,					idAI::Event_LaunchMissile )
-#ifdef _D3XP
 	EVENT( AI_LaunchProjectile,					idAI::Event_LaunchProjectile )
-#endif
 	EVENT( AI_AttackMelee,						idAI::Event_AttackMelee )
 	EVENT( AI_DirectDamage,						idAI::Event_DirectDamage )
 	EVENT( AI_RadiusDamageFromJoint,			idAI::Event_RadiusDamageFromJoint )
@@ -308,14 +301,12 @@ CLASS_DECLARATION( idActor, idAI )
 	EVENT( AI_CanReachEntity,					idAI::Event_CanReachEntity )
 	EVENT( AI_CanReachEnemy,					idAI::Event_CanReachEnemy )
 	EVENT( AI_GetReachableEntityPosition,		idAI::Event_GetReachableEntityPosition )
-#ifdef _D3XP
 	EVENT( AI_MoveToPositionDirect,				idAI::Event_MoveToPositionDirect )
 	EVENT( AI_AvoidObstacles,					idAI::Event_AvoidObstacles )
 	EVENT( AI_TriggerFX,						idAI::Event_TriggerFX )
 	EVENT( AI_StartEmitter,						idAI::Event_StartEmitter )
 	EVENT( AI_GetEmitter,						idAI::Event_GetEmitter )
 	EVENT( AI_StopEmitter,						idAI::Event_StopEmitter )
-#endif
 END_CLASS
 
 /*
@@ -678,8 +669,6 @@ void idAI::Event_LaunchMissile( const idVec3 &org, const idAngles &ang ) {
 	lastAttackTime = gameLocal.time;
 }
 
-
-#ifdef _D3XP
 /*
 =====================
 idAI::Event_LaunchProjectile
@@ -732,9 +721,6 @@ void idAI::Event_LaunchProjectile( const char *entityDefName ) {
 
 	TriggerWeaponEffects( muzzle );
 }
-
-#endif
-
 
 /*
 =====================
@@ -856,9 +842,7 @@ idAI::Event_CanBecomeSolid
 void idAI::Event_CanBecomeSolid( void ) {
 	int			i;
 	int			num;
-#ifdef _D3XP
 	bool		returnValue = true;
-#endif
 	idEntity *	hit;
 	idClipModel *cm;
 	idClipModel *clipModels[ MAX_GENTITIES ];
@@ -877,7 +861,6 @@ void idAI::Event_CanBecomeSolid( void ) {
 			continue;
 		}
 
-#ifdef _D3XP
 		if ( (spawnClearMoveables && hit->IsType( idMoveable::Type )) || (hit->IsType( idBarrel::Type ) || hit->IsType( idExplodingBarrel::Type) ) ) {
 			idVec3 push;
 			push = hit->GetPhysics()->GetOrigin() - GetPhysics()->GetOrigin();
@@ -890,23 +873,12 @@ void idAI::Event_CanBecomeSolid( void ) {
 			push *= 300.f;
 			hit->GetPhysics()->SetLinearVelocity( push );
 		}
-#endif
 
-		if ( physicsObj.ClipContents( cm ) ) {
-#ifdef _D3XP
+		if ( physicsObj.ClipContents( cm ) )
 			returnValue = false;
-#else
-			idThread::ReturnFloat( false );
-			return;
-#endif
-		}
 	}
 
-#ifdef _D3XP
 	idThread::ReturnFloat( returnValue );
-#else
-	idThread::ReturnFloat( true );
-#endif
 }
 
 /*
@@ -1230,7 +1202,6 @@ void idAI::Event_GetCombatNode( void ) {
 		// don't return a combat node if we don't have an enemy or
 		// if we can see he's not in the last place we saw him
 
-#ifdef _D3XP
 		if ( team == 0 ) {
 			// find the closest attack node to the player
 			bestNode = NULL;
@@ -1259,7 +1230,6 @@ void idAI::Event_GetCombatNode( void ) {
 			idThread::ReturnEntity( bestNode );
 			return;
 		}
-#endif
 
 		idThread::ReturnEntity( NULL );
 		return;
@@ -1317,14 +1287,12 @@ void idAI::Event_EnemyInCombatCone( idEntity *ent, int use_current_enemy_locatio
 		return;
 	}
 
-#ifdef _D3XP
 	//Allow the level designers define attack nodes that the enemy should never leave.
 	//This is different that the turrent type combat nodes because they can play an animation
 	if(ent->spawnArgs.GetBool("neverLeave", "0")) {
 		idThread::ReturnInt( true );
 		return;
 	}
-#endif
 
 	node = static_cast<idCombatNode *>( ent );
 	if ( use_current_enemy_location ) {
@@ -1984,11 +1952,8 @@ idAI::Event_PreBurn
 =====================
 */
 void idAI::Event_PreBurn( void ) {
-#ifdef _D3XP
 	// No grabbing after the burn has started!
 	noGrab = true;
-#endif
-
 	// for now this just turns shadows off
 	renderEntity.noShadow = true;
 }
@@ -2861,7 +2826,6 @@ void idAI::Event_GetReachableEntityPosition( idEntity *ent ) {
 	idThread::ReturnVector( pos );
 }
 
-#ifdef _D3XP
 /*
 ================
 idAI::Event_MoveToPositionDirect
@@ -2902,5 +2866,3 @@ void idAI::Event_GetEmitter( const char* name ) {
 void idAI::Event_StopEmitter( const char* name ) {
 	StopEmitter(name);
 }
-
-#endif

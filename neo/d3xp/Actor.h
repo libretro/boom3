@@ -57,9 +57,7 @@ extern const idEventDef AI_AnimDone;
 extern const idEventDef AI_SetBlendFrames;
 extern const idEventDef AI_GetBlendFrames;
 
-#ifdef _D3XP
 extern const idEventDef AI_SetState;
-#endif
 
 class idDeclParticle;
 
@@ -213,9 +211,7 @@ public:
 	bool					AnimDone( int channel, int blendFrames ) const;
 	virtual void			SpawnGibs( const idVec3 &dir, const char *damageDefName );
 
-#ifdef _D3XP
 	idEntity*				GetHeadEntity() { return head.GetEntity(); };
-#endif
 
 protected:
 	friend class			idAnimState;
@@ -272,73 +268,68 @@ protected:
 
 	idList<idAttachInfo>	attachments;
 
-#ifdef _D3XP
-	int						damageCap;
-#endif
+	int			damageCap;
 
-	virtual void			Gib( const idVec3 &dir, const char *damageDefName );
+	virtual void		Gib( const idVec3 &dir, const char *damageDefName );
 
-							// removes attachments with "remove" set for when character dies
-	void					RemoveAttachments( void );
+				// removes attachments with "remove" set for when character dies
+	void			RemoveAttachments( void );
 
-							// copies animation from body to head joints
-	void					CopyJointsFromBodyToHead( void );
+				// copies animation from body to head joints
+	void			CopyJointsFromBodyToHead( void );
 
 private:
-	void					SyncAnimChannels( int channel, int syncToChannel, int blendFrames );
-	void					FinishSetup( void );
-	void					SetupHead( void );
-	void					PlayFootStepSound( void );
+	void			SyncAnimChannels( int channel, int syncToChannel, int blendFrames );
+	void			FinishSetup( void );
+	void			SetupHead( void );
+	void			PlayFootStepSound( void );
 
-	void					Event_EnableEyeFocus( void );
-	void					Event_DisableEyeFocus( void );
-	void					Event_Footstep( void );
-	void					Event_EnableWalkIK( void );
-	void					Event_DisableWalkIK( void );
-	void					Event_EnableLegIK( int num );
-	void					Event_DisableLegIK( int num );
-	void					Event_SetAnimPrefix( const char *name );
-	void					Event_LookAtEntity( idEntity *ent, float duration );
-	void					Event_PreventPain( float duration );
-	void					Event_DisablePain( void );
-	void					Event_EnablePain( void );
-	void					Event_GetPainAnim( void );
-	void					Event_StopAnim( int channel, int frames );
-	void					Event_PlayAnim( int channel, const char *name );
-	void					Event_PlayCycle( int channel, const char *name );
-	void					Event_IdleAnim( int channel, const char *name );
-	void					Event_SetSyncedAnimWeight( int channel, int anim, float weight );
-	void					Event_OverrideAnim( int channel );
-	void					Event_EnableAnim( int channel, int blendFrames );
-	void					Event_SetBlendFrames( int channel, int blendFrames );
-	void					Event_GetBlendFrames( int channel );
-	void					Event_AnimState( int channel, const char *name, int blendFrames );
-	void					Event_GetAnimState( int channel );
-	void					Event_InAnimState( int channel, const char *name );
-	void					Event_FinishAction( const char *name );
-	void					Event_AnimDone( int channel, int blendFrames );
-	void					Event_HasAnim( int channel, const char *name );
-	void					Event_CheckAnim( int channel, const char *animname );
-	void					Event_ChooseAnim( int channel, const char *animname );
-	void					Event_AnimLength( int channel, const char *animname );
-	void					Event_AnimDistance( int channel, const char *animname );
-	void					Event_HasEnemies( void );
-	void					Event_NextEnemy( idEntity *ent );
-	void					Event_ClosestEnemyToPoint( const idVec3 &pos );
-	void					Event_StopSound( int channel, int netsync );
-	void					Event_SetNextState( const char *name );
-	void					Event_SetState( const char *name );
-	void					Event_GetState( void );
-	void					Event_GetHead( void );
-#ifdef _D3XP
-	void					Event_SetDamageGroupScale( const char* groupName, float scale);
-	void					Event_SetDamageGroupScaleAll( float scale );
-	void					Event_GetDamageGroupScale( const char* groupName );
-	void					Event_SetDamageCap( float _damageCap );
-	void					Event_SetWaitState( const char* waitState);
-	void					Event_GetWaitState();
-
-#endif
+	void			Event_EnableEyeFocus( void );
+	void			Event_DisableEyeFocus( void );
+	void			Event_Footstep( void );
+	void			Event_EnableWalkIK( void );
+	void			Event_DisableWalkIK( void );
+	void			Event_EnableLegIK( int num );
+	void			Event_DisableLegIK( int num );
+	void			Event_SetAnimPrefix( const char *name );
+	void			Event_LookAtEntity( idEntity *ent, float duration );
+	void			Event_PreventPain( float duration );
+	void			Event_DisablePain( void );
+	void			Event_EnablePain( void );
+	void			Event_GetPainAnim( void );
+	void			Event_StopAnim( int channel, int frames );
+	void			Event_PlayAnim( int channel, const char *name );
+	void			Event_PlayCycle( int channel, const char *name );
+	void			Event_IdleAnim( int channel, const char *name );
+	void			Event_SetSyncedAnimWeight( int channel, int anim, float weight );
+	void			Event_OverrideAnim( int channel );
+	void			Event_EnableAnim( int channel, int blendFrames );
+	void			Event_SetBlendFrames( int channel, int blendFrames );
+	void			Event_GetBlendFrames( int channel );
+	void			Event_AnimState( int channel, const char *name, int blendFrames );
+	void			Event_GetAnimState( int channel );
+	void			Event_InAnimState( int channel, const char *name );
+	void			Event_FinishAction( const char *name );
+	void			Event_AnimDone( int channel, int blendFrames );
+	void			Event_HasAnim( int channel, const char *name );
+	void			Event_CheckAnim( int channel, const char *animname );
+	void			Event_ChooseAnim( int channel, const char *animname );
+	void			Event_AnimLength( int channel, const char *animname );
+	void			Event_AnimDistance( int channel, const char *animname );
+	void			Event_HasEnemies( void );
+	void			Event_NextEnemy( idEntity *ent );
+	void			Event_ClosestEnemyToPoint( const idVec3 &pos );
+	void			Event_StopSound( int channel, int netsync );
+	void			Event_SetNextState( const char *name );
+	void			Event_SetState( const char *name );
+	void			Event_GetState( void );
+	void			Event_GetHead( void );
+	void			Event_SetDamageGroupScale( const char* groupName, float scale);
+	void			Event_SetDamageGroupScaleAll( float scale );
+	void			Event_GetDamageGroupScale( const char* groupName );
+	void			Event_SetDamageCap( float _damageCap );
+	void			Event_SetWaitState( const char* waitState);
+	void			Event_GetWaitState();
 };
 
 #endif /* !__GAME_ACTOR_H__ */

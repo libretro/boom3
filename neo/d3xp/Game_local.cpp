@@ -79,7 +79,6 @@ const char *idGameLocal::sufaceTypeNames[ MAX_SURFACE_TYPES ] = {
 	"ricochet", "surftype10", "surftype11", "surftype12", "surftype13", "surftype14", "surftype15"
 };
 
-#ifdef _D3XP
 // List of all defs used by the player that will stay on the fast timeline
 static const char* fastEntityList[] = {
 	"player_doommarine",
@@ -113,7 +112,6 @@ static const char* fastEntityList[] = {
 		"weapon_bloodstone_active3",
 		"weapon_bloodstone_passive",
 		NULL };
-#endif
 /*
 ===========
 GetGameAPI
@@ -282,12 +280,10 @@ void idGameLocal::Clear( void ) {
 
 	memset( lagometer, 0, sizeof( lagometer ) );
 
-#ifdef _D3XP
 	portalSkyEnt			= NULL;
 	portalSkyActive			= false;
 
 	ResetSlowTimeVars();
-#endif
 }
 
 static bool ( *updateDebuggerFnPtr )( idInterpreter *interpreter, idProgram *program, int instructionPointer ) = NULL;
@@ -339,7 +335,6 @@ void idGameLocal::Init( void ) {
 	InitConsoleCommands();
 
 
-#ifdef _D3XP
 	if(!g_xp_bind_run_once.GetBool()) {
 		//The default config file contains remapped controls that support the XP weapons
 		//We want to run this once after the base doom config file has run so we can
@@ -348,21 +343,18 @@ void idGameLocal::Init( void ) {
 		cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "seta g_xp_bind_run_once 1\n" );
 		cmdSystem->ExecuteCommandBuffer();
 	}
-#endif
 
 	// load default scripts
 	program.Startup( SCRIPT_DEFAULT );
 
-#ifdef _D3XP
 	//BSM Nerve: Loads a game specific main script file
 	idStr gamedir;
 	int i;
 	for ( i = 0; i < 2; i++ ) {
-		if ( i == 0 ) {
+		if ( i == 0 )
 			gamedir = cvarSystem->GetCVarString( "fs_game_base" );
-		} else if ( i == 1 ) {
+		else if ( i == 1 )
 			gamedir = cvarSystem->GetCVarString( "fs_game" );
-		}
 		if( gamedir.Length() > 0 ) {
 			idStr scriptFile = va( "script/%s_main.script", gamedir.c_str() );
 			if ( fileSystem->ReadFile( scriptFile.c_str(), NULL ) > 0 ) {
@@ -371,7 +363,6 @@ void idGameLocal::Init( void ) {
 			}
 		}
 	}
-#endif
 
 	smokeParticles = new idSmokeParticles;
 
@@ -590,9 +581,7 @@ void idGameLocal::SaveGame( idFile *f ) {
 	savegame.WriteInt( previousTime );
 	savegame.WriteInt( time );
 
-#ifdef _D3XP
 	savegame.WriteInt( msec );
-#endif
 
 	savegame.WriteInt( vacuumAreaNum );
 
@@ -608,7 +597,6 @@ void idGameLocal::SaveGame( idFile *f ) {
 	savegame.WriteBool( isNewFrame );
 	savegame.WriteFloat( clientSmoothing );
 
-#ifdef _D3XP
 	portalSkyEnt.Save( &savegame );
 	savegame.WriteBool( portalSkyActive );
 
@@ -618,7 +606,6 @@ void idGameLocal::SaveGame( idFile *f ) {
 	savegame.WriteInt( slowmoState );
 	savegame.WriteFloat( slowmoMsec );
 	savegame.WriteBool( quickSlowmoReset );
-#endif
 
 	savegame.WriteBool( mapCycleLoaded );
 	savegame.WriteInt( spawnCount );
@@ -928,11 +915,9 @@ void idGameLocal::LoadMap( const char *mapName, int randseed ) {
 	// clear the sound system
 	gameSoundWorld->ClearAllSoundEmitters();
 
-#ifdef _D3XP
 	// clear envirosuit sound fx
 	gameSoundWorld->SetEnviroSuit( false );
 	gameSoundWorld->SetSlowmo( false );
-#endif
 
 	InitAsyncNetwork();
 
@@ -996,12 +981,10 @@ void idGameLocal::LoadMap( const char *mapName, int randseed ) {
 	sessionCommand = "";
 	nextGibTime		= 0;
 
-#ifdef _D3XP
 	portalSkyEnt			= NULL;
 	portalSkyActive			= false;
 
 	ResetSlowTimeVars();
-#endif
 
 	vacuumAreaNum = -1;		// if an info_vacuum is spawned, it will set this
 
@@ -1071,11 +1054,9 @@ void idGameLocal::LocalMapRestart( ) {
 	// clear the sound system
 	if ( gameSoundWorld ) {
 		gameSoundWorld->ClearAllSoundEmitters();
-#ifdef _D3XP
 		// clear envirosuit sound fx
 		gameSoundWorld->SetEnviroSuit( false );
 		gameSoundWorld->SetSlowmo( false );
-#endif
 	}
 
 	// the spawnCount is reset to zero temporarily to spawn the map entities with the same spawnId
@@ -1117,7 +1098,6 @@ void idGameLocal::MapRestart( ) {
 	int			i;
 	const idKeyValue *keyval, *keyval2;
 
-#ifdef _D3XP
 	if ( isMultiplayer && isServer ) {
 		char buf[ MAX_STRING_CHARS ];
 		idStr gametype;
@@ -1127,7 +1107,6 @@ void idGameLocal::MapRestart( ) {
 			cvarSystem->SetCVarString( "si_gameType", gametype );
 		}
 	}
-#endif
 
 
 
@@ -1565,9 +1544,7 @@ bool idGameLocal::InitFromSaveGame( const char *mapName, idRenderWorld *renderWo
 	savegame.ReadInt( previousTime );
 	savegame.ReadInt( time );
 
-#ifdef _D3XP
 	savegame.ReadInt( msec );
-#endif
 
 	savegame.ReadInt( vacuumAreaNum );
 
@@ -1583,7 +1560,6 @@ bool idGameLocal::InitFromSaveGame( const char *mapName, idRenderWorld *renderWo
 	savegame.ReadBool( isNewFrame );
 	savegame.ReadFloat( clientSmoothing );
 
-#ifdef _D3XP
 	portalSkyEnt.Restore( &savegame );
 	savegame.ReadBool( portalSkyActive );
 
@@ -1616,7 +1592,6 @@ bool idGameLocal::InitFromSaveGame( const char *mapName, idRenderWorld *renderWo
 	if ( gameSoundWorld ) {
 		gameSoundWorld->SetSlowmoSpeed( slowmoMsec / USERCMD_MSEC_PRECISE ); // DG: slowmoMsec now is precise
 	}
-#endif
 
 	savegame.ReadBool( mapCycleLoaded );
 	savegame.ReadInt( spawnCount );
@@ -1832,7 +1807,6 @@ void idGameLocal::DumpOggSounds( void ) {
 				soundName = soundShader->GetSound( j );
 				soundName.BackSlashesToSlashes();
 
-#ifdef _D3XP
 				// D3XP :: don't add sounds that are in Doom 3's pak files
 				if ( fileSystem->FileIsInPAK( soundName ) ) {
 					continue;
@@ -1845,7 +1819,6 @@ void idGameLocal::DumpOggSounds( void ) {
 						continue;
 					}
 				}
-#endif
 				// don't OGG sounds that cause a shake because that would
 				// cause continuous seeking on the OGG file which is expensive
 				if ( parms->shakes != 0.0f ) {
@@ -2331,7 +2304,6 @@ void idGameLocal::SetupPlayerPVS( void ) {
 			playerConnectedAreas = newPVS;
 		}
 
-#ifdef _D3XP
 		// if portalSky is preset, then merge into pvs so we get rotating brushes, etc
 		if ( portalSkyEnt.GetEntity() ) {
 			idEntity *skyEnt = portalSkyEnt.GetEntity();
@@ -2348,7 +2320,6 @@ void idGameLocal::SetupPlayerPVS( void ) {
 			pvs.FreeCurrentPVS( otherPVS );
 			playerConnectedAreas = newPVS;
 		}
-#endif
 	}
 }
 
@@ -2499,7 +2470,6 @@ void idGameLocal::SortActiveEntityList( void ) {
 	sortPushers = false;
 }
 
-#ifdef _D3XP
 /*
 ================
 idGameLocal::RunTimeGroup2
@@ -2523,7 +2493,6 @@ void idGameLocal::RunTimeGroup2( int msec_fast ) { // dezo2/DG: added argument f
 
 	slow.Get( time, previousTime, msec, framenum, realClientTime, msecPrecise );
 }
-#endif
 
 // dezo2/DG: returns number of milliseconds for this frame, either 1000/gameHz or 1000/gameHz + 1,
 //   (16 or 17) so the frametimes of gameHz frames add up to 1000ms.
@@ -2557,13 +2526,11 @@ gameReturn_t idGameLocal::RunFrame(const usercmd_t* clientCmds) {
 
 	player = GetLocalPlayer();
 
-#ifdef _D3XP
 	ComputeSlowMsec();
 
 	slow.Get( time, previousTime, msec, framenum, realClientTime, msecPrecise );
 	msec = slowmoMsec;
 	msecPrecise = slowmoMsec;
-#endif
 
 	if ( !isMultiplayer && g_stopTime.GetBool() ) {
 		// clear any debug lines from a previous frame
@@ -2590,9 +2557,7 @@ gameReturn_t idGameLocal::RunFrame(const usercmd_t* clientCmds) {
 		time += msec;
 		realClientTime = time;
 
-#ifdef _D3XP
 		slow.Set( time, previousTime, msec, framenum, realClientTime, msecPrecise );
-#endif
 
 		// make sure the random number counter is used each frame so random events
 		// are influenced by the player's actions
@@ -2665,20 +2630,15 @@ gameReturn_t idGameLocal::RunFrame(const usercmd_t* clientCmds) {
 			} else {
 				num = 0;
 				for( ent = activeEntities.Next(); ent != NULL; ent = ent->activeNode.Next() ) {
-#ifdef _D3XP
-					if ( ent->timeGroup != TIME_GROUP1 ) {
+					if ( ent->timeGroup != TIME_GROUP1 )
 						continue;
-					}
-#endif
 					ent->Think();
 					num++;
 				}
 			}
 		}
 
-#ifdef _D3XP
 		RunTimeGroup2( msec_fast );
-#endif
 
 		// remove any entities that have stopped thinking
 		if ( numEntitiesToDeactivate ) {
@@ -2702,12 +2662,10 @@ gameReturn_t idGameLocal::RunFrame(const usercmd_t* clientCmds) {
 		// service any pending events
 		idEvent::ServiceEvents();
 
-#ifdef _D3XP
 		// service pending fast events
 		fast.Get( time, previousTime, msec, framenum, realClientTime, msecPrecise );
 		idEvent::ServiceFastEvents();
 		slow.Get( time, previousTime, msec, framenum, realClientTime, msecPrecise );
-#endif
 
 		timer_events.Stop();
 
@@ -3457,7 +3415,6 @@ bool idGameLocal::SpawnEntityDef( const idDict &args, idEntity **ent, bool setDe
 
 	spawnArgs.SetDefaults( &def->dict );
 
-#ifdef _D3XP
 	if ( !spawnArgs.FindKey( "slowmo" ) ) {
 		bool slowmo = true;
 
@@ -3472,7 +3429,6 @@ bool idGameLocal::SpawnEntityDef( const idDict &args, idEntity **ent, bool setDe
 			spawnArgs.SetBool( "slowmo", slowmo );
 		}
 	}
-#endif
 
 	// check if we should spawn a class object
 	spawnArgs.GetString( "spawnclass", NULL, &spawn );
@@ -3559,18 +3515,14 @@ bool idGameLocal::InhibitEntitySpawn( idDict &spawnArgs ) {
 		spawnArgs.GetBool( "not_medium", "0", result );
 	} else {
 		spawnArgs.GetBool( "not_hard", "0", result );
-#ifdef _D3XP
-		if ( !result && g_skill.GetInteger() == 3 ) {
+		if ( !result && g_skill.GetInteger() == 3 )
 			spawnArgs.GetBool( "not_nightmare", "0", result );
-		}
-#endif
 	}
 
 
 	const char *name;
 	if ( g_skill.GetInteger() == 3 ) {
 		name = spawnArgs.GetString( "classname" );
-		// _D3XP :: remove moveable medkit packs also
 		if ( idStr::Icmp( name, "item_medkit" ) == 0 || idStr::Icmp( name, "item_medkit_small" ) == 0 ||
 			 idStr::Icmp( name, "moveable_item_medkit" ) == 0 || idStr::Icmp( name, "moveable_item_medkit_small" ) == 0 ) {
 
@@ -4014,17 +3966,13 @@ idGameLocal::GetAlertEntity
 ============
 */
 idActor *idGameLocal::GetAlertEntity( void ) {
-#ifdef _D3XP
 	int timeGroup = 0;
-	if ( lastAIAlertTime && lastAIAlertEntity.GetEntity() ) {
+	if ( lastAIAlertTime && lastAIAlertEntity.GetEntity() )
 		timeGroup = lastAIAlertEntity.GetEntity()->timeGroup;
-	}
 	SetTimeState ts( timeGroup );
-#endif
 
-	if ( lastAIAlertTime >= time ) {
+	if ( lastAIAlertTime >= time )
 		return lastAIAlertEntity.GetEntity();
-	}
 
 	return NULL;
 }
@@ -4312,7 +4260,7 @@ void idGameLocal::ProjectDecal( const idVec3 &origin, const idVec3 &dir, float d
 	winding += idVec5( windingOrigin + ( axis * decalWinding[1] ) * size, idVec2( 0, 1 ) );
 	winding += idVec5( windingOrigin + ( axis * decalWinding[2] ) * size, idVec2( 0, 0 ) );
 	winding += idVec5( windingOrigin + ( axis * decalWinding[3] ) * size, idVec2( 1, 0 ) );
-	gameRenderWorld->ProjectDecalOntoWorld( winding, projectionOrigin, parallel, depth * 0.5f, declManager->FindMaterial( material ), gameLocal.slow.time /* _D3XP */ );
+	gameRenderWorld->ProjectDecalOntoWorld( winding, projectionOrigin, parallel, depth * 0.5f, declManager->FindMaterial( material ), gameLocal.slow.time);
 }
 
 /*
@@ -4934,7 +4882,6 @@ void idGameLocal::ThrottleUserInfo( void ) {
 	mpGame.ThrottleUserInfo();
 }
 
-#ifdef _D3XP
 /*
 =================
 idPlayer::SetPortalSkyEnt
@@ -5142,8 +5089,6 @@ bool idGameLocal::NeedRestart() {
 	}
 	return false;
 }
-
-#endif
 
 /*
 ================

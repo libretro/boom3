@@ -33,8 +33,6 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "Mover.h"
 
-// _D3XP : rename all gameLocal.time to gameLocal.slow.time for merge!
-
 // a mover will update any gui entities in it's target list with
 // a key/val pair of "mover" "state" from below.. guis can represent
 // realtime info like this
@@ -1574,9 +1572,7 @@ idElevator
 */
 const idEventDef EV_PostArrival( "postArrival", NULL );
 const idEventDef EV_GotoFloor( "gotoFloor", "d" );
-#ifdef _D3XP
 const idEventDef EV_SetGuiStates( "setGuiStates" );
-#endif
 
 CLASS_DECLARATION( idMover, idElevator )
 	EVENT( EV_Activate,				idElevator::Event_Activate )
@@ -1585,9 +1581,7 @@ CLASS_DECLARATION( idMover, idElevator )
 	EVENT( EV_PostArrival,			idElevator::Event_PostFloorArrival )
 	EVENT( EV_GotoFloor,			idElevator::Event_GotoFloor )
 	EVENT( EV_Touch,				idElevator::Event_Touch )
-#ifdef _D3XP
 	EVENT( EV_SetGuiStates,			idElevator::Event_SetGuiStates )
-#endif
 END_CLASS
 
 /*
@@ -1980,11 +1974,9 @@ void idElevator::Event_PostFloorArrival() {
 	}
 }
 
-#ifdef _D3XP
 void idElevator::Event_SetGuiStates() {
 	SetGuiStates( ( currentFloor == 1 ) ? guiBinaryMoverStates[0] : guiBinaryMoverStates[1] );
 }
-#endif
 
 /*
 ================
@@ -2132,9 +2124,7 @@ idMover_Binary::idMover_Binary() {
 	updateStatus = 0;
 	areaPortal = 0;
 	blocked = false;
-#ifdef _D3XP
 	playerOnly = false;
-#endif
 	fl.networkSync = true;
 }
 
@@ -2213,9 +2203,7 @@ void idMover_Binary::Save( idSaveGame *savefile ) const {
 		savefile->WriteInt( gameRenderWorld->GetPortalState( areaPortal ) );
 	}
 	savefile->WriteBool( blocked );
-#ifdef _D3XP
 	savefile->WriteBool( playerOnly );
-#endif
 
 	savefile->WriteInt( guiTargets.Num() );
 	for( i = 0; i < guiTargets.Num(); i++ ) {
@@ -2277,9 +2265,7 @@ void idMover_Binary::Restore( idRestoreGame *savefile ) {
 		gameLocal.SetPortalState( areaPortal, portalState );
 	}
 	savefile->ReadBool( blocked );
-#ifdef _D3XP
 	savefile->ReadBool( playerOnly );
-#endif
 
 	guiTargets.Clear();
 	savefile->ReadInt( num );
@@ -2586,14 +2572,10 @@ void idMover_Binary::Event_OpenPortal( void ) {
 	idMover_Binary *slave;
 
 	for ( slave = moveMaster; slave != NULL; slave = slave->activateChain ) {
-		if ( slave->areaPortal ) {
+		if ( slave->areaPortal )
 			slave->SetPortalState( true );
-		}
-#ifdef _D3XP
-		if ( slave->playerOnly ) {
+		if ( slave->playerOnly )
 			gameLocal.SetAASAreaState( slave->GetPhysics()->GetAbsBounds(), AREACONTENTS_CLUSTERPORTAL, false );
-		}
-#endif
 	}
 }
 
@@ -2609,14 +2591,10 @@ void idMover_Binary::Event_ClosePortal( void ) {
 
 	for ( slave = moveMaster; slave != NULL; slave = slave->activateChain ) {
 		if ( !slave->IsHidden() ) {
-			if ( slave->areaPortal ) {
+			if ( slave->areaPortal )
 				slave->SetPortalState( false );
-			}
-#ifdef _D3XP
-			if ( slave->playerOnly ) {
+			if ( slave->playerOnly )
 				gameLocal.SetAASAreaState( slave->GetPhysics()->GetAbsBounds(), AREACONTENTS_CLUSTERPORTAL, true );
-			}
-#endif
 		}
 	}
 }
@@ -3282,9 +3260,7 @@ void idDoor::Spawn( void ) {
 	spawnArgs.GetBool( "crusher", "0", crusher );
 	spawnArgs.GetBool( "start_open", "0", start_open );
 	spawnArgs.GetBool( "no_touch", "0", noTouch );
-#ifdef _D3XP
 	spawnArgs.GetBool( "player_only", "0", playerOnly );
-#endif
 
 	// expects syncLock to be a door that must be closed before this door will open
 	spawnArgs.GetString( "syncLock", "", syncLock );
@@ -3344,11 +3320,8 @@ void idDoor::Spawn( void ) {
 		// start closed
 		ProcessEvent( &EV_Mover_ClosePortal );
 
-#ifdef _D3XP
-		if ( playerOnly ) {
+		if ( playerOnly )
 			gameLocal.SetAASAreaState( GetPhysics()->GetAbsBounds(), AREACONTENTS_CLUSTERPORTAL, true );
-		}
-#endif
 	}
 
 	int locked = spawnArgs.GetInt( "locked" );
@@ -3620,20 +3593,16 @@ bool idDoor::IsNoTouch( void ) {
 	return noTouch;
 }
 
-#ifdef _D3XP
 /*
 ================
 idDoor::AllowPlayerOnly
 ================
 */
 bool idDoor::AllowPlayerOnly( idEntity *ent ) {
-	if ( playerOnly && !ent->IsType(idPlayer::Type) ) {
+	if ( playerOnly && !ent->IsType(idPlayer::Type) )
 		return false;
-	}
-
 	return true;
 }
-#endif
 
 /*
 ======================
@@ -3863,13 +3832,8 @@ void idDoor::Event_Touch( idEntity *other, trace_t *trace ) {
 
 	if ( trigger && trace->c.id == trigger->GetId() ) {
 		if ( !IsNoTouch() && !IsLocked() && GetMoverState() != MOVER_1TO2 ) {
-#ifdef _D3XP
-			if ( AllowPlayerOnly( other ) ) {
-#endif
+			if ( AllowPlayerOnly( other ) )
 				Use( this, other );
-#ifdef _D3XP
-			}
-#endif
 		}
 	} else if ( sndTrigger && trace->c.id == sndTrigger->GetId() ) {
 		if ( other && other->IsType( idPlayer::Type ) && IsLocked() && gameLocal.slow.time > nextSndTriggerTime ) {

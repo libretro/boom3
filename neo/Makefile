@@ -332,8 +332,8 @@ CXXFLAGS += -Wno-class-memaccess -Wno-write-strings
 CFLAGS   += -Wno-unused-result
 
 # unified core: always the d3xp game module (superset of the base game)
-CFLAGS	 +=	-I$(TOPDIR)/d3xp -D_D3XP
-CXXFLAGS +=     -I$(TOPDIR)/d3xp -D_D3XP
+CFLAGS	 +=	-I$(TOPDIR)/d3xp
+CXXFLAGS +=     -I$(TOPDIR)/d3xp
 
 CFLAGS     += $(INCFLAGS)
 CXXFLAGS   += $(INCFLAGS)

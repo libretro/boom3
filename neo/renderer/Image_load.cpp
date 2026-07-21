@@ -1495,44 +1495,38 @@ CheckPrecompressedImage
 If fullLoad is false, only the small mip levels of the image will be loaded
 ================
 */
-bool idImage::CheckPrecompressedImage( bool fullLoad ) {
-	if ( !glConfig.isInitialized || !glConfig.textureCompressionAvailable ) {
+bool idImage::CheckPrecompressedImage( bool fullLoad )
+{
+	ID_TIME_T precompTimestamp;
+	char filename[MAX_IMAGE_NAME];
+	if ( !glConfig.isInitialized || !glConfig.textureCompressionAvailable )
 		return false;
-	}
 
-#if 1 // ( _D3XP had disabled ) - Allow grabbing of DDS's from original Doom pak files
-	// if we are doing a copyFiles, make sure the original images are referenced
-	if ( fileSystem->PerformingCopyFiles() ) {
+	// if we are doing a copyFiles, make sure the 
+        // original images are referenced
+	if ( fileSystem->PerformingCopyFiles() )
 		return false;
-	}
-#endif
 
-	if ( depth == TD_BUMP && globalImages->image_useNormalCompression.GetInteger() != 2 ) {
+	if ( depth == TD_BUMP && globalImages->image_useNormalCompression.GetInteger() != 2 )
 		return false;
-	}
 
 	// god i love last minute hacks :-)
-	if ( com_machineSpec.GetInteger() >= 1 && imgName.Icmpn( "lights/", 7 ) == 0 ) {
+	if ( com_machineSpec.GetInteger() >= 1 && imgName.Icmpn( "lights/", 7 ) == 0 )
 		return false;
-	}
 
-	char filename[MAX_IMAGE_NAME];
 	ImageProgramStringToCompressedFileName( imgName, filename );
 
 	// get the file timestamp
-	ID_TIME_T precompTimestamp;
 	fileSystem->ReadFile( filename, NULL, &precompTimestamp );
 
-
-	if ( precompTimestamp == FILE_NOT_FOUND_TIMESTAMP ) {
+	if ( precompTimestamp == FILE_NOT_FOUND_TIMESTAMP )
 		return false;
-	}
 
-	if ( !generatorFunction && timestamp != FILE_NOT_FOUND_TIMESTAMP ) {
-		if ( precompTimestamp < timestamp ) {
-			// The image has changed after being precompressed
+	if ( !generatorFunction && timestamp != FILE_NOT_FOUND_TIMESTAMP )
+	{
+		// The image has changed after being precompressed
+		if ( precompTimestamp < timestamp )
 			return false;
-		}
 	}
 
 	timestamp = precompTimestamp;
@@ -1541,9 +1535,8 @@ bool idImage::CheckPrecompressedImage( bool fullLoad ) {
 	idFile *f;
 
 	f = fileSystem->OpenFileRead( filename );
-	if ( !f ) {
+	if ( !f )
 		return false;
-	}
 
 	int	len = f->Length();
 	if ( len < sizeof( ddsFileHeader_t ) + 4 ) { // +4 for the magic 'DDS ' fourcc at the beginning

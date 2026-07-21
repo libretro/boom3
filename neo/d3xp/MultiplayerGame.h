@@ -458,9 +458,7 @@ public:
 	void			ReloadScoreboard();
 #endif
 
-#ifdef _D3XP
 	idStr			GetBestGametype( const char* map, const char* gametype );
-#endif
 
 /* #ifdef CTF ... merge the below IsGametypeFlagBased */
 bool            IsGametypeFlagBased( void );

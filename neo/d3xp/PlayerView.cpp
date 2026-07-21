@@ -36,16 +36,12 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "PlayerView.h"
 
-// _D3XP : rename all gameLocal.time to gameLocal.slow.time for merge!
-
-#ifdef _D3XP
-static int MakePowerOfTwo( int num ) {
+static int MakePowerOfTwo( int num )
+{
 	int		pot;
-	for (pot = 1 ; pot < num ; pot<<=1) {
-	}
+	for (pot = 1 ; pot < num ; pot<<=1) { }
 	return pot;
 }
-#endif
 
 const int IMPULSE_DELAY = 150;
 /*
@@ -76,14 +72,12 @@ idPlayerView::idPlayerView() {
 	fadeToColor.Zero();
 	fadeColor.Zero();
 	shakeAng.Zero();
-#ifdef _D3XP
 	fxManager = NULL;
 
 	if ( !fxManager ) {
 		fxManager = new FullscreenFXManager;
 		fxManager->Initialize( this );
 	}
-#endif
 
 	ClearEffects();
 }
@@ -138,11 +132,8 @@ void idPlayerView::Save( idSaveGame *savefile ) const {
 	savefile->WriteObject( player );
 	savefile->WriteRenderView( view );
 
-#ifdef _D3XP
-	if ( fxManager ) {
+	if ( fxManager )
 		fxManager->Save( savefile );
-	}
-#endif
 }
 
 /*
@@ -195,11 +186,8 @@ void idPlayerView::Restore( idRestoreGame *savefile ) {
 	savefile->ReadObject( reinterpret_cast<idClass *&>( player ) );
 	savefile->ReadRenderView( view );
 
-#ifdef _D3XP
-	if ( fxManager ) {
+	if ( fxManager )
 		fxManager->Restore( savefile );
-	}
-#endif
 }
 
 /*
@@ -485,7 +473,6 @@ void idPlayerView::SingleView( idUserInterface *hud, const renderView_t *view ) 
 	renderView_t	hackedView = *view;
 	hackedView.viewaxis = hackedView.viewaxis * ShakeAxis();
 
-#ifdef _D3XP
 	if ( gameLocal.portalSkyEnt.GetEntity() && gameLocal.IsPortalSkyAcive() && g_enablePortalSky.GetBool() ) {
 		renderView_t	portalView = hackedView;
 		portalView.vieworg = gameLocal.portalSkyEnt.GetEntity()->GetPhysics()->GetOrigin();
@@ -518,15 +505,12 @@ void idPlayerView::SingleView( idUserInterface *hud, const renderView_t *view ) 
 
 	// process the frame
 	fxManager->Process( &hackedView );
-#endif
 
 	if ( player->spectating )
 		return;
 
-#ifdef _D3XP
 	if ( !hud )
 		return;
-#endif
 
 	// draw screen blobs
 	if ( !pm_thirdPerson.GetBool() && !g_skipViewEffects.GetBool() ) {
@@ -620,15 +604,12 @@ assumes: color.w is 0 or 1
 =================
 */
 void idPlayerView::Fade( idVec4 color, int time ) {
-#ifdef _D3XP
 	SetTimeState ts( player->timeGroup );
-#endif
 
-	if ( !fadeTime ) {
+	if ( !fadeTime )
 		fadeFromColor.Set( 0.0f, 0.0f, 0.0f, 1.0f - color[ 3 ] );
-	} else {
+	else
 		fadeFromColor = fadeColor;
-	}
 	fadeToColor = color;
 
 	if ( time <= 0 ) {
@@ -655,21 +636,17 @@ void idPlayerView::ScreenFade() {
 	int		msec;
 	float	t;
 
-	if ( !fadeTime ) {
+	if ( !fadeTime )
 		return;
-	}
 
-#ifdef _D3XP
 	SetTimeState ts( player->timeGroup );
-#endif
 
 	msec = fadeTime - gameLocal.realClientTime;
 
 	if ( msec <= 0 ) {
 		fadeColor = fadeToColor;
-		if ( fadeColor[ 3 ] == 0.0f ) {
+		if ( fadeColor[ 3 ] == 0.0f )
 			fadeTime = 0;
-		}
 	} else {
 		t = ( float )msec * fadeRate;
 		fadeColor = fadeFromColor * t + fadeToColor * ( 1.0f - t );
@@ -734,7 +711,6 @@ void idPlayerView::RenderPlayerView( idUserInterface *hud ) {
 	}
 }
 
-#ifdef _D3XP
 /*
 ===================
 idPlayerView::WarpVision
@@ -1885,7 +1861,3 @@ void FullscreenFXManager::Process( const renderView_t *view ) {
 		renderSystem->DrawStretchPic( 0.0f, 0.0f, 640.0f, 480.0f, 0.0f, 1, 1, 0.f, blendBackMaterial );
 	}
 }
-
-
-
-#endif

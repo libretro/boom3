@@ -212,9 +212,7 @@ const idEventDef *idEventDef::FindEvent( const char *name ) {
 
 static idLinkList<idEvent> FreeEvents;
 static idLinkList<idEvent> EventQueue;
-#ifdef _D3XP
 static idLinkList<idEvent> FastEventQueue;
-#endif
 static idEvent EventPool[ MAX_EVENTS ];
 
 bool idEvent::initialized = false;
@@ -395,24 +393,21 @@ void idEvent::Schedule( idClass *obj, const idTypeInfo *type, int time ) {
 
 	eventNode.Remove();
 
-#ifdef _D3XP
-	if ( obj->IsType( idEntity::Type ) && ( ( (idEntity*)(obj) )->timeGroup == TIME_GROUP2 ) ) {
+	if ( obj->IsType( idEntity::Type ) && ( ( (idEntity*)(obj) )->timeGroup == TIME_GROUP2 ) )
+	{
 		event = FastEventQueue.Next();
-		while( ( event != NULL ) && ( this->time >= event->time ) ) {
+		while( ( event != NULL ) && ( this->time >= event->time ) )
 			event = event->eventNode.Next();
-		}
 
-		if ( event ) {
+		if ( event )
 			eventNode.InsertBefore( event->eventNode );
-		} else {
+		else
 			eventNode.AddToEnd( FastEventQueue );
-		}
 
 		return;
-	} else {
-		this->time = gameLocal.slow.time + time;
 	}
-#endif
+	else
+		this->time = gameLocal.slow.time + time;
 
 	event = EventQueue.Next();
 	while( ( event != NULL ) && ( this->time >= event->time ) ) {
@@ -448,16 +443,14 @@ void idEvent::CancelEvents( const idClass *obj, const idEventDef *evdef ) {
 		}
 	}
 
-#ifdef _D3XP
 	for( event = FastEventQueue.Next(); event != NULL; event = next ) {
 		next = event->eventNode.Next();
-		if ( event->object == obj ) {
-			if ( !evdef || ( evdef == event->eventdef ) ) {
+		if ( event->object == obj )
+		{
+			if ( !evdef || ( evdef == event->eventdef ) )
 				event->Free();
-			}
 		}
 	}
-#endif
 }
 
 /*
@@ -573,7 +566,6 @@ void idEvent::ServiceEvents( void ) {
 	}
 }
 
-#ifdef _D3XP
 /*
 ================
 idEvent::ServiceFastEvents
@@ -664,7 +656,6 @@ void idEvent::ServiceFastEvents() {
 		}
 	}
 }
-#endif
 
 /*
 ================
@@ -794,7 +785,6 @@ void idEvent::Save( idSaveGame *savefile ) {
 		event = event->eventNode.Next();
 	}
 
-#ifdef _D3XP
 	// Save the Fast EventQueue
 	savefile->WriteInt( FastEventQueue.Num() );
 
@@ -809,7 +799,6 @@ void idEvent::Save( idSaveGame *savefile ) {
 
 		event = event->eventNode.Next();
 	}
-#endif
 }
 
 /*
@@ -913,7 +902,6 @@ void idEvent::Restore( idRestoreGame *savefile ) {
 		}
 	}
 
-#ifdef _D3XP
 	// Restore the Fast EventQueue
 	savefile->ReadInt( num );
 
@@ -956,7 +944,6 @@ void idEvent::Restore( idRestoreGame *savefile ) {
 			event->data = NULL;
 		}
 	}
-#endif
 }
 
 /*

@@ -202,9 +202,11 @@ idImage *idMaterial::GetEditorImage( void ) const {
 	}
 
 	// if we don't have an editorImageName, use the first stage image
-	if ( !editorImageName.Length()) {
-		// _D3XP :: First check for a diffuse image, then use the first
-		if ( numStages && stages ) {
+	if ( !editorImageName.Length())
+	{
+		// First check for a diffuse image, then use the first
+		if ( numStages && stages )
+		{
 			int i;
 			for( i = 0; i < numStages; i++ ) {
 				if ( stages[i].lighting == SL_DIFFUSE ) {

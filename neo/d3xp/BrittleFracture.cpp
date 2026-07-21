@@ -72,9 +72,7 @@ idBrittleFracture::idBrittleFracture( void ) {
 
 	fl.networkSync = true;
 
-#ifdef _D3XP
 	isXraySurface = false;
-#endif
 }
 
 /*
@@ -161,9 +159,7 @@ void idBrittleFracture::Save( idSaveGame *savefile ) const {
 		savefile->WriteStaticObject( shards[i]->physicsObj );
 	}
 
-#ifdef _D3XP
 	savefile->WriteBool( isXraySurface );
-#endif
 }
 
 /*
@@ -254,9 +250,7 @@ void idBrittleFracture::Restore( idRestoreGame *savefile ) {
 		}
 	}
 
-#ifdef _D3XP
 	savefile->ReadBool( isXraySurface );
-#endif
 }
 
 /*
@@ -294,7 +288,6 @@ void idBrittleFracture::Spawn( void ) {
 	// FIXME: set "bleed" so idProjectile calls AddDamageEffect
 	spawnArgs.SetBool( "bleed", 1 );
 
-#ifdef _D3XP
 	// check for xray surface
 	{
 		const idRenderModel *model = renderEntity.hModel;
@@ -310,7 +303,6 @@ void idBrittleFracture::Spawn( void ) {
 			}
 		}
 	}
-#endif
 
 	CreateFractures( renderEntity.hModel );
 
@@ -1062,16 +1054,10 @@ void idBrittleFracture::Fracture_r( idFixedWinding &w ) {
 
 		// randomly create a split plane
 		axis[2] = windingPlane.Normal();
-#ifdef _D3XP
-		if ( isXraySurface ) {
+		if ( isXraySurface )
 			a = idMath::TWO_PI / 2.f;
-		}
-		else {
+		else
 			a = gameLocal.random.RandomFloat() * idMath::TWO_PI;
-		}
-#else
-		a = gameLocal.random.RandomFloat() * idMath::TWO_PI;
-#endif
 		c = cos( a );
 		s = -sin( a );
 		axis[2].NormalVectors( axistemp[0], axistemp[1] );
@@ -1139,7 +1125,6 @@ void idBrittleFracture::CreateFractures( const idRenderModel *renderModel ) {
 	physicsObj.SetOrigin( GetPhysics()->GetOrigin(), 0 );
 	physicsObj.SetAxis( GetPhysics()->GetAxis(), 0 );
 
-#ifdef _D3XP
 	if ( isXraySurface ) {
 		for ( i = 0; i < 1 /*renderModel->NumSurfaces()*/; i++ ) {
 			surf = renderModel->Surface( i );
@@ -1192,23 +1177,6 @@ void idBrittleFracture::CreateFractures( const idRenderModel *renderModel ) {
 			}
 		}
 	}
-#else
-	for ( i = 0; i < 1 /*renderModel->NumSurfaces()*/; i++ ) {
-		surf = renderModel->Surface( i );
-		material = surf->shader;
-
-		for ( j = 0; j < surf->geometry->numIndexes; j += 3 ) {
-			w.Clear();
-			for ( k = 0; k < 3; k++ ) {
-				v = &surf->geometry->verts[ surf->geometry->indexes[ j + 2 - k ] ];
-				w.AddPoint( v->xyz );
-				w[k].s = v->st[0];
-				w[k].t = v->st[1];
-			}
-			Fracture_r( w );
-		}
-	}
-#endif
 
 	physicsObj.SetContents( material->GetContentFlags() );
 	SetPhysics( &physicsObj );

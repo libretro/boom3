@@ -1170,7 +1170,6 @@ bool idRenderWorldLocal::ModelTrace( modelTrace_t &trace, qhandle_t entityHandle
 idRenderWorldLocal::Trace
 ===================
 */
-// FIXME: _D3XP added those.
 const char* playerModelExcludeList[] = {
 	"models/md5/characters/player/d3xp_spplayer.md5mesh",
 	"models/md5/characters/player/head/d3xp_head.md5mesh",
@@ -1183,7 +1182,7 @@ const char* playerMaterialExcludeList[] = {
 	NULL
 };
 
-bool idRenderWorldLocal::Trace( modelTrace_t &trace, const idVec3 &start, const idVec3 &end, const float radius, bool skipDynamic, bool skipPlayer /*_D3XP*/ ) const {
+bool idRenderWorldLocal::Trace( modelTrace_t &trace, const idVec3 &start, const idVec3 &end, const float radius, bool skipDynamic, bool skipPlayer ) const {
 	areaReference_t * ref;
 	idRenderEntityLocal *def;
 	portalArea_t * area;
@@ -1226,36 +1225,33 @@ bool idRenderWorldLocal::Trace( modelTrace_t &trace, const idVec3 &start, const 
 					continue;
 				}
 
-/* _D3XP addition. could use a cleaner approach */
-				if ( skipPlayer ) {
+				if ( skipPlayer )
+				{
 					idStr name = model->Name();
 					const char *exclude;
 					int k;
 
-					for ( k = 0; playerModelExcludeList[k]; k++ ) {
+					for ( k = 0; playerModelExcludeList[k]; k++ )
+					{
 						exclude = playerModelExcludeList[k];
-						if ( name == exclude ) {
+						if ( name == exclude )
 							break;
-						}
 					}
 
-					if ( playerModelExcludeList[k] ) {
+					if ( playerModelExcludeList[k] )
 						continue;
-					}
 				}
 
 				model = R_EntityDefDynamicModel( def );
-				if ( !model ) {
+				if ( !model )
 					continue;	// can happen with particle systems, which don't instantiate without a valid view
-				}
 			}
 
 			bounds.FromTransformedBounds( model->Bounds( &def->parms ), def->parms.origin, def->parms.axis );
 
 			// if the model bounds do not overlap with the trace bounds
-			if ( !traceBounds.IntersectsBounds( bounds ) || !bounds.LineIntersection( start, trace.point ) ) {
+			if ( !traceBounds.IntersectsBounds( bounds ) || !bounds.LineIntersection( start, trace.point ) )
 				continue;
-			}
 
 			// check all model surfaces
 			for ( j = 0; j < model->NumSurfaces(); j++ ) {
@@ -1264,12 +1260,11 @@ bool idRenderWorldLocal::Trace( modelTrace_t &trace, const idVec3 &start, const 
 				shader = R_RemapShaderBySkin( surf->shader, def->parms.customSkin, def->parms.customShader );
 
 				// if no geometry or no shader
-				if ( !surf->geometry || !shader ) {
+				if ( !surf->geometry || !shader )
 					continue;
-				}
 
-/* _D3XP addition. could use a cleaner approach */
-				if ( skipPlayer ) {
+				if ( skipPlayer )
+				{
 					idStr name = shader->GetName();
 					const char *exclude;
 					int k;
@@ -1281,9 +1276,8 @@ bool idRenderWorldLocal::Trace( modelTrace_t &trace, const idVec3 &start, const 
 						}
 					}
 
-					if ( playerMaterialExcludeList[k] ) {
+					if ( playerMaterialExcludeList[k] )
 						continue;
-					}
 				}
 
 				tri = surf->geometry;
@@ -1862,17 +1856,15 @@ void idRenderWorldLocal::DebugCircle( const idVec4 &color, const idVec3 &origin,
 idRenderWorldLocal::DebugSphere
 ============
 */
-void idRenderWorldLocal::DebugSphere( const idVec4 &color, const idSphere &sphere, const int lifetime, const bool depthTest /*_D3XP*/ ) {
-	int i, j, n, num;
+void idRenderWorldLocal::DebugSphere( const idVec4 &color, const idSphere &sphere, const int lifetime, const bool depthTest ) {
+	int i, j, n;
 	float s, c;
-	idVec3 p, lastp, *lastArray;
-
-	num = 360 / 15;
-	lastArray = (idVec3 *) _alloca16( num * sizeof( idVec3 ) );
+	idVec3 p, lastp;
+	int num = 360 / 15;
+	idVec3 *lastArray = (idVec3 *) _alloca16( num * sizeof( idVec3 ) );
 	lastArray[0] = sphere.GetOrigin() + idVec3( 0, 0, sphere.GetRadius() );
-	for ( n = 1; n < num; n++ ) {
+	for ( n = 1; n < num; n++ )
 		lastArray[n] = lastArray[0];
-	}
 
 	for ( i = 15; i <= 360; i += 15 ) {
 		s = idMath::Sin16( DEG2RAD(i) );

@@ -714,13 +714,12 @@ R_GlobalToNormalizedDeviceCoordinates
 ==========================
 */
 void R_GlobalToNormalizedDeviceCoordinates( const idVec3 &global, idVec3 &ndc ) {
-	int		i;
+	int i;
 	idPlane	view;
 	idPlane	clip;
 
-	// _D3XP added work on primaryView when no viewDef
-	if ( !tr.viewDef ) {
-
+	if ( !tr.viewDef )
+	{
 		for ( i = 0 ; i < 4 ; i ++ ) {
 			view[i] =
 				global[0] * tr.primaryView->worldSpace.modelViewMatrix[ i + 0 * 4 ] +

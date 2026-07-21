@@ -45,9 +45,7 @@ class idFuncEmitter;
 ===============================================================================
 */
 
-#ifdef _D3XP
 extern const idEventDef EV_Weapon_State;
-#endif
 
 typedef enum {
 	WP_READY,
@@ -68,7 +66,6 @@ static const int LIGHTID_VIEW_MUZZLE_FLASH = 100;
 
 class idMoveableItem;
 
-#ifdef _D3XP
 typedef struct {
 	char			name[64];
 	char			particlename[128];
@@ -88,7 +85,6 @@ typedef struct {
 	int				lightHandle;
 	renderLight_t	light;
 } WeaponLight_t;
-#endif
 
 class idWeapon : public idAnimatedEntity {
 public:
@@ -146,10 +142,7 @@ public:
 	bool					CanDrop( void ) const;
 	void					WeaponStolen( void );
 
-#ifdef _D3XP
 	weaponStatus_t			GetStatus() { return status; };
-
-#endif
 
 	// Script state management
 	virtual idThread *		ConstructScriptObject( void );
@@ -178,10 +171,8 @@ public:
 	int						ClipSize( void ) const;
 	int						LowAmmo( void ) const;
 	int						AmmoRequired( void ) const;
-#ifdef _D3XP
 	int						AmmoCount() const;
 	int						GetGrabberState() const;
-#endif
 
 	virtual void			WriteToSnapshot( idBitMsgDelta &msg ) const;
 	virtual void			ReadFromSnapshot( const idBitMsgDelta &msg );
@@ -311,12 +302,10 @@ private:
 	jointHandle_t			barrelJointWorld;
 	jointHandle_t			ejectJointWorld;
 
-#ifdef _D3XP
 	jointHandle_t			smokeJointView;
 
 	idHashTable<WeaponParticle_t>	weaponParticles;
 	idHashTable<WeaponLight_t>		weaponLights;
-#endif
 
 	// sound
 	const idSoundShader *	sndHum;
@@ -399,7 +388,6 @@ private:
 	void					Event_IsInvisible( void );
 	void					Event_NetEndReload( void );
 
-#ifdef _D3XP
 	idGrabber				grabber;
 	int						grabberState;
 
@@ -417,7 +405,6 @@ private:
 
 	void					Event_StartWeaponLight( const char* name);
 	void					Event_StopWeaponLight( const char* name);
-#endif
 };
 
 ID_INLINE bool idWeapon::IsLinked( void ) {

@@ -120,7 +120,6 @@ const idEventDef EV_StartFx( "startFx", "s" );
 const idEventDef EV_HasFunction( "hasFunction", "s", 'd' );
 const idEventDef EV_CallFunction( "callFunction", "s" );
 const idEventDef EV_SetNeverDormant( "setNeverDormant", "d" );
-#ifdef _D3XP
 const idEventDef EV_SetGui ( "setGui", "ds" );
 const idEventDef EV_PrecacheGui ( "precacheGui", "s" );
 const idEventDef EV_GetGuiParm ( "getGuiParm", "ds", 's' );
@@ -128,7 +127,6 @@ const idEventDef EV_GetGuiParmFloat ( "getGuiParmFloat", "ds", 'f' );
 const idEventDef EV_MotionBlurOn( "motionBlurOn" );
 const idEventDef EV_MotionBlurOff( "motionBlurOff" );
 const idEventDef EV_GuiNamedEvent ( "guiNamedEvent", "ds" );
-#endif
 
 ABSTRACT_DECLARATION( idClass, idEntity )
 	EVENT( EV_GetName,				idEntity::Event_GetName )
@@ -194,13 +192,11 @@ ABSTRACT_DECLARATION( idClass, idEntity )
 	EVENT( EV_HasFunction,			idEntity::Event_HasFunction )
 	EVENT( EV_CallFunction,			idEntity::Event_CallFunction )
 	EVENT( EV_SetNeverDormant,		idEntity::Event_SetNeverDormant )
-#ifdef _D3XP
 	EVENT( EV_SetGui,				idEntity::Event_SetGui )
 	EVENT( EV_PrecacheGui,			idEntity::Event_PrecacheGui )
 	EVENT( EV_GetGuiParm,			idEntity::Event_GetGuiParm )
 	EVENT( EV_GetGuiParmFloat,		idEntity::Event_GetGuiParmFloat )
 	EVENT( EV_GuiNamedEvent,		idEntity::Event_GuiNamedEvent )
-#endif
 END_CLASS
 
 /*
@@ -452,7 +448,6 @@ idEntity::idEntity() {
 
 	mpGUIState = -1;
 
-#ifdef _D3XP
 	memset( &xrayEntity, 0, sizeof( xrayEntity ) );
 
 	timeGroup = TIME_GROUP1;
@@ -460,7 +455,6 @@ idEntity::idEntity() {
 	xraySkin = NULL;
 
 	noGrab = false;
-#endif
 }
 
 /*
@@ -506,17 +500,14 @@ void idEntity::Spawn( void ) {
 
 	renderEntity.entityNum = entityNumber;
 
-#ifdef _D3XP
 	noGrab = spawnArgs.GetBool( "noGrab", "0" );
 
 	xraySkin = NULL;
 	renderEntity.xrayIndex = 1;
 
 	idStr str;
-	if ( spawnArgs.GetString( "skin_xray", "", str ) ) {
+	if ( spawnArgs.GetString( "skin_xray", "", str ) )
 		xraySkin = declManager->FindSkin( str.c_str() );
-	}
-#endif
 
 	// go dormant within 5 frames so that when the map starts most monsters are dormant
 	dormantStart = gameLocal.time - DELAY_DORMANT_TIME + gameLocal.msec * 5;
@@ -599,10 +590,8 @@ void idEntity::Spawn( void ) {
 		ConstructScriptObject();
 	}
 
-#ifdef _D3XP
 	// determine time group
 	DetermineTimeGroup( spawnArgs.GetBool( "slowmo", "1" ) );
-#endif
 }
 
 /*
@@ -654,12 +643,10 @@ idEntity::~idEntity( void ) {
 	FreeModelDef();
 	FreeSoundEmitter( false );
 
-#ifdef _D3XP
 	if ( xrayEntityHandle != -1) {
 		gameRenderWorld->FreeEntityDef( xrayEntityHandle );
 		xrayEntityHandle = -1;
 	}
-#endif
 
 	gameLocal.UnregisterEntity( this );
 }
@@ -703,13 +690,11 @@ void idEntity::Save( idSaveGame *savefile ) const {
 #endif
 	savefile->Write( &flags, sizeof( flags ) );
 
-#ifdef _D3XP
 	savefile->WriteInt( timeGroup );
 	savefile->WriteBool( noGrab );
 	savefile->WriteRenderEntity( xrayEntity );
 	savefile->WriteInt( xrayEntityHandle );
 	savefile->WriteSkin( xraySkin );
-#endif
 
 	savefile->WriteRenderEntity( renderEntity );
 	savefile->WriteInt( modelDefHandle );
@@ -787,16 +772,13 @@ void idEntity::Restore( idRestoreGame *savefile ) {
 	RevBitFieldSwap( &fl, sizeof( fl ) );
 #endif
 
-#ifdef _D3XP
 	savefile->ReadInt( timeGroup );
 	savefile->ReadBool( noGrab );
 	savefile->ReadRenderEntity( xrayEntity );
 	savefile->ReadInt( xrayEntityHandle );
-	if ( xrayEntityHandle != -1 ) {
+	if ( xrayEntityHandle != -1 )
 		xrayEntityHandle =  gameRenderWorld->AddEntityDef( &xrayEntity );
-	}
 	savefile->ReadSkin( xraySkin );
-#endif
 
 	savefile->ReadRenderEntity( renderEntity );
 	savefile->ReadInt( modelDefHandle );
@@ -1274,9 +1256,7 @@ idEntity::UpdateModel
 ================
 */
 void idEntity::UpdateModel( void ) {
-#ifdef _D3XP
 	renderEntity.timeGroup = timeGroup;
-#endif
 
 	UpdateModelTransform();
 
@@ -1293,20 +1273,17 @@ void idEntity::UpdateModel( void ) {
 	// ensure that we call Present this frame
 	BecomeActive( TH_UPDATEVISUALS );
 
-#ifdef _D3XP
 	// If the entity has an xray skin, go ahead and add it
 	if ( xraySkin != NULL ) {
 		xrayEntity = renderEntity;
 		xrayEntity.xrayIndex = 2;
 		xrayEntity.customSkin = xraySkin;
 
-		if ( xrayEntityHandle == -1 ) {
+		if ( xrayEntityHandle == -1 )
 			xrayEntityHandle = gameRenderWorld->AddEntityDef( &xrayEntity );
-		} else {
+		else
 			gameRenderWorld->UpdateEntityDef( xrayEntityHandle, &xrayEntity );
-		}
 	}
-#endif
 }
 
 /*
@@ -1529,16 +1506,13 @@ idEntity::UpdateRenderEntity
 ================
 */
 bool idEntity::UpdateRenderEntity( renderEntity_s *renderEntity, const renderView_t *renderView ) {
-	if ( gameLocal.inCinematic && gameLocal.skipCinematic ) {
+	if ( gameLocal.inCinematic && gameLocal.skipCinematic )
 		return false;
-	}
 
 	idAnimator *animator = GetAnimator();
-	if ( animator ) {
-#ifdef _D3XP
+	if ( animator )
+	{
 		SetTimeState ts( timeGroup );
-#endif
-
 		return animator->CreateFrame( gameLocal.time, false );
 	}
 
@@ -1701,10 +1675,9 @@ bool idEntity::StartSoundShader( const idSoundShader *shader, const s_channelTyp
 
 	UpdateSound();
 
-	len = refSound.referenceSound->StartSound( shader, channel, diversity, soundShaderFlags, !timeGroup /*_D3XP*/ );
-	if ( length ) {
+	len = refSound.referenceSound->StartSound( shader, channel, diversity, soundShaderFlags, !timeGroup);
+	if ( length )
 		*length = len;
-	}
 
 	// set reference to the sound for shader synced effects
 	renderEntity.referenceSound = refSound.referenceSound;
@@ -3064,28 +3037,22 @@ inflictor, attacker, dir, and point can be NULL for environmental effects
 
 ============
 */
-void idEntity::Damage( idEntity *inflictor, idEntity *attacker, const idVec3 &dir,
-					  const char *damageDefName, const float damageScale, const int location ) {
-	if ( !fl.takedamage ) {
+void idEntity::Damage( idEntity *inflictor, idEntity *attacker, const idVec3 &dir, const char *damageDefName, const float damageScale, const int location )
+{
+	if ( !fl.takedamage )
 		return;
-	}
 
-#ifdef _D3XP
 	SetTimeState ts( timeGroup );
-#endif
 
-	if ( !inflictor ) {
+	if ( !inflictor )
 		inflictor = gameLocal.world;
-	}
 
-	if ( !attacker ) {
+	if ( !attacker )
 		attacker = gameLocal.world;
-	}
 
 	const idDict *damageDef = gameLocal.FindEntityDefDict( damageDefName );
-	if ( !damageDef ) {
+	if ( !damageDef )
 		gameLocal.Error( "Unknown damageDef '%s'\n", damageDefName );
-	}
 
 	int	damage = damageDef->GetInt( "damage" );
 
@@ -3095,14 +3062,13 @@ void idEntity::Damage( idEntity *inflictor, idEntity *attacker, const idVec3 &di
 		// do the damage
 		health -= damage;
 		if ( health <= 0 ) {
-			if ( health < -999 ) {
+			if ( health < -999 )
 				health = -999;
-			}
 
 			Killed( inflictor, attacker, damage, dir, location );
-		} else {
-			Pain( inflictor, attacker, damage, dir, location );
 		}
+		else
+			Pain( inflictor, attacker, damage, dir, location );
 	}
 }
 
@@ -3539,14 +3505,11 @@ bool idEntity::HandleGuiCommands( idEntity *entityGui, const char *cmds ) {
 				continue;
 			}
 
-#ifdef _D3XP
-
 			if ( !token.Icmp( "martianbuddycomplete" ) ) {
 				gameLocal.GetLocalPlayer()->GiveEmail( "MartianBuddyGameComplete" );
 				continue;
 			}
 
-#endif
 
 
 			// handy for debugging GUI stuff
@@ -3731,9 +3694,7 @@ bool idEntity::TouchTriggers( void ) const {
 			continue;
 		}
 
-#ifdef _D3XP
 		SetTimeState ts( ent->timeGroup );
-#endif
 
 		numEntities++;
 
@@ -4419,9 +4380,7 @@ idEntity::Event_SetKey
 */
 void idEntity::Event_SetKey( const char *key, const char *value ) {
 	spawnArgs.Set( key, value );
-#ifdef _D3XP
 	UpdateChangeableSpawnArgs( NULL );
-#endif
 }
 
 /*
@@ -4684,7 +4643,6 @@ void idEntity::Event_SetNeverDormant( int enable ) {
 	dormantStart = 0;
 }
 
-#ifdef _D3XP
 /*
 ================
 idEntity::Event_SetGui
@@ -4743,8 +4701,6 @@ void idEntity::Event_GuiNamedEvent(int guiNum, const char *event) {
 		renderEntity.gui[guiNum-1]->HandleNamedEvent(event);
 	}
 }
-
-#endif
 
 /***********************************************************************
 
@@ -5035,19 +4991,16 @@ bool idEntity::ClientReceiveEvent( int event, int time, const idBitMsg &msg ) {
 	return false;
 }
 
-#ifdef _D3XP
 /*
 ================
 idEntity::DetermineTimeGroup
 ================
 */
 void idEntity::DetermineTimeGroup( bool slowmo ) {
-	if ( slowmo || gameLocal.isMultiplayer ) {
+	if ( slowmo || gameLocal.isMultiplayer )
 		timeGroup = TIME_GROUP1;
-	}
-	else {
+	else
 		timeGroup = TIME_GROUP2;
-	}
 }
 
 /*
@@ -5067,7 +5020,6 @@ idEntity::IsGrabbed
 bool idEntity::IsGrabbed() {
 	return fl.grabbed;
 }
-#endif
 
 /*
 ===============================================================================
@@ -5375,9 +5327,7 @@ void idAnimatedEntity::AddLocalDamageEffect( jointHandle_t jointNum, const idVec
 	idVec3 origin, dir;
 	idMat3 axis;
 
-#ifdef _D3XP
 	SetTimeState ts( timeGroup );
-#endif
 
 	axis = renderEntity.joints[jointNum].ToMat3() * renderEntity.axis;
 	origin = renderEntity.origin + renderEntity.joints[jointNum].ToVec3() * renderEntity.axis;
@@ -5469,7 +5419,8 @@ void idAnimatedEntity::UpdateDamageEffects( void ) {
 	}
 
 	// emit a particle for each bleeding wound
-	for ( de = this->damageEffects; de; de = de->next ) {
+	for ( de = this->damageEffects; de; de = de->next )
+	{
 		idVec3 origin, start;
 		idMat3 axis;
 
@@ -5477,9 +5428,8 @@ void idAnimatedEntity::UpdateDamageEffects( void ) {
 		axis *= renderEntity.axis;
 		origin = renderEntity.origin + origin * renderEntity.axis;
 		start = origin + de->localOrigin * axis;
-		if ( !gameLocal.smokeParticles->EmitSmoke( de->type, de->time, gameLocal.random.CRandomFloat(), start, axis, timeGroup /*_D3XP*/ ) ) {
+		if ( !gameLocal.smokeParticles->EmitSmoke( de->type, de->time, gameLocal.random.CRandomFloat(), start, axis, timeGroup) )
 			de->time = 0;
-		}
 	}
 }
 

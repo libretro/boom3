@@ -752,18 +752,8 @@ void idTestModel::TestModel_f( const idCmdArgs &args ) {
 		} else {
 			// allow map models with underscore prefixes to be tested during development
 			// without appending an ase
-			if ( name[ 0 ] != '_' ) {
+			if ( name[ 0 ] != '_' )
 				name.DefaultFileExtension( ".ase" );
-			}
-
-#ifndef _D3XP
-			// Maya ascii format is supported natively now
-			if ( strstr( name, ".ma" ) || strstr( name, ".mb" ) ) {
-				idModelExport exporter;
-				exporter.ExportModel( name );
-				name.SetFileExtension( MD5_MESH_EXT );
-			}
-#endif
 
 			if ( !renderModelManager->CheckModel( name ) ) {
 				gameLocal.Printf( "Can't register model\n" );

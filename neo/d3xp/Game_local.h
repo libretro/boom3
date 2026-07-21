@@ -218,7 +218,6 @@ private:
 	int						spawnId;
 };
 
-#ifdef _D3XP
 struct timeState_t {
 	int					time;
 	int					previousTime;
@@ -257,7 +256,6 @@ enum slowmoState_t {
 	SLOWMO_STATE_ON,
 	SLOWMO_STATE_RAMPDOWN
 };
-#endif
 
 //============================================================================
 
@@ -341,7 +339,6 @@ public:
 	idEntityPtr<idEntity>	lastGUIEnt;				// last entity with a GUI, used by Cmd_NextGUI_f
 	int						lastGUI;				// last GUI on the lastGUIEnt
 
-#ifdef _D3XP
 	idEntityPtr<idEntity>	portalSkyEnt;
 	bool					portalSkyActive;
 
@@ -368,7 +365,6 @@ public:
 	void					QuickSlowmoReset();
 
 	bool					NeedRestart();
-#endif
 
 	void					Tokenize( idStrList &out, const char *in );
 
@@ -468,9 +464,7 @@ public:
 
 	bool					InPlayerPVS( idEntity *ent ) const;
 	bool					InPlayerConnectedArea( idEntity *ent ) const;
-#ifdef _D3XP
 	pvsHandle_t				GetPlayerPVS()			{ return playerPVS; };
-#endif
 
 	void					SetCamera( idCamera *cam );
 	idCamera *				GetCamera( void ) const;

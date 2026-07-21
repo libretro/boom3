@@ -156,26 +156,24 @@ class idDamagable : public idEntity {
 public:
 	CLASS_PROTOTYPE( idDamagable );
 
-						idDamagable( void );
+				idDamagable( void );
 
-	void				Save( idSaveGame *savefile ) const;
-	void				Restore( idRestoreGame *savefile );
+	void			Save( idSaveGame *savefile ) const;
+	void			Restore( idRestoreGame *savefile );
 
-	void				Spawn( void );
-	void				Killed( idEntity *inflictor, idEntity *attacker, int damage, const idVec3 &dir, int location );
+	void			Spawn( void );
+	void			Killed( idEntity *inflictor, idEntity *attacker, int damage, const idVec3 &dir, int location );
 
-#ifdef _D3XP
 	virtual void		Hide( void );
 	virtual void		Show( void );
-#endif
 
 private:
-	int					count;
-	int					nextTriggerTime;
+	int			count;
+	int			nextTriggerTime;
 
-	void				BecomeBroken( idEntity *activator );
-	void				Event_BecomeBroken( idEntity *activator );
-	void				Event_RestoreDamagable( void );
+	void			BecomeBroken( idEntity *activator );
+	void			Event_BecomeBroken( idEntity *activator );
+	void			Event_RestoreDamagable( void );
 };
 
 
@@ -191,10 +189,10 @@ class idExplodable : public idEntity {
 public:
 	CLASS_PROTOTYPE( idExplodable );
 
-	void				Spawn( void );
+	void		Spawn( void );
 
 private:
-	void				Event_Explode( idEntity *activator );
+	void		Event_Explode( idEntity *activator );
 };
 
 
@@ -280,39 +278,37 @@ class idAnimated : public idAFEntity_Gibbable {
 public:
 	CLASS_PROTOTYPE( idAnimated );
 
-							idAnimated();
-							~idAnimated();
+				idAnimated();
+				~idAnimated();
 
-	void					Save( idSaveGame *savefile ) const;
-	void					Restore( idRestoreGame *savefile );
+	void			Save( idSaveGame *savefile ) const;
+	void			Restore( idRestoreGame *savefile );
 
-	void					Spawn( void );
-	virtual bool			LoadAF( void );
-	bool					StartRagdoll( void );
-	virtual bool			GetPhysicsToSoundTransform( idVec3 &origin, idMat3 &axis );
+	void			Spawn( void );
+	virtual bool		LoadAF( void );
+	bool			StartRagdoll( void );
+	virtual bool		GetPhysicsToSoundTransform( idVec3 &origin, idMat3 &axis );
 
 private:
-	int						num_anims;
-	int						current_anim_index;
-	int						anim;
-	int						blendFrames;
-	jointHandle_t			soundJoint;
+	int			num_anims;
+	int			current_anim_index;
+	int			anim;
+	int			blendFrames;
+	jointHandle_t		soundJoint;
 	idEntityPtr<idEntity>	activator;
-	bool					activated;
+	bool			activated;
 
-	void					PlayNextAnim( void );
+	void			PlayNextAnim( void );
 
-	void					Event_Activate( idEntity *activator );
-	void					Event_Start( void );
-	void					Event_StartRagdoll( void );
-	void					Event_AnimDone( int animIndex );
-	void					Event_Footstep( void );
-	void					Event_LaunchMissiles( const char *projectilename, const char *sound, const char *launchjoint, const char *targetjoint, int numshots, int framedelay );
-	void					Event_LaunchMissilesUpdate( int launchjoint, int targetjoint, int numshots, int framedelay );
-#ifdef _D3XP
-	void					Event_SetAnimation( const char *animName );
-	void					Event_GetAnimationLength();
-#endif
+	void			Event_Activate( idEntity *activator );
+	void			Event_Start( void );
+	void			Event_StartRagdoll( void );
+	void			Event_AnimDone( int animIndex );
+	void			Event_Footstep( void );
+	void			Event_LaunchMissiles( const char *projectilename, const char *sound, const char *launchjoint, const char *targetjoint, int numshots, int framedelay );
+	void			Event_LaunchMissilesUpdate( int launchjoint, int targetjoint, int numshots, int framedelay );
+	void			Event_SetAnimation( const char *animName );
+	void			Event_GetAnimationLength();
 };
 
 
@@ -785,7 +781,6 @@ private:
 	idList<idVec3>		lastTargetPos;
 };
 
-#ifdef _D3XP
 /*
 ===============================================================================
 
@@ -905,7 +900,5 @@ public:
 	void				Event_PostSpawn();
 	void				Event_Activate( idEntity *activator );
 };
-
-#endif /* _D3XP */
 
 #endif /* !__GAME_MISC_H__ */

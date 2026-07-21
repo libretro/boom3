@@ -265,9 +265,7 @@ private:
 	void					Event_Activate( idEntity *activator );
 	void					Event_PostFloorArrival();
 
-#ifdef _D3XP
 	void					Event_SetGuiStates();
-#endif
 
 };
 
@@ -348,9 +346,7 @@ protected:
 	idPhysics_Parametric	physicsObj;
 	qhandle_t				areaPortal;			// 0 = no portal
 	bool					blocked;
-#ifdef _D3XP
 	bool					playerOnly;
-#endif
 	idList< idEntityPtr<idEntity> >	guiTargets;
 
 	void					MatchActivateTeam( moverState_t newstate, int time );
@@ -397,9 +393,7 @@ public:
 
 	bool					IsOpen( void );
 	bool					IsNoTouch( void );
-#ifdef _D3XP
 	bool					AllowPlayerOnly( idEntity *ent );
-#endif
 	int						IsLocked( void );
 	void					Lock( int f );
 	void					Use( idEntity *other, idEntity *activator );

@@ -167,9 +167,7 @@ public:
 
 	void					Spawn( void );
 	virtual void			Think( void );
-#ifdef _D3XP
 	virtual bool			Collide( const trace_t &collision, const idVec3 &velocity );
-#endif
 	virtual bool			Pickup( idPlayer *player );
 
 	static void				DropItems( idAnimatedEntity *ent, const char *type, idList<idEntity *> *list );
@@ -188,9 +186,7 @@ private:
 	const idDeclParticle *	smoke;
 	int						smokeTime;
 
-#ifdef _D3XP
 	int						nextSoundTime;
-#endif
 #ifdef CTF
 	bool					repeatSmoke;	// never stop updating the particles
 #endif
