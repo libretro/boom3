@@ -682,9 +682,10 @@ int idSampleDecoderLocal::DecodeOGG( idSoundSample *sample, int outputOffset, in
 		   The resampler's filter history and any carried-over output frames
 		   belong to the pre-seek position in the stream; blending them into
 		   post-seek audio puts a burst of the old position at the new one
-		   (audible when a looping sound wraps). There is no reset entry
-		   point, so rebuild lazily: freeing the handle makes the block loop
-		   below re-init it at the same rate pair.
+		   (audible when a looping sound wraps). Retiring the handle to the
+		   pool and re-acquiring it below gets a clean-state handle for the
+		   same rate pair at memset cost (the pool's adoption reset), or a
+		   fresh init on a pool miss.
 		*/
 		rsCarryFrames = 0;
 		if ( rsHandle != NULL ) {
