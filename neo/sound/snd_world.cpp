@@ -1561,6 +1561,40 @@ void idSoundWorldLocal::AddChannelContribution( idSoundEmitterLocal *sound, idSo
 			}
 		}
 
+		/*
+		   Occlusion spectral filtering: when the audible path runs through
+		   portals rather than the straight line, the sound arrives muffled
+		   as well as attenuated. The volume model already carries the
+		   longer distance and s_doorDistanceAdd; this adds the spectral
+		   half: a per-channel one-pole shelf at the 5 kHz statistical HF
+		   reference over the gathered source, hfGain =
+		   s_occlusionGainHF ^ (portal path - straight line, meters),
+		   clamped at 0.1. Filtering the source here, before the mix and
+		   the reverb send both consume it, muffles the dry voice and the
+		   energy it drives into the room alike - the wall stands between
+		   the source and everything. At the default 0.8/m a doorway's
+		   ~2 m detour passes 64% of the HF; s_occlusionGainHF 1 (or an
+		   unoccluded path) takes the exact legacy path, bit for bit.
+		   Enhancement beyond the original engine, which occluded volume
+		   only.
+		*/
+		if ( !global && !stereoSample && !noOcclusion ) {
+			float occG = idSoundSystemLocal::s_occlusionGainHF.GetFloat();
+			float detour = sound->distance - sound->realDistance;
+			if ( occG < 0.9999f && detour > 0.01f ) {
+				float hfG = powf( occG < 0.1f ? 0.1f : occG, detour );
+				if ( hfG < 0.1f ) hfG = 0.1f;
+				const float alpha = 1.0f - expf( -6.2831853f * 5000.0f / snd_SampleRate() );
+				float lp = chan->occLpF;
+				for ( int k = 0; k < numFrames; k++ ) {
+					float x = alignedInputSamples[k];
+					lp += alpha * ( x - lp );
+					alignedInputSamples[k] = lp + hfG * ( x - lp );
+				}
+				chan->occLpF = lp;
+			}
+		}
+
 		//
 		// work out the left / right ear values
 		//

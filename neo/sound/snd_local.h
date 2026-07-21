@@ -362,7 +362,11 @@ public:
 	   within a millisecond.
 	*/
 	float				airLpF;
-	int					airLpI;				// last calculated volume for each speaker, so we can smoothly fade
+	int					airLpI;
+	// occlusion shelf state: one-pole at 5 kHz on the gathered source,
+	// engaged when the portal path exceeds the straight line. Transient,
+	// not serialized, reset in Clear() - same contract as airLp*.
+	float				occLpF;				// last calculated volume for each speaker, so we can smoothly fade
 	idSoundFade			channelFade;
 	bool				triggered;
 	bool				stopped;
@@ -721,6 +725,7 @@ public:
 	static idCVar			s_constantAmplitude;
 	static idCVar			s_playDefaultSound;
 	static idCVar			s_useOcclusion;
+	static idCVar			s_occlusionGainHF;
 	static idCVar			s_subFraction;
 	static idCVar			s_globalFraction;
 	static idCVar			s_doorDistanceAdd;
