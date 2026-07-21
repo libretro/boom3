@@ -38,10 +38,13 @@ HW-render contract.
 | `Resolution` | Internal render resolution. |
 | `Quality Preset` | Engine quality preset (`com_machineSpec`), auto-detected by default. Requires restart. |
 | `Invert Y Axis`, `Mouse Sensitivity` | Input tuning. Mouse deltas are accumulated fractionally — no motion is lost at any sensitivity. |
+| `Sound Samplerate (Hint)` | Audio output rate: 32000/44100/48000/96000 or `auto` (ask the frontend for its device rate and render directly at it, so nothing downstream resamples). Doom 3's assets are authored at 44100. Resolved once at startup. |
 
 Notable cvars (console): `g_frameInterpolation` (render-side interpolation,
 default on), `s_useReverb` / `s_reverbGain` (environmental reverb),
-`com_showFPS`.
+`s_HRTF` (binaural rendering for headphones), `s_outputLimiter`
+(soft-knee output saturator), `com_showFPS`. See the Sound section and
+Configuration.md.
 
 ## Properties worth knowing
 
@@ -68,6 +71,80 @@ block savestates in RetroArch until updated.
 **Input latency.** One core frame input-to-photon; input is polled every
 frame including zero-tic frames, mouse wheel maps to the game's wheel keys,
 and at output rates above 60 fps mouse look renders sub-tic.
+
+## Sound
+
+The sound system is a from-scratch software mixer replacing dhewm3's
+OpenAL backend, built for byte-exact reproducibility. There is no audio
+thread and no ring buffer: each `retro_run` mixes exactly the frames it
+emits (a rational accumulator distributes `rate/framerate` with a
+multiple-of-8 carry, so the block sequence is a pure function of the
+frame index), and the master sample clock advances only by mixed audio —
+no wall clock exists anywhere in the audio path.
+
+**Two pipelines, one semantics.** When the frontend negotiates float
+output, mixing runs in float with the output normalization folded into
+the per-block gains; otherwise an all-integer pipeline runs: s16
+samples, Q15 gains with a 2.0 ceiling (products proven to fit a single
+32-bit multiply), int32 accumulation, round-half-up requantizers, and
+closed-form gain ramps — bit-exact across compilers and architectures
+by construction, with any auto-vectorization bit-identical. Overload is
+handled at the final narrow by a stateless soft-knee saturator
+(`s_outputLimiter`, default on): identity below ¾ full scale — normal
+content stays byte-exact — and a monotonic rational knee above, so
+stacked loud sounds compress instead of squaring off, with no permanent
+level pad and no lost resolution.
+
+**Spatialization.** Distance/occlusion attenuation as in the original
+engine, plus a spectral half the original never had: portal-occluded
+sources pass a 5 kHz one-pole shelf (`hfGain = s_occlusionGainHF ^
+detour-meters`), implemented twice — float state for the float pipeline,
+toward-zero-truncating integer state for the s16 pipeline, so the
+integer pipeline's determinism claim survives it. `s_HRTF` (default
+off, headphones) replaces the two-speaker pan law for spatialized mono
+sources with binaural convolution from the baked MIT KEMAR set: 368
+directions, full-phase 128-tap responses (ITD in the taps, per-channel
+state is just FIR history), per-block bilinear direction blending,
+resampled once at startup to the output rate, and bit-deterministic in
+the s16 pipeline via int64 tap sums.
+
+**Environmental reverb.** The EFX preset database drives a built-in
+8-line FDN (predelay, early-reflection taps, series allpasses, per-line
+low shelf and damping, Householder feedback, echo, modulation, density
+tap slew, EAXREVERB pan vectors, output band split) — every parsed
+EAXREVERB property is implemented. Twin implementations: float, and a
+pure-integer path whose toward-zero requantizers guarantee strict
+contraction, so tails provably decay to exact zero. Per-source sends
+carry room rolloff and air-absorption HF loss (a second per-channel
+shelf, also int/float twinned). The float path flushes sub-denormal
+state and both paths gate to zero cost on silence — the FDN never
+grinds on dead air, and FTZ-on/FTZ-off runs reconverge to identical
+exact zero (asserted by the bench via MXCSR). The ROE enviro-suit
+muffling is ported to this mixer and processes the final mix after the
+reverb.
+
+**Decode and resampling.** WAV/OGG via libretro-common; PCM is
+resampled once at load with the integer sinc, streaming Ogg through the
+float sinc pinned to its scalar path (SIMD mask 0) so the same binary
+produces the same bytes on every machine. Sinc handles are pooled, and
+resampler ring/phase state is serialized so a restored stream continues
+bit-exactly.
+
+**Savestates.** The state blob carries a versioned DSP section: the
+reverb and enviro objects as guarded raw images, every per-channel
+shelf state, binaural FIR history for active channels, decoder stream
+and resampler state, the music-diversity RNG seed, the audio pacing
+accumulators, and the output sample rate (mismatched-rate loads skip
+the section with a logged warning instead of failing subtly). A restore
+is byte-reproducible against an uninterrupted run.
+
+**Verification.** `bench/snd_mix_bench.cpp` is the correctness harness:
+kernel bit-exactness scalar-vs-SIMD on x86-64, aarch64, and armv7
+(qemu), integer-reverb impulse/decay and feature oracles, FTZ
+invariance, saturator properties (exhaustive identity region,
+monotonicity, symmetry), HRTF ITD/ILD and history-carry tests, and
+float-vs-integer agreement bounds. The retro_host frontend closes the
+loop with byte-exact audio capture of full game runs.
 
 ## Building
 
