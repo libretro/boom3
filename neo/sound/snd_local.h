@@ -365,7 +365,16 @@ public:
 	idSampleDecoder *	decoder;
 	float				diversity;
 	float				lastVolume;				// last calculated volume based on distance
-	float				lastV[6];				// last calculated volume for each speaker, so we can smoothly fade
+	float				lastV[6];
+	/*
+	   Per-channel air-absorption shelf state for the reverb send: a
+	   one-pole low-pass at the EAX statistical HF reference (5 kHz),
+	   blended by airAbsorptionGainHF^meters. Transient DSP state - not
+	   serialized; a savegame load restarts it and the shelf settles
+	   within a millisecond.
+	*/
+	float				airLpF;
+	int					airLpI;				// last calculated volume for each speaker, so we can smoothly fade
 	idSoundFade			channelFade;
 	bool				triggered;
 	bool				stopped;

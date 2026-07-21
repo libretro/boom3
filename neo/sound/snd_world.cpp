@@ -1653,34 +1653,50 @@ void idSoundWorldLocal::AddChannelContribution( idSoundEmitterLocal *sound, idSo
 			     - the standard EAX/OpenAL room rolloff model. The dry path
 			     keeps the game's own attenuation, which sendVol already
 			     carries.
-			   - airAbsorptionGainHF: per EAX this is an HF-only loss of
-			     airAbs^meters on the way to the room. A true per-source
-			     filter would add a state per channel; this applies it as a
-			     frequency-independent attenuation of the send instead - a
-			     documented approximation that captures the level effect
-			     (distant sources drive the room less) without the
-			     spectral tilt.
+			   - airAbsorptionGainHF: per EAX an HF-only loss of
+			     airAbs^meters on the way to the room, applied as a
+			     per-channel one-pole shelf at the 5 kHz statistical HF
+			     reference: y = lp + hfGain*(x - lp). This replaces the
+			     earlier frequency-independent attenuation, which carried
+			     the level effect but not the spectral tilt; distant
+			     sources now drive the room with genuinely darker energy.
+			     The shelf engages only when the preset absorbs (hfGain
+			     below unity), so a non-absorbing preset takes the exact
+			     legacy path.
 			*/
 			const sndReverbParams_t &rp = reverb.Params();
+			float airHfGain = 1.0f;
 			if ( sendDist > 0.0f ) {
 				float mind = parms->minDistance > 0.01f ? parms->minDistance : 0.01f;
 				if ( rp.roomRolloffFactor > 0.0f && sendDist > mind ) {
 					sendVol *= mind / ( mind + rp.roomRolloffFactor * ( sendDist - mind ) );
 				}
 				if ( rp.airAbsorptionGainHF < 0.9999f ) {
-					float aa = powf( rp.airAbsorptionGainHF, sendDist );
-					if ( aa < 0.05f ) aa = 0.05f;
-					sendVol *= aa;
+					airHfGain = powf( rp.airAbsorptionGainHF, sendDist );
+					if ( airHfGain < 0.05f ) airHfGain = 0.05f;
 				}
 			}
+			const bool airOn = airHfGain < 0.9999f;
+			// one-pole at 5 kHz in the current output rate
+			const float airAlpha = 1.0f - expf( -6.2831853f * 5000.0f / snd_SampleRate() );
 			if ( soundSystemLocal.outputIsFloat ) {
 				if ( stereoSample ) {
 					for ( int k = 0; k < numFrames; k++ ) {
-						reverbSendF[k] += ( alignedInputSamples[(size_t)k*2] + alignedInputSamples[(size_t)k*2+1] ) * ( 0.5f * sendVol );
+						float x = ( alignedInputSamples[(size_t)k*2] + alignedInputSamples[(size_t)k*2+1] ) * 0.5f;
+						if ( airOn ) {
+							chan->airLpF += airAlpha * ( x - chan->airLpF );
+							x = chan->airLpF + airHfGain * ( x - chan->airLpF );
+						}
+						reverbSendF[k] += x * sendVol;
 					}
 				} else {
 					for ( int k = 0; k < numFrames; k++ ) {
-						reverbSendF[k] += alignedInputSamples[k] * sendVol;
+						float x = alignedInputSamples[k];
+						if ( airOn ) {
+							chan->airLpF += airAlpha * ( x - chan->airLpF );
+							x = chan->airLpF + airHfGain * ( x - chan->airLpF );
+						}
+						reverbSendF[k] += x * sendVol;
 					}
 				}
 			} else {
@@ -1700,15 +1716,36 @@ void idSoundWorldLocal::AddChannelContribution( idSoundEmitterLocal *sound, idSo
 				   loop, so rounding is safe (the reverb's internal QMUL
 				   keeps its deliberate toward-zero truncation - that one
 				   guarantees tail decay). */
+				/*
+				   The shelf's state recursion uses the reverb's toward-zero
+				   QMUL idiom so the state provably decays to exact zero
+				   with silent input; the final volume multiply keeps the
+				   rounded feed-forward quantizer above.
+				*/
+				#define AIRQ(x,g) ( (x) >= 0 ? (int)( ( (long long)(x) * (g) ) >> 15 ) \
+				                             : -(int)( ( -(long long)(x) * (g) ) >> 15 ) )
+				const short airAlphaQ = Snd_ClampGainQ15( airAlpha );
+				const short airHfGQ   = Snd_ClampGainQ15( airHfGain );
 				if ( stereoSample ) {
 					for ( int k = 0; k < numFrames; k++ ) {
-						reverbSendI[k] += ( ( ( srcS16[(size_t)k*2] + srcS16[(size_t)k*2+1] ) / 2 ) * sq + 0x4000 ) >> 15;
+						int x = ( srcS16[(size_t)k*2] + srcS16[(size_t)k*2+1] ) / 2;
+						if ( airOn ) {
+							chan->airLpI += AIRQ( x - chan->airLpI, airAlphaQ );
+							x = chan->airLpI + AIRQ( x - chan->airLpI, airHfGQ );
+						}
+						reverbSendI[k] += ( x * sq + 0x4000 ) >> 15;
 					}
 				} else {
 					for ( int k = 0; k < numFrames; k++ ) {
-						reverbSendI[k] += ( srcS16[k] * sq + 0x4000 ) >> 15;
+						int x = srcS16[k];
+						if ( airOn ) {
+							chan->airLpI += AIRQ( x - chan->airLpI, airAlphaQ );
+							x = chan->airLpI + AIRQ( x - chan->airLpI, airHfGQ );
+						}
+						reverbSendI[k] += ( x * sq + 0x4000 ) >> 15;
 					}
 				}
+				#undef AIRQ
 			}
 		}
 

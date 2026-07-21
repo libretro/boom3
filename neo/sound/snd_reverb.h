@@ -61,7 +61,7 @@ typedef struct sndReverbParams_s {
 	float	echoDepth;			// 0..1, comb output blend
 	float	modulationTime;		// 0.04..4 s, read-tap LFO period
 	float	modulationDepth;	// 0..1, LFO excursion
-	float	airAbsorptionGainHF;// 0.892..1, send loss per meter (gain-only approx)
+	float	airAbsorptionGainHF;// 0.892..1, per-meter HF loss on the send (per-channel shelf)
 	float	hfReference;		// Hz
 	float	lfReference;		// Hz, low band split point
 	float	roomRolloffFactor;	// wet-path inverse-distance factor

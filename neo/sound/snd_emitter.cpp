@@ -169,6 +169,8 @@ void idSoundChannel::Clear( void ) {
 	int j;
 
 	Stop();
+	airLpF = 0.0f;
+	airLpI = 0;
 	soundShader = NULL;
 	lastVolume = 0.0f;
 	triggerChannel = SCHANNEL_ANY;
