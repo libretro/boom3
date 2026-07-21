@@ -215,6 +215,54 @@ private:
 idBlockAlloc<idSampleDecoderLocal, 64>		sampleDecoderAllocator;
 
 /*
+   Sinc resampler handle pool. Building the filter table costs ~3 ms at
+   the quality in use (multiples of that on weak FPUs) and used to happen
+   inside MixFrame at the first decode of every streaming sound whose
+   rate differs from the output - with 22 kHz assets that is nearly every
+   stream start, a recurring mid-play frame-time spike. Retired handles
+   park here instead of being freed; adoption resets the stream state to
+   the exact post-init state (see rarch_sinc_resampler_reset_state), so a
+   pooled handle is bit-identical to a fresh one and the output is
+   independent of pool history. All use is on the mixer thread.
+*/
+extern "C" void rarch_sinc_resampler_reset_state(void *re_);
+#define RS_POOL_SIZE 8
+static struct { void *handle; int srcRate, dstRate; } rsPool[RS_POOL_SIZE];
+
+static void *RsPool_Acquire( int srcRate, int dstRate ) {
+	for ( int i = 0; i < RS_POOL_SIZE; i++ ) {
+		if ( rsPool[i].handle && rsPool[i].srcRate == srcRate && rsPool[i].dstRate == dstRate ) {
+			void *h = rsPool[i].handle;
+			rsPool[i].handle = NULL;
+			rarch_sinc_resampler_reset_state( h );
+			return h;
+		}
+	}
+	return NULL;
+}
+
+static void RsPool_Retire( void *handle, int srcRate, int dstRate ) {
+	for ( int i = 0; i < RS_POOL_SIZE; i++ ) {
+		if ( rsPool[i].handle == NULL ) {
+			rsPool[i].handle = handle;
+			rsPool[i].srcRate = srcRate;
+			rsPool[i].dstRate = dstRate;
+			return;
+		}
+	}
+	sinc_resampler.free( handle );	// pool full: oldest policy not needed at this size
+}
+
+static void RsPool_Shutdown( void ) {
+	for ( int i = 0; i < RS_POOL_SIZE; i++ ) {
+		if ( rsPool[i].handle ) {
+			sinc_resampler.free( rsPool[i].handle );
+			rsPool[i].handle = NULL;
+		}
+	}
+}
+
+/*
 ====================
 idSampleDecoder::Init
 ====================
@@ -232,6 +280,7 @@ idSampleDecoder::Shutdown
 */
 void idSampleDecoder::Shutdown( void ) {
 	decoderMemoryAllocator.Shutdown();
+	RsPool_Shutdown();
 	sampleDecoderAllocator.Shutdown();
 }
 
@@ -311,7 +360,7 @@ void idSampleDecoderLocal::ClearDecoder( void ) {
 				atHandle = NULL;
 			}
 			if ( rsHandle != NULL ) {
-				sinc_resampler.free( rsHandle );
+				RsPool_Retire( rsHandle, rsSrcRate, rsDstRate );
 				rsHandle = NULL;
 				rsSrcRate = 0;
 				rsDstRate = 0;
@@ -545,7 +594,7 @@ int idSampleDecoderLocal::DecodeOGG( idSoundSample *sample, int outputOffset, in
 		*/
 		rsCarryFrames = 0;
 		if ( rsHandle != NULL ) {
-			sinc_resampler.free( rsHandle );
+			RsPool_Retire( rsHandle, rsSrcRate, rsDstRate );
 			rsHandle = NULL;
 			rsSrcRate = 0;
 			rsDstRate = 0;
@@ -618,9 +667,11 @@ int idSampleDecoderLocal::DecodeOGG( idSoundSample *sample, int outputOffset, in
 			*/
 			if ( rsHandle == NULL || rsSrcRate != srcRate || rsDstRate != dstRate ) {
 				if ( rsHandle != NULL ) {
-					sinc_resampler.free( rsHandle );
+					RsPool_Retire( rsHandle, rsSrcRate, rsDstRate );
 					rsHandle = NULL;
 				}
+				rsHandle = RsPool_Acquire( srcRate, dstRate );
+				if ( rsHandle == NULL )
 				rsHandle = sinc_resampler.init( NULL, (double)dstRate / (double)srcRate,
 						RESAMPLER_QUALITY_HIGHER, 0 );
 				if ( rsHandle == NULL ) {

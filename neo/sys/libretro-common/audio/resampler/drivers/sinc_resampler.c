@@ -657,6 +657,24 @@ static void resampler_sinc_process_c(void *re_, struct resampler_data *data)
    data->output_frames = out_frames;
 }
 
+/* Local addition (not yet upstream): return a handle to its exact
+ * post-init state so callers can reuse the expensive filter table across
+ * streams. A fresh handle differs from a used one only in the ring
+ * buffers (buffer_l/buffer_r, 4*taps floats, zeroed by init), ptr and
+ * time (both zero from the calloc); everything else is the immutable
+ * table and configuration. Resetting those three is therefore
+ * bit-equivalent to init for the same rate pair, at memset cost instead
+ * of a full table build. */
+void rarch_sinc_resampler_reset_state(void *re_)
+{
+   rarch_sinc_resampler_t *resamp = (rarch_sinc_resampler_t*)re_;
+   if (!resamp)
+      return;
+   memset(resamp->buffer_l, 0, 4 * resamp->taps * sizeof(float));
+   resamp->ptr  = 0;
+   resamp->time = 0;
+}
+
 static void resampler_sinc_free(void *data)
 {
    rarch_sinc_resampler_t *resamp = (rarch_sinc_resampler_t*)data;
