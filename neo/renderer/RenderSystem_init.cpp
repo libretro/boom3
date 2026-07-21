@@ -1321,8 +1321,6 @@ R_RenderingFPS
 ================
 */
 static float R_RenderingFPS( const renderView_t *renderView ) {
-	qglFinish();
-
 	int		start = Core_Milliseconds();
 	static const int SAMPLE_MSEC = 1000;
 	int		end;
@@ -1333,7 +1331,6 @@ static float R_RenderingFPS( const renderView_t *renderView ) {
 		renderSystem->BeginFrame( glConfig.vidWidth, glConfig.vidHeight );
 		tr.primaryWorld->RenderScene( renderView );
 		renderSystem->EndFrame( NULL, NULL );
-		qglFinish();
 		count++;
 		end = Core_Milliseconds();
 		if ( end - start > SAMPLE_MSEC ) {

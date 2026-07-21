@@ -922,7 +922,6 @@ static void RenderBumpTriangles( srfTriangles_t *lowMesh, renderBump_t *rb ) {
 		qglPixelZoom( glConfig.vidWidth / (float)rb->width, glConfig.vidHeight / (float)rb->height );
 		qglDrawPixels( rb->width, rb->height, GL_RGBA, GL_UNSIGNED_BYTE, rb->localPic );
 		qglPixelZoom( 1, 1 );
-		qglFlush();
 		GLimp_SwapBuffers();
 	}
 
@@ -1485,7 +1484,6 @@ void RenderBumpFlat_f( const idCmdArgs &args ) {
 			}
 
 			qglEnd();
-			qglFlush();
 			GLimp_SwapBuffers();
 			qglReadPixels( 0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, buffer );
 

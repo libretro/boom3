@@ -127,8 +127,6 @@ typedef double GLdouble;
 #define qglGetIntegerv              glGetIntegerv
 #define qglGetFloatv                glGetFloatv
 #define qglGetString                glGetString
-#define qglFinish                   glFinish
-#define qglFlush                    glFlush
 #define qglReadPixels               glReadPixels
 
 // Compressed textures are core in GLES2 (no ARB suffix needed)

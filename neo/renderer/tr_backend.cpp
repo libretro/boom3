@@ -482,8 +482,6 @@ void RB_ShowImages( void ) {
 
 	RB_SetGL2D();
 
-	qglFinish();
-
 	start = Core_Milliseconds();
 
 	for ( i = 0 ; i < globalImages->images.Num() ; i++ ) {
@@ -516,8 +514,6 @@ void RB_ShowImages( void ) {
 		qglVertex2f( x, y + h );
 		qglEnd();
 	}
-
-	qglFinish();
 
 	end = Core_Milliseconds();
 	common->Printf( "%i msec to draw all images\n", end - start );

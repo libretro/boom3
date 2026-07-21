@@ -248,8 +248,6 @@ static	void DrawAllEdges( void ) {
 		qglVertex3fv( optEdges[i].v2->pv.ToFloatPtr() );
 	}
 	qglEnd();
-	qglFlush();
-
 //	GLimp_SwapBuffers();
 }
 
@@ -275,7 +273,6 @@ static void DrawVerts( optIsland_t *island ) {
 	}
 	qglEnd();
 	qglDisable( GL_BLEND );
-	qglFlush();
 }
 
 /*
@@ -303,7 +300,6 @@ static	void DrawEdges( optIsland_t *island ) {
 		qglVertex3fv( edge->v2->pv.ToFloatPtr() );
 	}
 	qglEnd();
-	qglFlush();
 
 //	GLimp_SwapBuffers();
 }
@@ -482,7 +478,6 @@ static	bool TryAddNewEdge( optVertex_t *v1, optVertex_t *v2, optIsland_t *island
 		qglVertex3fv( v1->pv.ToFloatPtr() );
 		qglVertex3fv( v2->pv.ToFloatPtr() );
 		qglEnd();
-		qglFlush();
 	}
 	// add it
 	e = AllocEdge();
@@ -689,13 +684,11 @@ static	void RemoveIfColinear( optVertex_t *ov, optIsland_t *island ) {
 		qglVertex3fv( v1->pv.ToFloatPtr() );
 		qglVertex3fv( v2->pv.ToFloatPtr() );
 		qglEnd();
-		qglFlush();
 		qglBegin( GL_LINES );
 		qglColor3f( 0, 1, 1 );
 		qglVertex3fv( v2->pv.ToFloatPtr() );
 		qglVertex3fv( v3->pv.ToFloatPtr() );
 		qglEnd();
-		qglFlush();
 	}
 
 	// replace the two edges with a single edge
@@ -967,13 +960,11 @@ static void CreateOptTri( optVertex_t *first, optEdge_t *e1, optEdge_t *e2, optI
 		qglVertex3fv( e1->v1->pv.ToFloatPtr() );
 		qglVertex3fv( e1->v2->pv.ToFloatPtr() );
 		qglEnd();
-		qglFlush();
 		qglColor3f(0,1,1);
 		qglBegin( GL_LINES );
 		qglVertex3fv( e2->v1->pv.ToFloatPtr() );
 		qglVertex3fv( e2->v2->pv.ToFloatPtr() );
 		qglEnd();
-		qglFlush();
 	}
 
 	for ( opposite = second->edges ; opposite ; ) {
@@ -1001,7 +992,6 @@ static void CreateOptTri( optVertex_t *first, optEdge_t *e1, optEdge_t *e2, optI
 		qglVertex3fv( opposite->v1->pv.ToFloatPtr() );
 		qglVertex3fv( opposite->v2->pv.ToFloatPtr() );
 		qglEnd();
-		qglFlush();
 	}
 
 	// create new triangle
@@ -1019,7 +1009,6 @@ static void CreateOptTri( optVertex_t *first, optEdge_t *e1, optEdge_t *e2, optI
 		qglBegin( GL_POINTS );
 		qglVertex3fv( optTri->midpoint.ToFloatPtr() );
 		qglEnd();
-		qglFlush();
 	}
 
 	// find the midpoint, and scan through all the original triangles to
@@ -1051,7 +1040,6 @@ static void CreateOptTri( optVertex_t *first, optEdge_t *e1, optEdge_t *e2, optI
 		qglVertex3fv( optTri->v[1]->pv.ToFloatPtr() );
 		qglVertex3fv( optTri->v[2]->pv.ToFloatPtr() );
 		qglEnd();
-		qglFlush();
 	}
 
 	// link the triangle to it's edges
@@ -1059,29 +1047,6 @@ static void CreateOptTri( optVertex_t *first, optEdge_t *e1, optEdge_t *e2, optI
 	LinkTriToEdge( optTri, e2 );
 	LinkTriToEdge( optTri, opposite );
 }
-
-// debugging tool
-#if 0
-static void ReportNearbyVertexes( const optVertex_t *v, const optIsland_t *island ) {
-	const optVertex_t	*ov;
-	float		d;
-	idVec3		vec;
-
-	common->Printf( "verts near 0x%p (%f, %f)\n", v,  v->pv[0], v->pv[1] );
-	for ( ov = island->verts ; ov ; ov = ov->islandLink ) {
-		if ( ov == v ) {
-			continue;
-		}
-
-		vec = ov->pv - v->pv;
-
-		d = vec.Length();
-		if ( d < 1 ) {
-			common->Printf( "0x%p = (%f, %f)\n", ov, ov->pv[0], ov->pv[1] );
-		}
-	}
-}
-#endif
 
 /*
 ====================
@@ -1114,23 +1079,6 @@ static void BuildOptTriangles( optIsland_t *island ) {
 			continue;
 		}
 
-#if 0
-if ( dmapGlobals.drawflag && ov == (optVertex_t *)0x1845a60 ) {
-for ( e1 = ov->edges ; e1 ; e1 = e1Next ) {
-	qglBegin( GL_LINES );
-	qglColor3f( 0,1,0 );
-	qglVertex3fv( e1->v1->pv.ToFloatPtr() );
-	qglVertex3fv( e1->v2->pv.ToFloatPtr() );
-	qglEnd();
-	qglFlush();
-	if ( e1->v1 == ov ) {
-		e1Next = e1->v1link;
-	} else if ( e1->v2 == ov ) {
-		e1Next = e1->v2link;
-	}
-}
-}
-#endif
 		for ( e1 = ov->edges ; e1 ; e1 = e1Next ) {
 			if ( e1->v1 == ov ) {
 				second = e1->v2;
@@ -1374,7 +1322,6 @@ static void DrawOriginalEdges( int numOriginalEdges, originalEdges_t *originalEd
 		qglVertex3fv( originalEdges[i].v2->pv.ToFloatPtr() );
 	}
 	qglEnd();
-	qglFlush();
 }
 
 
@@ -1498,7 +1445,6 @@ void SplitOriginalEdgesAtCrossings( optimizeGroup_t *opt ) {
 			qglColor3f( 0, 0, 1 );
 			qglVertex3fv( originalEdges[i].v2->pv.ToFloatPtr() );
 			qglEnd();
-			qglFlush();
 		}
 		for ( j = i+1 ; j < numOriginalEdges ; j++ ) {
 			optVertex_t	*v1, *v2, *v3, *v4;
