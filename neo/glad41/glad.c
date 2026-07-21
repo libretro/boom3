@@ -496,8 +496,6 @@ PFNGLEVALPOINT1PROC glad_glEvalPoint1 = NULL;
 PFNGLEVALPOINT2PROC glad_glEvalPoint2 = NULL;
 PFNGLFEEDBACKBUFFERPROC glad_glFeedbackBuffer = NULL;
 PFNGLFENCESYNCPROC glad_glFenceSync = NULL;
-PFNGLFINISHPROC glad_glFinish = NULL;
-PFNGLFLUSHPROC glad_glFlush = NULL;
 PFNGLFLUSHMAPPEDBUFFERRANGEPROC glad_glFlushMappedBufferRange = NULL;
 PFNGLFOGCOORDPOINTERPROC glad_glFogCoordPointer = NULL;
 PFNGLFOGCOORDDPROC glad_glFogCoordd = NULL;
@@ -1639,8 +1637,6 @@ static void load_GL_VERSION_1_0(GLADloadproc load) {
 	glad_glDepthMask = (PFNGLDEPTHMASKPROC)load("glDepthMask");
 	glad_glDisable = (PFNGLDISABLEPROC)load("glDisable");
 	glad_glEnable = (PFNGLENABLEPROC)load("glEnable");
-	glad_glFinish = (PFNGLFINISHPROC)load("glFinish");
-	glad_glFlush = (PFNGLFLUSHPROC)load("glFlush");
 	glad_glBlendFunc = (PFNGLBLENDFUNCPROC)load("glBlendFunc");
 	glad_glLogicOp = (PFNGLLOGICOPPROC)load("glLogicOp");
 	glad_glStencilFunc = (PFNGLSTENCILFUNCPROC)load("glStencilFunc");

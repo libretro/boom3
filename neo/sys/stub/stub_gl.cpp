@@ -126,8 +126,6 @@ void APIENTRY glEvalMesh2(GLenum mode, GLint i1, GLint i2, GLint j1, GLint j2){}
 void APIENTRY glEvalPoint1(GLint i){};
 void APIENTRY glEvalPoint2(GLint i, GLint j){};
 void APIENTRY glFeedbackBuffer(GLsizei size, GLenum type, GLfloat *buffer){};
-void APIENTRY glFinish(void){};
-void APIENTRY glFlush(void){};
 void APIENTRY glFogf(GLenum pname, GLfloat param){};
 void APIENTRY glFogfv(GLenum pname, const GLfloat *params){};
 void APIENTRY glFogi(GLenum pname, GLint param){};
