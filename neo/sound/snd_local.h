@@ -603,6 +603,9 @@ public:
 	// environmental reverb (replaces the OpenAL EFX slot): per-world DSP,
 	// preset selected by listener area, mono send accumulated during the
 	// channel loop in whichever format the mixer is running
+	// diversity RNG for PlayShaderDirectly (music/GUI); a member so its
+	// seed can ride in the DSP savestate section - see WriteDSPState
+	idRandom				playShaderRnd;
 	// savestate-only DSP snapshot (libretro state blob section; the
 	// on-disk savegame format is untouched). Same-binary contract like
 	// any savestate: raw object images, validated by size.

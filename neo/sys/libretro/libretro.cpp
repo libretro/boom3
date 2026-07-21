@@ -1619,9 +1619,27 @@ static bool RetroBuildState(void)
 		if (sw) {
 			int before = mem.Length();
 			sw->WriteDSPState(&mem);
+			/*
+			 * v3 footer additions, after the DSP blob:
+			 *  - the output sample rate. Every sample-time field in the
+			 *    state (trigger times, the sound clock, the DSP stream
+			 *    states) is in output samples; loading under a different
+			 *    doom_sound_samplerate silently misinterprets all of
+			 *    them. The reader skips this whole section on mismatch
+			 *    and says so, instead of failing subtly.
+			 *  - the audio pacing accumulators. They define the per-run
+			 *    block-size sequence, and block boundaries shape the mix
+			 *    (per-block gain ramps, per-block reverb param steps):
+			 *    without them, post-restore audio is bit-reproducible
+			 *    only if the restore happens to land on the same
+			 *    accumulator phase as the save.
+			 */
+			mem.WriteInt((int)sample_rate);
+			mem.WriteInt(audio_rem_acc);
+			mem.WriteInt(audio_frame_carry);
 			int payload = mem.Length() - before;
 			mem.WriteInt(payload);
-			mem.WriteInt(0x32444E53);	/* 'SND2' */
+			mem.WriteInt(0x33444E53);	/* 'SND3' */
 		}
 	}
 	if (!ok || mem.Length() <= 0) {
@@ -1673,11 +1691,32 @@ bool retro_unserialize(const void *data_, size_t size)
 		int magic, payload;
 		memcpy(&magic,   bytes + size - 4, 4);
 		memcpy(&payload, bytes + size - 8, 4);
-		if (magic == 0x32444E53 && payload > 0 && (size_t)payload <= size - 8) {
-			idSoundWorldLocal *sw = static_cast<idSoundWorldLocal *>(soundSystem->GetPlayingSoundWorld());
-			if (sw) {
-				idFile_Memory dsp("dsp", (const char *)(bytes + size - 8 - payload), payload);
-				sw->ReadDSPState(&dsp);
+		/* 'SND2' footers from older builds fail the magic check and are
+		 * skipped cleanly, which is the correct migration: the DSP
+		 * section is same-binary-contract data anyway. */
+		if (magic == 0x33444E53 && payload > 12 && (size_t)payload <= size - 8) {
+			const unsigned char *sect = bytes + size - 8 - payload;
+			int rate = 0, remAcc = 0, carry = 0;
+			memcpy(&rate,   sect + payload - 12, 4);
+			memcpy(&remAcc, sect + payload - 8,  4);
+			memcpy(&carry,  sect + payload - 4,  4);
+			if (rate != (int)sample_rate) {
+				if (log_cb)
+					log_cb(RETRO_LOG_WARN,
+						"[boom3] state was saved at %d Hz, running at %u Hz: "
+						"skipping the mixer DSP section; sample-time fields in "
+						"the savegame keep their saved units, so timing and "
+						"pitch of in-flight sounds may be off. Set "
+						"doom_sound_samplerate to match the save for exact "
+						"restore.\n", rate, sample_rate);
+			} else {
+				audio_rem_acc     = remAcc;
+				audio_frame_carry = carry;
+				idSoundWorldLocal *sw = static_cast<idSoundWorldLocal *>(soundSystem->GetPlayingSoundWorld());
+				if (sw) {
+					idFile_Memory dsp("dsp", (const char *)sect, payload - 12);
+					sw->ReadDSPState(&dsp);
+				}
 			}
 		}
 	}

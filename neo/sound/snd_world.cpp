@@ -1276,8 +1276,14 @@ void idSoundWorldLocal::PlayShaderDirectly( const char *shaderName, int channel 
 		localSound = AllocLocalSoundEmitter();
 	}
 
-	static idRandom	rnd;
-	float	diversity = rnd.RandomFloat();
+	/*
+	   Was a function-local static idRandom, which survived nothing: a
+	   savestate restore resumed the boot-fresh sequence, so the next
+	   music/GUI trigger's diversity - which selects the shader entry
+	   and sample offset - diverged from an uninterrupted run. As a
+	   world member its seed rides in the DSP savestate section (v4).
+	*/
+	float	diversity = playShaderRnd.RandomFloat();
 
 	localSound->StartSound( shader, ( channel == -1 ) ? SCHANNEL_ONE : channel , diversity, SSF_GLOBAL );
 
@@ -2149,10 +2155,11 @@ saved: they are pure functions of saved inputs and re-derive to
 bit-identical values.
 ===================
 */
-static const int SND_DSP_VERSION = 3;	// v2: + per-channel airLpI; v3: + occLpI (the s16 occlusion shelf state)
+static const int SND_DSP_VERSION = 4;	// v2: + airLpI; v3: + occLpI; v4: + PlayShaderDirectly's diversity RNG seed
 
 void idSoundWorldLocal::WriteDSPState( idFile *f ) {
 	f->WriteInt( SND_DSP_VERSION );
+	f->WriteInt( playShaderRnd.GetSeed() );
 	f->WriteInt( (int)sizeof( reverb ) );
 	f->Write( &reverb, sizeof( reverb ) );
 	f->WriteInt( (int)sizeof( enviroFX ) );
@@ -2190,6 +2197,11 @@ void idSoundWorldLocal::ReadDSPState( idFile *f ) {
 	int ver = 0, sz = 0;
 	f->ReadInt( ver );
 	if ( ver != SND_DSP_VERSION ) return;
+	{
+		int seed = 0;
+		f->ReadInt( seed );
+		playShaderRnd.SetSeed( seed );
+	}
 	f->ReadInt( sz );
 	if ( sz != (int)sizeof( reverb ) ) return;
 	f->Read( &reverb, sizeof( reverb ) );
