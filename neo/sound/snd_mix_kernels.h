@@ -412,6 +412,192 @@ static inline void Snd_SumToS16( short *out, const int *in, int numSamples ) {
 }
 
 /*
+===========================================================================
+Stateless soft-knee output saturator.
+
+The mix is deliberately hot - sums of channels regularly exceed full
+scale - and every pipeline in this engine's history dealt with that at
+the last possible moment: the narrow to the output format. Hard
+saturation there squares off the sum (harsh odd-harmonic splatter, the
+dhewm3#179 "drowned shotgun"); the historical alternative, a permanent
+x0.333 pad upstream, avoided the corner by throwing away ~1.6 bits of
+s16 output resolution on every sample and was bit-transparent for
+nothing. This is the third option: a per-sample memoryless transfer
+curve at the narrow itself,
+
+  |v| <= A            : identity (bit-exact)
+  |v| >  A            : A + K*e/(e+K),  e = |v|-A,  sign carried
+
+with A = 24576 (3/4 full scale), K = 32767-A = 8191. K = M-A gives the
+curve unit slope at the knee (C1 continuous in the reals), and the
+rational form is monotonic with asymptote A+K = 32767: sums up to any
+overload map monotonically instead of flat-topping. Integer evaluation
+is exact and deterministic - one 64-bit mul and one integer divide, and
+only on samples past the knee, which normal content never reaches.
+
+The honest trade, stated for the record: single voices peaking inside
+(A, 32767] are no longer bit-transparent through the narrow - a lone
+full-scale peak comes out at 28671, about -1.16 dB. Memoryless is the
+price of determinism here: any gain-riding limiter would make a
+sample's value depend on its block, which the per-frame variable block
+size forbids. Below -2.5 dBFS everything is still byte-exact, which is
+more than the x0.333 pad ever offered anywhere.
+
+Stateless => nothing to savestate, no block-size dependence, and the
+scalar/SIMD split below cannot diverge: the SIMD lanes only ever handle
+the identity region (a vector compare routes any block-of-8 containing
+a past-knee sample to the scalar curve).
+===========================================================================
+*/
+
+#define SND_KNEE_A 24576
+#define SND_KNEE_K ( 32767 - SND_KNEE_A )
+
+static inline short Snd_SoftKneeS16( int v ) {
+	/* magnitude in 64-bit: v = INT32_MIN cannot overflow the negate */
+	long long m = v < 0 ? -(long long)v : (long long)v;
+	if ( m <= SND_KNEE_A ) {
+		return (short)v;
+	}
+	{
+		long long e = m - SND_KNEE_A;
+		/* K*e fits easily; C integer division truncates - defined and
+		   deterministic. Result < A+K = 32767 for all finite e. */
+		int y = SND_KNEE_A + (int)( ( e * SND_KNEE_K ) / ( e + SND_KNEE_K ) );
+		return (short)( v < 0 ? -y : y );
+	}
+}
+
+/*
+====================
+Snd_SumToS16Soft
+
+Soft-knee narrow of the int32 accumulator to int16. The SIMD fast path
+handles blocks of 8 that lie entirely in the identity region (the
+overwhelmingly common case) with the plain pack; any block containing a
+past-knee sample takes the scalar curve for all 8. Output is identical
+either way, so which path ran is unobservable.
+====================
+*/
+static inline void Snd_SumToS16Soft( short *out, const int *in, int numSamples ) {
+	int i = 0;
+
+#if SND_MIX_SSE2
+	const __m128i kA  = _mm_set1_epi32(  SND_KNEE_A );
+	const __m128i kNA = _mm_set1_epi32( -SND_KNEE_A );
+	for ( ; i + 8 <= numSamples; i += 8 ) {
+		__m128i a  = _mm_loadu_si128( (const __m128i *)( in + i ) );
+		__m128i b  = _mm_loadu_si128( (const __m128i *)( in + i + 4 ) );
+		__m128i ov = _mm_or_si128(
+			_mm_or_si128( _mm_cmpgt_epi32( a, kA ), _mm_cmpgt_epi32( kNA, a ) ),
+			_mm_or_si128( _mm_cmpgt_epi32( b, kA ), _mm_cmpgt_epi32( kNA, b ) ) );
+		if ( _mm_movemask_epi8( ov ) == 0 ) {
+			_mm_storeu_si128( (__m128i *)( out + i ), _mm_packs_epi32( a, b ) );
+		} else {
+			for ( int k = 0; k < 8; k++ ) {
+				out[i + k] = Snd_SoftKneeS16( in[i + k] );
+			}
+		}
+	}
+#elif SND_MIX_NEON
+	const int32x4_t kA  = vdupq_n_s32(  SND_KNEE_A );
+	const int32x4_t kNA = vdupq_n_s32( -SND_KNEE_A );
+	for ( ; i + 8 <= numSamples; i += 8 ) {
+		int32x4_t a   = vld1q_s32( in + i );
+		int32x4_t b   = vld1q_s32( in + i + 4 );
+		uint32x4_t ov = vorrq_u32(
+			vorrq_u32( vcgtq_s32( a, kA ), vcgtq_s32( kNA, a ) ),
+			vorrq_u32( vcgtq_s32( b, kA ), vcgtq_s32( kNA, b ) ) );
+		/* armv7-safe any-lane test: fold to 2x u64 lanes */
+		uint64x2_t f = vreinterpretq_u64_u32( ov );
+		if ( ( vgetq_lane_u64( f, 0 ) | vgetq_lane_u64( f, 1 ) ) == 0 ) {
+			vst1q_s16( out + i, vcombine_s16( vqmovn_s32( a ), vqmovn_s32( b ) ) );
+		} else {
+			for ( int k = 0; k < 8; k++ ) {
+				out[i + k] = Snd_SoftKneeS16( in[i + k] );
+			}
+		}
+	}
+#endif
+
+	for ( ; i < numSamples; i++ ) {
+		out[i] = Snd_SoftKneeS16( in[i] );
+	}
+}
+
+/*
+====================
+Snd_SoftKneeFloatOutput
+
+The same curve on the [-1,1] normalized float mix. Both knee constants
+are exact in binary32 (0.75 = 3*2^-2, K = 8191*2^-15), and the shape
+matches the s16 curve so the two pipelines saturate identically in the
+behavioral sense (they were never bit-identical to each other). A side
+effect worth noting: the old clamp's floor was -1.0 while its ceiling
+was 32767/32768; the knee is symmetric with asymptote +-32767/32768,
+matching the s16 narrow's range on both sides.
+====================
+*/
+static inline float Snd_SoftKneeF( float v ) {
+	const float A = 24576.0f / 32768.0f;
+	const float K = ( 32767.0f - 24576.0f ) / 32768.0f;
+	float m = v < 0.0f ? -v : v;
+	if ( m <= A ) {
+		return v;
+	}
+	{
+		float e = m - A;
+		float y = A + ( K * e ) / ( e + K );
+		return v < 0.0f ? -y : y;
+	}
+}
+
+static inline void Snd_SoftKneeFloatOutput( float *buf, int numSamples ) {
+	const float A = 24576.0f / 32768.0f;
+	int i = 0;
+
+#if SND_MIX_SSE2
+	const __m128 kA  = _mm_set1_ps(  A );
+	const __m128 kNA = _mm_set1_ps( -A );
+	for ( ; i + 8 <= numSamples; i += 8 ) {
+		__m128 a  = _mm_loadu_ps( buf + i );
+		__m128 b  = _mm_loadu_ps( buf + i + 4 );
+		__m128 ov = _mm_or_ps(
+			_mm_or_ps( _mm_cmpgt_ps( a, kA ), _mm_cmplt_ps( a, kNA ) ),
+			_mm_or_ps( _mm_cmpgt_ps( b, kA ), _mm_cmplt_ps( b, kNA ) ) );
+		if ( _mm_movemask_ps( ov ) == 0 ) {
+			/* entirely inside the identity region: nothing to write */
+			continue;
+		}
+		for ( int k = 0; k < 8; k++ ) {
+			buf[i + k] = Snd_SoftKneeF( buf[i + k] );
+		}
+	}
+#elif SND_MIX_NEON
+	const float32x4_t kA  = vdupq_n_f32(  A );
+	const float32x4_t kNA = vdupq_n_f32( -A );
+	for ( ; i + 8 <= numSamples; i += 8 ) {
+		float32x4_t a  = vld1q_f32( buf + i );
+		float32x4_t b  = vld1q_f32( buf + i + 4 );
+		uint32x4_t ov  = vorrq_u32(
+			vorrq_u32( vcgtq_f32( a, kA ), vcltq_f32( a, kNA ) ),
+			vorrq_u32( vcgtq_f32( b, kA ), vcltq_f32( b, kNA ) ) );
+		uint64x2_t f = vreinterpretq_u64_u32( ov );
+		if ( ( vgetq_lane_u64( f, 0 ) | vgetq_lane_u64( f, 1 ) ) == 0 ) {
+			continue;
+		}
+		for ( int k = 0; k < 8; k++ ) {
+			buf[i + k] = Snd_SoftKneeF( buf[i + k] );
+		}
+	}
+#endif
+
+	for ( ; i < numSamples; i++ ) {
+		buf[i] = Snd_SoftKneeF( buf[i] );
+	}
+}
+
+/*
 ====================
 Snd_FloatToS16
 Deterministic float -> s16 conversion at the s16 mixer's decode edge

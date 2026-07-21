@@ -64,6 +64,8 @@ idCVar idSoundSystemLocal::s_reverbFeedback( "s_reverbFeedback", "0.333", CVAR_S
 idCVar idSoundSystemLocal::s_enviroSuitVolumeScale( "s_enviroSuitVolumeScale", "0.9", CVAR_SOUND | CVAR_FLOAT, "" );
 idCVar idSoundSystemLocal::s_skipHelltimeFX( "s_skipHelltimeFX", "0", CVAR_SOUND | CVAR_BOOL, "" );
 
+idCVar idSoundSystemLocal::s_outputLimiter( "s_outputLimiter", "1", CVAR_SOUND | CVAR_BOOL, "soft-knee saturator at the output stage; 0 = hard clip" );
+
 
 
 idCVar idSoundSystemLocal::s_decompressionLimit( "s_decompressionLimit", "6", CVAR_SOUND | CVAR_INTEGER | CVAR_ROM, "specifies maximum uncompressed sample length in seconds" );
@@ -452,8 +454,14 @@ void idSoundSystemLocal::MixFrameFloat( float *dest, int numFrames ) {
 		currentSoundWorld->MixLoop( CurrentSoundTime, numFrames, dest );
 	// saturate: the sum of channels is deliberately unclamped during mixing
 	// (Doom 3's mix runs hot); every previous pipeline saturated at the final
-	// int16 conversion, and the frontend's float chain expects [-1,1]
-	Snd_ClampFloatOutput( dest, numFrames * 2 );
+	// int16 conversion, and the frontend's float chain expects [-1,1].
+	// Default is the soft knee (identity below 3/4 FS, monotonic above -
+	// see the saturator block in snd_mix_kernels.h); s_outputLimiter 0
+	// restores the plain hard clip.
+	if ( s_outputLimiter.GetBool() )
+		Snd_SoftKneeFloatOutput( dest, numFrames * 2 );
+	else
+		Snd_ClampFloatOutput( dest, numFrames * 2 );
 	CurrentSoundTime += numFrames;
 }
 
@@ -470,7 +478,13 @@ void idSoundSystemLocal::MixFrameS16( short *dest, int numFrames ) {
 	if ( isInitialized && !shutdown && !muted && currentSoundWorld )
 		// s16 mode: MixLoop's destination is the int32 accumulator
 		currentSoundWorld->MixLoop( CurrentSoundTime, numFrames, (float *)accum );
-	Snd_SumToS16( dest, accum, numFrames * 2 );
+	// narrow the int32 accumulator: soft knee by default (identity below
+	// 3/4 FS, so normal content stays byte-exact), hard saturation with
+	// s_outputLimiter 0.
+	if ( s_outputLimiter.GetBool() )
+		Snd_SumToS16Soft( dest, accum, numFrames * 2 );
+	else
+		Snd_SumToS16( dest, accum, numFrames * 2 );
 	if ( isInitialized && !shutdown )
 		CurrentSoundTime += numFrames;
 }

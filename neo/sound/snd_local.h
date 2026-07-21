@@ -760,7 +760,12 @@ public:
 
 	static idCVar			s_alReverbGain;
 
-	static idCVar			s_alOutputLimiter;
+	// soft-knee saturator at the output narrow (see Snd_SumToS16Soft /
+	// Snd_SoftKneeFloatOutput); 0 = the plain hard clip, kept as an A/B
+	// and verification escape hatch. Successor of the never-implemented
+	// OpenAL-era s_alOutputLimiter, whose dangling declaration this
+	// replaces.
+	static idCVar			s_outputLimiter;
 	static idCVar			s_alHRTF;
 
 	static idCVar			s_slowAttenuate;

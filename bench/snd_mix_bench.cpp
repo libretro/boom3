@@ -141,6 +141,86 @@ int main() {
 	int sat=0; for(int i=0;i<64;i++){int v=accA[i];short e=(short)(v<-32768?-32768:(v>32767?32767:v)); if(outA[i]!=e)sat++;}
 	printf("Snd_SumToS16 saturation: %s\n", sat?"FAIL":"bit-exact");
 
+	// -------- soft-knee saturator properties --------
+	{
+		int fail = 0;
+		// identity region, exhaustive: every |v| <= A passes bit-exact
+		for ( int v = -SND_KNEE_A; v <= SND_KNEE_A; v++ )
+			if ( Snd_SoftKneeS16(v) != (short)v ) fail++;
+		printf("knee identity |v|<=%d (exhaustive): %s\n", SND_KNEE_A, fail?"FAIL":"bit-exact");
+
+		// symmetry + bound + monotonicity over a dense sweep incl. extremes
+		fail = 0; int mono = 0, bound = 0;
+		long long prev = -0x7fffffffLL;
+		for ( long long v = -0x7fffffff; v <= 0x7fffffff; v += 4093 ) {
+			short y = Snd_SoftKneeS16( (int)v );
+			short yn = Snd_SoftKneeS16( (int)-v );
+			if ( yn != (short)-y ) fail++;
+			if ( y > 32767 || y < -32767 ) bound++;
+			(void)prev;
+		}
+		for ( int v = -200000, py = -32767-1; v <= 200000; v++ ) {
+			int y = Snd_SoftKneeS16(v);
+			if ( y < py ) mono++;
+			py = y;
+		}
+		// knee continuity + documented single-FS value
+		int c0 = ( Snd_SoftKneeS16(SND_KNEE_A) == SND_KNEE_A );
+		int fs = Snd_SoftKneeS16(32767);
+		printf("knee symmetry: %s | bound<=32767: %s | monotone [-200k,200k]: %s | f(A)=A: %s | f(32767)=%d\n",
+			fail?"FAIL":"ok", bound?"FAIL":"ok", mono?"FAIL":"ok", c0?"ok":"FAIL", fs);
+
+		// int32 extremes must not trap or wrap
+		short a = Snd_SoftKneeS16( 0x7fffffff );
+		short b = Snd_SoftKneeS16( (int)0x80000000 );
+		printf("knee extremes: f(INT_MAX)=%d f(INT_MIN)=%d %s\n", a, b,
+			( a <= 32767 && b >= -32767 ) ? "ok" : "FAIL");
+
+		// Snd_SumToS16Soft (SIMD fast path + scalar route) vs pure scalar curve,
+		// on mixed content: mostly in-knee with hot bursts, odd tails
+		fail = 0;
+		static int kin[MIXBUFFER_SAMPLES*2]; static short koutA[MIXBUFFER_SAMPLES*2], koutB[MIXBUFFER_SAMPLES*2];
+		for ( int trial = 0; trial < 200; trial++ ) {
+			int n = 1 + (int)( rng() % (MIXBUFFER_SAMPLES*2) );
+			for ( int i = 0; i < n; i++ ) {
+				int v = (int)( rng() % 40000 ) - 20000;              // in-knee
+				if ( ( rng() & 15 ) == 0 ) v *= 7;                    // hot burst
+				kin[i] = v;
+			}
+			Snd_SumToS16Soft( koutA, kin, n );
+			for ( int i = 0; i < n; i++ ) koutB[i] = Snd_SoftKneeS16( kin[i] );
+			for ( int i = 0; i < n; i++ ) if ( koutA[i] != koutB[i] ) fail++;
+		}
+		printf("Snd_SumToS16Soft %s vs scalar curve: %s\n", simd, fail?"FAIL":"bit-exact");
+
+		// float knee: shape parity with the s16 curve at int16 scale, and
+		// SIMD-vs-scalar bit-exactness of Snd_SoftKneeFloatOutput
+		double worst = 0.0;
+		for ( int v = -120000; v <= 120000; v += 7 ) {
+			float f = Snd_SoftKneeF( v / 32768.0f ) * 32768.0f;
+			int   s = Snd_SoftKneeS16( v );
+			double d = f - s; if ( d < 0 ) d = -d;
+			if ( d > worst ) worst = d;
+		}
+		printf("float knee vs s16 knee, worst |delta| over [-120k,120k]: %.3f LSB %s\n",
+			worst, worst < 2.0 ? "ok" : "FAIL");
+
+		fail = 0;
+		static float fA[MIXBUFFER_SAMPLES*2], fB[MIXBUFFER_SAMPLES*2];
+		for ( int trial = 0; trial < 100; trial++ ) {
+			int n = 1 + (int)( rng() % (MIXBUFFER_SAMPLES*2) );
+			for ( int i = 0; i < n; i++ ) {
+				float v = ( (int)( rng() % 40000 ) - 20000 ) / 32768.0f;
+				if ( ( rng() & 15 ) == 0 ) v *= 7.0f;
+				fA[i] = fB[i] = v;
+			}
+			Snd_SoftKneeFloatOutput( fA, n );
+			for ( int i = 0; i < n; i++ ) fB[i] = Snd_SoftKneeF( fB[i] );
+			for ( int i = 0; i < n; i++ ) if ( fA[i] != fB[i] ) fail++;
+		}
+		printf("Snd_SoftKneeFloatOutput %s vs scalar curve: %s\n", simd, fail?"FAIL":"bit-exact");
+	}
+
 
 	// float stereo + small-n mono: SIMD vs serial reference
 	{
