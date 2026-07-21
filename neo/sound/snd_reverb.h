@@ -263,12 +263,37 @@ public:
 
 private:
 	void	StepBlockParams( void );	// advance crossfade, derive coefficients
+	// float-path denormal flush + zero-state detection; see the dormancy
+	// block above ProcessFloat
+	bool	FlushAndTestZeroF( void );
+	void	AdvanceDormantParams( int numFrames );
+	bool	TestZeroI( void ) const;
+	static bool SendIsZeroF( const float *send, int n ) {
+		for ( int i = 0; i < n; i++ ) if ( send[i] != 0.0f ) return false;
+		return true;
+	}
+	static bool SendIsZeroI( const int *send, int n ) {
+		for ( int i = 0; i < n; i++ ) if ( send[i] ) return false;
+		return true;
+	}
 
 	// --- parameters ---
 	sndReverbParams_t	cur, target;
 	int					xfadeBlocksLeft;
 	bool				active;
 	bool				derivedClean;	// derivation skipped while true (inputs static)
+	/*
+	   Dormancy flags, one per path: true iff every recursive state of
+	   that path is exactly zero, established by a full sweep and
+	   invalidated by any nonzero send. Zero is a fixed point of both
+	   pipelines' arithmetic, so (send all zero && stateIsZero) means the
+	   block contributes nothing and processing is skipped outright - the
+	   FDN stops grinding on dead air. Derived purely from state and
+	   input, so it needs nothing extra in the savestate; the raw object
+	   image carries it consistently with the state it summarizes.
+	*/
+	bool				stateIsZeroF;
+	bool				stateIsZeroI;
 
 	// --- derived per-block coefficients (float masters) ---
 	float	fbGain[REVERB_LINES];		// per-line loop gain (RT60)
@@ -359,6 +384,8 @@ static inline short Snd_ReverbCoefQ15( float v ) {
 
 ID_INLINE void idSoundReverb::Init( void ) {
 	memset( this, 0, sizeof( *this ) );
+	stateIsZeroF = true;
+	stateIsZeroI = true;
 	/*
 	   Mutually coprime line lengths, ~37..97 ms, all < REVERB_MAX_LINE.
 
@@ -667,11 +694,136 @@ ID_INLINE void idSoundReverb::StepBlockParams( void ) {
 
 /*
 ====================
+idSoundReverb::FlushAndTestZeroF / TestZeroI
+
+Float path: flush every recursive state below SND_RVB_FLUSH_F to exact
+zero and report whether the whole path is now zero. Two jobs in one
+sweep:
+
+ - Denormal protection the pipeline does not otherwise have. The FDN's
+   loop gains are < 1, so on silence every float state decays
+   exponentially through the denormal range; on x86 without FTZ that is
+   a large per-op cost, and whether FTZ is set at all is ambient MXCSR
+   state this core does not own (frontends differ, and GCC pre-13
+   linked crtfastmath.o into -ffast-math shared objects, setting FTZ
+   process-wide at dlopen - GCC 13+ stopped). Flushing at 1e-20 (about
+   -430 dB at the int16-scale these lines carry) keeps sustained
+   processing out of the denormal range entirely.
+
+ - Termination of any residual FTZ sensitivity. Individual operations
+   on values near the threshold can still transit the denormal range
+   (a difference of two just-above-threshold values, times a small
+   interpolation fraction), so mid-decay bits are not guaranteed
+   FTZ-invariant - but everything below the threshold is forced to
+   exact zero within a block, zero is a fixed point of the arithmetic
+   under any FTZ setting, and the bench asserts FTZ-on and FTZ-off
+   streams reconverge to bit-identical exact zero. Divergence, if any,
+   is confined to sub -400 dB tails and self-heals.
+
+Int path: no flush needed (the QMUL contraction provably decays to
+exact zero); just the sweep. Both sweeps only run while the send is
+silent and the flag is not yet set - at most once per block during a
+tail, never during signal.
+====================
+*/
+#define SND_RVB_FLUSH_F 1e-20f
+
+/*
+====================
+idSoundReverb::AdvanceDormantParams
+
+The dormancy gate may only skip work that provably contributes nothing.
+Signal-history state qualifies (every buffer is exactly zero, so ring
+positions are meaningless over identical content), but two pieces of
+parameter-evolution state advance inside the frame loop and shape
+FUTURE output: the density tap slew and the modulation LFO phase.
+Freezing them while dormant would make post-silence output depend on
+whether the gate engaged - caught by the density feature oracle when
+the gate first landed without this. Advance both in closed form,
+bit-equal to the per-frame updates: the slew is linear and saturating,
+the phase is a modular add.
+====================
+*/
+ID_INLINE void idSoundReverb::AdvanceDormantParams( int numFrames ) {
+	const unsigned long long step =
+		(unsigned long long)(unsigned)numFrames * REVERB_TAP_SLEW_Q16;
+	for ( int l = 0; l < REVERB_LINES; l++ ) {
+		unsigned tap = densityTapQ16[l], tgt = densityTargetQ16[l];
+		if ( tap < tgt ) {
+			unsigned long long t = (unsigned long long)tap + step;
+			tap = ( t > tgt ) ? tgt : (unsigned)t;
+		} else if ( tap > tgt ) {
+			tap = ( (unsigned long long)( tap - tgt ) > step )
+			      ? tap - (unsigned)step : tgt;
+		}
+		densityTapQ16[l] = tap;
+	}
+	modPhase += modPhaseInc * (unsigned)numFrames;
+}
+
+ID_INLINE bool idSoundReverb::FlushAndTestZeroF( void ) {
+	bool zero = true;
+	#define RVB_FLUSH(x) do { float t_ = (x); if ( t_ != 0.0f ) { \
+			if ( t_ < SND_RVB_FLUSH_F && t_ > -SND_RVB_FLUSH_F ) (x) = 0.0f; \
+			else zero = false; } } while (0)
+	for ( int l = 0; l < REVERB_LINES; l++ ) {
+		for ( int k = 0; k < lineLen[l]; k++ ) RVB_FLUSH( lineF[l][k] );
+		RVB_FLUSH( dampF[l] );
+		RVB_FLUSH( lfLoopF[l] );
+	}
+	for ( int a = 0; a < 2; a++ )
+		for ( int k = 0; k < apLen[a]; k++ ) RVB_FLUSH( apF[a][k] );
+	for ( int k = 0; k < REVERB_PREDELAY_LEN; k++ ) RVB_FLUSH( preF[k] );
+	for ( int k = 0; k < echoLen; k++ ) RVB_FLUSH( echoF[k] );
+	for ( int c = 0; c < 2; c++ ) {
+		RVB_FLUSH( osLowF[c] );  RVB_FLUSH( osHighF[c] );
+		RVB_FLUSH( osLow2F[c] ); RVB_FLUSH( osHigh2F[c] );
+	}
+	#undef RVB_FLUSH
+	return zero;
+}
+
+ID_INLINE bool idSoundReverb::TestZeroI( void ) const {
+	for ( int l = 0; l < REVERB_LINES; l++ ) {
+		for ( int k = 0; k < lineLen[l]; k++ ) if ( lineI[l][k] ) return false;
+		if ( dampI[l] || lfLoopI[l] ) return false;
+	}
+	for ( int a = 0; a < 2; a++ )
+		for ( int k = 0; k < apLen[a]; k++ ) if ( apI[a][k] ) return false;
+	for ( int k = 0; k < REVERB_PREDELAY_LEN; k++ ) if ( preI[k] ) return false;
+	for ( int k = 0; k < echoLen; k++ ) if ( echoI[k] ) return false;
+	for ( int c = 0; c < 2; c++ )
+		if ( osLowI[c] || osHighI[c] || osLow2I[c] || osHigh2I[c] ) return false;
+	return true;
+}
+
+/*
+====================
 idSoundReverb::ProcessFloat
 ====================
 */
 ID_INLINE void idSoundReverb::ProcessFloat( const float *send, float *dest, int numFrames, float wetScale ) {
 	StepBlockParams();
+
+	/*
+	   Dormancy gate: with an all-zero send and all-zero state, the block
+	   contributes exactly nothing under either FTZ setting - skip it.
+	   StepBlockParams still ran, so parameter crossfades keep advancing
+	   and coefficients are current the instant signal returns. The gate
+	   condition is a pure function of state and input, hence
+	   deterministic and savestate-consistent by construction.
+	*/
+	if ( SendIsZeroF( send, numFrames ) ) {
+		if ( !stateIsZeroF )
+			stateIsZeroF = FlushAndTestZeroF();
+		if ( stateIsZeroF ) {
+			AdvanceDormantParams( numFrames );
+			return;
+		}
+	} else {
+		stateIsZeroF = false;
+	}
+
 
 	const float norm  = wetScale / 32768.0f;	// wet is mixed into the normalized buffer
 	const float eGL   = earlyGainL * norm;
@@ -880,6 +1032,20 @@ across compilers and architectures.
 */
 ID_INLINE void idSoundReverb::ProcessS16( const int *send, int *destAccum, int numFrames, float wetScale ) {
 	StepBlockParams();
+
+	// dormancy gate, int path: the QMUL contraction decays the state to
+	// exact zero on its own (proven by the impulse test); once there and
+	// with a silent send, skip the block. See ProcessFloat.
+	if ( SendIsZeroI( send, numFrames ) ) {
+		if ( !stateIsZeroI )
+			stateIsZeroI = TestZeroI();
+		if ( stateIsZeroI ) {
+			AdvanceDormantParams( numFrames );
+			return;
+		}
+	} else {
+		stateIsZeroI = false;
+	}
 
 	const short wetQ  = Snd_ReverbCoefQ15( wetScale > 0.999f ? 0.999f : ( wetScale < 0.0f ? 0.0f : wetScale ) );
 	const unsigned preMask = REVERB_PREDELAY_LEN - 1;

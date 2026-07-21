@@ -9,6 +9,9 @@
 #include <cmath>
 #include <cstdint>
 #include <chrono>
+#if defined(__x86_64__) || defined(__SSE2__) || defined(_M_X64)
+#include <xmmintrin.h>   // _mm_getcsr/_mm_setcsr for the FTZ tests
+#endif
 
 #define MIXBUFFER_SAMPLES 4096
 
@@ -398,6 +401,86 @@ int reverb_test() {
 		for(int i=0;i<1024;i++) if(o1[i]!=o2[i]) mism++;
 	}
 	printf("reverb int replay determinism: %s\n", mism?"FAIL":"bit-exact");
+
+	// -------- dormancy gate + denormal flush (new) --------
+	{
+		// (a) replay determinism through gate transitions: two objects
+		//     driven identically through signal / long silence / signal,
+		//     full streams compared. Transparency of the gate itself is
+		//     by construction (it only skips when state is exactly zero
+		//     and the send is exactly zero, and zero is a fixed point);
+		//     what needs testing is that the transition logic is
+		//     deterministic and the flush converges - (b) and (c).
+		static idSoundReverb gA, gB; gA.Init(); gB.Init();
+		sndReverbParams_t gp; gp.SetDefaults(); gp.decayTime = 0.6f;
+		gA.SetParams(gp); gB.SetParams(gp);
+		static float gs[512], gdA[1024], gdB[1024];
+		int gmis = 0;
+		/* window sized to the physics: states start near 2^14 and the
+		   flush threshold is 1e-20, i.e. ~484 dB of decay. RT60 0.6s is
+		   100 dB/s, so ~4.9s to cross; 7s covers the slower LF band. */
+		int silentBlocks = (int)(7.0*44100/512);
+		for (int phase=0; phase<2; phase++) {
+			for (int b=0;b<silentBlocks;b++) {
+				memset(gs,0,sizeof gs);
+				if (b==0) for (int i=0;i<64;i++) gs[i] = (float)((int)(rng()%32768)-16384);
+				memset(gdA,0,sizeof gdA); memset(gdB,0,sizeof gdB);
+				gA.ProcessFloat(gs,gdA,512,0.5f);
+				gB.ProcessFloat(gs,gdB,512,0.5f);
+				for (int i=0;i<1024;i++) if (gdA[i]!=gdB[i]) gmis++;
+			}
+		}
+		printf("reverb float gate replay (signal/silence x2): %s\n", gmis?"FAIL":"bit-exact");
+
+		// (b) exact-zero convergence of the float path: after long
+		//     silence the flush must drive every state to exact 0 and
+		//     the output to exact 0.0f
+		int nz = 0;
+		memset(gs,0,sizeof gs); memset(gdA,0,sizeof gdA);
+		gA.ProcessFloat(gs,gdA,512,0.5f);
+		for (int i=0;i<1024;i++) if (gdA[i]!=0.0f) nz++;
+		printf("reverb float tail after 7s silence: %d nonzero %s\n", nz, nz?"FAIL":"OK (exact zero)");
+
+#if defined(__x86_64__) || defined(__SSE2__) || defined(_M_X64)
+		// (c) FTZ invariance of the terminal state: run the same
+		//     program under FTZ+DAZ on vs off; streams must reconverge
+		//     to bit-identical exact zero within the silence window
+		{
+			unsigned csr = _mm_getcsr();
+			static idSoundReverb fA, fB; fA.Init(); fB.Init();
+			fA.SetParams(gp); fB.SetParams(gp);
+			static float o1f[1024], o2f[1024];
+			int diverged_end = 0;
+			for (int b=0;b<silentBlocks;b++) {
+				memset(gs,0,sizeof gs);
+				if (b==0) for (int i=0;i<64;i++) gs[i] = (float)((int)(rng()%32768)-16384);
+				_mm_setcsr(csr & ~0x8040u);            // FTZ,DAZ off
+				memset(o1f,0,sizeof o1f); fA.ProcessFloat(gs,o1f,512,0.5f);
+				_mm_setcsr(csr | 0x8040u);             // FTZ,DAZ on
+				memset(o2f,0,sizeof o2f); fB.ProcessFloat(gs,o2f,512,0.5f);
+				if (b == silentBlocks-1)
+					for (int i=0;i<1024;i++) if (o1f[i]!=o2f[i] || o1f[i]!=0.0f) diverged_end++;
+			}
+			_mm_setcsr(csr);
+			printf("reverb float FTZ-on vs FTZ-off, end of tail: %s\n",
+				diverged_end?"FAIL":"reconverged to identical exact zero");
+		}
+#endif
+
+		// (d) int path: gate must not change the (already exact-zero
+		//     decaying) stream
+		static idSoundReverb iA; iA.Init(); iA.SetParams(gp);
+		static int is_[512], id_[1024]; int inz=0;
+		for (int b=0;b<silentBlocks;b++) {
+			memset(is_,0,sizeof is_);
+			if (b==0) is_[0]=16384;
+			memset(id_,0,sizeof id_);
+			iA.ProcessS16(is_,id_,512,0.5f);
+		}
+		memset(id_,0,sizeof id_); iA.ProcessS16(is_,id_,512,0.5f);
+		for (int i=0;i<1024;i++) if (id_[i]) inz++;
+		printf("reverb int gated tail: %d nonzero %s\n", inz, inz?"FAIL":"OK (exact zero)");
+	}
 
 	/* ---- SIMD/scalar equivalence (appended with the SSE2 line stage) ----
 	   The header compiles its SSE2 path by default on x86; a second copy
