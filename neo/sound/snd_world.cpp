@@ -2098,7 +2098,7 @@ saved: they are pure functions of saved inputs and re-derive to
 bit-identical values.
 ===================
 */
-static const int SND_DSP_VERSION = 1;
+static const int SND_DSP_VERSION = 2;	// v2: + per-channel airLpI (the s16 shelf state)
 
 void idSoundWorldLocal::WriteDSPState( idFile *f ) {
 	f->WriteInt( SND_DSP_VERSION );
@@ -2119,6 +2119,7 @@ void idSoundWorldLocal::WriteDSPState( idFile *f ) {
 		for ( int c = 0; c < SOUND_MAX_CHANNELS; c++ ) {
 			f->WriteFloat( emitter->channels[c].occLpF );
 			f->WriteFloat( emitter->channels[c].airLpF );
+			f->WriteInt( emitter->channels[c].airLpI );
 			idSoundChannel *ch = &emitter->channels[c];
 			int hasStream = ( ch->triggerState && ch->decoder != NULL ) ? 1 : 0;
 			if ( hasStream ) {
@@ -2153,11 +2154,14 @@ void idSoundWorldLocal::ReadDSPState( idFile *f ) {
 		idSoundEmitterLocal *emitter = ( idx >= 0 && idx < emitters.Num() ) ? emitters[idx] : NULL;
 		for ( int c = 0; c < SOUND_MAX_CHANNELS; c++ ) {
 			float occ = 0.0f, air = 0.0f;
+			int airI = 0;
 			f->ReadFloat( occ );
 			f->ReadFloat( air );
+			f->ReadInt( airI );
 			if ( emitter ) {
 				emitter->channels[c].occLpF = occ;
 				emitter->channels[c].airLpF = air;
+				emitter->channels[c].airLpI = airI;
 			}
 			int blobLen = 0;
 			f->ReadInt( blobLen );

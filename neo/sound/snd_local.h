@@ -354,15 +354,17 @@ public:
 	/*
 	   Per-channel air-absorption shelf state for the reverb send: a
 	   one-pole low-pass at the EAX statistical HF reference (5 kHz),
-	   blended by airAbsorptionGainHF^meters. Transient DSP state - not
-	   serialized; a savegame load restarts it and the shelf settles
-	   within a millisecond.
+	   blended by airAbsorptionGainHF^meters. Not in the on-disk
+	   savegame (a load restarts it and the shelf settles within a
+	   millisecond); the libretro state blob's DSP section carries both
+	   states so a savestate restore continues them exactly.
 	*/
 	float				airLpF;
 	int					airLpI;
 	// occlusion shelf state: one-pole at 5 kHz on the gathered source,
-	// engaged when the portal path exceeds the straight line. Transient,
-	// not serialized, reset in Clear() - same contract as airLp*.
+	// engaged when the portal path exceeds the straight line. Reset in
+	// Clear(); not in the on-disk savegame, carried by the libretro
+	// state blob's DSP section - same contract as airLp*.
 	float				occLpF;
 	/*
 	   Exact input-keyed caches for the per-block powf derivations: the
