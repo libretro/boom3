@@ -296,7 +296,7 @@ void idBrittleFracture::Spawn( void ) {
 
 #ifdef _D3XP
 	// check for xray surface
-	if ( 1 ) {
+	{
 		const idRenderModel *model = renderEntity.hModel;
 
 		isXraySurface = false;

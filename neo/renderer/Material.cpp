@@ -2672,25 +2672,22 @@ size_t idMaterial::Size( void ) const {
 idMaterial::SetDefaultText
 ===================
 */
-bool idMaterial::SetDefaultText( void ) {
+bool idMaterial::SetDefaultText( void )
+{
 	// if there exists an image with the same name
-	if ( 1 ) { //fileSystem->ReadFile( GetName(), NULL ) != -1 ) {
-		char generated[2048];
-		idStr::snPrintf( generated, sizeof( generated ),
-						"material %s // IMPLICITLY GENERATED\n"
-						"{\n"
-						"{\n"
-						"blend blend\n"
-						"colored\n"
-						"map \"%s\"\n"
-						"clamp\n"
-						"}\n"
-						"}\n", GetName(), GetName() );
-		SetText( generated );
-		return true;
-	} else {
-		return false;
-	}
+	char generated[2048];
+	idStr::snPrintf( generated, sizeof( generated ),
+			"material %s // IMPLICITLY GENERATED\n"
+			"{\n"
+			"{\n"
+			"blend blend\n"
+			"colored\n"
+			"map \"%s\"\n"
+			"clamp\n"
+			"}\n"
+			"}\n", GetName(), GetName() );
+	SetText( generated );
+	return true;
 }
 
 /*

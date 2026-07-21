@@ -164,11 +164,10 @@ mapTri_t *TriListForSide( const side_t *s, const idWinding *w ) {
 	}
 
 	// don't create faces for non-visible sides
-	if ( !si->SurfaceCastsShadow() && !si->IsDrawn() ) {
+	if ( !si->SurfaceCastsShadow() && !si->IsDrawn() )
 		return NULL;
-	}
 
-	if ( 1 ) {
+	{
 		// triangle fan using only the outer verts
 		// this gives the minimum triangle count,
 		// but may have some very distended triangles
@@ -205,43 +204,6 @@ mapTri_t *TriListForSide( const side_t *s, const idWinding *w ) {
 				// copy normal
 				dv->normal = dmapGlobals.mapPlanes[s->planenum].Normal();
 				if ( dv->normal.Length() < 0.9 || dv->normal.Length() > 1.1 ) {
-					common->Error( "Bad normal in TriListForSide" );
-				}
-			}
-		}
-	} else {
-		// triangle fan from central point, more verts and tris, but less distended
-		// I use this when debugging some tjunction problems
-		triList = NULL;
-		for ( i = 0 ; i < w->GetNumPoints() ; i++ ) {
-			idVec3	midPoint;
-
-			tri = AllocTri();
-			tri->material = si;
-			tri->next = triList;
-			triList = tri;
-
-			for ( j = 0 ; j < 3 ; j++ ) {
-				if ( j == 0 ) {
-					vec = &midPoint;
-					midPoint = w->GetCenter();
-				} else if ( j == 1 ) {
-					vec = &((*w)[i]).ToVec3();
-				} else {
-					vec = &((*w)[(i+1)%w->GetNumPoints()]).ToVec3();
-				}
-
-				dv = tri->v + j;
-
-				VectorCopy( *vec, dv->xyz );
-
-				// calculate texture s/t from brush primitive texture matrix
-				dv->st[0] = DotProduct( dv->xyz, s->texVec.v[0] ) + s->texVec.v[0][3];
-				dv->st[1] = DotProduct( dv->xyz, s->texVec.v[1] ) + s->texVec.v[1][3];
-
-				// copy normal
-				dv->normal = dmapGlobals.mapPlanes[s->planenum].Normal();
-				if ( dv->normal.Length() < 0.9f || dv->normal.Length() > 1.1f ) {
 					common->Error( "Bad normal in TriListForSide" );
 				}
 			}

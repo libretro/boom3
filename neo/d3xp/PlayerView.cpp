@@ -491,7 +491,7 @@ void idPlayerView::SingleView( idUserInterface *hud, const renderView_t *view ) 
 		portalView.vieworg = gameLocal.portalSkyEnt.GetEntity()->GetPhysics()->GetOrigin();
 
 		// setup global fixup projection vars
-		if ( 1 ) {
+		{
 			int vidWidth, vidHeight;
 			idVec2 shiftScale;
 
@@ -520,14 +520,12 @@ void idPlayerView::SingleView( idUserInterface *hud, const renderView_t *view ) 
 	fxManager->Process( &hackedView );
 #endif
 
-	if ( player->spectating ) {
+	if ( player->spectating )
 		return;
-	}
 
 #ifdef _D3XP
-	if ( !hud ) {
+	if ( !hud )
 		return;
-	}
 #endif
 
 	// draw screen blobs

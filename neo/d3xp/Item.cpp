@@ -1430,7 +1430,7 @@ void idObjective::Event_CamShot( ) {
 				portalView.vieworg = gameLocal.portalSkyEnt.GetEntity()->GetPhysics()->GetOrigin();
 
 				// setup global fixup projection vars
-				if ( 1 ) {
+				{
 					int vidWidth, vidHeight;
 					idVec2 shiftScale;
 

@@ -87,25 +87,23 @@ void idSoundShader::FreeData() {
 idSoundShader::SetDefaultText
 ===================
 */
-bool idSoundShader::SetDefaultText( void ) {
+bool idSoundShader::SetDefaultText( void )
+{
+	char generated[2048];
 	idStr wavname;
 
 	wavname = GetName();
-	wavname.DefaultFileExtension( ".wav" );		// if the name has .ogg in it, that will stay
+	// if the name has .ogg in it, that will stay
+	wavname.DefaultFileExtension( ".wav" ); 
 
 	// if there exists a wav file with the same name
-	if ( 1 ) { //fileSystem->ReadFile( wavname, NULL ) != -1 ) {
-		char generated[2048];
-		idStr::snPrintf( generated, sizeof( generated ),
-						"sound %s // IMPLICITLY GENERATED\n"
-						"{\n"
-						"%s\n"
-						"}\n", GetName(), wavname.c_str() );
-		SetText( generated );
-		return true;
-	} else {
-		return false;
-	}
+	idStr::snPrintf( generated, sizeof( generated ),
+			"sound %s // IMPLICITLY GENERATED\n"
+			"{\n"
+			"%s\n"
+			"}\n", GetName(), wavname.c_str() );
+	SetText( generated );
+	return true;
 }
 
 /*
@@ -113,11 +111,9 @@ bool idSoundShader::SetDefaultText( void ) {
 DefaultDefinition
 ===================
 */
-const char *idSoundShader::DefaultDefinition() const {
-	return
-		"{\n"
-	"\t"	"_default.wav\n"
-		"}";
+const char *idSoundShader::DefaultDefinition() const
+{
+	return "{\n""\t""_default.wav\n""}";
 }
 
 /*
@@ -176,36 +172,31 @@ bool idSoundShader::ParseShader( idLexer &src ) {
 	}
 
 	while ( 1 ) {
-		if ( !src.ExpectAnyToken( &token ) ) {
+		if ( !src.ExpectAnyToken( &token ) )
 			return false;
-		}
 		// end of definition
-		else if ( token == "}" ) {
+		else if ( token == "}" )
 			break;
-		}
 		// minimum number of sounds
-		else if ( !token.Icmp( "minSamples" ) ) {
+		else if ( !token.Icmp( "minSamples" ) )
 			maxSamples = idMath::ClampInt( src.ParseInt(), SOUND_MAX_LIST_WAVS, maxSamples );
-		}
 		// description
 		else if ( !token.Icmp( "description" ) ) {
 			src.ReadTokenOnLine( &token );
 			desc = token.c_str();
 		}
 		// mindistance
-		else if ( !token.Icmp( "mindistance" ) ) {
+		else if ( !token.Icmp( "mindistance" ) )
 			parms.minDistance = src.ParseFloat();
-		}
 		// maxdistance
-		else if ( !token.Icmp( "maxdistance" ) ) {
+		else if ( !token.Icmp( "maxdistance" ) )
 			parms.maxDistance = src.ParseFloat();
-		}
 		// shakes screen
 		else if ( !token.Icmp( "shakes" ) ) {
 			src.ExpectAnyToken( &token );
-			if ( token.type == TT_NUMBER ) {
+			if ( token.type == TT_NUMBER )
 				parms.shakes = token.GetFloatValue();
-			} else {
+			else {
 				src.UnreadToken( &token );
 				parms.shakes = 1.0f;
 			}
