@@ -742,12 +742,6 @@ public:
 	static idCVar			s_useEAXReverb;
 	static idCVar			s_decompressionLimit;
 
-	static idCVar			s_alReverbGain;
-
-	static idCVar			s_scaleDownAndClamp;
-	static idCVar			s_alOutputLimiter;
-	static idCVar			s_alHRTF;
-
 	static idCVar			s_slowAttenuate;
 
 	static idCVar			s_enviroSuitCutoffFreq;

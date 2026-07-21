@@ -58,9 +58,6 @@ idEditField				input_field;
 static idStr			history[ COMMAND_HISTORY ];	// cycle buffer
 idEditField				history_backup;				// the base edit line
 
-// terminal support
-idCVar in_tty( "in_tty", "1", CVAR_BOOL | CVAR_INIT | CVAR_SYSTEM, "terminal tab-completion and history" );
-
 // exit - quit - error --------------------------------------------------------
 
 static int set_exit = 0;
@@ -357,9 +354,7 @@ int Sys_GetDriveFreeSpace( const char *path ) {
 NX_InitConsoleInput
 ===============
 */
-void LibRetro_InitConsoleInput( void ) {
-	common->StartupVariable( "in_tty", false );
-}
+void LibRetro_InitConsoleInput( void ) { }
 
 /*
 ================
@@ -368,9 +363,7 @@ Checks for a complete line of text typed in at the console.
 Return NULL if a complete line is not ready.
 ================
 */
-char *Sys_ConsoleInput( void ) {
-	return NULL;
-}
+char *Sys_ConsoleInput( void ) { return NULL; }
 
 /*
 ===============

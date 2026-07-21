@@ -5,7 +5,7 @@ This document explains some dhewm3-specific configuration options.
 For general Doom3 configuration see for example [this list of CVars](https://modwiki.dhewm3.org/CVars_%28Doom_3%29)
 and [this list of Console Commands](https://modwiki.dhewm3.org/Commands_%28Doom_3%29).
 
-**CVars** are set by entering `cvarName value` in the console, for example `com_showFPS 1`.  
+**CVars** are set by entering `cvarName value` in the console.  
 They can also be set as commandline arguments when starting dhewm3, for example `./dhewm3 +set r_fullscreen 0`.
 
 Just entering a CVar's name (without a value) will show its current value, its default value
@@ -166,19 +166,6 @@ gamepad buttons, sticks and triggers:
 
 </details>
 
-## Screenshot configuration
-
-Doom3 always supported taking screenshots, but dhewm3 (from 1.5.3 on) supports using different
-formats than TGA.  
-This can be configured with the following CVars:
-
-- `r_screenshotFormat` What format screenshots should be in:
-  `0` = TGA (default), `1` = BMP, `2` = PNG, `3` = JPG
-- `r_screenshotJpgQuality` Quality when using JPG screenshots (`1` - `100`). Lower value means smaller
-   image file but worse quality (default is `75`)
-- `r_screenshotPngCompression` Compression level when using PNG screenshots (`0` - `9`). Higher levels
-  generate smaller files, but take noticeably longer; `3` (the default) seems to be a good compromise.
-
 ## Other CVars added in dhewm3
 
 - `com_disableAutoSaves` if set to `1`, no Autosaves are created when starting a level, and when
@@ -195,24 +182,11 @@ This can be configured with the following CVars:
 - `in_allowAlwaysRunInSP` Allow always run (`in_alwaysRun`) and toggle run (`in_toggleRun`) in
   Single Player as well - keep in mind you may run out of stamina!
 
-- `in_nograb` if set to `1`, the mouse isn't grabbed when ingame. Not overly useful for normal playing
-  (unless maybe you play with a gamepad), but very useful for debugging. Default is `0`.
-- `in_grabKeyboard` if enabled (`1`), grabs all keyboard input if mouse is grabbed, so keyboard shortcuts
-  from the OS like Alt-Tab or Windows Key won't work and thus not accidentally interrupt your playing.
-  Defaults to `0`.
-
 - `in_namePressed` if set to `1`, the currently pressed key/button (on keyboard/mouse/gamepad)
   is printed to the console - useful when setting key-bindings in the console or a config. Default is `0`.
 
 - `in_kbd` allows you to set your keyboard layout so the console key works better. Mostly useful with SDL1.2
-- `in_tty` tab completion and history for input from the **terminal** (on Unix-likes, like Linux, macOS, BSD, ...)
 
-- `r_fullscreenDesktop` configures fullscreen windows (when `r_fullscreen` is `1`).  
-  `0`: "real"/"exclusive" fullscreen mode, might switch screen resolution  
-  `1`: "desktop" fullscreen mode, which keeps desktop resolution and is more like a borderless fullscreen window
-- `r_windowResizable` if set to `1` (the default), the dhewm3 window (when in windowed mode..)
-   can be freely resized. Needs SDL2; with 2.0.5 and newer it's applied immediately, otherwise when
-   creating the window (startup or `vid_restart`).
 - `r_fillWindowAlphaChan` Make sure alpha channel of windows default framebuffer is completely opaque
   at the end of each frame. Needed at least when using Wayland.  
   `1`: do this, `0`: don't do it, `-1`: let dhewm3 decide (default)
@@ -261,20 +235,3 @@ This can be configured with the following CVars:
 - `fs_gameDllPath` If set, game DLLs will be searched in that directory before the other
    standard places (like next to the executable). Especially useful for developing/debugging mod DLLs
    (you can just set `fs_gameDllPath` to the build dir, no need to copy the DLL/.so/.dylib)
-
-- `s_alReverbGain` reduce strength of OpenAL (EAX-like) EFX reverb effects, `0.0` - `1.0` (default `0.5`)
-- `s_alHRTF` Enable [HRTF](https://en.wikipedia.org/w/index.php?title=Head-related_transfer_function)
-   for better surround sound with stereo **headphones**. `0`: Disable, `1`: Enable, `-1`: Let OpenAL decide (default).  
-   *Note* that OpenAL may automatically enable HRTF when it detects headphones, and it can happen that
-   it detects regular stereo speakers as headphones (when they're plugged into a jack that's somehow
-   labeled as headphone jack) - in that case you'll want to explicitly disable it.
-   The *Audio Options* tab of the [dhewm3 Settings Menu](#dhewm3-settings-menu) shows OpenAL Info,
-   including the current HRTF state (if supported by your OpenAL version).
-- `s_alOutputLimiter` Configure OpenAL's output-limiter which temporarily reduces the overall volume
-  when too many too loud sounds play at once, to avoid issues like clipping. `0`: Disable, `1`: Enable, `-1`: Let OpenAL decide (default)
-- `s_scaleDownAndClamp` Clamp and reduce volume of all sounds to prevent clipping or temporary
-  downscaling by OpenAL's output limiter (default `1`)
-
-- `imgui_scale` Factor to scale ImGui menus by (especially relevant for HighDPI displays).
-  Should be a positive factor like `1.5` or `2`; or `-1` (the default) to let dhewm3 automatically
-  detect an appropriate factor.
