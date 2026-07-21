@@ -18,9 +18,10 @@ These kernels:
  - ramp per-speaker gains linearly from lastV[] to currentV[] across the
    block, exactly like the originals (divisor is numFrames, as it must be);
  - mix in float at int16 full scale and convert to int16 only in
-   Snd_MixedSoundToSamples, with clamp-then-truncate semantics identical
-   to the old generic code (<= -32768 -> -32768, >= 32767 -> 32767,
-   otherwise C float->short truncation toward zero);
+   Snd_MixedSoundToSamples, which clamps (<= -32768 -> -32768,
+   >= 32767 -> 32767) and rounds half away from zero - see that
+   kernel's comment for why rounding replaced the old generic code's
+   truncation and how the three implementations stay bit-identical;
  - dispatch at compile time: SSE2 on any x86 (baseline on x86_64,
    required on 32-bit x86 - every CPU since 2003 has it; build with
    SND_MIX_NO_SIMD to force scalar), NEON on ARM (__ARM_NEON, mandatory
@@ -618,9 +619,11 @@ static inline void Snd_SoftKneeFloatOutput( float *buf, int numSamples ) {
 /*
 ====================
 Snd_FloatToS16
-Deterministic float -> s16 conversion at the s16 mixer's decode edge
-(clamp then truncate toward zero - PCM decode floats are exact integers,
-so this is lossless for WAV sources).
+Deterministic float -> s16 conversion at the s16 mixer's decode edge:
+clamp, then round half away from zero (see Snd_MixedSoundToSamples).
+PCM decode floats are exact integers and the +-0.5 bias truncates back
+to the same integer, so WAV sources stay bit-lossless; Ogg and
+resampled blocks get the halved, unfolded quantization error.
 ====================
 */
 static inline void Snd_FloatToS16( short *out, const float *in, int numSamples ) {

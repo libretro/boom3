@@ -1094,14 +1094,15 @@ static struct retro_audio_sample_float_callback audio_float_cb;
 static bool audio_output_float = false;
 
 /* Deterministic per-frame sample budget.
- * The exact rational 44100/framerate frames per retro_run is distributed
+ * The exact rational SAMPLE_RATE/framerate frames per retro_run is distributed
  * with an integer remainder accumulator, then rounded down to a multiple
  * of 8 with a sample carry (11kHz sources decode with a >>2 offset shift,
  * stereo doubles it: 8-sample alignment keeps decode offsets exact - the
  * same constraint the old engine satisfied by rounding its ms-derived
- * sample time to multiples of 8). Long-run average is exactly 44100 Hz
- * and every quantity is an integer: the emitted count sequence is a pure
- * function of the frame index. */
+ * sample time to multiples of 8). Long-run average is exactly the
+ * resolved output rate and every quantity is an integer: the emitted
+ * count sequence is a pure function of the frame index (and, since the
+ * SND3 footer, of the restored accumulator phase). */
 static int audio_rem_acc    = 0;  /* rational remainder, in units of 1/framerate frame */
 static int audio_frame_carry = 0; /* 0..7 frames deferred by the multiple-of-8 rounding */
 
@@ -1112,7 +1113,7 @@ static void audio_upload_frame(void)
 
 	unsigned fps = framerate > 0 ? framerate : 60;
 
-	/* exact rational distribution of 44100/fps */
+	/* exact rational distribution of SAMPLE_RATE/fps */
 	audio_rem_acc += SAMPLE_RATE;
 	int want = audio_rem_acc / (int)fps;
 	audio_rem_acc -= want * (int)fps;
