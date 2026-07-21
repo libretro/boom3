@@ -363,7 +363,17 @@ public:
 	// occlusion shelf state: one-pole at 5 kHz on the gathered source,
 	// engaged when the portal path exceeds the straight line. Transient,
 	// not serialized, reset in Clear() - same contract as airLp*.
-	float				occLpF;				// last calculated volume for each speaker, so we can smoothly fade
+	float				occLpF;
+	/*
+	   Exact input-keyed caches for the per-block powf derivations: the
+	   stored result is reused only when the inputs compare equal, so the
+	   output is bit-identical to recomputing - static emitters and a
+	   still listener recompute never, moving ones exactly as often as
+	   before. Transient like the filter states; sentinels force the
+	   first block to compute.
+	*/
+	float				occCacheG, occCacheDetour, occCacheHfG;
+	float				airCacheAbs, airCacheDist, airCacheHfG;				// last calculated volume for each speaker, so we can smoothly fade
 	idSoundFade			channelFade;
 	bool				triggered;
 	bool				stopped;

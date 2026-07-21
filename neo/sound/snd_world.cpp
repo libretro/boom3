@@ -1349,6 +1349,21 @@ void idSoundWorldLocal::CalcEars( int numSpeakers, idVec3 spatializedOrigin, idV
 }
 
 /*
+   One-pole alpha for the 5 kHz statistical-HF shelves (occlusion, air
+   absorption). The rate is fixed for the session; recompute only if it
+   ever changes so the expf runs once, not per channel per block.
+*/
+static float Snd_Shelf5kAlpha( void ) {
+	static float alpha; static int lastRate;
+	int rate = snd_SampleRate();
+	if ( rate != lastRate ) {
+		lastRate = rate;
+		alpha = 1.0f - expf( -6.2831853f * 5000.0f / rate );
+	}
+	return alpha;
+}
+
+/*
 ===============
 idSoundWorldLocal::AddChannelContribution
 
@@ -1582,9 +1597,17 @@ void idSoundWorldLocal::AddChannelContribution( idSoundEmitterLocal *sound, idSo
 			float occG = idSoundSystemLocal::s_occlusionGainHF.GetFloat();
 			float detour = sound->distance - sound->realDistance;
 			if ( occG < 0.9999f && detour > 0.01f ) {
-				float hfG = powf( occG < 0.1f ? 0.1f : occG, detour );
-				if ( hfG < 0.1f ) hfG = 0.1f;
-				const float alpha = 1.0f - expf( -6.2831853f * 5000.0f / snd_SampleRate() );
+				float hfG;
+				if ( occG == chan->occCacheG && detour == chan->occCacheDetour ) {
+					hfG = chan->occCacheHfG;	// bit-identical reuse
+				} else {
+					hfG = powf( occG < 0.1f ? 0.1f : occG, detour );
+					if ( hfG < 0.1f ) hfG = 0.1f;
+					chan->occCacheG = occG;
+					chan->occCacheDetour = detour;
+					chan->occCacheHfG = hfG;
+				}
+				const float alpha = Snd_Shelf5kAlpha();
 				float lp = chan->occLpF;
 				for ( int k = 0; k < numFrames; k++ ) {
 					float x = alignedInputSamples[k];
@@ -1724,13 +1747,20 @@ void idSoundWorldLocal::AddChannelContribution( idSoundEmitterLocal *sound, idSo
 					sendVol *= mind / ( mind + rp.roomRolloffFactor * ( sendDist - mind ) );
 				}
 				if ( rp.airAbsorptionGainHF < 0.9999f ) {
-					airHfGain = powf( rp.airAbsorptionGainHF, sendDist );
-					if ( airHfGain < 0.05f ) airHfGain = 0.05f;
+					if ( rp.airAbsorptionGainHF == chan->airCacheAbs && sendDist == chan->airCacheDist ) {
+						airHfGain = chan->airCacheHfG;	// bit-identical reuse
+					} else {
+						airHfGain = powf( rp.airAbsorptionGainHF, sendDist );
+						if ( airHfGain < 0.05f ) airHfGain = 0.05f;
+						chan->airCacheAbs = rp.airAbsorptionGainHF;
+						chan->airCacheDist = sendDist;
+						chan->airCacheHfG = airHfGain;
+					}
 				}
 			}
 			const bool airOn = airHfGain < 0.9999f;
 			// one-pole at 5 kHz in the current output rate
-			const float airAlpha = 1.0f - expf( -6.2831853f * 5000.0f / snd_SampleRate() );
+			const float airAlpha = Snd_Shelf5kAlpha();
 			if ( soundSystemLocal.outputIsFloat ) {
 				if ( stereoSample ) {
 					for ( int k = 0; k < numFrames; k++ ) {

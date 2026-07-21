@@ -69,6 +69,11 @@ private:
 	int		bqXI[ENVIRO_CHANNELS][2], bqYI[ENVIRO_CHANNELS][2];
 	int		combI[ENVIRO_CHANNELS][2][ENVIRO_COMB_LEN];
 	unsigned combPos[ENVIRO_CHANNELS][2];
+	// SetParms input key: derivation reruns only when an input changed,
+	// so the per-block call in MixLoop costs five compares steady-state
+	// and the derived values are bit-identical by reuse
+	float	inCutoff, inQ, inVol, inCombTime, inCombFb;
+	int		inRate;
 };
 
 ID_INLINE void idEnviroSuitFX::Init( void ) {
@@ -78,6 +83,13 @@ ID_INLINE void idEnviroSuitFX::Init( void ) {
 
 ID_INLINE void idEnviroSuitFX::SetParms( float cutoffHz, float cutoffQ,
 		float volumeScale, float combTime, float combFeedback ) {
+	if ( cutoffHz == inCutoff && cutoffQ == inQ && volumeScale == inVol
+			&& combTime == inCombTime && combFeedback == inCombFb
+			&& snd_sampleRate == inRate ) {
+		return;
+	}
+	inCutoff = cutoffHz; inQ = cutoffQ; inVol = volumeScale;
+	inCombTime = combTime; inCombFb = combFeedback; inRate = snd_sampleRate;
 	// clamp cvar inputs to sane filter territory
 	if ( cutoffHz < 100.0f ) cutoffHz = 100.0f;
 	float ny = 0.45f * snd_sampleRate;

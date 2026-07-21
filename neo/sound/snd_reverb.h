@@ -267,6 +267,7 @@ private:
 	sndReverbParams_t	cur, target;
 	int					xfadeBlocksLeft;
 	bool				active;
+	bool				derivedClean;	// derivation skipped while true (inputs static)
 
 	// --- derived per-block coefficients (float masters) ---
 	float	fbGain[REVERB_LINES];		// per-line loop gain (RT60)
@@ -410,12 +411,25 @@ ID_INLINE void idSoundReverb::Init( void ) {
 }
 
 ID_INLINE void idSoundReverb::SetParams( const sndReverbParams_t &p ) {
+	derivedClean = false;
 	target = p;
 	xfadeBlocksLeft = REVERB_XFADE_BLOCKS;
 	active = true;
 }
 
 ID_INLINE void idSoundReverb::StepBlockParams( void ) {
+	/*
+	   Steady state is the common case: between preset retargets cur is
+	   static, so the ~20 transcendentals below would re-derive the same
+	   values every block. Skip the whole derivation while nothing can
+	   have changed; the reuse is bit-identical because the stored
+	   coefficients ARE the previous derivation. The kernel-side slews
+	   (density tap, modulation phase) live in the process loops and keep
+	   advancing regardless.
+	*/
+	if ( xfadeBlocksLeft == 0 && derivedClean ) {
+		return;
+	}
 	if ( xfadeBlocksLeft > 0 ) {
 		const float a = 1.0f / xfadeBlocksLeft;
 		#define RVB_LERP(f) cur.f += ( target.f - cur.f ) * a
@@ -646,6 +660,8 @@ ID_INLINE void idSoundReverb::StepBlockParams( void ) {
 	if ( preDelaySamps  > REVERB_PREDELAY_LEN - 8 )  preDelaySamps  = REVERB_PREDELAY_LEN - 8;
 	if ( lateDelaySamps < 1 ) lateDelaySamps = 1;
 	if ( lateDelaySamps > REVERB_PREDELAY_LEN - 8 )  lateDelaySamps = REVERB_PREDELAY_LEN - 8;
+
+	derivedClean = ( xfadeBlocksLeft == 0 );
 }
 
 /*
