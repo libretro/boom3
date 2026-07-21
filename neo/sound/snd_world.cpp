@@ -33,6 +33,7 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "sound/snd_local.h"
 #include "sound/snd_mix_kernels.h"
+#include "sound/snd_hrtf.h"
 
 /*
 ==================
@@ -1663,6 +1664,48 @@ void idSoundWorldLocal::AddChannelContribution( idSoundEmitterLocal *sound, idSo
 			}
 		}
 
+		/*
+		   Binaural eligibility (s_HRTF): spatialized mono channels
+		   outside minDistance, on the normal gather path. Slow-motion
+		   channels keep the pan law (their gather is stateful and the
+		   warped audio has no binaural fidelity to preserve); inside
+		   minDistance the pan law's spatialize blend takes over - the
+		   path switch at the boundary is smoothed by the shared lastV
+		   ramp, and a level step there sits where direction is
+		   ambiguous anyway. A source exactly at the listener has no
+		   direction and falls back too.
+		*/
+		float hrtfAz = 0.0f, hrtfEl = 0.0f;
+		bool hrtfActive = idSoundSystemLocal::s_HRTF.GetBool()
+			&& soundSystemLocal.hrtf && soundSystemLocal.hrtf->IsLoaded()
+			&& !global && !omni && !stereoSample
+			&& !( slowmoActive && !chan->disallowSlow )
+			&& spatialize == 1.0f;
+		if ( hrtfActive ) {
+			idVec3 svec = spatializedOriginInMeters - listenerPos;
+			if ( svec.LengthSqr() < 1e-8f ) {
+				hrtfActive = false;
+			} else {
+				idVec3 ov;
+				ov[0] = svec * listenerAxis[0];
+				ov[1] = svec * listenerAxis[1];
+				ov[2] = svec * listenerAxis[2];
+				ov.Normalize();
+				/*
+				   Azimuth increases clockwise viewed from above (to the
+				   listener's right) - the KEMAR convention, verified
+				   from the data itself; Doom 3 listener space is
+				   x forward, y LEFT, z up, hence the -y.
+				*/
+				const float r2d = 180.0f / 3.14159265358979323846f;
+				hrtfAz = atan2f( -ov[1], ov[0] ) * r2d;
+				float sz = ov[2];
+				if ( sz < -1.0f ) sz = -1.0f;
+				if ( sz >  1.0f ) sz =  1.0f;
+				hrtfEl = asinf( sz ) * r2d;
+			}
+		}
+
 		//
 		// work out the left / right ear values
 		//
@@ -1674,6 +1717,12 @@ void idSoundWorldLocal::AddChannelContribution( idSoundEmitterLocal *sound, idSo
 			}
 			ears[3] = idSoundSystemLocal::s_subFraction.GetFloat() * volume;		// subwoofer
 
+		} else if ( hrtfActive ) {
+			/* direction comes from the HRIRs; the pan stage carries
+			   only the level (distance/fade/master), equal per ear */
+			for ( int i = 0 ; i < 6 ; i++ ) {
+				ears[i] = volume;
+			}
 		} else {
 			CalcEars( 2, spatializedOriginInMeters, listenerPos, listenerAxis, ears, spatialize );
 
@@ -1732,9 +1781,28 @@ void idSoundWorldLocal::AddChannelContribution( idSoundEmitterLocal *sound, idSo
 			const float norm = 1.0f / 32768.0f;
 			float lastN[2]    = { chan->lastV[0] * norm, chan->lastV[1] * norm };
 			float currentN[2] = { ears[0] * norm,        ears[1] * norm };
-			if ( stereoSample ) {
+			if ( hrtfActive ) {
+				/* [history | block] buffer: x[i-k] with no wrap logic.
+				   Statics: single call path on the main thread, same
+				   justification as inputSamples above. */
+				static float hrtfSrcF[SND_HRTF_HIST + MIXBUFFER_SAMPLES];
+				static float hLf[SND_HRTF_MAX_TAPS], hRf[SND_HRTF_MAX_TAPS];
+				static short hLq[SND_HRTF_MAX_TAPS], hRq[SND_HRTF_MAX_TAPS];
+				const int taps = soundSystemLocal.hrtf->Taps();
+				soundSystemLocal.hrtf->BlendDirection( hrtfAz, hrtfEl, hLq, hRq, hLf, hRf );
+				if ( !chan->hrtfHistValid ) {
+					memset( chan->hrtfHistF, 0, ( taps - 1 ) * sizeof( float ) );
+				}
+				memcpy( hrtfSrcF, chan->hrtfHistF, ( taps - 1 ) * sizeof( float ) );
+				memcpy( hrtfSrcF + taps - 1, alignedInputSamples, numFrames * sizeof( float ) );
+				Snd_HrtfConvolveMixFloat( finalMixBuffer, hrtfSrcF, numFrames, hLf, hRf, taps, lastN, currentN );
+				memcpy( chan->hrtfHistF, hrtfSrcF + numFrames, ( taps - 1 ) * sizeof( float ) );
+				chan->hrtfHistValid = 1;
+			} else if ( stereoSample ) {
+				if ( chan->hrtfHistValid ) chan->hrtfHistValid = 0;
 				Snd_MixTwoSpeakerStereo( finalMixBuffer, alignedInputSamples, numFrames, lastN, currentN );
 			} else {
+				if ( chan->hrtfHistValid ) chan->hrtfHistValid = 0;
 				Snd_MixTwoSpeakerMono( finalMixBuffer, alignedInputSamples, numFrames, lastN, currentN );
 			}
 		} else {
@@ -1774,9 +1842,25 @@ void idSoundWorldLocal::AddChannelContribution( idSoundEmitterLocal *sound, idSo
 			int lastQ[2]    = { Snd_ClampGainQ15( chan->lastV[0] ), Snd_ClampGainQ15( chan->lastV[1] ) };
 			int currentQ[2] = { Snd_ClampGainQ15( ears[0] ),        Snd_ClampGainQ15( ears[1] ) };
 			int *accum = (int *)finalMixBuffer;   // s16 mode: the buffer is the int32 accumulator
-			if ( stereoSample ) {
+			if ( hrtfActive ) {
+				static short hrtfSrcS[SND_HRTF_HIST + MIXBUFFER_SAMPLES];
+				static short hLq2[SND_HRTF_MAX_TAPS], hRq2[SND_HRTF_MAX_TAPS];
+				static float hLf2[SND_HRTF_MAX_TAPS], hRf2[SND_HRTF_MAX_TAPS];
+				const int taps = soundSystemLocal.hrtf->Taps();
+				soundSystemLocal.hrtf->BlendDirection( hrtfAz, hrtfEl, hLq2, hRq2, hLf2, hRf2 );
+				if ( !chan->hrtfHistValid ) {
+					memset( chan->hrtfHistI, 0, ( taps - 1 ) * sizeof( short ) );
+				}
+				memcpy( hrtfSrcS, chan->hrtfHistI, ( taps - 1 ) * sizeof( short ) );
+				memcpy( hrtfSrcS + taps - 1, srcS16, numFrames * sizeof( short ) );
+				Snd_HrtfConvolveMixS16( accum, hrtfSrcS, numFrames, hLq2, hRq2, taps, lastQ, currentQ );
+				memcpy( chan->hrtfHistI, hrtfSrcS + numFrames, ( taps - 1 ) * sizeof( short ) );
+				chan->hrtfHistValid = 1;
+			} else if ( stereoSample ) {
+				if ( chan->hrtfHistValid ) chan->hrtfHistValid = 0;
 				Snd_MixTwoSpeakerStereoS16( accum, srcS16, numFrames, lastQ, currentQ );
 			} else {
+				if ( chan->hrtfHistValid ) chan->hrtfHistValid = 0;
 				Snd_MixTwoSpeakerMonoS16( accum, srcS16, numFrames, lastQ, currentQ );
 			}
 		}
@@ -2168,7 +2252,7 @@ saved: they are pure functions of saved inputs and re-derive to
 bit-identical values.
 ===================
 */
-static const int SND_DSP_VERSION = 4;	// v2: + airLpI; v3: + occLpI; v4: + PlayShaderDirectly's diversity RNG seed
+static const int SND_DSP_VERSION = 5;	// v2..v4 as before; v5: + per-channel binaural FIR history (s_HRTF)
 
 void idSoundWorldLocal::WriteDSPState( idFile *f ) {
 	f->WriteInt( SND_DSP_VERSION );
@@ -2192,6 +2276,17 @@ void idSoundWorldLocal::WriteDSPState( idFile *f ) {
 			f->WriteFloat( emitter->channels[c].airLpF );
 			f->WriteInt( emitter->channels[c].airLpI );
 			f->WriteInt( emitter->channels[c].occLpI );
+			{
+				/* binaural FIR history: only for channels that have it,
+				   to keep the section size proportional to activity */
+				idSoundChannel *hc = &emitter->channels[c];
+				int hasHrtf = ( hc->triggerState && hc->hrtfHistValid ) ? 1 : 0;
+				f->WriteInt( hasHrtf );
+				if ( hasHrtf ) {
+					f->Write( hc->hrtfHistF, sizeof( hc->hrtfHistF ) );
+					f->Write( hc->hrtfHistI, sizeof( hc->hrtfHistI ) );
+				}
+			}
 			idSoundChannel *ch = &emitter->channels[c];
 			int hasStream = ( ch->triggerState && ch->decoder != NULL ) ? 1 : 0;
 			if ( hasStream ) {
@@ -2236,11 +2331,28 @@ void idSoundWorldLocal::ReadDSPState( idFile *f ) {
 			f->ReadFloat( air );
 			f->ReadInt( airI );
 			f->ReadInt( occI );
+			int hasHrtf = 0;
+			f->ReadInt( hasHrtf );
 			if ( emitter ) {
 				emitter->channels[c].occLpF = occ;
 				emitter->channels[c].airLpF = air;
 				emitter->channels[c].airLpI = airI;
 				emitter->channels[c].occLpI = occI;
+			}
+			if ( hasHrtf ) {
+				if ( emitter ) {
+					idSoundChannel *hc = &emitter->channels[c];
+					f->Read( hc->hrtfHistF, sizeof( hc->hrtfHistF ) );
+					f->Read( hc->hrtfHistI, sizeof( hc->hrtfHistI ) );
+					hc->hrtfHistValid = 1;
+				} else {
+					/* consume to stay aligned */
+					static float dummyF[287]; static short dummyI[287];
+					f->Read( dummyF, sizeof( dummyF ) );
+					f->Read( dummyI, sizeof( dummyI ) );
+				}
+			} else if ( emitter ) {
+				emitter->channels[c].hrtfHistValid = 0;
 			}
 			int blobLen = 0;
 			f->ReadInt( blobLen );

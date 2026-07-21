@@ -30,6 +30,10 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "sound/snd_local.h"
 #include "sound/snd_mix_kernels.h"
+#include "sound/snd_hrtf.h"
+/* the channel history arrays in snd_local.h duplicate the tap constant */
+typedef char hrtf_hist_size_matches[
+	( sizeof( ((idSoundChannel *)0)->hrtfHistF ) / sizeof( float ) == SND_HRTF_HIST ) ? 1 : -1 ];
 #include <limits.h>
 
 idCVar idSoundSystemLocal::s_useReverb( "s_useReverb", "1", CVAR_SOUND | CVAR_BOOL | CVAR_ARCHIVE, "environmental reverb from efxs/*.efx" );
@@ -65,6 +69,7 @@ idCVar idSoundSystemLocal::s_enviroSuitVolumeScale( "s_enviroSuitVolumeScale", "
 idCVar idSoundSystemLocal::s_skipHelltimeFX( "s_skipHelltimeFX", "0", CVAR_SOUND | CVAR_BOOL, "" );
 
 idCVar idSoundSystemLocal::s_outputLimiter( "s_outputLimiter", "1", CVAR_SOUND | CVAR_BOOL, "soft-knee saturator at the output stage; 0 = hard clip" );
+idCVar idSoundSystemLocal::s_HRTF( "s_HRTF", "0", CVAR_SOUND | CVAR_BOOL | CVAR_ARCHIVE, "binaural rendering of spatialized sounds for headphones (KEMAR HRTF)" );
 
 
 
@@ -381,6 +386,17 @@ bool idSoundSystemLocal::InitHW() {
 
 	// put the real number in there
 	s_numberOfSpeakers.SetInteger(numSpeakers);
+
+	/*
+	   Binaural renderer: resolve the HRIR set at the final output rate.
+	   Heap-allocated (~1.3 MB of per-rate coefficient masters) so the
+	   tables live once; the one-shot resample costs a few tens of ms
+	   only when the rate is not 44100.
+	*/
+	if ( hrtf == NULL ) {
+		hrtf = (idSoundHRTF *)Mem_Alloc( sizeof( idSoundHRTF ) );
+	}
+	hrtf->Init( snd_SampleRate() );
 
 	isInitialized = true;
 	shutdown = false;

@@ -270,7 +270,10 @@ This can be configured with the following CVars:
   sounds from hard-clipping, `1`: Enable (default), `0`: plain hard clip. Replaces both
   `s_alOutputLimiter` (never implemented here) and `s_scaleDownAndClamp` (removed - overload is
   handled at the output stage now, with no permanent volume reduction).
-  There is no HRTF support in this core's stereo mixer; `s_alHRTF` has no equivalent.
+- `s_HRTF` binaural rendering of spatialized sounds through the MIT KEMAR HRTF set, for
+  **headphones** only, `0`: Disable (default), `1`: Enable. Unlike dhewm3's `s_alHRTF` this is
+  built into the core's own mixer (no OpenAL) and works in both the integer and float audio
+  pipelines. Leave it off on speakers - crosstalk makes binaural rendering sound wrong there.
 
 - `imgui_scale` Factor to scale ImGui menus by (especially relevant for HighDPI displays).
   Should be a positive factor like `1.5` or `2`; or `-1` (the default) to let dhewm3 automatically

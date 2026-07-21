@@ -19,6 +19,7 @@
 #define SND_MIX_NO_SIMD 1
 #endif
 #include "../neo/sound/snd_mix_kernels.h"
+#include "../neo/sound/snd_hrtf.h"
 
 // ---- the OLD kernels, verbatim semantics (idSIMD_Generic) ----
 static void OLD_MixSoundTwoSpeakerMono( float *mixBuffer, const float *samples, const int numSamples, const float lastV[2], const float currentV[2] ) {
@@ -480,6 +481,104 @@ int reverb_test() {
 		memset(id_,0,sizeof id_); iA.ProcessS16(is_,id_,512,0.5f);
 		for (int i=0;i<1024;i++) if (id_[i]) inz++;
 		printf("reverb int gated tail: %d nonzero %s\n", inz, inz?"FAIL":"OK (exact zero)");
+	}
+
+	// -------- HRTF renderer (s_HRTF) --------
+	{
+		static idSoundHRTF H;
+		H.Init(44100);
+		static short hLq[SND_HRTF_MAX_TAPS], hRq[SND_HRTF_MAX_TAPS];
+		static float hLf[SND_HRTF_MAX_TAPS], hRf[SND_HRTF_MAX_TAPS];
+		printf("hrtf init 44100: taps=%d %s\n", H.Taps(), H.Taps()==128?"ok":"FAIL");
+
+		// (a) end-to-end ITD/ILD at az=+90 (source hard right): impulse
+		//     through blend + s16 conv kernel; right ear must peak
+		//     earlier and larger
+		H.BlendDirection(90.0f, 0.0f, hLq, hRq, hLf, hRf);
+		{
+			const int taps=H.Taps(), N=256;
+			static short src[SND_HRTF_HIST+512]; memset(src,0,sizeof src);
+			src[taps-1]=16384;      // impulse at block start, zero history
+			static int acc[512*2]; memset(acc,0,sizeof acc);
+			const int g[2]={32767,32767};
+			Snd_HrtfConvolveMixS16(acc,src,N,hLq,hRq,taps,g,g);
+			int pL=0,pR=0,iL=0,iR=0;
+			for(int i=0;i<N;i++){
+				int aL=acc[i*2]<0?-acc[i*2]:acc[i*2], aR=acc[i*2+1]<0?-acc[i*2+1]:acc[i*2+1];
+				if(aL>pL){pL=aL;iL=i;} if(aR>pR){pR=aR;iR=i;}
+			}
+			printf("hrtf az+90 s16: peak L=%d@%d R=%d@%d  %s\n", pL,iL,pR,iR,
+				(pR>2*pL && iR<iL)?"ok (right louder+earlier)":"FAIL");
+		}
+
+		// (b) history carry: one long block vs odd-sized split blocks,
+		//     accumulators bit-identical (the world's [hist|block] scheme)
+		{
+			const int taps=H.Taps(), N=2000;
+			H.BlendDirection(37.0f, -12.0f, hLq, hRq, hLf, hRf);
+			static short sig[2000];
+			for(int i=0;i<N;i++) sig[i]=(short)((int)(rng()%65536)-32768);
+			static int accA[2000*2], accB[2000*2];
+			memset(accA,0,sizeof accA); memset(accB,0,sizeof accB);
+			const int gA[2]={29000,14000};
+			// single block
+			static short bufA[SND_HRTF_HIST+2000];
+			memset(bufA,0,(taps-1)*sizeof(short));
+			memcpy(bufA+taps-1,sig,N*sizeof(short));
+			Snd_HrtfConvolveMixS16(accA,bufA,N,hLq,hRq,taps,gA,gA);
+			// split blocks with carried history; constant gains so the
+			// per-block ramp is flat and comparable
+			static short hist[SND_HRTF_HIST]; memset(hist,0,sizeof hist);
+			static short buf[SND_HRTF_HIST+2000];
+			int pos=0, step=0; int sizes[]={1,7,64,381,997,550};
+			while(pos<N){
+				int n=sizes[step%6]; if(pos+n>N)n=N-pos; step++;
+				memcpy(buf,hist,(taps-1)*sizeof(short));
+				memcpy(buf+taps-1,sig+pos,n*sizeof(short));
+				Snd_HrtfConvolveMixS16(accB+pos*2,buf,n,hLq,hRq,taps,gA,gA);
+				memcpy(hist,buf+n,(taps-1)*sizeof(short));
+				pos+=n;
+			}
+			int mism=0; for(int i=0;i<N*2;i++) if(accA[i]!=accB[i]) mism++;
+			printf("hrtf history carry (split vs single): %s (%d mismatches)\n", mism?"FAIL":"bit-exact", mism);
+		}
+
+		// (c) float vs s16 conv agreement on the same content
+		{
+			const int taps=H.Taps(), N=512;
+			static float fsrc[SND_HRTF_HIST+512]; static short ssrc[SND_HRTF_HIST+512];
+			for(int i=0;i<taps-1+N;i++){ int v=(int)(rng()%65536)-32768; ssrc[i]=(short)v; fsrc[i]=(float)v; }
+			static float fdst[512*2]; static int sdst[512*2];
+			memset(fdst,0,sizeof fdst); memset(sdst,0,sizeof sdst);
+			const float gf[2]={0.7f/32768.0f,0.7f/32768.0f};
+			const int gq[2]={22938,22938};   // 0.7 Q15
+			Snd_HrtfConvolveMixFloat(fdst,fsrc,N,hLf,hRf,taps,gf,gf);
+			Snd_HrtfConvolveMixS16(sdst,ssrc,N,hLq,hRq,taps,gq,gq);
+			double worst=0;
+			for(int i=0;i<N*2;i++){ double d=fdst[i]*32768.0-(double)sdst[i]; if(d<0)d=-d; if(d>worst)worst=d; }
+			printf("hrtf float-vs-s16 conv worst delta: %.2f LSB %s\n", worst, worst<16.0?"ok":"FAIL");
+		}
+
+		// (d) resample to 48000: tap count, and the ITD ordering survives
+		H.Init(48000);
+		printf("hrtf init 48000: taps=%d %s\n", H.Taps(), H.Taps()==140?"ok":"FAIL");
+		H.BlendDirection(90.0f, 0.0f, hLq, hRq, hLf, hRf);
+		{
+			const int taps=H.Taps(), N=300;
+			static short src[SND_HRTF_HIST+512]; memset(src,0,sizeof src);
+			src[taps-1]=16384;
+			static int acc[512*2]; memset(acc,0,sizeof acc);
+			const int g[2]={32767,32767};
+			Snd_HrtfConvolveMixS16(acc,src,N,hLq,hRq,taps,g,g);
+			int pL=0,pR=0,iL=0,iR=0;
+			for(int i=0;i<N;i++){
+				int aL=acc[i*2]<0?-acc[i*2]:acc[i*2], aR=acc[i*2+1]<0?-acc[i*2+1]:acc[i*2+1];
+				if(aL>pL){pL=aL;iL=i;} if(aR>pR){pR=aR;iR=i;}
+			}
+			printf("hrtf az+90 s16 @48k: peak L=%d@%d R=%d@%d  %s\n", pL,iL,pR,iR,
+				(pR>2*pL && iR<iL)?"ok (right louder+earlier)":"FAIL");
+		}
+		H.Init(44100);   // restore for any later use
 	}
 
 	/* ---- SIMD/scalar equivalence (appended with the SSE2 line stage) ----

@@ -74,6 +74,7 @@ const int ROOM_SLICES_IN_BUFFER		= 10;
 class idAudioBuffer;
 class idWaveFile;
 class idSoundCache;
+class idSoundHRTF;
 class idSoundSample;
 class idSampleDecoder;
 class idSoundWorldLocal;
@@ -371,6 +372,16 @@ public:
 	// blob's DSP section - same contract as airLp*.
 	float				occLpF;
 	int					occLpI;
+	/*
+	   Binaural FIR input history (s_HRTF): the last taps-1 gathered
+	   source samples, one buffer per pipeline like the shelves above.
+	   287 = SND_HRTF_MAX_TAPS-1 (static-asserted where snd_hrtf.h is
+	   included). Carried by the DSP savestate section for triggered
+	   channels; reset in Clear().
+	*/
+	float				hrtfHistF[287];
+	short				hrtfHistI[287];
+	int					hrtfHistValid;	// 0 => history is stale, zero before use
 	/*
 	   Exact input-keyed caches for the per-block powf derivations: the
 	   stored result is reused only when the inputs compare equal, so the
@@ -674,9 +685,13 @@ public:
 
 	idEFXFile			EFXDatabase;
 	bool				efxloaded;
+	// binaural renderer (s_HRTF); heap so only the TUs that use it pull
+	// in the baked HRIR tables. NULL until InitHW resolves the rate.
+	idSoundHRTF *			hrtf;
 	int					efxGeneration;		// bumped on every EFX load/clear so worlds re-resolve cached presets
 	static idCVar			s_useReverb;
 	static idCVar			s_reverbGain;
+	static idCVar			s_HRTF;
 
 	idSoundCache *			soundCache;
 
