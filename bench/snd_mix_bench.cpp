@@ -237,6 +237,16 @@ int main() {
    defines the variable in snd_system.cpp, the bench provides it here */
 int snd_sampleRate = 44100;
 #include "../neo/sound/snd_reverb.h"
+/* scalar twin of the same header for SIMD equivalence testing: the include
+   guard is reopened inside a namespace with the kernel forced off, giving a
+   second, independent instantiation of the identical DSP */
+namespace rvb_scalar {
+	int snd_sampleRate = 44100;
+#define REVERB_FORCE_SCALAR 1
+#undef __SND_REVERB_H__
+#include "../neo/sound/snd_reverb.h"
+#undef REVERB_FORCE_SCALAR
+}
 static idSoundReverb rvbF, rvbI;
 int reverb_test() {
 	rvbF.Init(); rvbI.Init();
@@ -278,6 +288,45 @@ int reverb_test() {
 		for(int i=0;i<1024;i++) if(o1[i]!=o2[i]) mism++;
 	}
 	printf("reverb int replay determinism: %s\n", mism?"FAIL":"bit-exact");
+
+	/* ---- SIMD/scalar equivalence (appended with the SSE2 line stage) ----
+	   The header compiles its SSE2 path by default on x86; a second copy
+	   of the class is instantiated in a namespace with the kernel forced
+	   off, and both run the same stream: 8 seconds of noise through
+	   defaults -> all features hot -> back, so the tap slew, the
+	   crossfade, the LFO and the echo all pass through the comparison.
+	   Every output sample must match. On targets without the kernel both
+	   copies are scalar and the test is a tautology, which is fine. */
+	{
+		int mism2 = 0;
+		rvb_scalar::idSoundReverb rs; rs.Init();
+		idSoundReverb rv; rv.Init();
+		sndReverbParams_t pa; pa.SetDefaults(); pa.decayTime=4.0f;
+		sndReverbParams_t pb = pa; pb.decayLFRatio=1.8f; pb.gainLF=0.3f; pb.gainHF=0.2f;
+		pb.echoDepth=0.9f; pb.echoTime=0.09f; pb.modulationDepth=1.0f; pb.modulationTime=0.11f;
+		pb.density=0.15f; pb.airAbsorptionGainHF=0.9f; pb.decayHFLimit=1;
+		/* pc exercises the negative lfAdj (decayLFRatio < 1): the one
+		   signed gain, and exactly the case a non-negative-only vector
+		   multiply gets wrong while every other stream passes */
+		sndReverbParams_t pc = pb; pc.decayLFRatio=0.3f;
+		rvb_scalar::sndReverbParams_t sa, sb, sc;
+		memcpy(&sa,&pa,sizeof sa); memcpy(&sb,&pb,sizeof sb); memcpy(&sc,&pc,sizeof sc);
+		rv.SetParams(pa); rs.SetParams(sa);
+		unsigned rng=0xC0FFEE;
+		static int s2[512], d2a[1024], d2b[1024];
+		for (int blk=0; blk<690; blk++){
+			if (blk==120){ rv.SetParams(pb); rs.SetParams(sb); }
+			if (blk==430){ rv.SetParams(pc); rs.SetParams(sc); }
+			if (blk==560){ rv.SetParams(pa); rs.SetParams(sa); }
+			for (int i=0;i<512;i++){ rng=rng*1664525u+1013904223u; s2[i]=(int)(rng>>17)-16384; }
+			memset(d2a,0,sizeof d2a); memset(d2b,0,sizeof d2b);
+			rv.ProcessS16(s2,d2a,512,0.7f);
+			rs.ProcessS16(s2,d2b,512,0.7f);
+			for (int i=0;i<1024;i++) if (d2a[i]!=d2b[i]) mism2++;
+		}
+		printf("reverb SSE2-vs-scalar (8s, all features, retargets): %s\n",
+			mism2 ? "FAIL" : "bit-exact");
+	}
 
 	/* ---- EAXREVERB feature tests: steady-sine and noise-burst probes ----
 	   Single impulses die to exact zero in the integer path long before a
