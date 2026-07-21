@@ -437,17 +437,30 @@ void idSoundWorldLocal::MixLoop( int currentSampleTime, int numFrames, float *fi
 	int i, j;
 	idSoundEmitterLocal *sound;
 
-	// if noclip flying outside the world, leave silence
-	if ( listenerArea == -1 ) {
-			return;
-	}
+	/*
+	   If noclip flying outside the world, no emitter contributes - but
+	   the DSP tail below must still run. The old early return froze the
+	   reverb and enviro-suit state mid-tail: the wet cut instead of
+	   decaying, and stale tails resumed on re-entry. With the dormancy
+	   gate, processing the zero send costs nothing once the tails have
+	   decayed to exact zero.
+	*/
+	const bool outsideWorld = ( listenerArea == -1 );
 
 
 	// debugging option to mute all but a single soundEmitter
 	// environmental reverb: pick the preset for the listener's portal area
 	// (area number -> area name -> "default", same chain as the OpenAL era)
-	const bool reverbOn = idSoundSystemLocal::s_useReverb.GetBool()
-	                       && soundSystemLocal.efxloaded && listenerArea >= 0;
+	/*
+	   Split conditions: refreshing the preset needs a valid listener
+	   area; PROCESSING must keep running with whatever preset is loaded
+	   even when the listener has none (noclip outside the world), or
+	   the tail freezes instead of decaying. The dormancy gate makes the
+	   post-decay cost zero.
+	*/
+	const bool reverbRun = idSoundSystemLocal::s_useReverb.GetBool()
+	                       && soundSystemLocal.efxloaded;
+	const bool reverbOn  = reverbRun && listenerArea >= 0;
 	if ( reverbOn && ( listenerArea != reverbCachedArea
 	                   || reverbCachedGen != soundSystemLocal.efxGeneration ) ) {
 		/*
@@ -485,7 +498,7 @@ void idSoundWorldLocal::MixLoop( int currentSampleTime, int numFrames, float *fi
 		memset( reverbSendI, 0, numFrames * sizeof( int ) );
 	}
 
-	if ( idSoundSystemLocal::s_singleEmitter.GetInteger() > 0 && idSoundSystemLocal::s_singleEmitter.GetInteger() < emitters.Num() ) {
+	if ( !outsideWorld && idSoundSystemLocal::s_singleEmitter.GetInteger() > 0 && idSoundSystemLocal::s_singleEmitter.GetInteger() < emitters.Num() ) {
 		sound = emitters[idSoundSystemLocal::s_singleEmitter.GetInteger()];
 
 		if ( sound && sound->playing ) {
@@ -501,9 +514,9 @@ void idSoundWorldLocal::MixLoop( int currentSampleTime, int numFrames, float *fi
 				AddChannelContribution( sound, chan, currentSampleTime, numFrames, finalMixBuffer );
 			}
 		}
-		return;
-	}
-
+		// fall through: the debug filter selects emitters, it must not
+		// also freeze the reverb/enviro tails (the old return did)
+	} else if ( !outsideWorld )
 	for ( i = 1; i < emitters.Num(); i++ ) {
 		sound = emitters[i];
 
@@ -531,7 +544,7 @@ void idSoundWorldLocal::MixLoop( int currentSampleTime, int numFrames, float *fi
 
 	// environmental reverb: process the accumulated mono send and add the
 	// stereo wet into this block, in whichever format the mixer is running
-	if ( reverbOn && reverb.IsActive() ) {
+	if ( reverbRun && reverb.IsActive() ) {
 		const float wet = idSoundSystemLocal::s_reverbGain.GetFloat();
 		if ( soundSystemLocal.outputIsFloat ) {
 			reverb.ProcessFloat( reverbSendF, finalMixBuffer, numFrames, wet );
