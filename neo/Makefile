@@ -340,6 +340,16 @@ CXXFLAGS   += $(INCFLAGS)
 
 all: $(TARGET)
 
+# Header dependency tracking: every object records the headers it was
+# built against (-MMD -MP) and the .d files are folded back in, so a
+# header edit rebuilds its consumers. Without this, interface changes
+# linked stale objects over mismatched struct layouts and vtables -
+# it produced silently corrupt binaries four separate times before
+# the Windows CI finally caught one at compile time.
+DEPFLAGS := -MMD -MP
+DEPS := $(OBJECTS:.o=.d)
+-include $(DEPS)
+
 $(TARGET): $(OBJECTS)
 ifeq ($(STATIC_LINKING), 1)
 	$(AR) rcs $@ $(OBJECTS)
@@ -348,13 +358,13 @@ else
 endif
 
 %.o: $(CORE_DIR)/%.cpp
-	$(CXX) $(CFLAGS) $(CXXFLAGS) $(fpic) -c -o $@ $<
+	$(CXX) $(CFLAGS) $(CXXFLAGS) $(DEPFLAGS) $(fpic) -c -o $@ $<
 
 %.o: $(CORE_DIR)/%.c
-	$(CC) $(CFLAGS) -std=gnu11 $(fpic) -c -o $@ $<
+	$(CC) $(CFLAGS) -std=gnu11 $(DEPFLAGS) $(fpic) -c -o $@ $<
 
 clean:
-	rm -f $(OBJECTS) $(TARGET)
+	rm -f $(OBJECTS) $(DEPS) $(TARGET)
 
 .PHONY: clean
 
