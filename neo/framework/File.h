@@ -223,33 +223,29 @@ private:
 
 
 class idFile_InZip : public idFile {
-	friend class			idFileSystemLocal;
+	friend class idFileSystemLocal;
 
 public:
-							idFile_InZip( void );
-	virtual					~idFile_InZip( void );
+	idFile_InZip( void );
+	virtual ~idFile_InZip( void );
 
-	virtual const char *	GetName( void ) { return name.c_str(); }
-	virtual const char *	GetFullPath( void ) { return fullPath.c_str(); }
-	virtual int				Read( void *buffer, int len );
-	virtual int				Write( const void *buffer, int len );
-	virtual int				Length( void );
-	virtual ID_TIME_T			Timestamp( void );
-	virtual int				Tell( void );
-	virtual void			ForceFlush( void );
-	virtual void			Flush( void );
-	virtual int				Seek( long offset, fsOrigin_t origin );
+	virtual const char * GetName( void ) { return name.c_str(); }
+	virtual const char * GetFullPath( void ) { return fullPath.c_str(); }
+	virtual int	   Read( void *buffer, int len );
+	virtual int	   Write( const void *buffer, int len );
+	virtual int	   Length( void );
+	virtual ID_TIME_T  Timestamp( void );
+	virtual int	   Tell( void );
+	virtual void	   ForceFlush( void );
+	virtual void	   Flush( void );
+	virtual int	   Seek( long offset, fsOrigin_t origin );
 
 private:
-	idStr					name;			// name of the file in the pak
-	idStr					fullPath;		// full file path including pak file name
-#ifdef _WIN32
-	unsigned __int64		zipFilePos;		// zip file info position in pak - should be ZPOS64_T, but I don't want miniz.h (through Unzip.h) in this header
-#else
-	unsigned long long int	zipFilePos;		// zip file info position in pak
-#endif
-	int						fileSize;		// size of the file
-	void *					z;				// unzip info
+	idStr name;	            // name of the file in the pak
+	idStr fullPath;		    // full file path including pak file name
+	uint64_t	zipFilePos; // zip file info position in pak
+	int fileSize;		    // size of the file
+	void *z;		    // unzip info
 };
 
 #endif /* !__FILE_H__ */

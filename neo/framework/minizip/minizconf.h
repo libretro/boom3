@@ -45,10 +45,6 @@
   #endif
 #endif
 
-#ifndef ZEXPORT
- #define ZEXPORT
-#endif
-
 // FIXME: why not just set this to int64_t?
 #if !defined(_WIN32) && defined(__USE_LARGEFILE64) && !defined(__SWITCH__)
   #define z_off64_t off64_t

@@ -257,16 +257,16 @@ static idInitExclusions	initExclusions;
 #define FILE_HASH_SIZE			1024
 
 typedef struct fileInPack_s {
-	idStr				name;						// name of the file
-	ZPOS64_T			pos;						// file info position in zip
+	idStr    name; // name of the file
+	uint64_t pos;  // file info position in zip
 	struct fileInPack_s * next;						// next file in the hash
 } fileInPack_t;
 
 typedef enum {
-	PURE_UNKNOWN = 0,	// need to run the pak through GetPackStatus
-	PURE_NEUTRAL,	// neutral regarding pureness. gets in the pure list if referenced
-	PURE_ALWAYS,	// always referenced - for pak* named files, unless NEVER
-	PURE_NEVER		// VO paks. may be referenced, won't be in the pure lists
+	PURE_UNKNOWN = 0, // need to run the pak through GetPackStatus
+	PURE_NEUTRAL,	  // neutral regarding pureness. gets in the pure list if referenced
+	PURE_ALWAYS,	  // always referenced - for pak* named files, unless NEVER
+	PURE_NEVER	  // VO paks. may be referenced, won't be in the pure lists
 } pureStatus_t;
 
 typedef struct {
