@@ -1710,8 +1710,8 @@ void idSoundWorldLocal::AddChannelContribution( idSoundEmitterLocal *sound, idSo
 			const int n = stereoSample ? numFrames*2 : numFrames;
 			Snd_FloatToS16( srcS16, alignedInputSamples, n );
 			haveS16 = true;
-			short lastQ[2]    = { Snd_ClampGainQ15( chan->lastV[0] ), Snd_ClampGainQ15( chan->lastV[1] ) };
-			short currentQ[2] = { Snd_ClampGainQ15( ears[0] ),        Snd_ClampGainQ15( ears[1] ) };
+			int lastQ[2]    = { Snd_ClampGainQ15( chan->lastV[0] ), Snd_ClampGainQ15( chan->lastV[1] ) };
+			int currentQ[2] = { Snd_ClampGainQ15( ears[0] ),        Snd_ClampGainQ15( ears[1] ) };
 			int *accum = (int *)finalMixBuffer;   // s16 mode: the buffer is the int32 accumulator
 			if ( stereoSample ) {
 				Snd_MixTwoSpeakerStereoS16( accum, srcS16, numFrames, lastQ, currentQ );
@@ -1791,7 +1791,7 @@ void idSoundWorldLocal::AddChannelContribution( idSoundEmitterLocal *sound, idSo
 					}
 				}
 			} else {
-				const short sq = Snd_ClampGainQ15( sendVol );
+				const int sq = Snd_ClampGainQ15( sendVol );
 				/*
 				   srcS16 already holds this block converted, done by the mix
 				   above. The previous code declared a second buffer and ran
@@ -1815,8 +1815,8 @@ void idSoundWorldLocal::AddChannelContribution( idSoundEmitterLocal *sound, idSo
 				*/
 				#define AIRQ(x,g) ( (x) >= 0 ? (int)( ( (long long)(x) * (g) ) >> 15 ) \
 				                             : -(int)( ( -(long long)(x) * (g) ) >> 15 ) )
-				const short airAlphaQ = Snd_ClampGainQ15( airAlpha );
-				const short airHfGQ   = Snd_ClampGainQ15( airHfGain );
+				const int airAlphaQ = Snd_ClampGainQ15( airAlpha );
+				const int airHfGQ   = Snd_ClampGainQ15( airHfGain );
 				if ( stereoSample ) {
 					for ( int k = 0; k < numFrames; k++ ) {
 						int x = ( srcS16[(size_t)k*2] + srcS16[(size_t)k*2+1] ) / 2;

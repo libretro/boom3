@@ -63,8 +63,11 @@ int main() {
 
 	for (int i=0;i<MIXBUFFER_SAMPLES*2;i++) { src[i]=frand_pm32k(); srcS[i]=(short)(rng()&0xffff); }
 	const float lastV[2]={0.31f,0.87f}, curV[2]={0.93f,0.12f};
-	const short lastQ[2]={(short)(0.31f*32768),(short)(0.87f*32768)};
-	const short curQ[2]={(short)(0.93f*32768),(short)(0.12f*32768)};
+	const int lastQ[2]={(int)(0.31f*32768),(int)(0.87f*32768)};
+	const int curQ[2]={(int)(0.93f*32768),(int)(0.12f*32768)};
+	// over-unity endpoints (SSF_UNCLAMPED range, 2.0 ceiling = 65534)
+	const int lastQU[2]={65534,(int)(1.37f*32767)};
+	const int curQU[2]={(int)(0.05f*32767),65534};
 
 	// ---------- correctness ----------
 	// float new-vs-old at n=4096 (same effective ramp): expect tiny ulp diffs
@@ -133,6 +136,32 @@ int main() {
 			for(int i=0;i<n*2;i++) if(accA[i]!=accB[i]) stm++;
 		}
 		printf("s16 stereo %s-vs-reference over n=1..1470: %s (%d mismatches)\n", simd, stm?"FAIL":"bit-exact", stm);
+
+		// -------- over-unity gains (2.0 ceiling), full-scale samples --------
+		// int64 shadow reference proves no int32 step of the kernel can
+		// overflow at the documented extremes, and that the ramp between
+		// over-unity endpoints stays bit-exact.
+		{
+			short srcX[MIXBUFFER_SAMPLES];
+			for (int i=0;i<MIXBUFFER_SAMPLES;i++)
+				srcX[i] = (i&1) ? (short)0x8000 : (short)0x7fff;   // alternate full-scale extremes
+			int um=0, ovf=0;
+			for (int n=1;n<=1470;n+=13) {
+				memset(accA,0,sizeof accA); memset(accB,0,sizeof accB);
+				const int baseL=lastQU[0]<<8, baseR=lastQU[1]<<8;
+				const int incL=((curQU[0]-lastQU[0])<<8)/n, incR=((curQU[1]-lastQU[1])<<8)/n;
+				for(int i=0;i<n;i++){
+					int gL=(baseL+incL*i)>>8, gR=(baseR+incR*i)>>8;
+					long long pL=(long long)srcX[i]*gL+0x4000, pR=(long long)srcX[i]*gR+0x4000;
+					if (pL>0x7fffffffLL||pL<-0x80000000LL||pR>0x7fffffffLL||pR<-0x80000000LL) ovf++;
+					accA[i*2+0]+=(int)(pL>>15); accA[i*2+1]+=(int)(pR>>15);
+				}
+				Snd_MixTwoSpeakerMonoS16(accB, srcX, n, lastQU, curQU);
+				for(int i=0;i<n*2;i++) if(accA[i]!=accB[i]) um++;
+			}
+			printf("s16 mono over-unity gains (65534, FS samples): products in int32: %s | %s-vs-int64-reference: %s\n",
+				ovf?"FAIL":"proven", simd, um?"FAIL":"bit-exact");
+		}
 	}
 
 	// Snd_SumToS16 saturation exactness

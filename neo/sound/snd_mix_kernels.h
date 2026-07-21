@@ -271,9 +271,13 @@ Integer (all-s16) mixer kernels - used when the frontend does not support
 RETRO_ENVIRONMENT_GET_AUDIO_SAMPLE_BATCH_FLOAT.
 
 Design for bit-exact determinism across compilers AND architectures:
- - samples are int16, per-speaker gains are Q15 (0..32767; gains above
-   unity are clamped to unity in this mode - s_clipVolumes clamps there
-   anyway except for SSF_UNCLAMPED shaders, which saturate),
+ - samples are int16, per-speaker gains are Q15 with a 2.0 ceiling
+   (0..65534, scale 32767 = unity). Over-unity gains exist only for
+   SSF_UNCLAMPED shaders (s_clipVolumes clamps everything else at the
+   ears, and the pre-master unity clamp holds upstream); honoring them
+   up to 2.0 keeps this pipeline's gain law identical to the float
+   pipeline's over the range shaders actually use, instead of silently
+   saturating unclamped gains at unity where float applied them,
  - the gain ramp is the closed form g(i) = (last<<8 + inc_q23*i) >> 8
    with inc_q23 = ((cur-last)<<8)/numFrames (C integer division), so
    scalar and SIMD lanes compute identical per-frame gains,
@@ -283,8 +287,13 @@ Design for bit-exact determinism across compilers AND architectures:
    that floored a DC bias of about -N/2 LSB into the accumulator on top
    of signal-correlated truncation noise. The bias add is the same
    integer op in scalar, SSE2, and NEON, so lanes stay bit-identical.
-   Accumulated in int32 (each term is <= 32767 in magnitude, so overflow
-   would need ~65k simultaneous full-scale channels - impossible),
+   Accumulated in int32. Per-term bounds with the 2.0 gain ceiling,
+   worked at the extremes: 32767*65534 + 0x4000 = 2,147,368,962 and
+   -32768*65534 + 0x4000 = -2,147,401,728, both inside int32 - the
+   ceiling is chosen as exactly the largest that keeps the product a
+   single 32-bit multiply. Post-shift terms are <= 65534 in magnitude,
+   so accumulator overflow would need ~32k simultaneous full-scale
+   over-unity channels - impossible,
  - the final narrow saturates int32 to [-32768, 32767].
 Every operation is integer with defined semantics, there are no
 cross-lane reductions, and the gain ramp is closed-form per frame - so
@@ -294,7 +303,7 @@ slower than what the compiler emits from these loops; see the kernels).
 ===========================================================================
 */
 
-static inline short Snd_ClampGainQ15( float v ) {
+static inline int Snd_ClampGainQ15( float v ) {
 	/*
 	   Single, defined float->Q15 choke point for the s16 mixer.
 
@@ -305,16 +314,25 @@ static inline short Snd_ClampGainQ15( float v ) {
 
 	   The 32767 scale is deliberate. Rounding v*32768 overflows for v just
 	   below 1.0 - lrintf( 0.99999f * 32768.0f ) is 32768, which does not fit
-	   in a short and wraps to -32768, a full-scale sign flip on the loudest
-	   gains. The old truncation happened to be safe from that because it
-	   could never reach 32768; the rounded form has to be made safe on
-	   purpose.
+	   in 15 bits and would be a full-scale sign flip on the loudest gains
+	   in the old short representation. The rounded form has to be made
+	   safe on purpose.
+
+	   Ceiling is 2.0 (65534 at the 32767 scale), not unity: over-unity
+	   gains reach here only from SSF_UNCLAMPED shaders, and saturating
+	   them at unity - as the short-typed version of this function did -
+	   silently diverged from the float pipeline, which applied them.
+	   65534 is exactly the largest gain whose products with any s16
+	   sample stay in int32 (see the pipeline header); gains beyond 2.0
+	   still saturate, now at a documented point shared by nothing real.
 	*/
 	if ( v <= 0.0f )   return 0;
-	if ( v >= 1.0f )   return 32767;
-	int q = (int)( v * 32767.0f + 0.5f );
-	if ( q > 32767 ) q = 32767;
-	return (short)q;
+	if ( v >= 2.0f )   return 65534;
+	{
+		int q = (int)( v * 32767.0f + 0.5f );
+		if ( q > 65534 ) q = 65534;
+		return q;
+	}
 }
 
 /*
@@ -323,13 +341,13 @@ Snd_MixTwoSpeakerMonoS16
 dest: int32 stereo accumulator, numFrames*2; src: mono s16
 ====================
 */
-static inline void Snd_MixTwoSpeakerMonoS16( int *dest, const short *src, int numFrames, const short lastQ15[2], const short currentQ15[2] ) {
+static inline void Snd_MixTwoSpeakerMonoS16( int *dest, const short *src, int numFrames, const int lastQ15[2], const int currentQ15[2] ) {
 	if ( numFrames <= 0 )
 		return;
-	const int baseL = (int)lastQ15[0] << 8;
-	const int baseR = (int)lastQ15[1] << 8;
-	const int incL  = ( ( (int)currentQ15[0] - lastQ15[0] ) << 8 ) / numFrames;
-	const int incR  = ( ( (int)currentQ15[1] - lastQ15[1] ) << 8 ) / numFrames;
+	const int baseL = lastQ15[0] << 8;
+	const int baseR = lastQ15[1] << 8;
+	const int incL  = ( ( currentQ15[0] - lastQ15[0] ) << 8 ) / numFrames;
+	const int incR  = ( ( currentQ15[1] - lastQ15[1] ) << 8 ) / numFrames;
 
 	/*
 	   Deliberately plain scalar. A hand-written SSE2 path lived here (pack
@@ -358,14 +376,14 @@ dest: int32 stereo accumulator; src: interleaved stereo s16
 ====================
 */
 static inline void Snd_MixTwoSpeakerStereoS16( int *dest, const short *src, int numFrames,
-                                               const short lastQ15[2], const short currentQ15[2] ) {
+                                               const int lastQ15[2], const int currentQ15[2] ) {
 	if ( numFrames <= 0 ) {
 		return;
 	}
-	const int baseL = (int)lastQ15[0] << 8;
-	const int baseR = (int)lastQ15[1] << 8;
-	const int incL  = ( ( (int)currentQ15[0] - lastQ15[0] ) << 8 ) / numFrames;
-	const int incR  = ( ( (int)currentQ15[1] - lastQ15[1] ) << 8 ) / numFrames;
+	const int baseL = lastQ15[0] << 8;
+	const int baseR = lastQ15[1] << 8;
+	const int incL  = ( ( currentQ15[0] - lastQ15[0] ) << 8 ) / numFrames;
+	const int incR  = ( ( currentQ15[1] - lastQ15[1] ) << 8 ) / numFrames;
 
 	/* plain scalar on purpose - see the mono kernel above */
 	int *d = dest;
