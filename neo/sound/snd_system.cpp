@@ -45,6 +45,8 @@ idCVar idSoundSystemLocal::s_dotbias6( "s_dotbias6", "0.8", CVAR_SOUND | CVAR_FL
 idCVar idSoundSystemLocal::s_minVolume2( "s_minVolume2", "0.25", CVAR_SOUND | CVAR_FLOAT, "" );
 idCVar idSoundSystemLocal::s_dotbias2( "s_dotbias2", "1.1", CVAR_SOUND | CVAR_FLOAT, "" );
 idCVar idSoundSystemLocal::s_spatializationDecay( "s_spatializationDecay", "2", CVAR_SOUND | CVAR_ARCHIVE | CVAR_FLOAT, "" );
+idCVar idSoundSystemLocal::s_reverse( "s_reverse", "0", CVAR_SOUND | CVAR_ARCHIVE | CVAR_BOOL, "" );
+idCVar idSoundSystemLocal::s_meterTopTime( "s_meterTopTime", "2000", CVAR_SOUND | CVAR_ARCHIVE | CVAR_INTEGER, "" );
 idCVar idSoundSystemLocal::s_volume( "s_volume_dB", "0", CVAR_SOUND | CVAR_ARCHIVE | CVAR_FLOAT, "volume in dB" );
 idCVar idSoundSystemLocal::s_playDefaultSound( "s_playDefaultSound", "1", CVAR_SOUND | CVAR_ARCHIVE | CVAR_BOOL, "play a beep for missing sounds" );
 idCVar idSoundSystemLocal::s_subFraction( "s_subFraction", "0.75", CVAR_SOUND | CVAR_ARCHIVE | CVAR_FLOAT, "volume to subwoofer in 5.1" );
@@ -62,7 +64,7 @@ idCVar idSoundSystemLocal::s_reverbFeedback( "s_reverbFeedback", "0.333", CVAR_S
 idCVar idSoundSystemLocal::s_enviroSuitVolumeScale( "s_enviroSuitVolumeScale", "0.9", CVAR_SOUND | CVAR_FLOAT, "" );
 idCVar idSoundSystemLocal::s_skipHelltimeFX( "s_skipHelltimeFX", "0", CVAR_SOUND | CVAR_BOOL, "" );
 
-idCVar idSoundSystemLocal::s_scaleDownAndClamp( "s_scaleDownAndClamp", "1", CVAR_SOUND | CVAR_BOOL | CVAR_ARCHIVE, "Clamp and reduce volume of all sounds to prevent clipping" );
+idCVar idSoundSystemLocal::s_scaleDownAndClamp( "s_scaleDownAndClamp", "1", CVAR_SOUND | CVAR_BOOL | CVAR_ARCHIVE, "Clamp and reduce volume of all sounds to prevent clipping or clipping" );
 
 
 
@@ -321,6 +323,9 @@ void idSoundSystemLocal::Init() {
 	// format authoritatively on every call, so no reset ordering (s_restart,
 	// re-Init, re-load) can ever desync the two again.
 
+	memset( meterTops, 0, sizeof( meterTops ) );
+	memset( meterTopsTime, 0, sizeof( meterTopsTime ) );
+
 	for( int i = -600; i < 600; i++ ) {
 		float pt = i * 0.1f;
 		volumesDB[i+600] = pow( 2.0f,( pt * ( 1.0f / 6.0f ) ) );
@@ -329,6 +334,7 @@ void idSoundSystemLocal::Init() {
 	// make a 16 byte aligned finalMixBuffer
 	finalMixBuffer = (float *) ( ( ( (intptr_t)realAccum ) + 15 ) & ~15 );
 
+	graph = NULL;
 
 
 	idSampleDecoder::Init();
@@ -403,6 +409,10 @@ bool idSoundSystemLocal::ShutdownHW() {
 
 	isInitialized = false;
 
+	if ( graph ) {
+		Mem_Free( graph );
+		graph = NULL;
+	}
 
 	return true;
 }
@@ -485,6 +495,155 @@ float idSoundSystemLocal::dB2Scale( const float val ) const {
 	return volumesDB[ival];
 }
 
+/*
+===================
+idSoundSystemLocal::ImageForTime
+===================
+*/
+cinData_t idSoundSystemLocal::ImageForTime( const int milliseconds, const bool waveform ) {
+	cinData_t ret;
+	int i, j;
+
+	if ( !isInitialized ) {
+		memset( &ret, 0, sizeof( ret ) );
+		return ret;
+	}
+
+	Sys_EnterCriticalSection();
+
+	if ( !graph ) {
+		graph = (dword *)Mem_Alloc( 256*128 * 4);
+	}
+	memset( graph, 0, 256*128 * 4 );
+	float *accum = finalMixBuffer;	// unfortunately, these are already clamped
+	int time = Core_Milliseconds();
+
+	int numSpeakers = s_numberOfSpeakers.GetInteger();
+
+	if ( !waveform ) {
+		for( j = 0; j < numSpeakers; j++ ) {
+			int meter = 0;
+			for( i = 0; i < MIXBUFFER_SAMPLES; i++ ) {
+				float result = idMath::Fabs(accum[i*numSpeakers+j]);
+				if ( result > meter ) {
+					meter = result;
+				}
+			}
+
+			meter /= 256;		// 32768 becomes 128
+			if ( meter > 128 ) {
+				meter = 128;
+			}
+			int offset;
+			int xsize;
+			if ( numSpeakers == 6 ) {
+				offset = j * 40;
+				xsize = 20;
+			} else {
+				offset = j * 128;
+				xsize = 63;
+			}
+			int x,y;
+			dword color = 0xff00ff00;
+			for ( y = 0; y < 128; y++ ) {
+				for ( x = 0; x < xsize; x++ ) {
+					graph[(127-y)*256 + offset + x ] = color;
+				}
+				if ( y > meter )
+					break;
+			}
+
+			if ( meter > meterTops[j] ) {
+				meterTops[j] = meter;
+				meterTopsTime[j] = time + s_meterTopTime.GetInteger();
+			} else if ( time > meterTopsTime[j] && meterTops[j] > 0 ) {
+				meterTops[j]--;
+				if (meterTops[j]) {
+					meterTops[j]--;
+				}
+			}
+		}
+
+		for( j = 0; j < numSpeakers; j++ ) {
+			int meter = meterTops[j];
+
+			int offset;
+			int xsize;
+			if ( numSpeakers == 6 ) {
+				offset = j*40;
+				xsize = 20;
+			} else {
+				offset = j*128;
+				xsize = 63;
+			}
+			int x,y;
+			dword color;
+			if ( meter <= 80 ) {
+				color = 0xff007f00;
+			} else if ( meter <= 112 ) {
+				color = 0xff007f7f;
+			} else {
+				color = 0xff00007f;
+			}
+			for ( y = meter; y < 128 && y < meter + 4; y++ ) {
+				for ( x = 0; x < xsize; x++ ) {
+					graph[(127-y)*256 + offset + x ] = color;
+				}
+			}
+		}
+	} else {
+		dword colors[] = { 0xff007f00, 0xff007f7f, 0xff00007f, 0xff00ff00, 0xff00ffff, 0xff0000ff };
+
+		for( j = 0; j < numSpeakers; j++ ) {
+			int xx = 0;
+			float fmeter;
+			int step = MIXBUFFER_SAMPLES / 256;
+			for( i = 0; i < MIXBUFFER_SAMPLES; i += step ) {
+				fmeter = 0.0f;
+				for( int x = 0; x < step; x++ ) {
+					float result = accum[(i+x)*numSpeakers+j];
+					result = result / 32768.0f;
+					fmeter += result;
+				}
+				fmeter /= 4.0f;
+				if ( fmeter < -1.0f ) {
+					fmeter = -1.0f;
+				} else if ( fmeter > 1.0f ) {
+					fmeter = 1.0f;
+				}
+				int meter = (fmeter * 63.0f);
+				graph[ (meter + 64) * 256 + xx ] = colors[j];
+
+				if ( meter < 0 ) {
+					meter = -meter;
+				}
+				if ( meter > meterTops[xx] ) {
+					meterTops[xx] = meter;
+					meterTopsTime[xx] = time + 100;
+				} else if ( time>meterTopsTime[xx] && meterTops[xx] > 0 ) {
+					meterTops[xx]--;
+					if ( meterTops[xx] ) {
+						meterTops[xx]--;
+					}
+				}
+				xx++;
+			}
+		}
+		for( i = 0; i < 256; i++ ) {
+			int meter = meterTops[i];
+			for ( int y = -meter; y < meter; y++ ) {
+				graph[ (y+64)*256 + i ] = colors[j];
+			}
+		}
+	}
+	ret.imageHeight = 128;
+	ret.imageWidth = 256;
+	ret.image = (unsigned char *)graph;
+
+	Sys_LeaveCriticalSection();
+
+	return ret;
+}
 
 /*
 ===================
