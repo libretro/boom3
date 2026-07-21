@@ -720,7 +720,6 @@ public:
 	static idCVar			s_spatializationDecay;
 	static idCVar			s_showStartSound;
 	static idCVar			s_maxSoundsPerShader;
-	static idCVar			s_reverse;
 	static idCVar			s_meterTopTime;
 	static idCVar			s_volume;
 	static idCVar			s_constantAmplitude;

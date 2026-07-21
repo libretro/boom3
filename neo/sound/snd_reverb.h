@@ -514,8 +514,10 @@ ID_INLINE void idSoundReverb::StepBlockParams( void ) {
 		float href = cur.hfReference < 1000.0f ? 1000.0f : ( cur.hfReference > 20000.0f ? 20000.0f : cur.hfReference );
 		float cl = expf( -6.2831853f * lref / REVERB_FS );
 		float ch = expf( -6.2831853f * href / REVERB_FS );
-		if ( cl < 0.0f ) cl = 0.0f; if ( cl > 0.9995f ) cl = 0.9995f;
-		if ( ch < 0.0f ) ch = 0.0f; if ( ch > 0.9995f ) ch = 0.9995f;
+		if ( cl < 0.0f ) cl = 0.0f;
+		if ( cl > 0.9995f ) cl = 0.9995f;
+		if ( ch < 0.0f ) ch = 0.0f;
+		if ( ch > 0.9995f ) ch = 0.9995f;
 		osLowCoef = cl; osHighCoef = ch;
 		osGainLF = cur.gainLF < 0.0f ? 0.0f : ( cur.gainLF > 1.0f ? 1.0f : cur.gainLF );
 		osGainHF = cur.gainHF < 0.0f ? 0.0f : ( cur.gainHF > 1.0f ? 1.0f : cur.gainHF );
