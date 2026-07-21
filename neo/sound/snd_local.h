@@ -362,10 +362,15 @@ public:
 	float				airLpF;
 	int					airLpI;
 	// occlusion shelf state: one-pole at 5 kHz on the gathered source,
-	// engaged when the portal path exceeds the straight line. Reset in
-	// Clear(); not in the on-disk savegame, carried by the libretro
-	// state blob's DSP section - same contract as airLp*.
+	// engaged when the portal path exceeds the straight line. Float
+	// state for the float pipeline, integer twin for the s16 pipeline -
+	// same split as airLpF/airLpI, and for the same reason: the s16
+	// pipeline's cross-compiler bit-exactness claim cannot survive a
+	// float IIR with persistent state in its path. Reset in Clear();
+	// not in the on-disk savegame, carried by the libretro state
+	// blob's DSP section - same contract as airLp*.
 	float				occLpF;
+	int					occLpI;
 	/*
 	   Exact input-keyed caches for the per-block powf derivations: the
 	   stored result is reused only when the inputs compare equal, so the

@@ -1602,6 +1602,18 @@ void idSoundWorldLocal::AddChannelContribution( idSoundEmitterLocal *sound, idSo
 		   Enhancement beyond the original engine, which occluded volume
 		   only.
 		*/
+		/*
+		   Pipeline split, same as the air shelf's airLpF/airLpI: the
+		   float pipeline filters the gathered floats here; the s16
+		   pipeline defers to an integer shelf over the converted block
+		   below (occFilterS16/occHfG), because a float IIR with
+		   persistent state would break the s16 pipeline's
+		   cross-compiler bit-exactness for occluded channels. The
+		   filter runs before both consumers either way - the mix and
+		   the reverb send see the same muffled source.
+		*/
+		bool  occFilterS16 = false;
+		float occHfG = 1.0f;
 		if ( !global && !stereoSample && !noOcclusion ) {
 			float occG = idSoundSystemLocal::s_occlusionGainHF.GetFloat();
 			float detour = sound->distance - sound->realDistance;
@@ -1616,14 +1628,19 @@ void idSoundWorldLocal::AddChannelContribution( idSoundEmitterLocal *sound, idSo
 					chan->occCacheDetour = detour;
 					chan->occCacheHfG = hfG;
 				}
-				const float alpha = Snd_Shelf5kAlpha();
-				float lp = chan->occLpF;
-				for ( int k = 0; k < numFrames; k++ ) {
-					float x = alignedInputSamples[k];
-					lp += alpha * ( x - lp );
-					alignedInputSamples[k] = lp + hfG * ( x - lp );
+				if ( soundSystemLocal.outputIsFloat ) {
+					const float alpha = Snd_Shelf5kAlpha();
+					float lp = chan->occLpF;
+					for ( int k = 0; k < numFrames; k++ ) {
+						float x = alignedInputSamples[k];
+						lp += alpha * ( x - lp );
+						alignedInputSamples[k] = lp + hfG * ( x - lp );
+					}
+					chan->occLpF = lp;
+				} else {
+					occFilterS16 = true;
+					occHfG = hfG;
 				}
-				chan->occLpF = lp;
 			}
 		}
 
@@ -1710,6 +1727,31 @@ void idSoundWorldLocal::AddChannelContribution( idSoundEmitterLocal *sound, idSo
 			const int n = stereoSample ? numFrames*2 : numFrames;
 			Snd_FloatToS16( srcS16, alignedInputSamples, n );
 			haveS16 = true;
+			if ( occFilterS16 ) {
+				/*
+				   Integer occlusion shelf, the twin of the float one
+				   above: state recursion in the reverb's toward-zero
+				   QMUL idiom (provable decay to exact zero on silence,
+				   matching AIRQ), applied in place so the mix and the
+				   reverb-send reuse of srcS16 both see the muffled
+				   source. Output is a convex combination of x and lp
+				   for gains in [0,1], so it stays in s16 range with no
+				   clamp. Occlusion never applies to stereo samples, so
+				   srcS16 is mono here.
+				*/
+				#define OCCQ(x,g) ( (x) >= 0 ? (int)( ( (long long)(x) * (g) ) >> 15 ) \
+				                             : -(int)( ( -(long long)(x) * (g) ) >> 15 ) )
+				const int occAQ = Snd_ClampGainQ15( Snd_Shelf5kAlpha() );
+				const int occGQ = Snd_ClampGainQ15( occHfG );
+				int lp = chan->occLpI;
+				for ( int k = 0; k < numFrames; k++ ) {
+					int x = srcS16[k];
+					lp += OCCQ( x - lp, occAQ );
+					srcS16[k] = (short)( lp + OCCQ( x - lp, occGQ ) );
+				}
+				chan->occLpI = lp;
+				#undef OCCQ
+			}
 			int lastQ[2]    = { Snd_ClampGainQ15( chan->lastV[0] ), Snd_ClampGainQ15( chan->lastV[1] ) };
 			int currentQ[2] = { Snd_ClampGainQ15( ears[0] ),        Snd_ClampGainQ15( ears[1] ) };
 			int *accum = (int *)finalMixBuffer;   // s16 mode: the buffer is the int32 accumulator
@@ -2107,7 +2149,7 @@ saved: they are pure functions of saved inputs and re-derive to
 bit-identical values.
 ===================
 */
-static const int SND_DSP_VERSION = 2;	// v2: + per-channel airLpI (the s16 shelf state)
+static const int SND_DSP_VERSION = 3;	// v2: + per-channel airLpI; v3: + occLpI (the s16 occlusion shelf state)
 
 void idSoundWorldLocal::WriteDSPState( idFile *f ) {
 	f->WriteInt( SND_DSP_VERSION );
@@ -2129,6 +2171,7 @@ void idSoundWorldLocal::WriteDSPState( idFile *f ) {
 			f->WriteFloat( emitter->channels[c].occLpF );
 			f->WriteFloat( emitter->channels[c].airLpF );
 			f->WriteInt( emitter->channels[c].airLpI );
+			f->WriteInt( emitter->channels[c].occLpI );
 			idSoundChannel *ch = &emitter->channels[c];
 			int hasStream = ( ch->triggerState && ch->decoder != NULL ) ? 1 : 0;
 			if ( hasStream ) {
@@ -2163,14 +2206,16 @@ void idSoundWorldLocal::ReadDSPState( idFile *f ) {
 		idSoundEmitterLocal *emitter = ( idx >= 0 && idx < emitters.Num() ) ? emitters[idx] : NULL;
 		for ( int c = 0; c < SOUND_MAX_CHANNELS; c++ ) {
 			float occ = 0.0f, air = 0.0f;
-			int airI = 0;
+			int airI = 0, occI = 0;
 			f->ReadFloat( occ );
 			f->ReadFloat( air );
 			f->ReadInt( airI );
+			f->ReadInt( occI );
 			if ( emitter ) {
 				emitter->channels[c].occLpF = occ;
 				emitter->channels[c].airLpF = air;
 				emitter->channels[c].airLpI = airI;
+				emitter->channels[c].occLpI = occI;
 			}
 			int blobLen = 0;
 			f->ReadInt( blobLen );

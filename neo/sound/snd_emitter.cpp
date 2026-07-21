@@ -173,6 +173,7 @@ void idSoundChannel::Clear( void ) {
 	airLpF = 0.0f;
 	airLpI = 0;
 	occLpF = 0.0f;
+	occLpI = 0;
 	occCacheG = occCacheDetour = airCacheAbs = airCacheDist = -1.0f;
 	occCacheHfG = airCacheHfG = 1.0f;
 	if ( pendStream != NULL ) {
