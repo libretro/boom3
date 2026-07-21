@@ -1507,7 +1507,35 @@ void idSoundWorldLocal::AddChannelContribution( idSoundEmitterLocal *sound, idSo
 		}
 	}
 
-	// global volume scale - DG: now done after clamping to 1.0, so reducing the
+	/*
+	   Unity clamp BEFORE the master volume scale. This is the balance half
+	   of the s_scaleDownAndClamp block removed in c58acc51: many stock
+	   shaders author volumes above 0 dB and only balance correctly against
+	   each other when they saturate at a common ceiling (dhewm3 #326,
+	   dhewm3/dhewm3#326 comment on weapon volumes). The ordering is the
+	   point - clamping before s_volume keeps that balance invariant under
+	   the master volume, while the post-removal code (s_clipVolumes on the
+	   ears, downstream of the s_volume multiply) re-separates overloud
+	   shaders as the master comes down: at s_volume_dB -20, a +6 dB and a
+	   +12 dB shader differ by 2x again instead of staying pinned equal.
+
+	   SSF_UNCLAMPED shaders opt out, the same convention s_clipVolumes
+	   already uses: the flag's authored meaning is over-unity gain, and
+	   the output saturator bounds whatever they sum to.
+
+	   The removed block's x0.333 headroom is deliberately NOT resurrected.
+	   Summation overload was never an OpenAL artifact - both current
+	   pipelines saturate at the final narrow - but a static -9.5 dB pad
+	   is the wrong tool: it discards ~1.6 bits of s16 output resolution
+	   on every sample and makes nothing bit-transparent. Overload is now
+	   handled where the information still exists, at the int32
+	   accumulator's narrow to s16 (see Snd_SumToS16Soft).
+	*/
+	if ( !( parms->soundShaderFlags & SSF_UNCLAMPED ) && volume > 1.0f ) {
+		volume = 1.0f;
+	}
+
+	// global volume scale - DG: done after clamping to 1.0, so reducing the
 	// global volume doesn't cause the different weapon volume issues described above
 	volume *= soundSystemLocal.dB2Scale( idSoundSystemLocal::s_volume.GetFloat() );
 
