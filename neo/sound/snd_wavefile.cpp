@@ -41,7 +41,6 @@ idWaveFile::idWaveFile( void ) {
 	memset( &mpwfx, 0, sizeof( waveformatextensible_t ) );
 	mhmmio		= NULL;
 	mdwSize		= 0;
-	mseekBase	= 0;
 	mbIsReadingFromMemory = false;
 	mpbData		= NULL;
 	isOgg		= false;
@@ -53,9 +52,6 @@ idWaveFile::idWaveFile( void ) {
 //-----------------------------------------------------------------------------
 idWaveFile::~idWaveFile( void ) {
 	Close();
-
-	if ( mbIsReadingFromMemory && mpbData )
-		Mem_Free( mpbData );
 
 	memset( &mpwfx, 0, sizeof( waveformatextensible_t ) );
 }
@@ -117,22 +113,6 @@ int idWaveFile::Open( const char* strFileName, waveformatex_t* pwfx ) {
 		return 0;
 	}
 	return -1;
-}
-
-//-----------------------------------------------------------------------------
-// Name: idWaveFile::OpenFromMemory()
-// Desc: copy data to idWaveFile member variable from memory
-//-----------------------------------------------------------------------------
-int idWaveFile::OpenFromMemory( short* pbData, int ulDataSize, waveformatextensible_t* pwfx ) {
-	mpwfx       = *pwfx;
-	mulDataSize = ulDataSize;
-	mpbData     = pbData;
-	mpbDataCur  = mpbData;
-	mdwSize		= ulDataSize / sizeof( short );
-	mMemSize	= ulDataSize;
-	mbIsReadingFromMemory = true;
-
-	return 0;
 }
 
 //-----------------------------------------------------------------------------
@@ -236,7 +216,6 @@ int idWaveFile::ResetFile( void )
 #ifdef MSB_FIRST
 		mck.cksize = D3_Swap32( mck.cksize );
 #endif
-		mseekBase = mhmmio->Tell();
 	}
 
 	return 0;
@@ -254,13 +233,27 @@ int idWaveFile::Read( byte* pBuffer, int dwSizeToRead, int *pdwSizeRead ) {
 
 	if ( mbIsReadingFromMemory )
 	{
-
+		/*
+		   This path serves every OGG load (see OpenOGG). The old
+		   arithmetic mixed units: mpbData is short* but dwSizeToRead and
+		   mulDataSize are byte counts, so the bounds check compared
+		   quantities scaled by two on both sides - correct only by
+		   cancellation for the single full-size read the cache performs -
+		   and the cursor advanced two bytes per byte read, which any
+		   second partial read would have paid for. Everything below is in
+		   bytes.
+		*/
 		if( mpbDataCur == NULL )
 			return -1;
-		if( (byte*)(mpbDataCur + dwSizeToRead) > (byte*)(mpbData + mulDataSize) )
-			dwSizeToRead = mulDataSize - (int)(mpbDataCur - mpbData);
-		SIMDProcessor->Memcpy( pBuffer, mpbDataCur, dwSizeToRead );
-		mpbDataCur += dwSizeToRead;
+		{
+			const byte *base = (const byte *)mpbData;
+			const byte *cur  = (const byte *)mpbDataCur;
+			int avail = (int)mulDataSize - (int)( cur - base );
+			if ( dwSizeToRead > avail )
+				dwSizeToRead = avail < 0 ? 0 : avail;
+			SIMDProcessor->Memcpy( pBuffer, cur, dwSizeToRead );
+			mpbDataCur = (short *)( cur + dwSizeToRead );
+		}
 	}
 	else
 	{
@@ -301,8 +294,7 @@ int idWaveFile::Read( byte* pBuffer, int dwSizeToRead, int *pdwSizeRead ) {
 int idWaveFile::Close( void ) {
 	/*
 	   An OGG opened by OpenOGG serves the cache read from the probe's own
-	   in-memory copy of the file; that buffer is owned here, unlike the
-	   OpenFromMemory case where the caller owns it.
+	   in-memory copy of the file; that buffer is owned and freed here.
 	*/
 	if ( isOgg && mbIsReadingFromMemory && mpbData != NULL ) {
 		Mem_Free( (void *)mpbData );
@@ -317,25 +309,3 @@ int idWaveFile::Close( void ) {
 	return 0;
 }
 
-//-----------------------------------------------------------------------------
-// Name: idWaveFile::Seek()
-//-----------------------------------------------------------------------------
-int idWaveFile::Seek( int offset ) {
-
-	if( mbIsReadingFromMemory ) {
-
-		mpbDataCur = mpbData + offset;
-
-	} else {
-		if( mhmmio == NULL ) {
-			return -1;
-		}
-
-		if ((int)(offset+mseekBase) == mhmmio->Tell()) {
-			return 0;
-		}
-		mhmmio->Seek( offset + mseekBase, FS_SEEK_SET );
-		return 0;
-	}
-	return -1;
-}

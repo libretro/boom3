@@ -181,9 +181,7 @@ public:
 					~idWaveFile( void );
 
 	int				Open( const char* strFileName, waveformatex_t* pwfx = NULL );
-	int				OpenFromMemory( short* pbData, int ulDataSize, waveformatextensible_t* pwfx );
 	int				Read( byte* pBuffer, int dwSizeToRead, int *pdwSizeRead );
-	int				Seek( int offset );
 	int				Close( void );
 	int				ResetFile( void );
 
@@ -198,7 +196,6 @@ private:
 	mminfo_t		mckRiff;		// used when opening a WAVE file
 	dword			mdwSize;		// size in samples
 	dword			mMemSize;		// size of the wave data in memory
-	dword			mseekBase;
 	ID_TIME_T			mfileTime;
 
 	bool			mbIsReadingFromMemory;
