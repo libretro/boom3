@@ -143,29 +143,69 @@ static inline int Snd_ReverbSinQ15( unsigned ph ) {
 	}
 }
 #if defined(__SSE2__) && !defined(REVERB_FORCE_SCALAR)
+#define REVERB_SIMD 1
 #include <emmintrin.h>
 /*
-   Branch-free 4-lane QMUL, bit-identical to the scalar macro for every
-   input the loop can produce: fold the sign out (s = x>>31, ax = (x^s)-s),
-   widen-multiply the magnitude by the non-negative gain, shift, fold the
-   sign back in ((p^s)-s). Toward-zero truncation of |x|*g is plain
-   unsigned >>, so the equivalence is exact; the only excluded input is
-   x = INT_MIN, which the contracting loop cannot reach (states stay
-   orders of magnitude below it). pmuludq multiplies the even 32-bit
-   lanes, so the odd lanes go through a second multiply and the two
-   results interleave back with two shuffles.
+   Four-lane int32 vector layer for the s16 line stage; SSE2 and NEON
+   implement the same seven operations and one shared kernel body uses
+   them. The QMUL is branch-free and bit-identical to the scalar macro
+   for every input the loop can produce: fold the sign out (s = x>>31,
+   ax = (x^s)-s), widen-multiply the magnitude by the non-negative gain,
+   shift, fold the sign back in ((p^s)-s). Toward-zero truncation of
+   |x|*g is a plain unsigned shift, so the equivalence is exact; the only
+   excluded input is x = INT_MIN, which the contracting loop cannot
+   reach. On SSE2, pmuludq multiplies the even 32-bit lanes, so the odd
+   lanes go through a second multiply and interleave back with two
+   shuffles.
 */
-static inline __m128i Snd_ReverbQmul4( __m128i x, __m128i g, int shift ) {
+typedef __m128i rvbv;
+static inline rvbv Rvb_Load( const int *p )        { return _mm_loadu_si128( (const __m128i *)p ); }
+static inline void Rvb_Store( int *p, rvbv v )     { _mm_storeu_si128( (__m128i *)p, v ); }
+static inline rvbv Rvb_Add( rvbv a, rvbv b )       { return _mm_add_epi32( a, b ); }
+static inline rvbv Rvb_Sub( rvbv a, rvbv b )       { return _mm_sub_epi32( a, b ); }
+static inline rvbv Rvb_Set1( int v )               { return _mm_set1_epi32( v ); }
+static inline rvbv Rvb_Set4( int a, int b, int c, int d ) { return _mm_set_epi32( d, c, b, a ); }
+// (x ^ m) - m: negates lanes where m is -1, passes where m is 0
+static inline rvbv Rvb_CSign( rvbv x, rvbv m )     { return _mm_sub_epi32( _mm_xor_si128( x, m ), m ); }
+template< int SHIFT >
+static inline rvbv Snd_ReverbQmul4( rvbv x, rvbv g ) {
 	__m128i s  = _mm_srai_epi32( x, 31 );
 	__m128i ax = _mm_sub_epi32( _mm_xor_si128( x, s ), s );
-	__m128i pe = _mm_srli_epi64( _mm_mul_epu32( ax, g ), shift );
+	__m128i pe = _mm_srli_epi64( _mm_mul_epu32( ax, g ), SHIFT );
 	__m128i po = _mm_srli_epi64( _mm_mul_epu32( _mm_srli_epi64( ax, 32 ),
-	                                            _mm_srli_epi64( g, 32 ) ), shift );
+	                                            _mm_srli_epi64( g, 32 ) ), SHIFT );
 	__m128i r  = _mm_castps_si128( _mm_shuffle_ps( _mm_castsi128_ps( pe ),
 	                                               _mm_castsi128_ps( po ),
 	                                               _MM_SHUFFLE( 2, 0, 2, 0 ) ) );
 	r = _mm_shuffle_epi32( r, _MM_SHUFFLE( 3, 1, 2, 0 ) );
 	return _mm_sub_epi32( _mm_xor_si128( r, s ), s );
+}
+#elif ( defined(__ARM_NEON) || defined(__ARM_NEON__) ) && !defined(REVERB_FORCE_SCALAR)
+#define REVERB_SIMD 1
+#include <arm_neon.h>
+/*
+   NEON mirror of the layer above; see the SSE2 comment for the QMUL
+   identity argument. The magnitudes are non-negative so the signed
+   widening multiply equals the unsigned one, and the products are
+   non-negative so the arithmetic 64-bit shift equals the logical shift
+   the identity calls for.
+*/
+typedef int32x4_t rvbv;
+static inline rvbv Rvb_Load( const int *p )        { return vld1q_s32( p ); }
+static inline void Rvb_Store( int *p, rvbv v )     { vst1q_s32( p, v ); }
+static inline rvbv Rvb_Add( rvbv a, rvbv b )       { return vaddq_s32( a, b ); }
+static inline rvbv Rvb_Sub( rvbv a, rvbv b )       { return vsubq_s32( a, b ); }
+static inline rvbv Rvb_Set1( int v )               { return vdupq_n_s32( v ); }
+static inline rvbv Rvb_Set4( int a, int b, int c, int d ) { int32_t t[4] = { a, b, c, d }; return vld1q_s32( t ); }
+static inline rvbv Rvb_CSign( rvbv x, rvbv m )     { return vsubq_s32( veorq_s32( x, m ), m ); }
+template< int SHIFT >
+static inline rvbv Snd_ReverbQmul4( rvbv x, rvbv g ) {
+	int32x4_t s  = vshrq_n_s32( x, 31 );
+	int32x4_t ax = vsubq_s32( veorq_s32( x, s ), s );
+	int64x2_t pl = vshrq_n_s64( vmull_s32( vget_low_s32( ax ),  vget_low_s32( g ) ),  SHIFT );
+	int64x2_t ph = vshrq_n_s64( vmull_s32( vget_high_s32( ax ), vget_high_s32( g ) ), SHIFT );
+	int32x4_t r  = vcombine_s32( vmovn_s64( pl ), vmovn_s64( ph ) );
+	return vsubq_s32( veorq_s32( r, s ), s );
 }
 #endif
 
@@ -709,28 +749,29 @@ ID_INLINE void idSoundReverb::ProcessS16( const int *send, int *destAccum, int n
 	const bool echoOn = echoOutGainQ > 0;
 	const bool modOn  = modDepthQ16 > 0;
 
-#if defined(__SSE2__) && !defined(REVERB_FORCE_SCALAR)
+#ifdef REVERB_SIMD
 	/*
-	   The line stage vectorized 4 lanes at a time. Measured against this
-	   compiler's own -O3 output first: the scalar QMUL's sign conditional
-	   keeps the whole stage scalar (2032 insns, one packed op, 193
-	   branches in the loop body), so unlike the mix kernels this is not a
-	   fight with the autovectorizer. Gathers, taps and the LFO stay
-	   scalar; the shelf/damp/feedback arithmetic runs in 2x4 int32 lanes
-	   with the branch-free QMUL above, and the state vectors are hoisted
-	   across the frame loop. Bit-exactness against the scalar path is
-	   asserted by the bench, not assumed.
+	   The line stage vectorized 4 lanes at a time. Codegen was inspected
+	   first, per the mix-kernel lesson: the scalar QMUL's sign conditional
+	   keeps the whole stage scalar on both targets (x86-64: 2032 insns,
+	   one packed op, 193 branches; aarch64: 1336 insns, zero vector
+	   register references, 105 branches), so unlike the mix kernels this
+	   is not a fight with the autovectorizer. Gathers, taps and the LFO
+	   stay scalar; the shelf/damp/feedback arithmetic runs in 2x4 int32
+	   lanes with the branch-free QMUL above, and the state vectors are
+	   hoisted across the frame loop. Bit-exactness against the scalar
+	   path is asserted by the bench, not assumed.
 	*/
-	__m128i lfv0   = _mm_loadu_si128( (const __m128i *)&lfLoopI[0] );
-	__m128i lfv1   = _mm_loadu_si128( (const __m128i *)&lfLoopI[4] );
-	__m128i dampv0 = _mm_loadu_si128( (const __m128i *)&dampI[0] );
-	__m128i dampv1 = _mm_loadu_si128( (const __m128i *)&dampI[4] );
-	__m128i fbg0   = _mm_set_epi32( fbGainQ[3], fbGainQ[2], fbGainQ[1], fbGainQ[0] );
-	__m128i fbg1   = _mm_set_epi32( fbGainQ[7], fbGainQ[6], fbGainQ[5], fbGainQ[4] );
-	const __m128i lfAlpha   = _mm_set1_epi32( 32767 - lfLoopCoefQ );
-	const __m128i lfAdjV    = _mm_set1_epi32( lfAdjQ );
-	const __m128i lfAdjSgn  = _mm_set1_epi32( lfAdjNeg ? -1 : 0 );
-	const __m128i dampAlpha = _mm_set1_epi32( 32767 - dampCoefQ );
+	rvbv lfv0   = Rvb_Load( &lfLoopI[0] );
+	rvbv lfv1   = Rvb_Load( &lfLoopI[4] );
+	rvbv dampv0 = Rvb_Load( &dampI[0] );
+	rvbv dampv1 = Rvb_Load( &dampI[4] );
+	const rvbv fbg0      = Rvb_Set4( fbGainQ[0], fbGainQ[1], fbGainQ[2], fbGainQ[3] );
+	const rvbv fbg1      = Rvb_Set4( fbGainQ[4], fbGainQ[5], fbGainQ[6], fbGainQ[7] );
+	const rvbv lfAlpha   = Rvb_Set1( 32767 - lfLoopCoefQ );
+	const rvbv lfAdjV    = Rvb_Set1( lfAdjQ );
+	const rvbv lfAdjSgn  = Rvb_Set1( lfAdjNeg ? -1 : 0 );
+	const rvbv dampAlpha = Rvb_Set1( 32767 - dampCoefQ );
 #endif
 
 	for ( int i = 0; i < numFrames; i++ ) {
@@ -752,7 +793,7 @@ ID_INLINE void idSoundReverb::ProcessS16( const int *send, int *destAccum, int n
 		}
 
 		int out[REVERB_LINES]; long long sum = 0;
-#if defined(__SSE2__) && !defined(REVERB_FORCE_SCALAR)
+#ifdef REVERB_SIMD
 		int a0A[REVERB_LINES], dA[REVERB_LINES], fracA[REVERB_LINES];
 		for ( int l = 0; l < REVERB_LINES; l++ ) {
 			unsigned tap = densityTapQ16[l];
@@ -786,42 +827,30 @@ ID_INLINE void idSoundReverb::ProcessS16( const int *send, int *destAccum, int n
 			dA[l]  = b0 - a0;
 			fracA[l] = (int)( tap & 0xffffu );
 		}
-		__m128i a0v0 = _mm_loadu_si128( (const __m128i *)&a0A[0] );
-		__m128i a0v1 = _mm_loadu_si128( (const __m128i *)&a0A[4] );
-		__m128i dv0  = _mm_loadu_si128( (const __m128i *)&dA[0] );
-		__m128i dv1  = _mm_loadu_si128( (const __m128i *)&dA[4] );
-		__m128i frv0 = _mm_loadu_si128( (const __m128i *)&fracA[0] );
-		__m128i frv1 = _mm_loadu_si128( (const __m128i *)&fracA[4] );
 		// v = a0 + toward-zero( d * frac >> 16 ): the interp step
-		__m128i vv0 = _mm_add_epi32( a0v0, Snd_ReverbQmul4( dv0, frv0, 16 ) );
-		__m128i vv1 = _mm_add_epi32( a0v1, Snd_ReverbQmul4( dv1, frv1, 16 ) );
-		// LF decay shelf (loop gain bound enforced in StepBlockParams)
-		lfv0 = _mm_add_epi32( lfv0, Snd_ReverbQmul4( _mm_sub_epi32( vv0, lfv0 ), lfAlpha, 15 ) );
-		lfv1 = _mm_add_epi32( lfv1, Snd_ReverbQmul4( _mm_sub_epi32( vv1, lfv1 ), lfAlpha, 15 ) );
-		{
-			__m128i t0 = Snd_ReverbQmul4( lfv0, lfAdjV, 15 );
-			__m128i t1 = Snd_ReverbQmul4( lfv1, lfAdjV, 15 );
-			t0 = _mm_sub_epi32( _mm_xor_si128( t0, lfAdjSgn ), lfAdjSgn );
-			t1 = _mm_sub_epi32( _mm_xor_si128( t1, lfAdjSgn ), lfAdjSgn );
-			vv0 = _mm_add_epi32( vv0, t0 );
-			vv1 = _mm_add_epi32( vv1, t1 );
-		}
+		rvbv vv0 = Rvb_Add( Rvb_Load( &a0A[0] ), Snd_ReverbQmul4<16>( Rvb_Load( &dA[0] ), Rvb_Load( &fracA[0] ) ) );
+		rvbv vv1 = Rvb_Add( Rvb_Load( &a0A[4] ), Snd_ReverbQmul4<16>( Rvb_Load( &dA[4] ), Rvb_Load( &fracA[4] ) ) );
+		// LF decay shelf (loop gain bound enforced in StepBlockParams);
+		// lfAdj is the one signed gain: multiply the magnitude, then
+		// conditionally negate with the precomputed sign mask
+		lfv0 = Rvb_Add( lfv0, Snd_ReverbQmul4<15>( Rvb_Sub( vv0, lfv0 ), lfAlpha ) );
+		lfv1 = Rvb_Add( lfv1, Snd_ReverbQmul4<15>( Rvb_Sub( vv1, lfv1 ), lfAlpha ) );
+		vv0 = Rvb_Add( vv0, Rvb_CSign( Snd_ReverbQmul4<15>( lfv0, lfAdjV ), lfAdjSgn ) );
+		vv1 = Rvb_Add( vv1, Rvb_CSign( Snd_ReverbQmul4<15>( lfv1, lfAdjV ), lfAdjSgn ) );
 		// damping one-pole
-		dampv0 = _mm_add_epi32( dampv0, Snd_ReverbQmul4( _mm_sub_epi32( vv0, dampv0 ), dampAlpha, 15 ) );
-		dampv1 = _mm_add_epi32( dampv1, Snd_ReverbQmul4( _mm_sub_epi32( vv1, dampv1 ), dampAlpha, 15 ) );
-		_mm_storeu_si128( (__m128i *)&out[0], dampv0 );
-		_mm_storeu_si128( (__m128i *)&out[4], dampv1 );
+		dampv0 = Rvb_Add( dampv0, Snd_ReverbQmul4<15>( Rvb_Sub( vv0, dampv0 ), dampAlpha ) );
+		dampv1 = Rvb_Add( dampv1, Snd_ReverbQmul4<15>( Rvb_Sub( vv1, dampv1 ), dampAlpha ) );
+		Rvb_Store( &out[0], dampv0 );
+		Rvb_Store( &out[4], dampv1 );
 		for ( int l = 0; l < REVERB_LINES; l++ ) {
 			sum += out[l];	// int64 accumulate: identical to the scalar path
 		}
 		int sumQ = (int)( sum >> 2 );	// 2/8 exactly
-		__m128i sumv = _mm_set1_epi32( sumQ );
-		__m128i xv   = _mm_set1_epi32( x );
-		__m128i fb0  = _mm_add_epi32( xv, Snd_ReverbQmul4( _mm_sub_epi32( dampv0, sumv ), fbg0, 15 ) );
-		__m128i fb1  = _mm_add_epi32( xv, Snd_ReverbQmul4( _mm_sub_epi32( dampv1, sumv ), fbg1, 15 ) );
+		rvbv sumv = Rvb_Set1( sumQ );
+		rvbv xv   = Rvb_Set1( x );
 		int fbA[REVERB_LINES];
-		_mm_storeu_si128( (__m128i *)&fbA[0], fb0 );
-		_mm_storeu_si128( (__m128i *)&fbA[4], fb1 );
+		Rvb_Store( &fbA[0], Rvb_Add( xv, Snd_ReverbQmul4<15>( Rvb_Sub( dampv0, sumv ), fbg0 ) ) );
+		Rvb_Store( &fbA[4], Rvb_Add( xv, Snd_ReverbQmul4<15>( Rvb_Sub( dampv1, sumv ), fbg1 ) ) );
 		for ( int l = 0; l < REVERB_LINES; l++ ) {
 			unsigned p = linePos[l] % (unsigned)lineLen[l];
 			lineI[l][p] = fbA[l];
@@ -923,11 +952,11 @@ ID_INLINE void idSoundReverb::ProcessS16( const int *send, int *destAccum, int n
 		apPos[0]++; apPos[1]++;
 		modPhase += modPhaseInc;
 	}
-#if defined(__SSE2__) && !defined(REVERB_FORCE_SCALAR)
-	_mm_storeu_si128( (__m128i *)&lfLoopI[0], lfv0 );
-	_mm_storeu_si128( (__m128i *)&lfLoopI[4], lfv1 );
-	_mm_storeu_si128( (__m128i *)&dampI[0],   dampv0 );
-	_mm_storeu_si128( (__m128i *)&dampI[4],   dampv1 );
+#ifdef REVERB_SIMD
+	Rvb_Store( &lfLoopI[0], lfv0 );
+	Rvb_Store( &lfLoopI[4], lfv1 );
+	Rvb_Store( &dampI[0],   dampv0 );
+	Rvb_Store( &dampI[4],   dampv1 );
 #endif
 	#undef QMUL
 }
