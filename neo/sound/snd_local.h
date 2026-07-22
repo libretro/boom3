@@ -692,6 +692,7 @@ public:
 	static idCVar			s_useReverb;
 	static idCVar			s_reverbGain;
 	static idCVar			s_HRTF;
+	static idCVar			s_reverse;
 
 	idSoundCache *			soundCache;
 

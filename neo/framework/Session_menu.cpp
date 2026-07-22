@@ -930,8 +930,18 @@ void idSessionLocal::HandleMainMenuCommands( const char *menuCommand ) {
 				if ( old != cvarSystem->GetCVarInteger( "s_numberOfSpeakers" ) ) {
 					// unconditionally the string that doesn't mention the
 					// Windows control panel: the frontend's audio is stereo
-					// regardless of OS, so 5.1 is never available here
-					MessageBox( MSG_OK, common->GetLanguageDict()->GetString( "#str_07230" ), common->GetLanguageDict()->GetString( "#str_04141" ), true );
+					// regardless of OS, so 5.1 is never available here.
+					// #str_07230 is a dhewm3 ADDITION absent from stock
+					// retail data - the dict returns the key itself when a
+					// string is missing, so fall back to a code literal
+					// rather than showing "#str_07230" to the user.
+					{
+						const char *surroundMsg = common->GetLanguageDict()->GetString( "#str_07230" );
+						if ( surroundMsg[0] == '#' ) {
+							surroundMsg = "Surround speakers are not supported:\naudio output in this core is stereo.";
+						}
+						MessageBox( MSG_OK, surroundMsg, common->GetLanguageDict()->GetString( "#str_04141" ), true );
+					}
 				}
 			}
 			if ( !vcmd.Icmp( "eax" ) ) {

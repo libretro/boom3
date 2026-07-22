@@ -270,6 +270,8 @@ This can be configured with the following CVars:
   sounds from hard-clipping, `1`: Enable (default), `0`: plain hard clip. Replaces both
   `s_alOutputLimiter` (never implemented here) and `s_scaleDownAndClamp` (removed - overload is
   handled at the output stage now, with no permanent volume reduction).
+- `s_reverse` swap the left and right output channels, `0`: Disable (default), `1`: Enable.
+  This is what the "Reverse Channels" row in the game's audio menu toggles.
 - `s_HRTF` binaural rendering of spatialized sounds through the MIT KEMAR HRTF set, for
   **headphones** only, `0`: Disable (default), `1`: Enable. Unlike dhewm3's `s_alHRTF` this is
   built into the core's own mixer (no OpenAL) and works in both the integer and float audio

@@ -70,6 +70,7 @@ idCVar idSoundSystemLocal::s_skipHelltimeFX( "s_skipHelltimeFX", "0", CVAR_SOUND
 
 idCVar idSoundSystemLocal::s_outputLimiter( "s_outputLimiter", "1", CVAR_SOUND | CVAR_BOOL, "soft-knee saturator at the output stage; 0 = hard clip" );
 idCVar idSoundSystemLocal::s_HRTF( "s_HRTF", "0", CVAR_SOUND | CVAR_BOOL | CVAR_ARCHIVE, "binaural rendering of spatialized sounds for headphones (KEMAR HRTF)" );
+idCVar idSoundSystemLocal::s_reverse( "s_reverse", "0", CVAR_SOUND | CVAR_BOOL | CVAR_ARCHIVE, "swap left and right output channels" );
 
 
 
@@ -478,6 +479,20 @@ void idSoundSystemLocal::MixFrameFloat( float *dest, int numFrames ) {
 		Snd_SoftKneeFloatOutput( dest, numFrames * 2 );
 	else
 		Snd_ClampFloatOutput( dest, numFrames * 2 );
+
+	/*
+	   s_reverse: the "Reverse Channels" row in the game's audio menu.
+	   The cvar vanished with the OpenAL backend, leaving that menu row
+	   a dead toggle (retail mainmenu.gui is data this core cannot
+	   ship modified, so the row cannot be removed - make it work
+	   instead). A pure output permutation: stateless, bit-exact,
+	   nothing downstream to care.
+	*/
+	if ( s_reverse.GetBool() ) {
+		for ( int i = 0; i < numFrames; i++ ) {
+			float t = dest[i*2]; dest[i*2] = dest[i*2+1]; dest[i*2+1] = t;
+		}
+	}
 	CurrentSoundTime += numFrames;
 }
 
@@ -501,6 +516,13 @@ void idSoundSystemLocal::MixFrameS16( short *dest, int numFrames ) {
 		Snd_SumToS16Soft( dest, accum, numFrames * 2 );
 	else
 		Snd_SumToS16( dest, accum, numFrames * 2 );
+
+	// s_reverse: see MixFrameFloat
+	if ( s_reverse.GetBool() ) {
+		for ( int i = 0; i < numFrames; i++ ) {
+			short t = dest[i*2]; dest[i*2] = dest[i*2+1]; dest[i*2+1] = t;
+		}
+	}
 	if ( isInitialized && !shutdown )
 		CurrentSoundTime += numFrames;
 }
