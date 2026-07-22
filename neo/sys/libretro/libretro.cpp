@@ -456,6 +456,16 @@ static void update_variables(bool startup)
 	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
 		cvarSystem->SetCVarBool("r_perFrameShadowVolumes", strcmp(var.value, "enabled") == 0);
 
+	/* HRTF: 'auto' means hands off - the archived s_HRTF cvar (console,
+	 * config) stays in charge; only an explicit enabled/disabled from the
+	 * frontend menu overrides it. Live-toggling works: the mixer reads
+	 * the cvar per block and the binaural path keeps its own history
+	 * validity, so switching mid-game is clean. */
+	var.key = "doom_hrtf";
+	var.value = NULL;
+	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value && strcmp(var.value, "auto") != 0)
+		cvarSystem->SetCVarBool("s_HRTF", strcmp(var.value, "enabled") == 0);
+
 	var.key = "doom_machine_spec";
 	var.value = NULL;
 

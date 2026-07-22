@@ -118,6 +118,24 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "auto"
    },
    {
+      "doom_hrtf",
+      "Sound: HRTF (Headphones)",
+      NULL,
+      "Binaural rendering of spatialized sounds through the built-in KEMAR "
+      "HRTF - positional audio for headphones. Sounds wrong on speakers. "
+      "'Auto' leaves the s_HRTF cvar in charge, so console or config "
+      "settings are respected; 'Enabled'/'Disabled' override it.",
+      NULL,
+      NULL,
+      {
+         { "auto",        "Auto (s_HRTF cvar)" },
+         { "disabled",    NULL },
+         { "enabled",     NULL },
+         { NULL, NULL },
+      },
+      "auto"
+   },
+   {
       "doom_resolution",
       "Internal resolution (Restart Required)",
       NULL,
