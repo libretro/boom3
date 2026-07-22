@@ -928,12 +928,10 @@ void idSessionLocal::HandleMainMenuCommands( const char *menuCommand ) {
 				int old = cvarSystem->GetCVarInteger( "s_numberOfSpeakers" );
 				cmdSystem->BufferCommandText( CMD_EXEC_NOW, "s_restart\n" );
 				if ( old != cvarSystem->GetCVarInteger( "s_numberOfSpeakers" ) ) {
-#ifdef _WIN32
-					MessageBox( MSG_OK, common->GetLanguageDict()->GetString( "#str_04142" ), common->GetLanguageDict()->GetString( "#str_04141" ), true );
-#else
-					// a message that doesn't mention the windows control panel
+					// unconditionally the string that doesn't mention the
+					// Windows control panel: the frontend's audio is stereo
+					// regardless of OS, so 5.1 is never available here
 					MessageBox( MSG_OK, common->GetLanguageDict()->GetString( "#str_07230" ), common->GetLanguageDict()->GetString( "#str_04141" ), true );
-#endif
 				}
 			}
 			if ( !vcmd.Icmp( "eax" ) ) {
@@ -1384,41 +1382,40 @@ const char* idSessionLocal::MessageBox( msgBoxType_t type, const char *message, 
 	msgRetIndex = -1;
 
 	if ( wait ) {
-		// play one frame ignoring events so we don't get confused by parasite button releases
-		msgIgnoreButtons = true;
-		common->GUIFrame( true, network );
-		msgIgnoreButtons = false;
-		while ( msgRunning ) {
-			common->GUIFrame( true, network );
-		}
-		if ( msgRetIndex < 0 ) {
-			// MSG_WAIT and other StopBox calls
+		/*
+		   Blocking wait is impossible in a libretro core: retro_run must
+		   return every frame, and input only arrives when it does. The
+		   original nested GUIFrame pump rendered (GL swaps still reach
+		   the frontend) but could never receive the click that ends it -
+		   the process hung with the dialog visibly up, which is exactly
+		   what the surround-speakers "unable to locate 3D audio" dialog
+		   did. Degrade instead of spinning:
+
+		   - MSG_OK / MSG_WAIT / MSG_ABORT / MSG_INFO: every caller
+		     ignores the return value. Leave the dialog up non-blocking -
+		     the normal per-frame session flow renders it and OK
+		     dismisses it through HandleMsgCommands - and return NULL,
+		     which is what the original returned for a stopped box.
+
+		   - Question types (MSG_YESNO, MSG_OKCANCEL, MSG_PROMPT,
+		     MSG_CDKEY): callers dereference the return unconditionally
+		     and branch on it, so an answer must exist NOW. Take the
+		     decline ("" = no/cancel/empty everywhere it is checked),
+		     and tear the box down first so a later click cannot fire
+		     stale firebacks into a decision already taken.
+		*/
+		if ( type == MSG_OK || type == MSG_WAIT || type == MSG_ABORT || type == MSG_INFO ) {
 			return NULL;
 		}
-		if ( type == MSG_PROMPT ) {
-			if ( msgRetIndex == 0 ) {
-				guiMsg->State().GetString( "str_entry", "", msgFireBack[ 0 ] );
-				return msgFireBack[ 0 ].c_str();
-			} else {
-				return NULL;
-			}
-		} else if ( type == MSG_CDKEY ) {
-			if ( msgRetIndex == 0 ) {
-				// the visible_ values distinguish looking at a valid key, or editing it
-				sprintf( msgFireBack[ 0 ], "%1s;%16s;%2s;%1s;%16s;%2s",
-						 guiMsg->State().GetString( "visible_cdchk" ),
-						 guiMsg->State().GetString( "str_cdkey" ),
-						 guiMsg->State().GetString( "str_cdchk" ),
-						 guiMsg->State().GetString( "visible_xpchk" ),
-						 guiMsg->State().GetString( "str_xpkey" ),
-						 guiMsg->State().GetString( "str_xpchk" ) );
-				return msgFireBack[ 0 ].c_str();
-			} else {
-				return NULL;
-			}
-		} else {
-			return msgFireBack[ msgRetIndex ].c_str();
+		common->Warning( "MessageBox: modal '%s' cannot block in a libretro core, answering no/cancel", title ? title : "" );
+		msgRunning = false;
+		guiActive = guiMsgRestore;
+		guiMsgRestore = NULL;
+		if ( guiActive ) {
+			guiActive->Activate( true, com_frameTime );
 		}
+		msgFireBack[ 0 ] = "";
+		return msgFireBack[ 0 ].c_str();
 	}
 	return NULL;
 }
@@ -1455,6 +1452,21 @@ void idSessionLocal::DownloadProgressBox( backgroundDownload_t *bgl, const char 
 	guiMsgRestore = guiActive;
 	guiActive = guiMsg;
 	msgRunning = true;
+
+	/*
+	   Same nested-GUIFrame pump as the old MessageBox wait branch, same
+	   impossibility in a libretro core (see the comment there): the loop
+	   would render but never receive the input that ends it, hanging
+	   retro_run. This path is only reachable through multiplayer
+	   server-pushed pak downloads; degrade by aborting the transfer and
+	   returning, which is the loop's own user-cancel outcome.
+	*/
+	common->Warning( "DownloadProgressBox: cannot block in a libretro core, aborting download" );
+	bgl->url.status = DL_ABORTING;
+	msgRunning = false;
+	guiActive = guiMsgRestore;
+	guiMsgRestore = NULL;
+	return;
 
 	while ( 1 ) {
 		while ( msgRunning ) {
