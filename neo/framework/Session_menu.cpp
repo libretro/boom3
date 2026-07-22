@@ -925,24 +925,18 @@ void idSessionLocal::HandleMainMenuCommands( const char *menuCommand ) {
 				vcmd = args.Argv( icmd++ );
 			}
 			if ( !vcmd.Length() || !vcmd.Icmp( "speakers" ) ) {
-				int old = cvarSystem->GetCVarInteger( "s_numberOfSpeakers" );
-				cmdSystem->BufferCommandText( CMD_EXEC_NOW, "s_restart\n" );
-				if ( old != cvarSystem->GetCVarInteger( "s_numberOfSpeakers" ) ) {
-					// unconditionally the string that doesn't mention the
-					// Windows control panel: the frontend's audio is stereo
-					// regardless of OS, so 5.1 is never available here.
-					// #str_07230 is a dhewm3 ADDITION absent from stock
-					// retail data - the dict returns the key itself when a
-					// string is missing, so fall back to a code literal
-					// rather than showing "#str_07230" to the user.
-					{
-						const char *surroundMsg = common->GetLanguageDict()->GetString( "#str_07230" );
-						if ( surroundMsg[0] == '#' ) {
-							surroundMsg = "Surround speakers are not supported:\naudio output in this core is stereo.";
-						}
-						MessageBox( MSG_OK, surroundMsg, common->GetLanguageDict()->GetString( "#str_04141" ), true );
-					}
-				}
+				/*
+				   The "Surround Speakers" row, repurposed. Its original job -
+				   switch to 5.1 - is permanently impossible here (libretro
+				   audio is stereo), which left the row a toggle whose only
+				   function was showing an error. It now drives the binaural
+				   renderer: Yes = s_HRTF on. No restart (the mixer reads the
+				   cvar per block and live-toggles cleanly), no failure
+				   dialog (there is no failure mode). The row's display value
+				   (s_numberOfSpeakers) is synced back from s_HRTF at InitHW,
+				   so it shows the real state after restarts and config loads.
+				*/
+				cvarSystem->SetCVarBool( "s_HRTF", cvarSystem->GetCVarInteger( "s_numberOfSpeakers" ) == 6 );
 			}
 			if ( !vcmd.Icmp( "eax" ) ) {
 				// EFX reverb was removed along with OpenAL; nothing to toggle

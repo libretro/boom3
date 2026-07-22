@@ -375,18 +375,17 @@ idSoundSystemLocal::InitHW
 ===============
 */
 bool idSoundSystemLocal::InitHW() {
-	int numSpeakers = 2;
-	if (numSpeakers != 2 && numSpeakers != 6) {
-		common->Warning("invalid value for s_numberOfSpeakers. Use either 2 or 6");
-		numSpeakers = 2;
-		s_numberOfSpeakers.SetInteger(numSpeakers);
-	}
-
-
 	common->Printf("Initializing sound system\n");
 
-	// put the real number in there
-	s_numberOfSpeakers.SetInteger(numSpeakers);
+	/*
+	   Output is stereo, always - the mixer never consults
+	   s_numberOfSpeakers. The cvar survives purely as the display value
+	   of the game menu's (repurposed) "Surround Speakers" row, which now
+	   toggles s_HRTF; sync it here so the row shows the real state after
+	   restarts and config loads. A console s_HRTF change mid-session
+	   desyncs the row until the next s_restart - cosmetic only.
+	*/
+	s_numberOfSpeakers.SetInteger( s_HRTF.GetBool() ? 6 : 2 );
 
 	/*
 	   Binaural renderer: resolve the HRIR set at the final output rate.
@@ -568,7 +567,7 @@ cinData_t idSoundSystemLocal::ImageForTime( const int milliseconds, const bool w
 	float *accum = finalMixBuffer;	// unfortunately, these are already clamped
 	int time = Core_Milliseconds();
 
-	int numSpeakers = s_numberOfSpeakers.GetInteger();
+	int numSpeakers = 2;	// meter layout: output is stereo; the cvar is a menu display value
 
 	if ( !waveform ) {
 		for( j = 0; j < numSpeakers; j++ ) {

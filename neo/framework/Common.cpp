@@ -2565,7 +2565,10 @@ void idCommonLocal::InitGame( void ) {
 	if ( sysDetect ) {
 		SetMachineSpec();
 		Com_ExecMachineSpec_f( args );
-		cvarSystem->SetCVarInteger( "s_numberOfSpeakers", 6 );
+		// OpenAL-era: fast machines defaulted to 5.1. s_numberOfSpeakers
+		// is now the display value of the repurposed Surround/HRTF menu
+		// row - a headphone preference no machine spec can detect, so
+		// leave it alone.
 		cmdSystem->BufferCommandText( CMD_EXEC_NOW, "s_restart\n" );
 		cmdSystem->ExecuteCommandBuffer();
 	}

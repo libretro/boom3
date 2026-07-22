@@ -276,6 +276,10 @@ This can be configured with the following CVars:
   **headphones** only, `0`: Disable (default), `1`: Enable. Unlike dhewm3's `s_alHRTF` this is
   built into the core's own mixer (no OpenAL) and works in both the integer and float audio
   pipelines. Leave it off on speakers - crosstalk makes binaural rendering sound wrong there.
+  Toggled by the game menu's "Surround Speakers" row (System Options → audio): 5.1 output can
+  never exist on this stereo core, so that row now drives the binaural renderer instead of
+  showing an error. Also available as the `Sound: HRTF (Headphones)` core option in the
+  frontend's Quick Menu → Options.
 
 - `imgui_scale` Factor to scale ImGui menus by (especially relevant for HighDPI displays).
   Should be a positive factor like `1.5` or `2`; or `-1` (the default) to let dhewm3 automatically
