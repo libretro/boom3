@@ -131,7 +131,7 @@ android-armeabi-v7a:
 # Android x86_64
 android-x86_64:
   extends:
-    - .android-make-x86_64
+    - .libretro-android-make-x86_64
     - .core-defs
 
 # iOS
