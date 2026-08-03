@@ -577,28 +577,31 @@ soundCacheAllocator'd buffer and writes the output sample-count (per channel)
 to *outFrames. Returns NULL on failure (caller keeps the native-rate data).
 ===================
 */
-static short *ResamplePCMToOutput( const short *src, int srcFrames, int channels, int srcRate, int *outFrames ) {
-	if ( srcRate >= snd_SampleRate() || srcFrames <= 0 ) {
+/*
+   Pull-driven core: the resample loop consumes source frames from a
+   callback instead of a flat buffer, so decode and resample can fuse -
+   the caller's pull can be a memory walk (ResamplePCMToOutput below)
+   or a live audio_transfer_read_s16 (LoadWAV_transfer), and the full
+   decoded intermediate never needs to exist in the latter case. The
+   bench's chunk-invariance oracle is what makes this safe: the sinc's
+   sequential chunked output is bit-identical regardless of how the
+   pull slices the stream, so fusing changes no output byte.
+   pull returns frames written (interleaved at 'channels'), 0 at end,
+   negative on error.
+*/
+typedef int (*rsPull_t)( void *ud, short *dst, int maxFrames );
+
+static short *ResampleStreamToOutput( rsPull_t pull, void *ud, int srcFramesTotal,
+		int channels, int srcRate, int *outFrames ) {
+	if ( srcRate >= snd_SampleRate() || srcFramesTotal <= 0 ) {
 		return NULL;	// nothing to do
 	}
 
 	double ratio = (double)snd_SampleRate() / (double)srcRate;
 
-	/*
-	   Chunked feed. The previous version duplicated mono to a whole-file
-	   stereo staging buffer, resampled the whole file into a second
-	   whole-file stereo buffer, then packed down - load-time peak of
-	   roughly src + 2x src + 2x out on top of the final buffer. The
-	   sinc is a stateful FIR whose sequential chunked processing is
-	   bit-identical to one whole-buffer call (asserted by the bench's
-	   chunk-invariance test), so feed it in fixed chunks instead: the
-	   per-chunk staging is a few KB, the output lands directly in the
-	   final cache buffer for stereo, and mono packs down per chunk.
-	   Peak becomes src + out + epsilon.
-	*/
 	#define RS_CHUNK 1024	/* input frames per feed */
 
-	int outCap = (int)( srcFrames * ratio ) + 64;
+	int outCap = (int)( srcFramesTotal * ratio ) + 64;
 	short *result = (short *)soundCacheAllocator.Alloc( outCap * channels * sizeof( short ) );
 
 	void *re = sinc_resampler_int16_init( 1.0, SINC_INT16_QUALITY_HIGHER );
@@ -607,15 +610,21 @@ static short *ResamplePCMToOutput( const short *src, int srcFrames, int channels
 		return NULL;
 	}
 
+	static short pullBuf[RS_CHUNK * 2];
 	static short chunkIn[RS_CHUNK * 2];
 	static short chunkOut[RS_CHUNK * 8];	/* covers ratios up to ~4x (11025 -> 44100) */
 
 	int producedFrames = 0;
-	int pos = 0;
-	bool overflow = false;
-	while ( pos < srcFrames ) {
-		int n = srcFrames - pos;
-		if ( n > RS_CHUNK ) n = RS_CHUNK;
+	bool failed = false;
+	for ( ;; ) {
+		int n = pull( ud, pullBuf, RS_CHUNK );
+		if ( n < 0 ) {
+			failed = true;
+			break;
+		}
+		if ( n == 0 ) {
+			break;
+		}
 
 		struct resampler_data_int16 d;
 		memset( &d, 0, sizeof( d ) );
@@ -623,10 +632,10 @@ static short *ResamplePCMToOutput( const short *src, int srcFrames, int channels
 		d.input_frames = n;
 		d.data_out = chunkOut;
 		if ( channels == 2 ) {
-			d.data_in = src + pos * 2;
+			d.data_in = pullBuf;
 		} else {
 			for ( int i = 0; i < n; i++ ) {
-				chunkIn[i*2+0] = chunkIn[i*2+1] = src[pos + i];
+				chunkIn[i*2+0] = chunkIn[i*2+1] = pullBuf[i];
 			}
 			d.data_in = chunkIn;
 		}
@@ -634,7 +643,7 @@ static short *ResamplePCMToOutput( const short *src, int srcFrames, int channels
 
 		int got = (int)d.output_frames;
 		if ( producedFrames + got > outCap ) {
-			overflow = true;	/* cannot happen for sane ratios; fail closed */
+			failed = true;	/* cannot happen for sane ratios; fail closed */
 			break;
 		}
 		if ( channels == 2 ) {
@@ -645,11 +654,10 @@ static short *ResamplePCMToOutput( const short *src, int srcFrames, int channels
 			}
 		}
 		producedFrames += got;
-		pos += n;
 	}
 	sinc_resampler_int16_free( re );
 
-	if ( overflow || producedFrames <= 0 ) {
+	if ( failed || producedFrames <= 0 ) {
 		soundCacheAllocator.Free( (byte *)result );
 		return NULL;
 	}
@@ -657,6 +665,37 @@ static short *ResamplePCMToOutput( const short *src, int srcFrames, int channels
 	*outFrames = producedFrames;
 	return result;
 	#undef RS_CHUNK
+}
+
+/* memory pull for the flat-buffer callers (the idWaveFile fallback path) */
+typedef struct rsMemPull_s {
+	const short *src;
+	int pos;
+	int total;
+	int channels;
+} rsMemPull_t;
+
+static int RsMemPull( void *ud, short *dst, int maxFrames ) {
+	rsMemPull_t *m = (rsMemPull_t *)ud;
+	int n = m->total - m->pos;
+	if ( n <= 0 ) {
+		return 0;
+	}
+	if ( n > maxFrames ) {
+		n = maxFrames;
+	}
+	memcpy( dst, m->src + m->pos * m->channels, n * m->channels * sizeof( short ) );
+	m->pos += n;
+	return n;
+}
+
+static short *ResamplePCMToOutput( const short *src, int srcFrames, int channels, int srcRate, int *outFrames ) {
+	rsMemPull_t m;
+	m.src = src;
+	m.pos = 0;
+	m.total = srcFrames;
+	m.channels = channels;
+	return ResampleStreamToOutput( RsMemPull, &m, srcFrames, channels, srcRate, outFrames );
 }
 
 // Load a WAV via libretro-common audio_transfer instead of idWaveFile. Reads
@@ -699,22 +738,76 @@ static bool LoadWAV_transfer( const char *name, waveformatex_t *info, byte **out
 	}
 
 	int totalSamples = (int)( totalFrames * channels );
-	short *pcm = (short *)soundCacheAllocator.Alloc( totalSamples * sizeof( short ) );
+	short *pcm = NULL;
+	unsigned outRate = rate;
 
-	// pull the whole stream out in bounded chunks (read_s16 is the caller-paced
-	// analogue of image_transfer_process; here we drain it to completion at
-	// load time). frames are per-channel.
-	size_t framesLeft = (size_t)totalFrames;
-	short *dst = pcm;
-	while ( framesLeft > 0 ) {
-		size_t got = 0;
-		int ret = audio_transfer_read_s16( at, AUDIO_TYPE_WAV, dst, framesLeft, &got );
-		if ( got > 0 ) {
-			dst += got * channels;
-			framesLeft -= ( got <= framesLeft ) ? got : framesLeft;
+	if ( rate < (unsigned)snd_SampleRate() ) {
+		/*
+		   Sub-output-rate WAV: fuse decode and resample. The pull hands
+		   read_s16 chunks straight to the sinc, so the full decoded
+		   intermediate never exists - load peak is the compressed file
+		   plus the final output-rate buffer. Output bytes are identical
+		   to the old decode-all-then-resample pipeline by the
+		   chunk-invariance oracle.
+		*/
+		struct atPull_s { void *at; unsigned ch; bool done; } ap = { at, channels, false };
+		struct local {
+			static int Pull( void *ud, short *dst, int maxFrames ) {
+				struct atPull_s *p = (struct atPull_s *)ud;
+				if ( p->done ) {
+					return 0;
+				}
+				size_t got = 0;
+				int ret = audio_transfer_read_s16( p->at, AUDIO_TYPE_WAV, dst, (size_t)maxFrames, &got );
+				if ( ret == AUDIO_PROCESS_END || ret == AUDIO_PROCESS_ERROR_END || got == 0 ) {
+					p->done = true;
+				}
+				if ( ret == AUDIO_PROCESS_ERROR && got == 0 ) {
+					return -1;
+				}
+				return (int)got;
+			}
+		};
+		int outFrames = 0;
+		pcm = ResampleStreamToOutput( local::Pull, &ap, (int)totalFrames, (int)channels, (int)rate, &outFrames );
+		if ( pcm != NULL ) {
+			totalSamples = outFrames * (int)channels;
+			outRate = (unsigned)snd_SampleRate();
+		} else {
+			/*
+			   The fused path consumed an unknown amount of the stream;
+			   the plain-decode fallback below must start from frame 0
+			   or it reads a partially-drained transfer. If the rewind
+			   fails, fail the whole loader - the caller falls back to
+			   idWaveFile, which reopens the file itself.
+			*/
+			if ( !audio_transfer_seek( at, AUDIO_TYPE_WAV, 0 ) ) {
+				audio_transfer_free( at, AUDIO_TYPE_WAV );
+				fileSystem->FreeFile( fileBuf );
+				return false;
+			}
 		}
-		if ( ret == AUDIO_PROCESS_END || ret == AUDIO_PROCESS_ERROR || ret == AUDIO_PROCESS_ERROR_END || got == 0 ) {
-			break;
+	}
+
+	if ( pcm == NULL ) {
+		/* at output rate already, or the fused path declined: plain decode */
+		pcm = (short *)soundCacheAllocator.Alloc( totalSamples * sizeof( short ) );
+
+		// pull the whole stream out in bounded chunks (read_s16 is the
+		// caller-paced analogue of image_transfer_process; here we drain it
+		// to completion at load time). frames are per-channel.
+		size_t framesLeft = (size_t)totalFrames;
+		short *dst = pcm;
+		while ( framesLeft > 0 ) {
+			size_t got = 0;
+			int ret = audio_transfer_read_s16( at, AUDIO_TYPE_WAV, dst, framesLeft, &got );
+			if ( got > 0 ) {
+				dst += got * channels;
+				framesLeft -= ( got <= framesLeft ) ? got : framesLeft;
+			}
+			if ( ret == AUDIO_PROCESS_END || ret == AUDIO_PROCESS_ERROR || ret == AUDIO_PROCESS_ERROR_END || got == 0 ) {
+				break;
+			}
 		}
 	}
 
@@ -725,10 +818,10 @@ static bool LoadWAV_transfer( const char *name, waveformatex_t *info, byte **out
 	memset( info, 0, sizeof( *info ) );
 	info->wFormatTag = WAVE_FORMAT_TAG_PCM;
 	info->nChannels = (word)channels;
-	info->nSamplesPerSec = rate;
+	info->nSamplesPerSec = outRate;
 	info->wBitsPerSample = 16;
 	info->nBlockAlign = (word)( channels * sizeof( short ) );
-	info->nAvgBytesPerSec = rate * channels * sizeof( short );
+	info->nAvgBytesPerSec = outRate * channels * sizeof( short );
 
 	*outData = (byte *)pcm;
 	*outBytes = totalSamples * sizeof( short );
