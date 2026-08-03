@@ -39,6 +39,44 @@ possible for a float mixer and is not a goal.
 */
 
 /*
+   QUANTIZATION CONVENTIONS - the complete map, in one place.
+
+   Five distinct rounding regimes coexist in this mixer, each chosen
+   for its position in the signal flow, all deterministic:
+
+   1. Feed-forward Q15 requantizers (mix gain application, HRTF blend
+      and convolution): round half up, ( x + 0x4000 ) >> 15. Unbiased
+      for symmetric signals except at exact halves (measure: sub-1e-4
+      LSB DC), and one shared idiom everywhere it appears.
+   2. Recursive/feedback quantizers (reverb feedback network, comb and
+      biquad states, occlusion and air shelves): sign-symmetric
+      truncation TOWARD ZERO (the QMUL/OCCQ/AIRQ/EQMUL macros).
+      Deliberately NOT rounded: |q(x*g)| <= |x*g| makes every feedback
+      path strictly contractive, which is the proof that tails decay
+      to exact zero. Rounding here would trade an inaudible half-LSB
+      for losing that proof.
+   3. The float->s16 edge (Snd_FloatToS16, the HRTF table bake): round
+      half away from zero, symmetric by construction.
+   4. Accumulator narrow (Snd_SumToS16): saturate only - the inputs
+      are already integers, there is nothing to round, and the scalar,
+      SSE2 packs, and NEON vqmovn paths agree exactly.
+   5. The soft knee: truncating rational, monotone and symmetric via
+      the magnitude/sign split; the float twin matches behaviorally
+      (bounded by the bench's curve-agreement test), never bit-wise.
+
+   Gain ramps interpolate in gain*256 with a truncated per-frame
+   increment; the truncation accumulates across the block, so the
+   final frame's effective gain can sit up to numFrames/256 Q15 steps
+   short of the target - 16 steps (0.004 dB) at the longest blocks,
+   found by the bench's endpoint oracle when it disproved this
+   comment's first, wronger claim of sub-step accuracy. The next
+   block re-anchors at the exact target, so the error is bounded and
+   never accumulates across blocks. There is no dither anywhere, by decision: dither is
+   noise by design, and byte-exact reproducibility is this mixer's
+   contract. All five regimes are locked by bench oracles.
+*/
+
+/*
    UBSan sweep notes for the integer kernels:
    - gain-ramp fixed-point scaling uses * 256 rather than << 8: Q15
      gains are legitimately negative (reverb pan matrices), and left

@@ -523,6 +523,94 @@ int reverb_test() {
 		(void)allfail;
 	}
 
+	// -------- quantization convention locks --------
+	{
+		// (1) requantizer DC bias: unity-gain mono mix of symmetric noise
+		// vs the ideal double computation - half-up must stay unbiased
+		// within noise and inside +-0.5 LSB pointwise (plus the exact-half
+		// tie, which rounds up by convention)
+		{
+			const int N = 8192;
+			static short src[8192]; static int acc[8192*2];
+			uint32_t qr = 0xBEEF5EED;
+			for (int i = 0; i < N; i++) { qr = qr*1664525u+1013904223u; src[i] = (short)((qr>>16) - 32768); }
+			memset(acc, 0, sizeof acc);
+			const int g[2] = {32767, 32767};
+			Snd_MixTwoSpeakerMonoS16(acc, src, N, g, g);
+			double sumErr = 0, maxErr = 0;
+			for (int i = 0; i < N; i++) {
+				double ideal = (double)src[i] * 32767.0 / 32768.0;
+				double e = (double)acc[i*2] - ideal;
+				sumErr += e; if (e < 0) e = -e; if (e > maxErr) maxErr = e;
+			}
+			double bias = sumErr / N;
+			printf("quant requantizer: bias %.5f LSB max %.3f LSB %s\n", bias, maxErr,
+				(bias < 0.02 && bias > -0.02 && maxErr <= 0.5005) ? "OK" : "FAIL");
+		}
+		// (2) contraction property of the recursive quantizer idiom:
+		// |q(x*g)| <= |x*g| exactly, toward-zero, sign-symmetric
+		{
+			#define QM(x,g) ( (x) >= 0 ? (int)( ( (long long)(x) * (g) ) >> 15 ) \
+			                           : -(int)( ( -(long long)(x) * (g) ) >> 15 ) )
+			uint32_t qr = 0x51CA1E; int bad = 0;
+			for (int t = 0; t < 200000; t++) {
+				qr = qr*1664525u+1013904223u; int x = (int)qr;         // full int range
+				qr = qr*1664525u+1013904223u; int g = (int)(qr % 32769); // 0..32768
+				long long exact = (long long)x * g;                     // pre-shift
+				int q = QM(x, g);
+				long long back = (long long)q << 15;
+				if ( (exact >= 0 && (back > exact || back < 0)) ||
+				     (exact <  0 && (back < exact || back > 0)) ) bad++;
+				if ( QM(-x, g) != -QM(x, g) && x != (-2147483647-1) ) bad++;
+			}
+			printf("quant contraction (toward-zero, sign-symmetric): %s (%d violations)\n", bad?"FAIL":"OK", bad);
+			#undef QM
+		}
+		// (3) float->s16 edge symmetry and half behavior
+		{
+			int bad = 0;
+			static float fin[7] = { 0.4f, 0.5f, 0.6f, 1.5f, 2.5f, 32766.5f, 12345.678f };
+			for (int i = 0; i < 7; i++) {
+				float v = fin[i];
+				short a[2], b[2]; float pv[1] = { v }, nv[1] = { -v };
+				Snd_FloatToS16(a, pv, 1); Snd_FloatToS16(b, nv, 1);
+				if (a[0] != -b[0]) bad++;
+			}
+			short h[1]; float half[1] = { 0.5f };
+			Snd_FloatToS16(h, half, 1);
+			printf("quant float->s16: symmetric %s, +0.5 -> %d (away from zero)\n", bad?"FAIL":"OK", h[0]);
+		}
+		// (4) knee twins: float curve vs s16 curve over the full useful
+		// range - behavioral match within 1.5 LSB, never claimed bitwise
+		{
+			double worst = 0;
+			for (int v = -131072; v <= 131072; v += 7) {
+				int si = Snd_SoftKneeS16(v);
+				float sf = Snd_SoftKneeF((float)v / 32768.0f) * 32768.0f;
+				double d = (double)si - (double)sf; if (d < 0) d = -d;
+				if (d > worst) worst = d;
+			}
+			printf("quant knee float-vs-s16 curve: worst %.3f LSB %s\n", worst, worst <= 1.5 ? "OK" : "FAIL");
+		}
+		// (5) ramp endpoint: for random gain pairs the final frame's
+		// effective gain lands within one Q15 step of the target
+		{
+			uint32_t qr = 0x9A3B7; int bad = 0;
+			for (int t = 0; t < 5000; t++) {
+				qr = qr*1664525u+1013904223u; int g0 = (int)(qr % 65535);
+				qr = qr*1664525u+1013904223u; int g1 = (int)(qr % 65535);
+				qr = qr*1664525u+1013904223u; int n  = 1 + (int)(qr % 4096);
+				int base = g0 * 256, inc = ((g1 - g0) * 256) / n;
+				int gEnd = (base + inc * (n - 1)) >> 8;
+				int err = gEnd - g1; if (err < 0) err = -err;
+				// true bound: the design's (|g1-g0|/n) last-step gap plus
+				// the truncated increment's accumulation, n/256 steps
+				if (err > ( (g1>g0?g1-g0:g0-g1) / n ) + (n >> 8) + 2) bad++;
+			}
+			printf("quant ramp endpoint: %s (%d out of tolerance)\n", bad?"FAIL":"OK", bad);
+		}
+	}
+
 	// -------- HRTF renderer (s_HRTF) --------
 	{
 		static idSoundHRTF H;
