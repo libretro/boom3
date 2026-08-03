@@ -1618,6 +1618,11 @@ static bool RetroBuildState(void)
 
 	// serialize straight into memory: no disk I/O anywhere in this path
 	idFile_Memory mem(RETRO_STATE_NAME ".save");
+	/* seed the buffer from the previous state's size: state sizes are
+	 * stable frame to frame, so the steady state is exactly one
+	 * allocation and zero growth copies per build */
+	if (retro_state_cache.Num() > 0)
+		mem.SetGranularity(retro_state_cache.Num() + 65536);
 	int stT0 = Core_Milliseconds();
 	retro_savestate_active = true;
 	bool ok = sessLocal.SaveGame(RETRO_STATE_NAME, true, NULL, &mem);

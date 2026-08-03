@@ -784,7 +784,20 @@ int idFile_Memory::Write( const void *buffer, int len ) {
 			common->Error( "idFile_Memory::Write: exceeded maximum size %d", maxSize );
 			return 0;
 		}
+		/*
+		   Geometric growth. The original grew by granularity-rounded
+		   need only, and every grow memcpys the whole current buffer -
+		   for a consumer that streams megabytes through per-field
+		   writes (the savestate build: a 4 MB state at 16 KB steps is
+		   ~256 grows and ~half a gigabyte of copy traffic), that is
+		   O(n^2/granularity) bytes moved. Growing by at least the
+		   current size makes it amortized O(n) with identical
+		   semantics; small files still grow by plain granularity.
+		*/
 		int extra = granularity * ( 1 + alloc / granularity );
+		if ( extra < allocated ) {
+			extra = allocated;
+		}
 		char *newPtr = (char *) Mem_Alloc( allocated + extra );
 		if ( allocated ) {
 			memcpy( newPtr, filePtr, allocated );
