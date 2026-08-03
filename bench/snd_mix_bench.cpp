@@ -20,6 +20,7 @@
 #endif
 #include "../neo/sound/snd_mix_kernels.h"
 #include "../neo/sound/snd_hrtf.h"
+#include "../neo/sys/libretro-common/audio/resampler/drivers/sinc_resampler_int16.c"
 
 // ---- the OLD kernels, verbatim semantics (idSIMD_Generic) ----
 static void OLD_MixSoundTwoSpeakerMono( float *mixBuffer, const float *samples, const int numSamples, const float lastV[2], const float currentV[2] ) {
@@ -481,6 +482,45 @@ int reverb_test() {
 		memset(id_,0,sizeof id_); iA.ProcessS16(is_,id_,512,0.5f);
 		for (int i=0;i<1024;i++) if (id_[i]) inz++;
 		printf("reverb int gated tail: %d nonzero %s\n", inz, inz?"FAIL":"OK (exact zero)");
+	}
+
+	// -------- int16 sinc chunk-invariance (snd_cache chunked feed) --------
+	{
+		// sequential chunked processing must be bit-identical to one
+		// whole-buffer call: the load-time resampler now feeds chunks
+		double ratios[2] = { 44100.0/22050.0, 48000.0/11025.0 };
+		int allfail = 0;
+		for (int r = 0; r < 2; r++) {
+			const int N = 9973;              // prime, exercises tails
+			static short in[9973*2]; static short outA[9973*10], outB[9973*10];
+			for (int i = 0; i < N*2; i++) in[i] = (short)((int)(rng()%65536)-32768);
+			// whole
+			void *ra = sinc_resampler_int16_init(1.0, SINC_INT16_QUALITY_HIGHER);
+			struct resampler_data_int16 d; memset(&d,0,sizeof d);
+			d.ratio = ratios[r]; d.data_in = in; d.data_out = outA; d.input_frames = N;
+			sinc_resampler_int16_process(ra, &d);
+			int totA = (int)d.output_frames;
+			sinc_resampler_int16_free(ra);
+			// chunked, odd sizes
+			void *rb = sinc_resampler_int16_init(1.0, SINC_INT16_QUALITY_HIGHER);
+			int sizes[] = {1, 1024, 7, 501, 2048, 333};
+			int pos = 0, totB = 0, step = 0;
+			while (pos < N) {
+				int n = sizes[step++ % 6]; if (pos + n > N) n = N - pos;
+				memset(&d,0,sizeof d);
+				d.ratio = ratios[r]; d.data_in = in + pos*2;
+				d.data_out = outB + totB*2; d.input_frames = n;
+				sinc_resampler_int16_process(rb, &d);
+				totB += (int)d.output_frames; pos += n;
+			}
+			sinc_resampler_int16_free(rb);
+			int fail = (totA != totB);
+			for (int i = 0; i < totA*2 && !fail; i++) if (outA[i] != outB[i]) fail = 1;
+			printf("sinc_int16 chunked vs whole (ratio %.3f): %s (frames %d/%d)\n",
+				ratios[r], fail?"FAIL":"bit-exact", totA, totB);
+			allfail += fail;
+		}
+		(void)allfail;
 	}
 
 	// -------- HRTF renderer (s_HRTF) --------

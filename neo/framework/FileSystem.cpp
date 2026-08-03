@@ -43,6 +43,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "idlib/hashing/MD4.h"
 #include "framework/Licensee.h"
 #include "framework/Unzip.h"
+#include "framework/minizip/ioapi_mapped.h"
 #include "framework/EventLoop.h"
 #include "framework/DeclEntityDef.h"
 #include "framework/DeclManager.h"
@@ -1131,7 +1132,21 @@ int idFileSystemLocal::ReadFile( const char *relativePath, void **buffer, ID_TIM
 	buf = (byte *)Mem_ClearedAlloc(len+1);
 	*buffer = buf;
 
-	f->Read( buf, len );
+	/*
+	   Honest short reads: a truncated or corrupt pak entry used to
+	   return partial content as if it were the whole file (the return
+	   value was never checked). Fail loudly instead - the
+	   data_transfer contract's lesson, applied at the joint this
+	   engine's allocator model actually permits (see the vendoring
+	   commit for why detach-based adoption is a copy tax here).
+	*/
+	if ( f->Read( buf, len ) != len ) {
+		common->Warning( "idFileSystemLocal::ReadFile: short read on '%s'", relativePath );
+		CloseFile( f );
+		Mem_Free( buf );
+		*buffer = NULL;
+		return -1;
+	}
 
 	// guarantee that it will have a trailing 0 for string operations
 	buf[len] = 0;
@@ -1324,7 +1339,14 @@ pack_t *idFileSystemLocal::LoadZipFile( const char *zipfile ) {
 
 	fs_numHeaderLongs = 0;
 
-	uf = unzOpen( zipfile );
+	{
+		/* pak I/O through the VFS: mmap fast path where the platform
+		   supports it (HAVE_MMAP builds), buffered RFILE otherwise -
+		   see framework/minizip/ioapi_mapped.cpp */
+		zlib_filefunc64_def mappedFuncs;
+		fill_mapped_filefunc64( &mappedFuncs );
+		uf = unzOpen2_64( zipfile, &mappedFuncs );
+	}
 	err = unzGetGlobalInfo64( uf, &gi );
 
 	if ( err != UNZ_OK ) {

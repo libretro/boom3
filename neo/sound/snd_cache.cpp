@@ -584,58 +584,79 @@ static short *ResamplePCMToOutput( const short *src, int srcFrames, int channels
 
 	double ratio = (double)snd_SampleRate() / (double)srcRate;
 
-	// the int16 sinc resampler works on interleaved stereo; feed it 2ch.
-	// For mono we duplicate to stereo, resample, then take one channel back.
-	const short *in = src;
-	short *tmpStereo = NULL;
-	if ( channels == 1 ) {
-		tmpStereo = (short *)Mem_Alloc( srcFrames * 2 * sizeof( short ) );
-		for ( int i = 0; i < srcFrames; i++ ) {
-			tmpStereo[i*2+0] = tmpStereo[i*2+1] = src[i];
-		}
-		in = tmpStereo;
-	}
+	/*
+	   Chunked feed. The previous version duplicated mono to a whole-file
+	   stereo staging buffer, resampled the whole file into a second
+	   whole-file stereo buffer, then packed down - load-time peak of
+	   roughly src + 2x src + 2x out on top of the final buffer. The
+	   sinc is a stateful FIR whose sequential chunked processing is
+	   bit-identical to one whole-buffer call (asserted by the bench's
+	   chunk-invariance test), so feed it in fixed chunks instead: the
+	   per-chunk staging is a few KB, the output lands directly in the
+	   final cache buffer for stereo, and mono packs down per chunk.
+	   Peak becomes src + out + epsilon.
+	*/
+	#define RS_CHUNK 1024	/* input frames per feed */
 
 	int outCap = (int)( srcFrames * ratio ) + 64;
-	short *outStereo = (short *)Mem_Alloc( outCap * 2 * sizeof( short ) );
+	short *result = (short *)soundCacheAllocator.Alloc( outCap * channels * sizeof( short ) );
 
 	void *re = sinc_resampler_int16_init( 1.0, SINC_INT16_QUALITY_HIGHER );
 	if ( !re ) {
-		Mem_Free( outStereo );
-		if ( tmpStereo ) {
-			Mem_Free( tmpStereo );
-		}
+		soundCacheAllocator.Free( (byte *)result );
 		return NULL;
 	}
 
-	struct resampler_data_int16 d;
-	memset( &d, 0, sizeof( d ) );
-	d.data_in = in;
-	d.data_out = outStereo;
-	d.input_frames = srcFrames;
-	d.ratio = ratio;
-	sinc_resampler_int16_process( re, &d );
+	static short chunkIn[RS_CHUNK * 2];
+	static short chunkOut[RS_CHUNK * 8];	/* covers ratios up to ~4x (11025 -> 44100) */
+
+	int producedFrames = 0;
+	int pos = 0;
+	bool overflow = false;
+	while ( pos < srcFrames ) {
+		int n = srcFrames - pos;
+		if ( n > RS_CHUNK ) n = RS_CHUNK;
+
+		struct resampler_data_int16 d;
+		memset( &d, 0, sizeof( d ) );
+		d.ratio = ratio;
+		d.input_frames = n;
+		d.data_out = chunkOut;
+		if ( channels == 2 ) {
+			d.data_in = src + pos * 2;
+		} else {
+			for ( int i = 0; i < n; i++ ) {
+				chunkIn[i*2+0] = chunkIn[i*2+1] = src[pos + i];
+			}
+			d.data_in = chunkIn;
+		}
+		sinc_resampler_int16_process( re, &d );
+
+		int got = (int)d.output_frames;
+		if ( producedFrames + got > outCap ) {
+			overflow = true;	/* cannot happen for sane ratios; fail closed */
+			break;
+		}
+		if ( channels == 2 ) {
+			memcpy( result + producedFrames * 2, chunkOut, got * 2 * sizeof( short ) );
+		} else {
+			for ( int i = 0; i < got; i++ ) {
+				result[producedFrames + i] = chunkOut[i*2+0];
+			}
+		}
+		producedFrames += got;
+		pos += n;
+	}
 	sinc_resampler_int16_free( re );
 
-	int producedFrames = (int)d.output_frames;
-
-	// pack into a cache buffer at the sample's channel count
-	short *result = (short *)soundCacheAllocator.Alloc( producedFrames * channels * sizeof( short ) );
-	if ( channels == 1 ) {
-		for ( int i = 0; i < producedFrames; i++ ) {
-			result[i] = outStereo[i*2+0];
-		}
-	} else {
-		memcpy( result, outStereo, producedFrames * 2 * sizeof( short ) );
-	}
-
-	Mem_Free( outStereo );
-	if ( tmpStereo ) {
-		Mem_Free( tmpStereo );
+	if ( overflow || producedFrames <= 0 ) {
+		soundCacheAllocator.Free( (byte *)result );
+		return NULL;
 	}
 
 	*outFrames = producedFrames;
 	return result;
+	#undef RS_CHUNK
 }
 
 // Load a WAV via libretro-common audio_transfer instead of idWaveFile. Reads

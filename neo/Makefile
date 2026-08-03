@@ -343,6 +343,19 @@ CXXFLAGS += -Wall $(fpic) -fpermissive -std=gnu++11
 # idMath NaN checks. The vendored C code doesn't lean on NaN semantics;
 # the engine does.
 CXXFLAGS += -ffp-contract=off -fno-strict-aliasing
+
+# POSIX mmap for the VFS (pak mapping fast path, data_transfer windows).
+# Only platforms whose libc has mmap: desktop unix and android. Windows'
+# vendored VFS has no mapping arm and consoles lack mmap - they take the
+# buffered-RFILE fallback in ioapi_mapped.cpp automatically.
+ifneq (,$(filter unix linux%,$(platform)))
+CFLAGS   += -DHAVE_MMAP
+CXXFLAGS += -DHAVE_MMAP
+endif
+ifneq (,$(findstring android,$(platform)))
+CFLAGS   += -DHAVE_MMAP
+CXXFLAGS += -DHAVE_MMAP
+endif
 # idlib deliberately memset()s/memcpy()s POD-ish structs and classes that the
 # compiler considers non-trivial only because they have constructors; rewriting
 # ~60 of those to value-initialisation would be churn with no runtime benefit.
