@@ -373,6 +373,10 @@ public:
 	virtual void			ResetReadCount( void ) { readCount = 0; }
 	virtual void			AddToReadCount( int c ) { readCount += c; }
 	virtual int				GetReadCount( void ) { return readCount; }
+	virtual void			GetIOStats( int &probeMisses, int &pakOpens, int &viewHits ) {
+		probeMisses = ioProbeMisses; pakOpens = ioPakOpens; viewHits = ioViewHits;
+	}
+	virtual void			ResetIOStats( void ) { ioProbeMisses = ioPakOpens = ioViewHits = 0; }
 	virtual void			FindDLL( const char *basename, char dllPath[ MAX_OSPATH ] );
 	virtual void			ClearDirCache( void );
 	virtual bool			HasD3XP( void );
@@ -398,6 +402,9 @@ private:
 
 	searchpath_t *			searchPaths;
 	int						readCount;			// total bytes read
+	int						ioProbeMisses;		// failed OS-path open attempts
+	int						ioPakOpens;			// pak entries opened
+	int						ioViewHits;			// zero-copy borrows handed out
 	int						loadCount;			// total files read
 	int						loadStack;			// total files in memory
 	int						viewsOutstanding;	// GetFileView borrows not yet released
@@ -501,6 +508,7 @@ idFileSystemLocal::idFileSystemLocal
 idFileSystemLocal::idFileSystemLocal( void ) {
 	searchPaths = NULL;
 	readCount = 0;
+	ioProbeMisses = ioPakOpens = ioViewHits = 0;
 	loadCount = 0;
 	loadStack = 0;
 	dir_cache_index = 0;
@@ -662,6 +670,9 @@ RFILE *idFileSystemLocal::OpenOSFile( const char *fileName, const char *mode, id
 	} else if ( caseSensitiveName ) {
 		*caseSensitiveName = fileName;
 		caseSensitiveName->StripPath();
+	}
+	if ( fp == NULL && vfsFlags == RETRO_VFS_FILE_ACCESS_READ ) {
+		ioProbeMisses++;	// a searchpath probe that hit nothing
 	}
 	return fp;
 }
@@ -3034,6 +3045,7 @@ idFile_InZip * idFileSystemLocal::ReadFileFromZip( pack_t *pak, fileInPack_t *pa
 		common->FatalError( "Couldn't open %s in %s, entry %llu", relativePath, pak->pakFilename.c_str(), pakFile->pos );
 	}
 	const rzip_entry_t *entry = rzip_entry_at( pak->handle, (int)pakFile->pos );
+	ioPakOpens++;
 
 	// create idFile_InZip and set fields accordingly
 	idFile_InZip *file = new idFile_InZip();
@@ -3082,6 +3094,7 @@ const void *idFileSystemLocal::GetFileView( const char *relativePath, int *len, 
 		*len = n;
 	}
 	viewsOutstanding++;
+	ioViewHits++;
 	return view;
 }
 

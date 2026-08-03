@@ -1618,9 +1618,11 @@ static bool RetroBuildState(void)
 
 	// serialize straight into memory: no disk I/O anywhere in this path
 	idFile_Memory mem(RETRO_STATE_NAME ".save");
+	int stT0 = Core_Milliseconds();
 	retro_savestate_active = true;
 	bool ok = sessLocal.SaveGame(RETRO_STATE_NAME, true, NULL, &mem);
 	retro_savestate_active = false;
+	int stT1 = Core_Milliseconds();
 	if (ok) {
 		/* Append the mixer's DSP section (see WriteDSPState) with a
 		 * trailing [size]['SND2'] footer. LoadGame reads its own chunks
@@ -1653,6 +1655,11 @@ static bool RetroBuildState(void)
 			mem.WriteInt(0x33444E53);	/* 'SND3' */
 		}
 	}
+	/* the audit numbers for the fast-savestate work: what a state build
+	 * actually costs, split game-vs-dsp. Logged only on cache misses, so
+	 * run-ahead's per-frame serialize stays silent once cached. */
+	if (log_cb) log_cb(RETRO_LOG_INFO, "[boom3] state build: game %dms dsp %dms size %d\n",
+			stT1 - stT0, Core_Milliseconds() - stT1, mem.Length());
 	if (!ok || mem.Length() <= 0) {
 		if (log_cb) log_cb(RETRO_LOG_INFO, "[boom3] state: SaveGame ok=%d len=%d\n", (int)ok, mem.Length());
 		return false;
@@ -1692,9 +1699,14 @@ bool retro_unserialize(const void *data_, size_t size)
 	idFile_Memory *mem = new idFile_Memory(RETRO_STATE_NAME ".save",
 	                                       (const char *)data_, (int)size);
 
+	int stT0 = Core_Milliseconds();
 	retro_savestate_active = true;
 	bool ok = sessLocal.LoadGame(RETRO_STATE_NAME, mem);
 	retro_savestate_active = false;
+	/* the restore is a synchronous map change today: this number is the
+	 * whole case for the same-map fast-restore architecture. */
+	if (log_cb) log_cb(RETRO_LOG_INFO, "[boom3] state restore: %dms ok=%d\n",
+			Core_Milliseconds() - stT0, (int)ok);
 
 	if (ok && size >= 8) {
 		/* apply the DSP section after LoadGame has rebuilt the emitters */

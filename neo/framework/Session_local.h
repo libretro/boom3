@@ -240,6 +240,14 @@ public:
 	idStr				currentMapName;			// for checking reload on same level
 	bool				mapSpawned;				// cleared on Stop()
 
+	// level-load instrumentation: per-phase wall clock + the filesystem
+	// census, printed at MapLoad_MediaFinish. Decides where sub-phase
+	// slicing and probe caching would actually pay.
+	int					mapLoadPhaseStartMs;
+	int					mapLoadTotalStartMs;
+	idStr				mapLoadPhaseReport;
+	void				MapLoadPhaseMark( const char *phase );
+
 	int					numClients;				// from serverInfo
 
 	int					logIndex;

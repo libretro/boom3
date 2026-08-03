@@ -1586,7 +1586,31 @@ idSessionLocal::MapLoad_Begin
 Phase 1: shut down the old map, begin level load, bring up the loading GUI.
 ===============
 */
+/*
+===============
+idSessionLocal::MapLoadPhaseMark
+
+Called at the END of each load phase with its name: appends
+"name Nms(probe/pak/view)" to the report and re-arms the phase clock
+and I/O census for the next phase. Works identically under the
+synchronous driver and AdvanceMapLoad's one-phase-per-frame driver,
+because the phases themselves call it.
+===============
+*/
+void idSessionLocal::MapLoadPhaseMark( const char *phase ) {
+	int now = Core_Milliseconds();
+	int probes, paks, views;
+	fileSystem->GetIOStats( probes, paks, views );
+	fileSystem->ResetIOStats();
+	mapLoadPhaseReport += va( " %s %dms(%d/%d/%d)", phase, now - mapLoadPhaseStartMs, probes, paks, views );
+	mapLoadPhaseStartMs = now;
+}
+
 void idSessionLocal::MapLoad_Begin() {
+	mapLoadTotalStartMs = mapLoadPhaseStartMs = Core_Milliseconds();
+	mapLoadPhaseReport = "";
+	fileSystem->ResetIOStats();
+
 	bool noFadeWipe = mapLoadNoFadeWipe;
 
 	// close console and remove any prints from the notify lines
@@ -1688,6 +1712,7 @@ Phase 2: load all the map geometry.
 ===============
 */
 void idSessionLocal::MapLoad_Geometry() {
+	MapLoadPhaseMark( "begin" );
 	// let the renderSystem load all the geometry
 	if ( !rw->InitFromMap( mapLoadFullMapName ) ) {
 		common->Error( "couldn't load %s", mapLoadFullMapName.c_str() );
@@ -1701,6 +1726,7 @@ Phase 3: spawn all entities (from a savegame or a new map) and the players.
 ===============
 */
 void idSessionLocal::MapLoad_Spawn() {
+	MapLoadPhaseMark( "geometry" );
 	int i;
 
 	// for the synchronous networking we needed to roll the angles over from
@@ -1748,6 +1774,7 @@ rather than before the entities exist.
 ===============
 */
 void idSessionLocal::MapLoad_SpawnPlayers() {
+	MapLoadPhaseMark( "spawn+pump" );
 	if ( !idAsyncNetwork::IsActive() && !loadingSaveGame ) {
 		// spawn players
 		for ( int i = 0; i < numClients; i++ ) {
@@ -1853,6 +1880,7 @@ loads themselves are then driven per-frame by MapLoad_MediaPump().
 ===============
 */
 void idSessionLocal::MapLoad_MediaStart() {
+	MapLoadPhaseMark( "players" );
 	if ( !mapLoadReloadingSameMap ) {
 		renderSystem->EndLevelLoadStart();		// models + image purge/collect
 		declManager->EndLevelLoad();
@@ -1891,6 +1919,10 @@ void idSessionLocal::MapLoad_MediaFinish() {
 	if ( !mapLoadReloadingSameMap ) {
 		renderSystem->EndLevelLoadFinish();
 	}
+	MapLoadPhaseMark( "media" );
+	common->Printf( "map load I/O census:%s | total %dms (phase ms(osProbeMiss/pakOpen/viewBorrow))\n",
+			mapLoadPhaseReport.c_str(), Core_Milliseconds() - mapLoadTotalStartMs );
+
 }
 
 /*

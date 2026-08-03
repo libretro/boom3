@@ -259,6 +259,13 @@ public:
 	virtual void			ResetReadCount( void ) = 0;
 							// retrieves the current read count
 	virtual int				GetReadCount( void ) = 0;
+							// level-load I/O census: OS-path probe misses (the
+							// probe-storm question), pak entry opens, and view
+							// borrows since the last reset. The numbers that decide
+							// whether a negative-probe cache and sub-phase load
+							// slicing are worth building.
+	virtual void			GetIOStats( int &probeMisses, int &pakOpens, int &viewHits ) = 0;
+	virtual void			ResetIOStats( void ) = 0;
 							// adds to the read count
 	virtual void			AddToReadCount( int c ) = 0;
 							// look for a dynamic module
