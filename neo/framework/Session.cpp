@@ -545,6 +545,18 @@ idSessionLocal::ShowLoadingGui
 ================
 */
 void idSessionLocal::ShowLoadingGui() {
+	extern bool retro_savestate_active;
+	if ( retro_savestate_active ) {
+		/*
+		   Pure latency for a savestate restore, and worse than latency:
+		   the ten forced frames advance com_frameTime through
+		   Com_UpdateFrameTime, perturbing timing state the restored
+		   game is about to depend on. UpdateScreen is already a no-op
+		   under savestates; the animation this loop exists to play is
+		   never seen. Skip the whole thing.
+		*/
+		return;
+	}
 	if ( com_ticNumber == 0 ) {
 		return;
 	}
@@ -1331,6 +1343,14 @@ idSessionLocal::LoadLoadingGui
 ===============
 */
 void idSessionLocal::LoadLoadingGui( const char *mapName ) {
+	extern bool retro_savestate_active;
+	if ( retro_savestate_active ) {
+		// no frame is ever presented during a savestate restore, so
+		// loading a loading screen is wasted parse time per restore
+		guiLoading = NULL;
+		return;
+	}
+
 	// load / program a gui to stay up on the screen while loading
 	idStr stripped = mapName;
 	stripped.StripFileExtension();
@@ -1965,7 +1985,7 @@ void idSessionLocal::MapLoad_Warmup() {
 			pct = 0.0f;
 		}
 		while ( pct < 1.0f ) {
-			guiLoading->SetStateFloat( "map_loading", pct );
+			if ( guiLoading ) guiLoading->SetStateFloat( "map_loading", pct );
 			guiLoading->StateChanged( com_frameTime );
 			Sys_GenerateEvents();
 			UpdateScreen();
@@ -2777,7 +2797,7 @@ void idSessionLocal::PacifierUpdate() {
 		float n = fileSystem->GetReadCount();
 		float pct = ( n / bytesNeededForMapLoad );
 		// pct = idMath::ClampFloat( 0.0f, 100.0f, pct );
-		guiLoading->SetStateFloat( "map_loading", pct );
+		if ( guiLoading ) guiLoading->SetStateFloat( "map_loading", pct );
 		guiLoading->StateChanged( com_frameTime );
 	}
 
@@ -2799,7 +2819,7 @@ void idSessionLocal::Draw() {
 
 	if ( insideExecuteMapChange ) {
 		if ( guiLoading ) {
-			guiLoading->Redraw( com_frameTime );
+			if ( guiLoading ) guiLoading->Redraw( com_frameTime );
 		}
 		if ( guiActive == guiMsg ) {
 			guiMsg->Redraw( com_frameTime );
