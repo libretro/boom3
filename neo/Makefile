@@ -1,7 +1,6 @@
 STATIC_LINKING := 0
 AR             := ar
 CORE           := -DCORE=ON
-SDL_VER        := 0
 DEBUG          := 0
 RELWITHDEBINFO := 0
 
@@ -315,7 +314,7 @@ TOPDIR ?= $(CURDIR)
 
 
 
-CFLAGS   += -Wall $(fpic) $(CORE) $(SDL2) -DBASE=ON -DUSE_FILE32API -ffast-math \
+CFLAGS   += -Wall $(fpic) $(CORE) -DBASE=ON -ffast-math \
 			-fno-unsafe-math-optimizations -ffp-contract=off \
 			-fno-strict-aliasing -fomit-frame-pointer \
 			-Wno-sign-compare -Wno-switch -Wno-format-security -I$(TOPDIR) -I$(TOPDIR)/sys/libretro/config
@@ -379,7 +378,7 @@ $(TARGET): $(OBJECTS)
 ifeq ($(STATIC_LINKING), 1)
 	$(AR) rcs $@ $(OBJECTS)
 else
-	$(CXX) $(fpic) $(SHARED) -o $@ $(OBJECTS) $(LDFLAGS) $(GL_LIB) $(LIBS) $(SDL_LIBS)
+	$(CXX) $(fpic) $(SHARED) -o $@ $(OBJECTS) $(LDFLAGS) $(GL_LIB) $(LIBS)
 endif
 
 %.o: $(CORE_DIR)/%.cpp

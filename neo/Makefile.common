@@ -2,20 +2,7 @@ ifeq ($(LIBRETRO_COMM_DIR),)
 LIBRETRO_COMM_DIR  = $(CORE_DIR)/sys/libretro-common
 endif
 
-ifeq ($(SDL_VER),2)
-	SDL_CFLAGS := $(shell pkg-config --cflags sdl2)
-	SDL_LIBS   := $(shell pkg-config --libs sdl2)
-endif
-
-ifeq ($(SDL_VER),3)
-	SDL_CFLAGS := $(shell pkg-config --cflags sdl3)
-	SDL_LIBS   := $(shell pkg-config --libs sdl3)
-endif
-
-
-INCFLAGS   :=  \
-	-I$(LIBRETRO_COMM_DIR)/include \
-	$(SDL_CFLAGS) \
+INCFLAGS   := -I$(LIBRETRO_COMM_DIR)/include
 
 SRC_RENDERER	:=\
 	$(CORE_DIR)/renderer/Cinematic.cpp \
