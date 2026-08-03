@@ -87,6 +87,15 @@ typedef struct rarch_sinc_resampler
    uint32_t time;
    float subphase_mod;
    float kaiser_beta;
+   /* Per-instance kernel. The global sinc_resampler vtable is shared by
+    * every instance (game audio, microphone, mixer voices), so the kernel
+    * choice must live here: window types lay out phase_table differently
+    * (Kaiser interleaves coeff+delta rows at stride taps*2, Lanczos rows
+    * are stride taps), and letting a later init of one window type rewrite
+    * a shared function pointer makes an earlier instance of the other type
+    * read its table at the wrong stride - deltas get used as coefficients,
+    * collapsing output level on a per-phase basis. */
+   void (*process)(void *re, struct resampler_data *data);
 } rarch_sinc_resampler_t;
 
 /*
@@ -657,56 +666,6 @@ static void resampler_sinc_process_c(void *re_, struct resampler_data *data)
    data->output_frames = out_frames;
 }
 
-/* Local addition (not yet upstream): return a handle to its exact
- * post-init state so callers can reuse the expensive filter table across
- * streams. A fresh handle differs from a used one only in the ring
- * buffers (buffer_l/buffer_r, 4*taps floats, zeroed by init), ptr and
- * time (both zero from the calloc); everything else is the immutable
- * table and configuration. Resetting those three is therefore
- * bit-equivalent to init for the same rate pair, at memset cost instead
- * of a full table build. */
-void rarch_sinc_resampler_reset_state(void *re_)
-{
-   rarch_sinc_resampler_t *resamp = (rarch_sinc_resampler_t*)re_;
-   if (!resamp)
-      return;
-   memset(resamp->buffer_l, 0, 4 * resamp->taps * sizeof(float));
-   resamp->ptr  = 0;
-   resamp->time = 0;
-}
-
-/* Local additions for savestate support: the mutable stream state is the
- * ring (4*taps floats), ptr and time; the rest is the immutable table.
- * Saving and restoring exactly that set lets a rebuilt handle continue a
- * stream bit-exactly. */
-size_t rarch_sinc_resampler_state_size(void *re_)
-{
-   rarch_sinc_resampler_t *resamp = (rarch_sinc_resampler_t*)re_;
-   if (!resamp)
-      return 0;
-   return 4 * resamp->taps * sizeof(float) + sizeof(unsigned) + sizeof(uint32_t);
-}
-
-void rarch_sinc_resampler_get_state(void *re_, void *out)
-{
-   rarch_sinc_resampler_t *resamp = (rarch_sinc_resampler_t*)re_;
-   unsigned char *p = (unsigned char*)out;
-   size_t ring = 4 * resamp->taps * sizeof(float);
-   memcpy(p, resamp->buffer_l, ring); p += ring;
-   memcpy(p, &resamp->ptr,  sizeof(unsigned)); p += sizeof(unsigned);
-   memcpy(p, &resamp->time, sizeof(uint32_t));
-}
-
-void rarch_sinc_resampler_set_state(void *re_, const void *in)
-{
-   rarch_sinc_resampler_t *resamp = (rarch_sinc_resampler_t*)re_;
-   const unsigned char *p = (const unsigned char*)in;
-   size_t ring = 4 * resamp->taps * sizeof(float);
-   memcpy(resamp->buffer_l, p, ring); p += ring;
-   memcpy(&resamp->ptr,  p, sizeof(unsigned)); p += sizeof(unsigned);
-   memcpy(&resamp->time, p, sizeof(uint32_t));
-}
-
 static void resampler_sinc_free(void *data)
 {
    rarch_sinc_resampler_t *resamp = (rarch_sinc_resampler_t*)data;
@@ -924,19 +883,18 @@ static void *resampler_sinc_new(const struct resampler_config *config,
       re->taps = (unsigned)ceil(re->taps / bandwidth_mod);
    }
 
-   /* Be SIMD-friendly. */
-#if defined(__AVX__)
-   if (enable_avx)
-      re->taps = (re->taps + 7) & ~7;
-   else
-#endif
-   {
-#if (defined(__ARM_NEON__) || defined(HAVE_NEON))
-      re->taps = (re->taps + 7) & ~7;
-#else
-      re->taps = (re->taps + 3) & ~3;
-#endif
-   }
+   /* Be SIMD-friendly: round taps up to a multiple of 8 on every platform.
+    * NEON and AVX builds always required this; SSE/scalar builds only
+    * required a multiple of 4, which made LOWEST a different filter per
+    * platform: 4 taps on x86, 8 on ARM (identical to LOWER there).  The
+    * 4-tap variant carries 0.117 dB of per-phase DC gain ripple - audible
+    * as slow amplitude wobble on sustained tones as rate control sweeps
+    * the phase - while the 8-tap variant measures 0.003 dB.  A uniform
+    * multiple of 8 gives every platform the same filter and retires the
+    * one quality tier with audible gain ripple.  LOWEST thereby becomes
+    * an alias of LOWER for upsampling, matching what ARM and AVX builds
+    * have always shipped. */
+   re->taps = (re->taps + 7) & ~7;
 
    phase_elems = ((1 << re->phase_bits) * re->taps);
    if (window_type == SINC_WINDOW_KAISER)
@@ -967,24 +925,24 @@ static void *resampler_sinc_new(const struct resampler_config *config,
          goto error;
    }
 
-   sinc_resampler.process = resampler_sinc_process_c;
+   re->process = resampler_sinc_process_c;
    if (window_type == SINC_WINDOW_KAISER)
-      sinc_resampler.process    = resampler_sinc_process_c_kaiser;
+      re->process    = resampler_sinc_process_c_kaiser;
 
    if (mask & RESAMPLER_SIMD_AVX && enable_avx)
    {
 #if defined(__AVX__)
-      sinc_resampler.process    = resampler_sinc_process_avx;
+      re->process    = resampler_sinc_process_avx;
       if (window_type == SINC_WINDOW_KAISER)
-         sinc_resampler.process = resampler_sinc_process_avx_kaiser;
+         re->process = resampler_sinc_process_avx_kaiser;
 #endif
    }
    else if (mask & RESAMPLER_SIMD_SSE)
    {
 #if defined(__SSE__)
-      sinc_resampler.process = resampler_sinc_process_sse;
+      re->process = resampler_sinc_process_sse;
       if (window_type == SINC_WINDOW_KAISER)
-         sinc_resampler.process = resampler_sinc_process_sse_kaiser;
+         re->process = resampler_sinc_process_sse_kaiser;
 #endif
    }
    else if (mask & RESAMPLER_SIMD_NEON)
@@ -992,11 +950,11 @@ static void *resampler_sinc_new(const struct resampler_config *config,
 #if (defined(__ARM_NEON__) || defined(HAVE_NEON))
 #ifdef HAVE_ARM_NEON_ASM_OPTIMIZATIONS
       if (window_type != SINC_WINDOW_KAISER)
-         sinc_resampler.process = resampler_sinc_process_neon;
+         re->process = resampler_sinc_process_neon;
 #else
-      sinc_resampler.process = resampler_sinc_process_neon;
+      re->process = resampler_sinc_process_neon;
       if (window_type == SINC_WINDOW_KAISER)
-         sinc_resampler.process = resampler_sinc_process_neon_kaiser;
+         re->process = resampler_sinc_process_neon_kaiser;
 #endif
 #endif
    }
@@ -1008,9 +966,17 @@ error:
    return NULL;
 }
 
+/* Thin dispatcher: the vtable is shared across all live instances, so the
+ * actual kernel is read from the instance itself.  One indirect call per
+ * process() invocation (per chunk, not per sample) - no measurable cost. */
+static void resampler_sinc_process(void *re_, struct resampler_data *data)
+{
+   ((rarch_sinc_resampler_t*)re_)->process(re_, data);
+}
+
 retro_resampler_t sinc_resampler = {
    resampler_sinc_new,
-   resampler_sinc_process_c,
+   resampler_sinc_process,
    resampler_sinc_free,
    RESAMPLER_API_VERSION,
    "sinc",
@@ -1020,3 +986,52 @@ retro_resampler_t sinc_resampler = {
 #if defined(__GNUC__) && defined(__OPTIMIZE__) && !defined(__clang__)
 #pragma GCC pop_options
 #endif
+/* Local addition (not yet upstream): return a handle to its exact
+ * post-init state so callers can reuse the expensive filter table across
+ * streams. A fresh handle differs from a used one only in the ring
+ * buffers (buffer_l/buffer_r, 4*taps floats, zeroed by init), ptr and
+ * time (both zero from the calloc); everything else is the immutable
+ * table and configuration. Resetting those three is therefore
+ * bit-equivalent to init for the same rate pair, at memset cost instead
+ * of a full table build. */
+void rarch_sinc_resampler_reset_state(void *re_)
+{
+   rarch_sinc_resampler_t *resamp = (rarch_sinc_resampler_t*)re_;
+   if (!resamp)
+      return;
+   memset(resamp->buffer_l, 0, 4 * resamp->taps * sizeof(float));
+   resamp->ptr  = 0;
+   resamp->time = 0;
+}
+
+/* Local additions for savestate support: the mutable stream state is the
+ * ring (4*taps floats), ptr and time; the rest is the immutable table.
+ * Saving and restoring exactly that set lets a rebuilt handle continue a
+ * stream bit-exactly. */
+size_t rarch_sinc_resampler_state_size(void *re_)
+{
+   rarch_sinc_resampler_t *resamp = (rarch_sinc_resampler_t*)re_;
+   if (!resamp)
+      return 0;
+   return 4 * resamp->taps * sizeof(float) + sizeof(unsigned) + sizeof(uint32_t);
+}
+
+void rarch_sinc_resampler_get_state(void *re_, void *out)
+{
+   rarch_sinc_resampler_t *resamp = (rarch_sinc_resampler_t*)re_;
+   unsigned char *p = (unsigned char*)out;
+   size_t ring = 4 * resamp->taps * sizeof(float);
+   memcpy(p, resamp->buffer_l, ring); p += ring;
+   memcpy(p, &resamp->ptr,  sizeof(unsigned)); p += sizeof(unsigned);
+   memcpy(p, &resamp->time, sizeof(uint32_t));
+}
+
+void rarch_sinc_resampler_set_state(void *re_, const void *in)
+{
+   rarch_sinc_resampler_t *resamp = (rarch_sinc_resampler_t*)re_;
+   const unsigned char *p = (const unsigned char*)in;
+   size_t ring = 4 * resamp->taps * sizeof(float);
+   memcpy(resamp->buffer_l, p, ring); p += ring;
+   memcpy(&resamp->ptr,  p, sizeof(unsigned)); p += sizeof(unsigned);
+   memcpy(&resamp->time, p, sizeof(uint32_t));
+}

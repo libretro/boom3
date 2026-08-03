@@ -264,6 +264,17 @@
 #define RETRO_ATOMIC_BACKEND_SYNC 1
 #elif defined(RETRO_ATOMIC_FORCE_VOLATILE)
 #define RETRO_ATOMIC_BACKEND_VOLATILE 1
+/* Some targets ship a modern C11/GCC toolchain on hardware with no
+ * usable atomic instruction -- the PS2 R5900 is the case in point.  The
+ * builtins compile there, but the compiler lowers them to __atomic_*
+ * libcalls, and those SDKs do not ship libatomic, so the link fails with
+ * undefined references to e.g. __atomic_fetch_or_4.  GCC and Clang both
+ * publish __GCC_ATOMIC_INT_LOCK_FREE: 2 means always lock-free, anything
+ * less means the compiler may emit a call.  Only take a builtin backend
+ * when it is 2.  Such targets are single-core in practice, which is
+ * exactly the condition under which the volatile fallback is sound. */
+#elif defined(__GCC_ATOMIC_INT_LOCK_FREE) && __GCC_ATOMIC_INT_LOCK_FREE != 2
+#define RETRO_ATOMIC_BACKEND_VOLATILE 1
 #elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L && \
     !defined(__STDC_NO_ATOMICS__)
 #define RETRO_ATOMIC_BACKEND_C11 1
@@ -538,15 +549,57 @@ typedef volatile LONG_PTR retro_atomic_size_t;
 #define retro_atomic_fetch_sub_int(p, v) (                                \
    RETRO_ATOMIC_MSVC_ARM_FENCE(),                                         \
    InterlockedExchangeAdd((LONG volatile*)(p), -(LONG)(v)) )
-/* InterlockedOr / InterlockedAnd return the ORIGINAL value, matching the
- * fetch_* contract.  Available since Windows XP / VS2003 and on Xbox 360,
- * i.e. everywhere this backend is selected. */
-#define retro_atomic_fetch_or_int(p, v) (                                 \
-   RETRO_ATOMIC_MSVC_ARM_FENCE(),                                         \
-   InterlockedOr((LONG volatile*)(p), (LONG)(v)) )
-#define retro_atomic_fetch_and_int(p, v) (                                \
-   RETRO_ATOMIC_MSVC_ARM_FENCE(),                                         \
-   InterlockedAnd((LONG volatile*)(p), (LONG)(v)) )
+/* fetch_or / fetch_and are built from InterlockedCompareExchange rather
+ * than from InterlockedOr / InterlockedAnd.
+ *
+ * InterlockedOr / InterlockedAnd / InterlockedXor are declared by winnt.h
+ * from the Windows XP SDK onwards, but kernel32 exports no x86
+ * implementation of them: the declaration is backed solely by the
+ * _InterlockedOr / _InterlockedAnd compiler intrinsics, and the
+ * '#pragma intrinsic' that binds the two is not applied on VS2005 RTM
+ * (link.exe 8.00.50727.42) or earlier, nor on the OG Xbox / Xbox 360
+ * XDKs.  On those toolchains the call is emitted as a plain external
+ * reference and the link fails:
+ *
+ *   error LNK2019: unresolved external symbol _InterlockedOr
+ *   error LNK2019: unresolved external symbol _InterlockedAnd
+ *
+ * InterlockedCompareExchange has no such gap -- it is exported by
+ * kernel32 on every Win32 target and is an intrinsic on every newer
+ * MSVC -- so the compare-exchange loop below is the portable spelling.
+ * It returns the value observed immediately before the successful
+ * swap, which is exactly the fetch_* contract.  Both call sites are
+ * uncontended flag words, so the loop cost is not a concern. */
+static INLINE LONG retro_atomic_fetch_or_int_cas(LONG volatile *p, LONG v)
+{
+   LONG old;
+   LONG prev;
+   RETRO_ATOMIC_MSVC_ARM_FENCE();
+   do
+   {
+      old  = *p;
+      prev = InterlockedCompareExchange(p, old | v, old);
+   } while (prev != old);
+   return prev;
+}
+
+static INLINE LONG retro_atomic_fetch_and_int_cas(LONG volatile *p, LONG v)
+{
+   LONG old;
+   LONG prev;
+   RETRO_ATOMIC_MSVC_ARM_FENCE();
+   do
+   {
+      old  = *p;
+      prev = InterlockedCompareExchange(p, old & v, old);
+   } while (prev != old);
+   return prev;
+}
+
+#define retro_atomic_fetch_or_int(p, v) \
+   retro_atomic_fetch_or_int_cas((LONG volatile*)(p), (LONG)(v))
+#define retro_atomic_fetch_and_int(p, v) \
+   retro_atomic_fetch_and_int_cas((LONG volatile*)(p), (LONG)(v))
 /* Note: on ARM we'd ideally want a __dmb both before AND after the
  * RMW for full sequential consistency (PostgreSQL's recent fix does
  * exactly that).  acq_rel needs only one barrier on most use cases;
