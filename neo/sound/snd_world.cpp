@@ -2228,6 +2228,13 @@ idSoundWorldLocal::SetEnviroSuit
 =================
 */
 void idSoundWorldLocal::SetEnviroSuit( bool active ) {
+	// reset the effect's carried tail on the off->on edge: the chain
+	// only processes while active, so deactivation freezes state
+	// mid-tail, and resuming it on a later activation would replay a
+	// stale tail. See idEnviroSuitFX::ResetState.
+	if ( active && !enviroSuitActive ) {
+		enviroFX.ResetState();
+	}
 	enviroSuitActive = active;
 }
 

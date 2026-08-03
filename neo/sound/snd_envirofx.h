@@ -52,6 +52,11 @@ public:
 	void	ProcessFloat( float *samples, int numFrames );
 	// stereo interleaved int16-scale int32 accumulator, in place.
 	void	ProcessS16( int *samples, int numFrames );
+	// forget any carried tail: called on suit activation, so toggling
+	// the suit on never resumes a tail frozen at the last deactivation
+	void	ResetState( void );
+	// float-path denormal flush; see the comment at the implementation
+	void	FlushDenormalsF( void );
 
 private:
 	// derived per block
@@ -158,6 +163,66 @@ ID_INLINE void idEnviroSuitFX::ProcessFloat( float *samples, int numFrames ) {
 		bqXF[ch][0] = x1; bqXF[ch][1] = x2;
 		bqYF[ch][0] = y1; bqYF[ch][1] = y2;
 	}
+	FlushDenormalsF();
+}
+
+/*
+====================
+idEnviroSuitFX::FlushDenormalsF
+
+The reverb's denormal story, applied to the suit chain (see
+idSoundReverb::FlushAndTestZeroF for the full reasoning): the float
+biquad and comb feedback decay exponentially over quiet passages, and
+without a flush their state transits the denormal range - a large
+per-op cost on x86 without FTZ, and FTZ itself is ambient MXCSR state
+this core does not own, so the bits become environment-dependent.
+Force everything below 1e-20 (about -400 dB at either operating scale)
+to exact zero once per processed block: sustained processing never
+enters the denormal range, zero is a fixed point under any FTZ
+setting, and any residual sub -400 dB divergence self-heals to
+bit-identical exact zero - asserted by the bench's FTZ test. Unlike
+the reverb there is no dormancy gate to pair with: the caller only
+runs this chain while the suit is active, so there is no dead-air
+processing to skip.
+====================
+*/
+ID_INLINE void idEnviroSuitFX::FlushDenormalsF( void ) {
+	#define ENV_FLUSH(x) do { float t_ = (x); if ( t_ != 0.0f \
+			&& t_ < 1e-20f && t_ > -1e-20f ) (x) = 0.0f; } while (0)
+	for ( int ch = 0; ch < ENVIRO_CHANNELS; ch++ ) {
+		ENV_FLUSH( bqXF[ch][0] ); ENV_FLUSH( bqXF[ch][1] );
+		ENV_FLUSH( bqYF[ch][0] ); ENV_FLUSH( bqYF[ch][1] );
+		for ( int k = 0; k < 2; k++ ) {
+			for ( int p = 0; p < combLen[ch][k]; p++ ) {
+				ENV_FLUSH( combF[ch][k][p] );
+			}
+		}
+	}
+	#undef ENV_FLUSH
+}
+
+/*
+====================
+idEnviroSuitFX::ResetState
+
+Zero the carried audio history, both pipelines. The caller runs this
+chain only while the suit is active, so on deactivation the state
+freezes mid-tail; resuming that stale tail on the NEXT activation -
+minutes later, in another room - is the F7 class of bug. Activation
+resets instead: a suit turning on is a fresh effect by intent, the
+reset is driven by game state so it is deterministic, and the raw
+object image in the DSP savestate stays consistent automatically.
+Coefficients (SetParms) are per-block and untouched.
+====================
+*/
+ID_INLINE void idEnviroSuitFX::ResetState( void ) {
+	memset( bqXF, 0, sizeof( bqXF ) );
+	memset( bqYF, 0, sizeof( bqYF ) );
+	memset( combF, 0, sizeof( combF ) );
+	memset( bqXI, 0, sizeof( bqXI ) );
+	memset( bqYI, 0, sizeof( bqYI ) );
+	memset( combI, 0, sizeof( combI ) );
+	memset( combPos, 0, sizeof( combPos ) );
 }
 
 ID_INLINE void idEnviroSuitFX::ProcessS16( int *samples, int numFrames ) {

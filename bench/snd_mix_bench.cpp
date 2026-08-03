@@ -754,6 +754,31 @@ int reverb_test() {
 			long long tail=0; for (int i=0;i<1024;i++) tail += (long long)o1[i]*o1[i];
 			printf("enviro int determinism: %s; tail after 1.9s silence: %lld %s\n",
 				mism?"FAIL":"bit-exact", tail, tail==0?"OK (exact zero)":(tail<100?"OK":"FAIL"));
+
+#if defined(__x86_64__) || defined(__SSE2__) || defined(_M_X64)
+	// enviro float: FTZ-on vs FTZ-off must reconverge to identical exact
+	// zero through a signal/long-silence program (the flush's contract)
+	{
+		unsigned csr = _mm_getcsr();
+		static idEnviroSuitFX eA, eB; eA.Init(); eB.Init();
+		eA.SetParms(1000.0f, 1.2f, 0.9f, 0.023f, 0.5f);
+		eB.SetParms(1000.0f, 1.2f, 0.9f, 0.023f, 0.5f);
+		static float sa[512*2], sb[512*2];
+		int blocks = (int)(6.0*44100/512), bad = 0;
+		uint32_t er = 0xC0FFEEu;   /* the enclosing scope shadows rng() */
+		for (int b = 0; b < blocks; b++) {
+			memset(sa,0,sizeof sa); memset(sb,0,sizeof sb);
+			if (b==0) for (int i2=0;i2<64;i2++) { er = er*1664525u+1013904223u; sa[i2]=sb[i2]=((int)(er>>17)-16384)/32768.0f; }
+			_mm_setcsr(csr & ~0x8040u); eA.ProcessFloat(sa,512);
+			_mm_setcsr(csr | 0x8040u);  eB.ProcessFloat(sb,512);
+			if (b == blocks-1)
+				for (int i2=0;i2<1024;i2++) if (sa[i2]!=sb[i2] || sa[i2]!=0.0f) bad++;
+		}
+		_mm_setcsr(csr);
+		printf("enviro float FTZ-on vs FTZ-off, end of tail: %s\n",
+			bad?"FAIL":"reconverged to identical exact zero");
+	}
+#endif
 		}
 	}
 
