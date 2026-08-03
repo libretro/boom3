@@ -163,6 +163,15 @@ public:
 	virtual void			Restart( void ) = 0;
 							// Shutdown the file system.
 	virtual void			Shutdown( bool reloading ) = 0;
+							// Zero-copy read: a stable borrowed pointer to the whole
+							// file where the backing store permits (a STORED entry in
+							// a mapped pak), valid until the filesystem shuts down or
+							// restarts. NULL means use ReadFile. Every successful view
+							// must be paired with ReleaseFileView - bookkeeping only,
+							// so a shutdown with borrows outstanding can say so loudly
+							// instead of leaving silent dangling pointers.
+	virtual const void *	GetFileView( const char *relativePath, int *len, ID_TIME_T *timestamp = NULL ) = 0;
+	virtual void			ReleaseFileView( const void *data ) = 0;
 							// Returns true if the file system is initialized.
 	virtual bool			IsInitialized( void ) const = 0;
 							// Returns true if we are doing an fs_copyfiles.

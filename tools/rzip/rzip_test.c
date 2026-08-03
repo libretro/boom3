@@ -41,6 +41,38 @@ int main(void) {
         rzip_file_close(f); free(buf);
     }
     if (warns) { printf("FAIL unexpected warnings clean pak\n"); fail++; }
+    /* borrow contract: stored entries hand back the exact file bytes on
+       mapped builds; deflated entries always NULL; on unmapped builds
+       everything is NULL. Both via entry index and via an open handle. */
+    {
+        int mapped_expected =
+#ifdef HAVE_MMAP
+            1;
+#else
+            0;
+#endif
+        for (int i = 0; i < rzip_num_entries(z); i++) {
+            const rzip_entry_t *e = rzip_entry_at(z,i);
+            uint64_t bl = 0;
+            const uint8_t *b = rzip_entry_borrow(z,i,&bl);
+            rzip_file_t *fh = rzip_file_open(z,i);
+            uint64_t bl2 = 0;
+            const uint8_t *b2 = fh ? rzip_file_borrow(fh,&bl2) : NULL;
+            if (e->method != 0 || !mapped_expected) {
+                if (b || b2) { printf("FAIL borrow should be NULL for %s\n", e->name); fail++; }
+            } else {
+                unsigned char *ref=NULL; long rn=0;
+                if (strstr(e->name,"stored")) { ref=d1; rn=n1; }
+                if (!b || !b2 || bl != e->uncompressedSize || bl2 != bl || b != b2) {
+                    printf("FAIL borrow shape for %s\n", e->name); fail++;
+                } else if (ref && (long)bl==rn && memcmp(b,ref,rn)) {
+                    printf("FAIL borrow content %s\n", e->name); fail++;
+                }
+            }
+            if (fh) rzip_file_close(fh);
+        }
+        printf("borrow contract (%s): checked\n", mapped_expected?"mapped":"unmapped");
+    }
     rzip_close(z);
     /* corruption: flip a byte mid-file, expect CRC warning on full read */
     { long zn; unsigned char *zb=slurp("/tmp/test.pk4",&zn); zb[zn/3]^=0xFF;

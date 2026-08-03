@@ -9,6 +9,10 @@
 #include <encodings/deflate.h>
 #include <encodings/crc32.h>
 
+#ifdef HAVE_MMAP
+#include <sys/mman.h>
+#endif
+
 #include "rzip.h"
 
 #define RZIP_EOCD_SIG   0x06054b50u
@@ -137,16 +141,27 @@ rzip_t *rzip_open( const char *path ) {
 			}
 		}
 
-		/* central directory: one contiguous read, then walk records */
+		/* central directory: parsed in place over the mapping when we
+		   have one (no transient the size of the directory), copied out
+		   only on the unmapped fallback */
 		{
-			uint8_t *cd = (uint8_t *)malloc( cdSize ? cdSize : 1 );
+			uint8_t *cdCopy = NULL;
+			const uint8_t *cd;
 			size_t   nameBytes = 0;
 			uint32_t p = 0;
 			int      n;
 
-			if ( !cd || rzip_pread( z, cdOfs, cd, cdSize ) != 0 ) {
-				free( cd );
-				goto fail;
+			if ( z->base ) {
+				if ( (uint64_t)cdOfs + cdSize > (uint64_t)z->len )
+					goto fail;
+				cd = z->base + cdOfs;
+			} else {
+				cdCopy = (uint8_t *)malloc( cdSize ? cdSize : 1 );
+				if ( !cdCopy || rzip_pread( z, cdOfs, cdCopy, cdSize ) != 0 ) {
+					free( cdCopy );
+					goto fail;
+				}
+				cd = cdCopy;
 			}
 			z->entries = (rzip_entry_t *)calloc( count ? count : 1, sizeof( rzip_entry_t ) );
 
@@ -155,7 +170,7 @@ rzip_t *rzip_open( const char *path ) {
 				uint16_t nameLen, extraLen, cmtLen, flags, method;
 				if ( p + 46 > cdSize || rd32( cd + p ) != RZIP_CD_SIG ) {
 					WARN( "rzip: '%s': corrupt central directory (entry %d)", path, n );
-					free( cd );
+					free( cdCopy );
 					goto fail;
 				}
 				flags    = rd16( cd + p + 8 );
@@ -165,31 +180,31 @@ rzip_t *rzip_open( const char *path ) {
 				cmtLen   = rd16( cd + p + 32 );
 				if ( flags & 0x0001 ) {
 					WARN( "rzip: '%s': encrypted entries are not supported", path );
-					free( cd );
+					free( cdCopy );
 					goto fail;
 				}
 				if ( method != 0 && method != 8 ) {
 					WARN( "rzip: '%s': unsupported compression method %u (entry %d)", path, method, n );
-					free( cd );
+					free( cdCopy );
 					goto fail;
 				}
 				if ( rd32( cd + p + 20 ) == 0xFFFFFFFFu || rd32( cd + p + 24 ) == 0xFFFFFFFFu
 						|| rd32( cd + p + 42 ) == 0xFFFFFFFFu ) {
 					WARN( "rzip: '%s': ZIP64 entry fields are not supported", path );
-					free( cd );
+					free( cdCopy );
 					goto fail;
 				}
 				nameBytes += (size_t)nameLen + 1;
 				p += 46u + nameLen + extraLen + cmtLen;
 			}
 			if ( p > cdSize ) {
-				free( cd );
+				free( cdCopy );
 				goto fail;
 			}
 
 			z->nameBlob = (char *)malloc( nameBytes ? nameBytes : 1 );
 			if ( !z->nameBlob ) {
-				free( cd );
+				free( cdCopy );
 				goto fail;
 			}
 
@@ -214,7 +229,7 @@ rzip_t *rzip_open( const char *path ) {
 					p += 46u + nameLen + extraLen + cmtLen;
 				}
 			}
-			free( cd );
+			free( cdCopy );
 			z->numEntries = count;
 		}
 	}
@@ -246,6 +261,51 @@ const rzip_entry_t *rzip_entry_at( const rzip_t *z, int index ) {
 	return &z->entries[index];
 }
 
+/* streaming-read hint over a mapped span: pulls the faults off the
+   consumer's timeline for big sequential entries (roq, ogg). Hint
+   only - failure is ignorable by contract. */
+static void rzip_madvise_span( rzip_t *z, uint64_t ofs, uint64_t n ) {
+#if defined(HAVE_MMAP) && defined(POSIX_MADV_SEQUENTIAL)
+	if ( z->base && n >= 256 * 1024 ) {
+		uintptr_t a = (uintptr_t)( z->base + ofs );
+		uintptr_t pg = a & ~(uintptr_t)4095;
+		posix_madvise( (void *)pg, (size_t)( n + ( a - pg ) ), POSIX_MADV_SEQUENTIAL );
+	}
+#else
+	(void)z; (void)ofs; (void)n;
+#endif
+}
+
+const uint8_t *rzip_entry_borrow( rzip_t *z, int index, uint64_t *len ) {
+	const rzip_entry_t *e = rzip_entry_at( z, index );
+	uint8_t lh[30];
+	uint64_t dataOfs;
+
+	if ( len )
+		*len = 0;
+	if ( !e || !z->base || e->method != 0 )
+		return NULL;
+	if ( rzip_pread( z, e->localHeaderOfs, lh, 30 ) != 0 || rd32( lh ) != RZIP_LOCAL_SIG )
+		return NULL;
+	dataOfs = e->localHeaderOfs + 30u + rd16( lh + 26 ) + rd16( lh + 28 );
+	if ( dataOfs + e->uncompressedSize > (uint64_t)z->len )
+		return NULL;
+	if ( len )
+		*len = e->uncompressedSize;
+	rzip_madvise_span( z, dataOfs, e->uncompressedSize );
+	return z->base + dataOfs;
+}
+
+const uint8_t *rzip_file_borrow( rzip_file_t *f, uint64_t *len ) {
+	if ( len )
+		*len = 0;
+	if ( !f || !f->pak->base || f->e->method != 0 )
+		return NULL;
+	if ( len )
+		*len = f->e->uncompressedSize;
+	return f->pak->base + f->dataOfs;
+}
+
 rzip_file_t *rzip_file_open( rzip_t *z, int index ) {
 	const rzip_entry_t *e = rzip_entry_at( z, index );
 	rzip_file_t *f;
@@ -268,6 +328,8 @@ rzip_file_t *rzip_file_open( rzip_t *z, int index ) {
 	f->e       = e;
 	f->dataOfs = e->localHeaderOfs + 30u + rd16( lh + 26 ) + rd16( lh + 28 );
 	f->runCrc  = encoding_crc32( 0, NULL, 0 );
+
+	rzip_madvise_span( z, f->dataOfs, e->compressedSize );
 
 	if ( f->dataOfs + e->compressedSize > (uint64_t)z->len ) {
 		WARN( "rzip: '%s': entry '%s' extends past the archive", z->path, e->name );

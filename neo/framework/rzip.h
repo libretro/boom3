@@ -66,6 +66,17 @@ int                 rzip_file_rewind( rzip_file_t *f );   /* back to entry start
 int64_t             rzip_file_tell( const rzip_file_t *f );  /* uncompressed bytes handed out */
 void                rzip_file_close( rzip_file_t *f );
 
+/* Zero-copy borrow: for a STORED entry in a MAPPED pak, the entry's
+   bytes ARE the file at a stable address for the pak's lifetime -
+   return that pointer (and the length) instead of copying. NULL for
+   deflated entries, unmapped paks, or out-of-range indices; the caller
+   falls back to a copying read. Borrowed bytes skip the CRC check by
+   design: verifying would touch every page up front, defeating the
+   laziness that is the point, and the mapping is the file. */
+const uint8_t *     rzip_entry_borrow( rzip_t *z, int index, uint64_t *len );
+/* same borrow resolved through an already-open handle */
+const uint8_t *     rzip_file_borrow( rzip_file_t *f, uint64_t *len );
+
 /* diagnostics sink (Warning-level); set once at startup */
 typedef void ( *rzip_warn_fn )( const char *fmt, ... );
 void                rzip_set_warn( rzip_warn_fn fn );

@@ -338,6 +338,8 @@ public:
 	virtual void			StartBackgroundDownloadThread( void );
 	virtual void			Restart( void );
 	virtual void			Shutdown( bool reloading );
+	virtual const void *	GetFileView( const char *relativePath, int *len, ID_TIME_T *timestamp = NULL );
+	virtual void			ReleaseFileView( const void *data );
 	virtual bool			IsInitialized( void ) const;
 	virtual bool			PerformingCopyFiles( void ) const;
 	virtual idModList *		ListMods( void );
@@ -398,6 +400,7 @@ private:
 	int						readCount;			// total bytes read
 	int						loadCount;			// total files read
 	int						loadStack;			// total files in memory
+	int						viewsOutstanding;	// GetFileView borrows not yet released
 	idStr					gameFolder;			// this will be a single name without separators
 
 	searchpath_t			*addonPaks;			// not loaded up, but we saw them
@@ -2714,6 +2717,7 @@ is resetting due to a game change
 ================
 */
 void idFileSystemLocal::Init( void ) {
+	viewsOutstanding = 0;
 	// allow command line parms to override our defaults
 	// we have to specially handle this, because normal command
 	// line variable sets don't happen until after the filesystem
@@ -2828,6 +2832,15 @@ Frees all resources and closes all files
 */
 void idFileSystemLocal::Shutdown( bool reloading ) {
 	searchpath_t *sp, *next, *loop;
+
+	if ( viewsOutstanding > 0 ) {
+		// closing the paks unmaps them under every outstanding borrow -
+		// this is the dangling-pointer bug announcing itself instead of
+		// corrupting silently. The holder failed to release before the
+		// filesystem went down.
+		common->Warning( "idFileSystemLocal::Shutdown: %d file view(s) still borrowed - dangling pointers ahead", viewsOutstanding );
+	}
+	viewsOutstanding = 0;
 
 	backgroundThread_exit = true;
 	Sys_TriggerEvent();
@@ -3031,6 +3044,56 @@ idFile_InZip * idFileSystemLocal::ReadFileFromZip( pack_t *pak, fileInPack_t *pa
 	file->fileSize = (int)entry->uncompressedSize;
 
 	return file;
+}
+
+/*
+=================
+idFileSystemLocal::GetFileView / ReleaseFileView
+
+Resolution reuses the one true search path walk: open the file the
+normal way, ask the idFile whether its backing store can hand the
+whole content out as a stable pointer (idFile_InZip over a mapped
+stored pak entry says yes), and close the handle - the borrow's
+lifetime is the PAK's, not the file object's, so the close is safe
+and the fallback costs one open/close, cheap under a mapping.
+=================
+*/
+const void *idFileSystemLocal::GetFileView( const char *relativePath, int *len, ID_TIME_T *timestamp ) {
+	if ( len ) {
+		*len = 0;
+	}
+	if ( timestamp ) {
+		*timestamp = FILE_NOT_FOUND_TIMESTAMP;
+	}
+	idFile *f = OpenFileRead( relativePath );
+	if ( f == NULL ) {
+		return NULL;
+	}
+	if ( timestamp ) {
+		*timestamp = f->Timestamp();   // parity with ReadFile's reporting
+	}
+	int n = 0;
+	const void *view = f->MapView( &n );
+	CloseFile( f );
+	if ( view == NULL ) {
+		return NULL;
+	}
+	if ( len ) {
+		*len = n;
+	}
+	viewsOutstanding++;
+	return view;
+}
+
+void idFileSystemLocal::ReleaseFileView( const void *data ) {
+	if ( data == NULL ) {
+		return;
+	}
+	if ( viewsOutstanding <= 0 ) {
+		common->Warning( "idFileSystemLocal::ReleaseFileView: release without a borrow" );
+		return;
+	}
+	viewsOutstanding--;
 }
 
 /*

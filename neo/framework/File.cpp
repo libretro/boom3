@@ -1372,6 +1372,19 @@ ID_TIME_T idFile_InZip::Timestamp( void ) {
 }
 
 /*
+================
+idFile_InZip::MapView
+================
+*/
+const void *idFile_InZip::MapView( int *len ) {
+	uint64_t n = 0;
+	const uint8_t *p = rzip_file_borrow( (rzip_file_t *)z, &n );
+	if ( len )
+		*len = (int)n;
+	return p;
+}
+
+/*
 =================
 idFile_InZip::Seek
 

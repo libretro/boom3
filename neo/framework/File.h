@@ -62,6 +62,11 @@ public:
 	virtual const char *	GetName( void );
 							// Get the full file path.
 	virtual const char *	GetFullPath( void );
+							// Zero-copy view of the whole file where the backing
+							// store permits (mapped stored pak entries); the
+							// pointer's lifetime is the PAK's, not this file
+							// object's. NULL means copy via Read().
+	virtual const void *	MapView( int *len ) { if ( len ) *len = 0; return NULL; }
 							// Read data from the file to the buffer.
 	virtual int				Read( void *buffer, int len );
 							// Write data from the buffer to the file.
@@ -239,6 +244,7 @@ public:
 	virtual void	   ForceFlush( void );
 	virtual void	   Flush( void );
 	virtual int	   Seek( long offset, fsOrigin_t origin );
+	virtual const void *MapView( int *len );
 
 private:
 	idStr name;	            // name of the file in the pak

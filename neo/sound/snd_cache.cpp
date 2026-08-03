@@ -383,6 +383,7 @@ idSoundSample::idSoundSample() {
 	objectSize = 0;
 	objectMemSize = 0;
 	nonCacheData = NULL;
+	nonCacheDataBorrowed = false;
 	amplitudeData = NULL;
 	amplitudeBuildFailed = false;
 	defaultSound = false;
@@ -904,8 +905,32 @@ void idSoundSample::Load( void ) {
 	objectSize = fh.GetOutputSize();
 	objectMemSize = fh.GetMemorySize();
 
-	nonCacheData = (byte *)soundCacheAllocator.Alloc( objectMemSize );
-	fh.Read( nonCacheData, objectMemSize, NULL );
+	/*
+	   OGG stays encoded in memory and streams at mix time, so for OGGs
+	   nonCacheData is just the file's bytes - and pk4s store
+	   already-compressed audio uncompressed, so on a mapped pak those
+	   bytes already sit at a stable address for the pak's lifetime.
+	   Borrow instead of copying: the resident music/ambience share of
+	   the sound cache drops to zero on mapped platforms. PCM keeps the
+	   copying path (it gets decoded/resampled in place downstream),
+	   and any borrow shorter or longer than what idWaveFile reports
+	   falls back rather than guessing.
+	*/
+	nonCacheDataBorrowed = false;
+	if ( objectInfo.wFormatTag == WAVE_FORMAT_TAG_OGG ) {
+		int viewLen = 0;
+		const void *view = fileSystem->GetFileView( name, &viewLen );
+		if ( view != NULL && viewLen == objectMemSize ) {
+			nonCacheData = (byte *)view;
+			nonCacheDataBorrowed = true;
+		} else if ( view != NULL ) {
+			fileSystem->ReleaseFileView( view );
+		}
+	}
+	if ( !nonCacheDataBorrowed ) {
+		nonCacheData = (byte *)soundCacheAllocator.Alloc( objectMemSize );
+		fh.Read( nonCacheData, objectMemSize, NULL );
+	}
 
 	// note: the old OpenAL "hardware buffer" upload used to happen here; the
 	// libretro core mixes everything in software from nonCacheData
@@ -923,6 +948,8 @@ haveData:
 		short *resampled = ResamplePCMToOutput( (const short *)nonCacheData, srcFrames,
 				objectInfo.nChannels, objectInfo.nSamplesPerSec, &outFrames );
 		if ( resampled != NULL ) {
+			// PCM only reaches here, never a borrow, but keep the
+			// invariant explicit
 			soundCacheAllocator.Free( nonCacheData );
 			nonCacheData = (byte *)resampled;
 			objectSize = outFrames * objectInfo.nChannels;
@@ -952,7 +979,12 @@ void idSoundSample::PurgeSoundSample() {
 	amplitudeBuildFailed = false;
 
 	if ( nonCacheData ) {
-		soundCacheAllocator.Free( nonCacheData );
+		if ( nonCacheDataBorrowed ) {
+			fileSystem->ReleaseFileView( nonCacheData );
+			nonCacheDataBorrowed = false;
+		} else {
+			soundCacheAllocator.Free( nonCacheData );
+		}
 		nonCacheData = NULL;
 	}
 }

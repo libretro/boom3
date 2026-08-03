@@ -827,6 +827,7 @@ public:
 	int				objectSize;					// size of waveform in samples, excludes the header
 	int				objectMemSize;				// object size in memory
 	byte *				nonCacheData;				// if it's not cached
+	bool					nonCacheDataBorrowed;	// nonCacheData is a filesystem view, not soundCacheAllocator memory
 	byte *				amplitudeData;				// precomputed min,max amplitude pairs
 	bool				amplitudeBuildFailed;		// don't retry a failed build every query
 	void				EnsureAmplitudeData( void );// lazy build, own decoder - never the channel's

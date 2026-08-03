@@ -42,6 +42,40 @@ If you have questions concerning this license or the applicable additional terms
 #include "renderer/Image.h"
 
 /*
+================
+R_ReadImageFile / R_FreeImageFile
+
+Zero-copy where the filesystem permits it (a stored entry in a mapped
+pak): the decode-from-memory calls below never cared where the bytes
+live, so borrow them for the length of the decode and release, falling
+back to the copying ReadFile everywhere else. Timestamp parity with
+ReadFile is preserved through GetFileView.
+================
+*/
+static int R_ReadImageFile( const char *name, byte **buf, ID_TIME_T *timestamp, bool *borrowed ) {
+	int len = 0;
+	const void *view = fileSystem->GetFileView( name, &len, timestamp );
+	if ( view != NULL ) {
+		*buf = (byte *)view;
+		*borrowed = true;
+		return len;
+	}
+	*borrowed = false;
+	return fileSystem->ReadFile( name, (void **)buf, timestamp );
+}
+
+static void R_FreeImageFile( byte *buf, bool borrowed ) {
+	if ( buf == NULL ) {
+		return;
+	}
+	if ( borrowed ) {
+		fileSystem->ReleaseFileView( buf );
+	} else {
+		fileSystem->FreeFile( buf );
+	}
+}
+
+/*
 
 This file only has a single entry point:
 
@@ -232,7 +266,8 @@ static void LoadBMP( const char *name, byte **pic, int *width, int *height, ID_T
 	//
 	// load the file
 	//
-	length = fileSystem->ReadFile( name, (void **)&buffer, timestamp );
+	bool bufferBorrowed = false;
+	length = R_ReadImageFile( name, &buffer, timestamp, &bufferBorrowed );
 	if ( !buffer ) {
 		return;
 	}
@@ -409,7 +444,7 @@ static void LoadBMP( const char *name, byte **pic, int *width, int *height, ID_T
 		}
 	}
 
-	fileSystem->FreeFile( buffer );
+	R_FreeImageFile( buffer, bufferBorrowed );
 
 }
 
@@ -428,6 +463,7 @@ PCX LOADING
 LoadPCX
 ==============
 */
+
 static void LoadPCX ( const char *filename, byte **pic, byte **palette, int *width, int *height, ID_TIME_T *timestamp ) {
 	byte	*raw;
 	pcx_t	*pcx;
@@ -713,14 +749,15 @@ static void LoadTGA( const char *name, byte **pic, int *width, int *height, ID_T
 		return;
 	}
 
-	fileLen = fileSystem->ReadFile( name, (void **)&fileBuf, timestamp );
+	bool fileBufBorrowed = false;
+	fileLen = R_ReadImageFile( name, &fileBuf, timestamp, &fileBufBorrowed );
 	if ( !fileBuf ) {
 		return;
 	}
 
 	void *img = image_transfer_new( IMAGE_TYPE_TGA );
 	if ( !img ) {
-		fileSystem->FreeFile( fileBuf );
+		R_FreeImageFile( fileBuf, fileBufBorrowed );
 		return;
 	}
 
@@ -728,7 +765,7 @@ static void LoadTGA( const char *name, byte **pic, int *width, int *height, ID_T
 
 	if ( !image_transfer_start( img, IMAGE_TYPE_TGA ) ) {
 		image_transfer_free( img, IMAGE_TYPE_TGA );
-		fileSystem->FreeFile( fileBuf );
+		R_FreeImageFile( fileBuf, fileBufBorrowed );
 		return;
 	}
 
@@ -739,7 +776,7 @@ static void LoadTGA( const char *name, byte **pic, int *width, int *height, ID_T
 
 	if ( !image_transfer_is_valid( img, IMAGE_TYPE_TGA ) ) {
 		image_transfer_free( img, IMAGE_TYPE_TGA );
-		fileSystem->FreeFile( fileBuf );
+		R_FreeImageFile( fileBuf, fileBufBorrowed );
 		return;
 	}
 
@@ -754,7 +791,7 @@ static void LoadTGA( const char *name, byte **pic, int *width, int *height, ID_T
 	} while ( ret == IMAGE_PROCESS_NEXT );
 
 	image_transfer_free( img, IMAGE_TYPE_TGA );
-	fileSystem->FreeFile( fileBuf );
+	R_FreeImageFile( fileBuf, fileBufBorrowed );
 
 	if ( ret == IMAGE_PROCESS_ERROR || ret == IMAGE_PROCESS_ERROR_END || !transferPixels ) {
 		if ( transferPixels ) {
