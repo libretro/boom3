@@ -116,8 +116,8 @@ int main() {
 		memset(accA,0,sizeof accA); memset(accB,0,sizeof accB);
 		// scalar reference computed inline (closed-form, mirrors kernel tail)
 		{
-			const int baseL=(int)lastQ[0]<<8, baseR=(int)lastQ[1]<<8;
-			const int incL=(((int)curQ[0]-lastQ[0])<<8)/n, incR=(((int)curQ[1]-lastQ[1])<<8)/n;
+			const int baseL=(int)lastQ[0]* 256, baseR=(int)lastQ[1]* 256;
+			const int incL=(((int)curQ[0]-lastQ[0])* 256)/n, incR=(((int)curQ[1]-lastQ[1])* 256)/n;
 			for(int i=0;i<n;i++){ int gL=(baseL+incL*i)>>8, gR=(baseR+incR*i)>>8;
 				accA[i*2+0]+=(srcS[i]*gL+0x4000)>>15; accA[i*2+1]+=(srcS[i]*gR+0x4000)>>15; }
 		}
@@ -133,8 +133,8 @@ int main() {
 		int stm=0;
 		for (int n=1;n<=1470;n+=7) {
 			memset(accA,0,sizeof accA); memset(accB,0,sizeof accB);
-			const int baseL=(int)lastQ[0]<<8, baseR=(int)lastQ[1]<<8;
-			const int incL=(((int)curQ[0]-lastQ[0])<<8)/n, incR=(((int)curQ[1]-lastQ[1])<<8)/n;
+			const int baseL=(int)lastQ[0]* 256, baseR=(int)lastQ[1]* 256;
+			const int incL=(((int)curQ[0]-lastQ[0])* 256)/n, incR=(((int)curQ[1]-lastQ[1])* 256)/n;
 			for(int i=0;i<n;i++){ int gL=(baseL+incL*i)>>8, gR=(baseR+incR*i)>>8;
 				accA[i*2+0]+=(srcSt[i*2+0]*gL+0x4000)>>15; accA[i*2+1]+=(srcSt[i*2+1]*gR+0x4000)>>15; }
 			Snd_MixTwoSpeakerStereoS16(accB, srcSt, n, lastQ, curQ);
@@ -153,8 +153,8 @@ int main() {
 			int um=0, ovf=0;
 			for (int n=1;n<=1470;n+=13) {
 				memset(accA,0,sizeof accA); memset(accB,0,sizeof accB);
-				const int baseL=lastQU[0]<<8, baseR=lastQU[1]<<8;
-				const int incL=((curQU[0]-lastQU[0])<<8)/n, incR=((curQU[1]-lastQU[1])<<8)/n;
+				const int baseL=lastQU[0]* 256, baseR=lastQU[1]* 256;
+				const int incL=((curQU[0]-lastQU[0])* 256)/n, incR=((curQU[1]-lastQU[1])* 256)/n;
 				for(int i=0;i<n;i++){
 					int gL=(baseL+incL*i)>>8, gR=(baseR+incR*i)>>8;
 					long long pL=(long long)srcX[i]*gL+0x4000, pR=(long long)srcX[i]*gR+0x4000;
@@ -396,7 +396,7 @@ int reverb_test() {
 	printf("reverb float/int agreement: %s\n",
 		(eI>0 && eF/eI>0.5 && eF/eI<2.0) ? "OK (same order, same envelope)" : "FAIL");
 	// int path determinism: run twice, compare
-	idSoundReverb a,b2; a.Init(); b2.Init(); a.SetParams(p); b2.SetParams(p);
+	static idSoundReverb a,b2; a.Init(); b2.Init(); a.SetParams(p); b2.SetParams(p);
 	static int o1[1024],o2[1024]; int mism=0;
 	for (int b=0;b<40;b++){ memset(o1,0,sizeof o1); memset(o2,0,sizeof o2);
 		a.ProcessS16(b?zi:si,o1,512,0.5f); b2.ProcessS16(b?zi:si,o2,512,0.5f);
@@ -631,8 +631,8 @@ int reverb_test() {
 	   copies are scalar and the test is a tautology, which is fine. */
 	{
 		int mism2 = 0;
-		rvb_scalar::idSoundReverb rs; rs.Init();
-		idSoundReverb rv; rv.Init();
+		static rvb_scalar::idSoundReverb rs; rs.Init();
+		static idSoundReverb rv; rv.Init();
 		sndReverbParams_t pa; pa.SetDefaults(); pa.decayTime=4.0f;
 		sndReverbParams_t pb = pa; pb.decayLFRatio=1.8f; pb.gainLF=0.3f; pb.gainHF=0.2f;
 		pb.echoDepth=0.9f; pb.echoTime=0.09f; pb.modulationDepth=1.0f; pb.modulationTime=0.11f;
@@ -663,7 +663,7 @@ int reverb_test() {
 	/* ---- NEON float kernel parity (appended with the float line stage;
 	        tautological where no float SIMD compiles in) ---- */
 	{
-		idSoundReverb rA; rvb_scalar::idSoundReverb rB;
+		static idSoundReverb rA; static rvb_scalar::idSoundReverb rB;
 		rA.Init(); rB.Init();
 		sndReverbParams_t qa; rvb_scalar::sndReverbParams_t qb;
 		qa.SetDefaults(); qa.decayTime=2.2f; qa.decayLFRatio=0.3f; qa.decayHFRatio=0.4f;
@@ -692,7 +692,7 @@ int reverb_test() {
 	{
 		/* late pan hard right vs unpanned: R wet energy must dominate L */
 		for (int pan = 0; pan < 2; pan++) {
-			idSoundReverb rv; rv.Init();
+			static idSoundReverb rv; rv.Init();
 			sndReverbParams_t pp; pp.SetDefaults();
 			pp.lateReverbGain = 1.0f; pp.reflectionsGain = 0.2f;
 			if (pan) { pp.lateReverbPan[0] = 1.0f; pp.reflectionsPan[0] = 1.0f; }
@@ -796,7 +796,7 @@ int reverb_test() {
 			/* steady sine at f, return wet output RMS after settling */
 			static double sineRMS( const sndReverbParams_t &pp, double f ) {
 				static int zi[512], di[1024], si[512];
-				idSoundReverb r; r.Init(); r.SetParams(pp);
+				static idSoundReverb r; r.Init(); r.SetParams(pp);
 				memset(zi,0,sizeof zi);
 				for (int b=0;b<REVERB_XFADE_BLOCKS+2;b++){ memset(di,0,sizeof di); r.ProcessS16(zi,di,512,0.5f); }
 				double e=0; long n=0;
@@ -813,7 +813,7 @@ int reverb_test() {
 			static void decayBands( const sndReverbParams_t &pp, double fSplit, int highBand,
 			                        double t0, double t1, double *e0, double *e1 ) {
 				static int zi[512], di[1024], si[512];
-				idSoundReverb r; r.Init(); r.SetParams(pp);
+				static idSoundReverb r; r.Init(); r.SetParams(pp);
 				memset(zi,0,sizeof zi);
 				for (int b=0;b<REVERB_XFADE_BLOCKS+2;b++){ memset(di,0,sizeof di); r.ProcessS16(zi,di,512,0.5f); }
 				Probe pr; double lp[4]={0,0,0,0};
@@ -878,7 +878,7 @@ int reverb_test() {
 			sndReverbParams_t e1=base; e1.echoDepth=1.0f; e1.echoTime=0.1f; e1.diffusion=0.0f;
 			static int zi[512], di[1024], si[512];
 			memset(zi,0,sizeof zi); memset(si,0,sizeof si); si[0]=16384;
-			idSoundReverb r; r.Init(); r.SetParams(e1);
+			static idSoundReverb r; r.Init(); r.SetParams(e1);
 			for (int b=0;b<REVERB_XFADE_BLOCKS+2;b++){ memset(di,0,sizeof di); r.ProcessS16(zi,di,512,0.5f); }
 			static double sig[44100];
 			for (int b=0;b*512<44100;b++){ memset(di,0,sizeof di);
@@ -901,7 +901,7 @@ int reverb_test() {
 			for (int variant=0; variant<2; variant++){
 				static int zi[512], di[1024], si[512];
 				memset(zi,0,sizeof zi);
-				idSoundReverb r; r.Init(); r.SetParams(variant?m1:m0);
+				static idSoundReverb r; r.Init(); r.SetParams(variant?m1:m0);
 				for (int b=0;b<REVERB_XFADE_BLOCKS+2;b++){ memset(di,0,sizeof di); r.ProcessS16(zi,di,512,0.5f); }
 				static double sig[88200];
 				for (int b=0;b*512<88200;b++){
@@ -932,7 +932,7 @@ int reverb_test() {
 			for (int variant=0; variant<2; variant++){
 				sndReverbParams_t dp=base; dp.density = variant? 0.05f : 1.0f;
 				memset(zi,0,sizeof zi); memset(si,0,sizeof si); si[0]=16384;
-				idSoundReverb r; r.Init(); r.SetParams(dp);
+				static idSoundReverb r; r.Init(); r.SetParams(dp);
 				/* warm past the crossfade AND the read-tap slew (worst-case
 				   retarget ~1.5s at REVERB_TAP_SLEW_Q16) */
 				for (int b=0;b*512<44100*5/2;b++){ memset(di,0,sizeof di); r.ProcessS16(zi,di,512,0.5f); }
@@ -969,7 +969,7 @@ int reverb_test() {
 			w.density=0.05f; w.diffusion=1.0f;
 			static int zi[512], di[1024], si[512];
 			memset(zi,0,sizeof zi); memset(si,0,sizeof si); si[0]=32767;
-			idSoundReverb r; r.Init(); r.SetParams(w);
+			static idSoundReverb r; r.Init(); r.SetParams(w);
 			for (int b=0;b<REVERB_XFADE_BLOCKS+2;b++){ memset(di,0,sizeof di); r.ProcessS16(zi,di,512,0.5f); }
 			long long lastE=0;
 			for (int b=0;b*512<44100*80;b++){ memset(di,0,sizeof di);

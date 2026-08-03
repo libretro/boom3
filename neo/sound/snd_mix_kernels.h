@@ -38,6 +38,20 @@ possible for a float mixer and is not a goal.
 ===========================================================================
 */
 
+/*
+   UBSan sweep notes for the integer kernels:
+   - gain-ramp fixed-point scaling uses * 256 rather than << 8: Q15
+     gains are legitimately negative (reverb pan matrices), and left
+     shift of a negative value is UB before C++20. Identical codegen.
+   - accumulation into the int32 mix buffer wraps through unsigned
+     arithmetic: nothing bounds simultaneous voices, so the sum
+     overflowing int32 is reachable, and signed overflow is UB. Wrap
+     is the semantic every build already exhibited in practice; the
+     output saturator handles magnitude, and a mix hot enough to wrap
+     is audibly catastrophic either way - the change removes the UB,
+     not the glitch. Applies to every += into the accumulator.
+*/
+
 #ifndef __SND_MIX_KERNELS_H__
 #define __SND_MIX_KERNELS_H__
 
@@ -345,10 +359,10 @@ dest: int32 stereo accumulator, numFrames*2; src: mono s16
 static inline void Snd_MixTwoSpeakerMonoS16( int *dest, const short *src, int numFrames, const int lastQ15[2], const int currentQ15[2] ) {
 	if ( numFrames <= 0 )
 		return;
-	const int baseL = lastQ15[0] << 8;
-	const int baseR = lastQ15[1] << 8;
-	const int incL  = ( ( currentQ15[0] - lastQ15[0] ) << 8 ) / numFrames;
-	const int incR  = ( ( currentQ15[1] - lastQ15[1] ) << 8 ) / numFrames;
+	const int baseL = lastQ15[0] * 256;
+	const int baseR = lastQ15[1] * 256;
+	const int incL  = ( ( currentQ15[0] - lastQ15[0] ) * 256 ) / numFrames;
+	const int incR  = ( ( currentQ15[1] - lastQ15[1] ) * 256 ) / numFrames;
 
 	/*
 	   Deliberately plain scalar. A hand-written SSE2 path lived here (pack
@@ -365,8 +379,8 @@ static inline void Snd_MixTwoSpeakerMonoS16( int *dest, const short *src, int nu
 	for ( int i = 0; i < numFrames; i++, d += 2 ) {
 		const int gL = ( baseL + incL * i ) >> 8;
 		const int gR = ( baseR + incR * i ) >> 8;
-		d[0] += ( src[i] * gL + 0x4000 ) >> 15;
-		d[1] += ( src[i] * gR + 0x4000 ) >> 15;
+		d[0] = (int)( (unsigned)d[0] + (unsigned)( ( src[i] * gL + 0x4000 ) >> 15 ) );
+		d[1] = (int)( (unsigned)d[1] + (unsigned)( ( src[i] * gR + 0x4000 ) >> 15 ) );
 	}
 }
 
@@ -381,10 +395,10 @@ static inline void Snd_MixTwoSpeakerStereoS16( int *dest, const short *src, int 
 	if ( numFrames <= 0 ) {
 		return;
 	}
-	const int baseL = lastQ15[0] << 8;
-	const int baseR = lastQ15[1] << 8;
-	const int incL  = ( ( currentQ15[0] - lastQ15[0] ) << 8 ) / numFrames;
-	const int incR  = ( ( currentQ15[1] - lastQ15[1] ) << 8 ) / numFrames;
+	const int baseL = lastQ15[0] * 256;
+	const int baseR = lastQ15[1] * 256;
+	const int incL  = ( ( currentQ15[0] - lastQ15[0] ) * 256 ) / numFrames;
+	const int incR  = ( ( currentQ15[1] - lastQ15[1] ) * 256 ) / numFrames;
 
 	/* plain scalar on purpose - see the mono kernel above */
 	int *d = dest;
@@ -392,8 +406,8 @@ static inline void Snd_MixTwoSpeakerStereoS16( int *dest, const short *src, int 
 	for ( int i = 0; i < numFrames; i++, d += 2, sp += 2 ) {
 		const int gL = ( baseL + incL * i ) >> 8;
 		const int gR = ( baseR + incR * i ) >> 8;
-		d[0] += ( sp[0] * gL + 0x4000 ) >> 15;
-		d[1] += ( sp[1] * gR + 0x4000 ) >> 15;
+		d[0] = (int)( (unsigned)d[0] + (unsigned)( ( sp[0] * gL + 0x4000 ) >> 15 ) );
+		d[1] = (int)( (unsigned)d[1] + (unsigned)( ( sp[1] * gR + 0x4000 ) >> 15 ) );
 	}
 }
 

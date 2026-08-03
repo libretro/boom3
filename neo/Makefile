@@ -343,6 +343,19 @@ CXXFLAGS += -Wall $(fpic) -fpermissive -std=gnu++11
 # the engine does.
 CXXFLAGS += -ffp-contract=off -fno-strict-aliasing
 
+# Sanitizer sweep: make SANITIZE=address,undefined (or thread, or leak).
+# Instruments the whole core; run the game under a frontend with
+# ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=print_stacktrace=1 in the
+# environment and LD_PRELOAD of the matching libasan if the frontend
+# itself is uninstrumented. -O1 keeps stacks honest.
+ifneq ($(SANITIZE),)
+# vptr checking needs RTTI, and parts of this tree build -fno-rtti:
+# the mismatch surfaces as undefined typeinfo references at link.
+CFLAGS   += -fsanitize=$(SANITIZE) -fno-sanitize=vptr -fno-omit-frame-pointer -g -O1
+CXXFLAGS += -fsanitize=$(SANITIZE) -fno-sanitize=vptr -fno-omit-frame-pointer -g -O1
+LDFLAGS  += -fsanitize=$(SANITIZE) -fno-sanitize=vptr
+endif
+
 # POSIX mmap for the VFS (pak mapping fast path, data_transfer windows).
 # Only platforms whose libc has mmap: desktop unix and android. Windows'
 # vendored VFS has no mapping arm and consoles lack mmap - they take the

@@ -77,6 +77,7 @@ int main(void) {
     /* corruption: flip a byte mid-file, expect CRC warning on full read */
     { long zn; unsigned char *zb=slurp("/tmp/test.pk4",&zn); zb[zn/3]^=0xFF;
       FILE*o=fopen("/tmp/bad.pk4","wb");fwrite(zb,1,zn,o);fclose(o);
+      free(zb);
       rzip_t *b=rzip_open("/tmp/bad.pk4");
       if (b){ int w0=warns;
         for(int i=0;i<rzip_num_entries(b);i++){const rzip_entry_t*e=rzip_entry_at(b,i);
@@ -87,6 +88,7 @@ int main(void) {
         rzip_close(b);
       } else printf("corruption: open refused (acceptable)\n");
     }
+    free(d1); free(d2);   /* harness hygiene: leak-clean under LSan */
     printf(fail?"RESULT: FAIL(%d)\n":"RESULT: ALL OK\n", fail);
     return fail?1:0;
 }
