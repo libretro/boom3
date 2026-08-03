@@ -35,7 +35,7 @@ If you have questions concerning this license or the applicable additional terms
 // libretro-common file stream (VFS-backed); full API in streams/file_stream.h
 typedef struct RFILE RFILE;
 
-//#include "framework/Unzip.h"
+//#include "framework/rzip.h"
 
 /*
 ==============================================================

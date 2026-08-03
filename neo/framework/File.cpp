@@ -29,7 +29,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "sys/platform.h"
 #include <streams/file_stream.h>
 #include <libretro.h>
-#include "framework/Unzip.h"
+#include "framework/rzip.h"
 #include "framework/FileSystem.h"
 
 #include "framework/File.h"
@@ -1300,8 +1300,7 @@ idFile_InZip::~idFile_InZip
 =================
 */
 idFile_InZip::~idFile_InZip( void ) {
-	unzCloseCurrentFile( z );
-	unzClose( z );
+	rzip_file_close( (rzip_file_t *)z );
 }
 
 /*
@@ -1312,7 +1311,7 @@ Properly handles partial reads
 =================
 */
 int idFile_InZip::Read( void *buffer, int len ) {
-	int l = unzReadCurrentFile( z, buffer, len );
+	int l = rzip_file_read( (rzip_file_t *)z, buffer, len );
 	fileSystem->AddToReadCount( l );
 	return l;
 }
@@ -1351,7 +1350,7 @@ idFile_InZip::Tell
 =================
 */
 int idFile_InZip::Tell( void ) {
-	return unztell( z );
+	return (int)rzip_file_tell( (const rzip_file_t *)z );
 }
 
 /*
@@ -1391,8 +1390,10 @@ int idFile_InZip::Seek( long offset, fsOrigin_t origin ) {
 		}
 		case FS_SEEK_SET: {
 			// set the file position in the zip file (also sets the current file info)
-			unzSetOffset64(z, zipFilePos);
-			unzOpenCurrentFile( z );
+			// back to the entry start: cursor+inflate reset in place
+			if ( rzip_file_rewind( (rzip_file_t *)z ) != 0 ) {
+				return -1;
+			}
 			if ( offset <= 0 ) {
 				return 0;
 			}
@@ -1400,12 +1401,12 @@ int idFile_InZip::Seek( long offset, fsOrigin_t origin ) {
 		case FS_SEEK_CUR: {
 			buf = (char *) _alloca16( ZIP_SEEK_BUF_SIZE );
 			for ( i = 0; i < ( offset - ZIP_SEEK_BUF_SIZE ); i += ZIP_SEEK_BUF_SIZE ) {
-				res = unzReadCurrentFile( z, buf, ZIP_SEEK_BUF_SIZE );
+				res = rzip_file_read( (rzip_file_t *)z, buf, ZIP_SEEK_BUF_SIZE );
 				if ( res < ZIP_SEEK_BUF_SIZE ) {
 					return -1;
 				}
 			}
-			res = i + unzReadCurrentFile( z, buf, offset - i );
+			res = i + rzip_file_read( (rzip_file_t *)z, buf, offset - i );
 			return ( res == offset ) ? 0 : -1;
 		}
 		default: {

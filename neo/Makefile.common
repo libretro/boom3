@@ -85,6 +85,7 @@ SRC_FRAMEWORK	:=\
 	$(CORE_DIR)/framework/DeclTable.cpp \
 	$(CORE_DIR)/framework/EditField.cpp \
 	$(CORE_DIR)/framework/EventLoop.cpp \
+	$(CORE_DIR)/framework/rzip.cpp \
 	$(CORE_DIR)/framework/File.cpp \
 	$(CORE_DIR)/framework/FileSystem.cpp \
 	$(CORE_DIR)/framework/KeyInput.cpp \
@@ -97,8 +98,6 @@ SRC_FRAMEWORK	:=\
 	$(CORE_DIR)/framework/async/MsgChannel.cpp \
 	$(CORE_DIR)/framework/async/NetworkSystem.cpp \
 	$(CORE_DIR)/framework/async/ServerScan.cpp \
-	$(CORE_DIR)/framework/minizip/unzip.cpp \
-	$(CORE_DIR)/framework/minizip/ioapi_mapped.cpp
 
 SRC_CM	:=\
 	$(CORE_DIR)/cm/CollisionModel_contacts.cpp \
@@ -425,7 +424,6 @@ SOURCES_CXX	:=\
 	$(SRC_GAME) \
 
 SOURCES_C	:=\
-	$(CORE_DIR)/framework/minizip/ioapi.c \
 	$(LIBRETRO_COMM_DIR)/formats/data_transfer.c \
 	$(LIBRETRO_COMM_DIR)/memmap/memmap.c \
 	$(SRC_GLAD) \

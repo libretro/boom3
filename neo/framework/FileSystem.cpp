@@ -42,12 +42,12 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "idlib/hashing/MD4.h"
 #include "framework/Licensee.h"
-#include "framework/Unzip.h"
-#include "framework/minizip/ioapi_mapped.h"
+#include "framework/rzip.h"
 #include "framework/EventLoop.h"
 #include "framework/DeclEntityDef.h"
 #include "framework/DeclManager.h"
 
+#include "framework/rzip.h"
 #include "framework/FileSystem.h"
 
 /*
@@ -277,7 +277,7 @@ typedef struct {
 
 typedef struct {
 	idStr				pakFilename;				// c:\doom\base\pak0.pk4
-	unzFile				handle;
+	rzip_t *			handle;
 	int					checksum;
 	int					numfiles;
 	int					length;
@@ -1313,14 +1313,20 @@ addonInfo_t *idFileSystemLocal::ParseAddonDef( const char *buf, const int len ) 
 idFileSystemLocal::LoadZipFile
 =================
 */
+static void RZipWarn( const char *fmt, ... ) {
+	va_list ap;
+	char msg[1024];
+	va_start( ap, fmt );
+	idStr::vsnPrintf( msg, sizeof( msg ), fmt, ap );
+	va_end( ap );
+	common->Warning( "%s", msg );
+}
+
 pack_t *idFileSystemLocal::LoadZipFile( const char *zipfile ) {
+	rzip_set_warn( RZipWarn );
+
 	fileInPack_t *	buildBuffer;
 	pack_t *		pack;
-	unzFile			uf;
-	int				err;
-	unz_global_info64 gi;
-	char			filename_inzip[MAX_ZIPPED_FILE_NAME];
-	unz_file_info64	file_info;
 	int				i;
 	int				hash;
 	int				fs_numHeaderLongs;
@@ -1339,21 +1345,13 @@ pack_t *idFileSystemLocal::LoadZipFile( const char *zipfile ) {
 
 	fs_numHeaderLongs = 0;
 
-	{
-		/* pak I/O through the VFS: mmap fast path where the platform
-		   supports it (HAVE_MMAP builds), buffered RFILE otherwise -
-		   see framework/minizip/ioapi_mapped.cpp */
-		zlib_filefunc64_def mappedFuncs;
-		fill_mapped_filefunc64( &mappedFuncs );
-		uf = unzOpen2_64( zipfile, &mappedFuncs );
-	}
-	err = unzGetGlobalInfo64( uf, &gi );
-
-	if ( err != UNZ_OK ) {
+	rzip_t *uf = rzip_open( zipfile );
+	if ( uf == NULL ) {
 		return NULL;
 	}
+	int numEntries = rzip_num_entries( uf );
 
-	buildBuffer = new fileInPack_t[gi.number_entry];
+	buildBuffer = new fileInPack_t[numEntries];
 	pack = new pack_t;
 	for( i = 0; i < FILE_HASH_SIZE; i++ ) {
 		pack->hashTable[i] = NULL;
@@ -1361,7 +1359,7 @@ pack_t *idFileSystemLocal::LoadZipFile( const char *zipfile ) {
 
 	pack->pakFilename = zipfile;
 	pack->handle = uf;
-	pack->numfiles = gi.number_entry;
+	pack->numfiles = numEntries;
 	pack->buildBuffer = buildBuffer;
 	pack->referenced = false;
 	pack->addon = false;
@@ -1372,37 +1370,31 @@ pack_t *idFileSystemLocal::LoadZipFile( const char *zipfile ) {
 
 	pack->length = len;
 
-	unzGoToFirstFile(uf);
-	fs_headerLongs = (int *)Mem_ClearedAlloc( gi.number_entry * sizeof(int) );
-	for ( i = 0; i < (int)gi.number_entry; i++ ) {
-		err = unzGetCurrentFileInfo64( uf, &file_info, filename_inzip, sizeof(filename_inzip), NULL, 0, NULL, 0 );
-		if ( err != UNZ_OK ) {
-			break;
-		}
-		if ( file_info.uncompressed_size > 0 )
+	fs_headerLongs = (int *)Mem_ClearedAlloc( numEntries * sizeof(int) );
+	for ( i = 0; i < numEntries; i++ ) {
+		const rzip_entry_t *entry = rzip_entry_at( uf, i );
+		if ( entry->uncompressedSize > 0 )
 #ifdef MSB_FIRST
-			fs_headerLongs[fs_numHeaderLongs++] = D3_Swap32( file_info.crc );
+			fs_headerLongs[fs_numHeaderLongs++] = D3_Swap32( entry->crc32 );
 #else
-			fs_headerLongs[fs_numHeaderLongs++] = ( file_info.crc );
+			fs_headerLongs[fs_numHeaderLongs++] = ( entry->crc32 );
 #endif
-		hash = HashFileName( filename_inzip );
-		buildBuffer[i].name = filename_inzip;
+		hash = HashFileName( entry->name );
+		buildBuffer[i].name = entry->name;
 		buildBuffer[i].name.ToLower();
 		buildBuffer[i].name.BackSlashesToSlashes();
-		// store the file position in the zip
-		buildBuffer[i].pos = unzGetOffset64( uf );
+		// the stable entry id: rzip's index into the parsed directory
+		buildBuffer[i].pos = (uint64_t)i;
 		// add the file to the hash
 		buildBuffer[i].next = pack->hashTable[hash];
 		pack->hashTable[hash] = &buildBuffer[i];
-		// go to the next file in the zip
-		unzGoToNextFile(uf);
 	}
 
 	// ignore all binary paks
 	confHash = HashFileName(BINARY_CONFIG);
 	for (pakFile = pack->hashTable[confHash]; pakFile; pakFile = pakFile->next) {
 		if (!FilenameCompare(pakFile->name, BINARY_CONFIG)) {
-			unzClose(uf);
+			rzip_close(uf);
 			delete[] buildBuffer;
 			delete pack;
 			Mem_Free( fs_headerLongs );
@@ -2859,7 +2851,7 @@ void idFileSystemLocal::Shutdown( bool reloading ) {
 			next = sp->next;
 
 			if ( sp->pack ) {
-				unzClose( sp->pack->handle );
+				rzip_close( sp->pack->handle );
 				delete [] sp->pack->buildBuffer;
 				if ( sp->pack->addon_info ) {
 					sp->pack->addon_info->mapDecls.DeleteContents( true );
@@ -3016,34 +3008,19 @@ idFile_InZip * idFileSystemLocal::ReadFileFromZip( pack_t *pak, fileInPack_t *pa
 	// relativePath == pakFile->name according to FilenameCompare()
 	// pakFile->Pos is position of that file within the zip
 
-	// The offset is set on the pak's SHARED handle and then unzReOpen()
-	// clones a fresh, independent handle from it - so the SetOffset+ReOpen
-	// pair races if two threads read from the same pak at once (the async
-	// loader does exactly this). Serialize just that pair; the returned
-	// handle 'uf' is independent, so the slow inflate afterwards runs
-	// lock-free and concurrently. Single-threaded, this lock is always
-	// uncontended and changes nothing.
-	Sys_EnterCriticalSection( CRITICAL_SECTION_THREE );
-
-	// set position in pk4 file to the file (in the zip/pk4) we want a handle on
-	unzSetOffset64( pak->handle, pakFile->pos );
-
-	// clone handle and assign a new internal filestream to zip file to it
-	unzFile uf = unzReOpen( pak->pakFilename, pak->handle );
-
-	Sys_LeaveCriticalSection( CRITICAL_SECTION_THREE );
-
+	/*
+	   rzip_file_open reads only the immutable parsed directory and, in
+	   unmapped mode, opens its own RFILE - so concurrent opens on one
+	   pak need no lock in either mode. The critical section that
+	   serialized minizip's shared-handle SetOffset+ReOpen pair is gone
+	   with the shared handle itself; under the mapped fast path an
+	   "open" is a 30-byte local-header parse over the mapping.
+	*/
+	rzip_file_t *uf = rzip_file_open( pak->handle, (int)pakFile->pos );
 	if ( uf == NULL ) {
-		common->FatalError( "Couldn't reopen %s", pak->pakFilename.c_str() );
+		common->FatalError( "Couldn't open %s in %s, entry %llu", relativePath, pak->pakFilename.c_str(), pakFile->pos );
 	}
-
-	// the following stuff is needed to get the uncompress filesize (for file->fileSize)
-	char	filename_inzip[MAX_ZIPPED_FILE_NAME];
-	unz_file_info64	file_info;
-	int err = unzGetCurrentFileInfo64( uf, &file_info, filename_inzip, sizeof(filename_inzip), NULL, 0, NULL, 0 );
-	if ( err != UNZ_OK ) {
-		common->FatalError( "Couldn't get file info for %s in %s, pos %llu", relativePath, pak->pakFilename.c_str(), pakFile->pos );
-	}
+	const rzip_entry_t *entry = rzip_entry_at( pak->handle, (int)pakFile->pos );
 
 	// create idFile_InZip and set fields accordingly
 	idFile_InZip *file = new idFile_InZip();
@@ -3051,7 +3028,7 @@ idFile_InZip * idFileSystemLocal::ReadFileFromZip( pack_t *pak, fileInPack_t *pa
 	file->name = relativePath;
 	file->fullPath = pak->pakFilename + "/" + relativePath;
 	file->zipFilePos = pakFile->pos;
-	file->fileSize = file_info.uncompressed_size;
+	file->fileSize = (int)entry->uncompressedSize;
 
 	return file;
 }
