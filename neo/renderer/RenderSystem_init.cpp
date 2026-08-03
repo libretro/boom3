@@ -994,6 +994,20 @@ void GL_CheckErrors( void ) {
 	char	s[64];
 	int		i;
 
+	/*
+	   Frame-time fix: with r_ignoreGLErrors (the default), skip the
+	   glGetError drain ENTIRELY. The old code always drained and only
+	   suppressed the printing - but on threaded GL drivers (Mesa
+	   glthread, NVIDIA threaded optimizations) every glGetError is a
+	   full application/driver-thread synchronization whose stall
+	   equals the current queue depth: variable by construction, and
+	   this ran once per frame at EndFrame plus per draw batch on the
+	   GLES2 path. Set r_ignoreGLErrors 0 when actually debugging GL.
+	*/
+	if ( r_ignoreGLErrors.GetBool() ) {
+		return;
+	}
+
 	// check for up to 10 errors pending
 	for ( i = 0 ; i < 10 ; i++ ) {
 		err = qglGetError();

@@ -1478,7 +1478,16 @@ GLimp_SwapBuffers
 ===================
 */
 void GLimp_SwapBuffers() {
-   glFlush();
+   /*
+      Frame-time fix: flush only when the frontend reads our FBO from a
+      DIFFERENT context - cross-context visibility genuinely needs it.
+      In the default single-context mode, command ordering within the
+      context already guarantees the frontend sees the finished frame,
+      and an unconditional glFlush was one more per-frame driver
+      synchronization with driver-dependent, variable cost.
+   */
+   if (libretro_shared_context)
+      glFlush();
    if (!libretro_shared_context)
       glsm_ctl(GLSM_CTL_STATE_UNBIND, NULL);
 	video_cb(RETRO_HW_FRAME_BUFFER_VALID, scr_width, scr_height, 0);
