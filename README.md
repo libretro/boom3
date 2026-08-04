@@ -21,6 +21,9 @@ engine locates the rest of the data relative to it.
   must be installed beside it, as on a retail install).
 - Environmental reverb uses the game's `efxs/<map>.efx` files where present
   (retail data ships them; the console logs `sound: found efxs/...` per map).
+- Pre-1.3.1 language files lack menu strings the (1.3.1-era) game code
+  queries; the console hints once and shows raw `#str_` ids in a few menu
+  spots. 1.3.1-patched data provides the strings.
 
 ## Requirements
 
@@ -30,6 +33,13 @@ OpenGL ES 2.0 via the translated shader path. RetroArch's GL/glcore video
 drivers satisfy this; the core requests depth and stencil through the
 HW-render contract.
 
+30-bit HDR mode additionally needs a frontend implementing the
+`HDR10_2101010` pixel format and HDR environment queries (RetroArch
+1.22+), frontend HDR output enabled, and an HDR display; the FP16/FP32
+scene precisions need float render-target support (any desktop GPU).
+On frontends or drivers without a 10-bit path the core logs the refusal
+and falls back to 24-bit.
+
 ## Core options
 
 | Option | Meaning |
@@ -38,6 +48,8 @@ HW-render contract.
 | `Resolution` | Internal render resolution. |
 | `Quality Preset` | Engine quality preset (`com_machineSpec`), auto-detected by default. Requires restart. |
 | `Invert Y Axis`, `Mouse Sensitivity` | Input tuning. Mouse deltas are accumulated fractionally — no motion is lost at any sensitivity. |
+| `Game` | `auto` (default) selects Doom 3 or Resurrection of Evil from the content directory name; `doom3`/`d3xp` force it. |
+| `Shadow Smoothing` | Soft-edged stencil shadows. |
 | `Color Format (Restart Required)` | `24-bit (Standard)`: the stock XRGB8888 path. `30-bit Color (HDR)`: renders into a 10-bit target and emits HDR10 (PQ, Rec.2020) honoring the frontend's paper-white, peak-luminance, and Colour Boost settings, with dithered 10-bit quantization. Needs frontend HDR output and an HDR display; works under both the gl and glcore video drivers. |
 | `HDR Scene Precision (Restart Required)` | Scene buffer depth in 30-bit HDR mode. `10-bit` quantizes each additive light pass to 10-bit steps with one stop of fold headroom. `FP16 (Half-Float)` removes per-pass quantization; `FP32 (Full-Float)` adds full-float accumulation for extreme translucent stacking where half-float rounding could absorb tiny contributions - at 4x the 10-bit bandwidth, the heavy-hit tier. |
 | `HDR True Multi-Pass Blending (Restart Required)` | On an FP16/FP32 scene buffer, stacked translucent passes accumulate past white instead of clamping per pass: smoke planes, fog volumes, and explosion clouds keep internal structure instead of saturating flat. `Disabled` restores per-pass clamping - the escape hatch if float-buffer particle overdraw costs too much fillrate. No effect on the 10-bit buffer. |
@@ -70,16 +82,57 @@ look, and prev→cur transform interpolation for entities and the first-person
 view origin — all presentation-only, provably inert to the simulation, and
 exact no-ops at 60 fps.
 
-**Savestates.** Supported at the `basic` level (manual save/load, slots,
-auto-state) through the engine's savegame machinery, fully in memory. A
-restore is a synchronous map reload (a few seconds), so rewind and run-ahead
-are not supported. States are platform- and endian-dependent. Note: core
-info files older than this feature declare `savestate = "false"` and will
-block savestates in RetroArch until updated.
+**Savestates.** Supported through the engine's savegame machinery, fully
+in memory, with a per-tic cache so repeated size/serialize queries within
+a tic are free. A restore into the **same map** takes a fast path: media
+and render geometry are retained, the loading screen is skipped entirely,
+and only entity state rebuilds; restoring into a different map is a full
+synchronous load. The core declares the `MUST_INITIALIZE` serialization
+quirk (no state exists before a map is loaded — frontends should query
+again in-game). States are platform- and endian-dependent, and multiple
+megabytes each, which is why rewind remains impractical regardless of
+support being declared.
 
 **Input latency.** One core frame input-to-photon; input is polled every
 frame including zero-tic frames, mouse wheel maps to the game's wheel keys,
 and at output rates above 60 fps mouse look renders sub-tic.
+
+## 30-bit HDR output
+
+With `Color Format` set to 30-bit, the engine renders unmodified —
+gamma-encoded Rec.709, exactly as always — into a private scene target,
+and a final pass converts to what an HDR10 swapchain expects: exact
+inverse-sRGB linearization, highlight roll-off across the paper-white →
+display-peak headroom, Rec.709→2020 gamut rotation honoring the
+frontend's Colour Boost setting, SMPTE ST 2084 (PQ) encoding over
+absolute 0–10000 nits, and a ±0.5 LSB dither against the sRGB→PQ remap's
+banding. Paper white, peak luminance, gamut mode, and output mode are
+re-queried from the frontend every frame. HDR10 and scRGB swapchains
+share the encoding — verified colorimetrically identical on hardware.
+
+The enhancement stack layers on top, each independently switchable:
+multi-band **bloom** (extracted in linear light, firefly-compressed,
+composited before the roll-off so glow genuinely exceeds paper white);
+**specular boost** on lit surfaces only; **scene headroom** (the scene
+encodes at half intensity so additive light sums that clamped at white
+survive, restored at output — HUD stays at exactly paper white);
+**scene precision** up to FP16/FP32 targets that eliminate per-pass
+write quantization, where **true multi-pass blending** unclamps
+accumulation entirely — stacked smoke and fog keep internal structure
+instead of saturating flat — and `_currentRender` copies follow the
+scene's depth so refraction effects stop re-quantizing to 8-bit; and
+**direct light projection**, which turns the largest particle clusters
+in view into a pool of real dynamic lights casting genuine diffuse and
+specular on nearby surfaces. Performance ladder, cheap to heavy:
+10-bit → FP16 → FP32, and 0 → 2 → 4 particle lights; everything is
+inert in 24-bit mode, which remains the untouched stock path byte for
+byte.
+
+`Reinhard (Soft-Knee)` roll-off is the reference (mid-tones match
+24-bit exactly); `ACES (Filmic)` deliberately lifts mid-tone brightness
+along with its filmic shoulder — inherent to normalizing a compressive
+curve across expansion headroom, documented so it isn't mistaken for a
+calibration error.
 
 ## Sound
 
