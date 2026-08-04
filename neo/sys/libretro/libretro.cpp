@@ -1605,12 +1605,13 @@ contract in libretro.h:
    receive the same PQ Rec.2020 frame here. The colorimetric argument:
    every gamut intent above is expressed as actual Rec.2020
    coordinates, and a conversion to scRGB that respects colorimetry
-   preserves them. Flagged for verification against RetroArch's scRGB
-   decode on real hardware; if its rotation is applied differently,
-   this is the single place to compensate. Mode 0 (HDR off while the
-   HDR10 format is set) logs once and keeps encoding - the image
-   stays viewable, just tone-shifted - and the right fix is switching
-   the core option back to 24-bit.
+   preserves them. VERIFIED on hardware (RetroArch 1.22.2 Win32 gl,
+   FP16 scRGB swapchain, RTX 5090): 24-bit and 30-bit side by side
+   show no hue rotation or saturation shift - the shared encoding is
+   correct and no per-mode compensation is needed. Mode 0 (HDR off
+   while the HDR10 format is set) logs once and keeps encoding - the
+   image stays viewable, just tone-shifted - and the right fix is
+   switching the core option back to 24-bit.
 
 Shaders are legacy GLSL (attribute/varying/texture2D) with a small
 GLES precision prefix: the engine requests compatibility GL / GLES2

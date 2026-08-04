@@ -183,10 +183,13 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "HDR Highlight Roll-Off",
       NULL,
       "How highlights use the headroom between paper white and the "
-      "display's peak in 30-bit HDR mode. Reinhard (Soft-Knee) keeps "
-      "mid-tones exact and eases the top end toward the peak. ACES "
-      "(Filmic) applies the ACES curve: filmic contrast through the "
-      "mid-tones and a gentler shoulder.",
+      "display's peak in 30-bit HDR mode. Reinhard (Soft-Knee) is the "
+      "reference: mid-tones match 24-bit output exactly, only the top "
+      "end eases toward the peak. ACES (Filmic) applies the ACES curve "
+      "normalized to the peak, which visibly LIFTS mid-tone brightness "
+      "as well as reshaping highlights - a deliberate, brighter filmic "
+      "look, not a calibration error. Pick Reinhard for a faithful "
+      "comparison against 24-bit.",
       NULL,
       NULL,
       {
