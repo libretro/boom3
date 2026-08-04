@@ -1153,7 +1153,27 @@ void RB_STD_T_RenderShaderPasses( const drawSurf_t *surf ) {
 			// brightness/gamma for the injected epilogue
 			float parm[4];
 			extern float hdr_scene_encode_scale;
-			parm[0] = parm[1] = parm[2] = r_brightness.GetFloat() * hdr_scene_encode_scale;
+			/*
+			   The encoding fold must NOT apply to filter blends. A
+			   filter stage multiplies against the destination, and the
+			   destination already carries the scene's encoding scale -
+			   scaling the source as well squares the fold and the
+			   surface goes dark by exactly that factor. The source of
+			   a filter is a pure per-channel factor, not scene energy;
+			   it ships unscaled, the destination keeps the scale, and
+			   the product stays uniformly encoded. Additive and alpha
+			   blends scale normally (alpha itself is never scaled, so
+			   lerp weights are unaffected).
+			*/
+			int srcB = pStage->drawStateBits & GLS_SRCBLEND_BITS;
+			int dstB = pStage->drawStateBits & GLS_DSTBLEND_BITS;
+			bool filterBlend =
+				srcB == GLS_SRCBLEND_DST_COLOR ||
+				srcB == GLS_SRCBLEND_ONE_MINUS_DST_COLOR ||
+				dstB == GLS_DSTBLEND_SRC_COLOR ||
+				dstB == GLS_DSTBLEND_ONE_MINUS_SRC_COLOR;
+			float encScale = filterBlend ? 1.0f : hdr_scene_encode_scale;
+			parm[0] = parm[1] = parm[2] = r_brightness.GetFloat() * encScale;
 			parm[3] = 1.0f / r_gamma.GetFloat();
 			qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, PP_GAMMA_BRIGHTNESS, parm );
 		}
