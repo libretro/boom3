@@ -166,7 +166,26 @@ const char *idLangDict::GetString( const char *str ) const {
 		}
 	}
 
-	idLib::common->Warning( "Unknown string id %s", str );
+	/*
+	   Warn once per id: every menu redraw re-queries, so an id missing
+	   from the language file (retail pre-1.3.1 data lacks the
+	   #str_07xxx range the 1.3.1 game code uses) otherwise floods the
+	   console with the same lines forever. One hint on first miss says
+	   what actually fixes it.
+	*/
+	{
+		static idStrList warnedIds;
+		if ( warnedIds.FindIndex( str ) < 0 ) {
+			if ( warnedIds.Num() == 0 ) {
+				idLib::common->Warning( "language file is missing string ids (below); "
+						"the official Doom 3 1.3.1 patch data provides them" );
+			}
+			if ( warnedIds.Num() < 512 ) {
+				warnedIds.Append( str );
+			}
+			idLib::common->Warning( "Unknown string id %s", str );
+		}
+	}
 	return str;
 }
 

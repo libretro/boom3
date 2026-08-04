@@ -117,6 +117,11 @@ char *BUILD_DATADIR;
 
 extern struct retro_hw_render_callback hw_render;
 
+/* retail default.cfg sets these Win32-era cvars; register them as inert
+   so every boot doesn't print "Unknown command" twice */
+static idCVar in_mouse( "in_mouse", "1", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL, "legacy, unused" );
+static idCVar m_strafe( "m_strafe", "0.25", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_FLOAT, "legacy, unused" );
+
 /* 30-bit / HDR10 output state; the implementation lives above
    GLimp_SwapBuffers, the full design comment with it. */
 static bool   hdr_output_active = false;   /* chosen at load, needs restart */

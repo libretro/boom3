@@ -412,8 +412,15 @@ static void R_CheckPortableExtensions( void ) {
 #endif
 
 		if ( glConfig.stencilBits == 0 ) {
-			common->Warning( "could not determine stencil buffer depth, assuming 8 - "
-							 "stencil shadows may be wrong" );
+			/*
+			   GL_STENCIL_BITS is a default-framebuffer query; under
+			   libretro the engine always renders into an FBO (the
+			   frontend's, or the HDR scene target), where it answers 0.
+			   The real depth is not in doubt: hw_render requests
+			   depth+stencil, the frontend's contract provides 8, and
+			   the HDR target is explicitly D24S8. This is knowledge,
+			   not an assumption - no warning warranted.
+			*/
 			glConfig.stencilBits = 8;
 		}
 		if ( glConfig.depthBits == 0 ) {

@@ -881,6 +881,33 @@ const char *idFileSystemLocal::OSPathToRelativePath( const char *OSPath ) {
 	static char relativePath[MAX_STRING_CHARS];
 	const char *s, *base;
 
+	/*
+	   Pak-qualified OS paths first: idFile_InZip::GetFullPath() produces
+	   "<os path of pak>.pk4/<relative path>" (the script compiler feeds
+	   these back for every #include), and everything after the pak name
+	   IS the relative path - no directory-name guessing required. The
+	   old logic below only recognized game directories literally named
+	   "base"/fs_game with slash delimiters, so a layout like
+	   "base-retail" failed the match and warned once per script.
+	*/
+	{
+		const char *pk = OSPath;
+		const char *lastPk = NULL;
+		while ( ( pk = strstr( pk, ".pk4" ) ) != NULL ) {
+			if ( pk[4] == '/' || pk[4] == '\\' ) {
+				lastPk = pk + 5;
+			}
+			pk += 4;
+		}
+		if ( lastPk != NULL && *lastPk != '\0' ) {
+			strcpy( relativePath, lastPk );
+			if ( fs_debug.GetInteger() > 1 ) {
+				common->Printf( "idFileSystem::OSPathToRelativePath: %s becomes %s (pak-qualified)\n", OSPath, relativePath );
+			}
+			return relativePath;
+		}
+	}
+
 	// skip a drive letter?
 
 	// search for anything with "base" in it
