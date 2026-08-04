@@ -127,7 +127,9 @@ static idCVar m_strafe( "m_strafe", "0.25", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_FL
 bool          hdr_output_active = false;   /* chosen at load, needs restart; read by draw_arb2 */
 float         hdr_specular_gain = 2.0f;    /* interaction specular scale in HDR mode; read by draw_arb2 */
 float         hdr_scene_encode_scale = 1.0f; /* 0.5 = one gamma-domain stop of scene headroom; read by the render backend */
-bool          hdr_fp16_scene = false;      /* FP16 scene target: per-pass quantization gone, accumulation unbounded */
+bool          hdr_fp16_scene = false;      /* FP16 scene target: per-pass quantization gone */
+bool          hdr_fp32_scene = false;      /* FP32 scene target: full-float accumulation for extreme translucent stacking */
+bool          hdr_unbounded_blend = true;  /* unclamped epilogue on float targets: true multi-pass accumulation past 1.0 */
 static bool   hdr_rolloff_aces  = false;   /* live-switchable */
 
 static GLuint hdr_fbo, hdr_tex, hdr_rbo, hdr_prog;
@@ -493,7 +495,8 @@ static void update_variables(bool startup)
 	var.key = "doom_hdr_headroom";
 	var.value = NULL;
 	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
-		hdr_scene_encode_scale = (hdr_output_active && !hdr_fp16_scene
+		hdr_scene_encode_scale = (hdr_output_active
+				&& !((hdr_fp16_scene || hdr_fp32_scene) && hdr_unbounded_blend)
 				&& strcmp(var.value, "disabled") != 0) ? 0.5f : 1.0f;
 
 	var.key = "doom_hdr_specular";
@@ -1320,10 +1323,18 @@ bool retro_load_game(const struct retro_game_info *info)
 	if (hdr_output_active) {
 		fmt = RETRO_PIXEL_FORMAT_HDR10_2101010;
 		struct retro_variable pv = { "doom_hdr_precision", NULL };
-		if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &pv) && pv.value)
+		if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &pv) && pv.value) {
 			hdr_fp16_scene = strcmp(pv.value, "fp16") == 0;
-		if (hdr_fp16_scene && log_cb)
-			log_cb(RETRO_LOG_INFO, "[boom3] FP16 scene target: unbounded accumulation, fold disabled\n");
+			hdr_fp32_scene = strcmp(pv.value, "fp32") == 0;
+		}
+		pv.key = "doom_hdr_true_blend";
+		pv.value = NULL;
+		if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &pv) && pv.value)
+			hdr_unbounded_blend = strcmp(pv.value, "disabled") != 0;
+		if ((hdr_fp16_scene || hdr_fp32_scene) && log_cb)
+			log_cb(RETRO_LOG_INFO, "[boom3] %s scene target, multi-pass blending %s\n",
+					hdr_fp32_scene ? "FP32" : "FP16",
+					hdr_unbounded_blend ? "unbounded" : "clamped per pass");
 	}
 	if (!environ_cb(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &fmt))
 	{
@@ -1839,7 +1850,10 @@ static bool hdr_ensure_target( int w, int h ) {
 		   epilogue the accumulation ceiling disappears with it - no
 		   encoding fold needed, no darks cost.
 		*/
-		if ( hdr_fp16_scene )
+		if ( hdr_fp32_scene )
+			glTexImage2D( GL_TEXTURE_2D, 0, 0x8814 /* GL_RGBA32F */, w, h, 0, GL_RGBA,
+					GL_FLOAT, NULL );
+		else if ( hdr_fp16_scene )
 			glTexImage2D( GL_TEXTURE_2D, 0, 0x881A /* GL_RGBA16F */, w, h, 0, GL_RGBA,
 					0x140B /* GL_HALF_FLOAT */, NULL );
 		else
@@ -1881,7 +1895,10 @@ static bool hdr_ensure_target( int w, int h ) {
 				if ( hdr_bloom_fbo[i] ) glDeleteFramebuffers( 1, &hdr_bloom_fbo[i] );
 				glGenTextures( 1, &hdr_bloom_tex[i] );
 				glBindTexture( GL_TEXTURE_2D, hdr_bloom_tex[i] );
-				if ( hdr_fp16_scene )
+				if ( hdr_fp32_scene )
+					glTexImage2D( GL_TEXTURE_2D, 0, 0x8814, bw, bh, 0, GL_RGBA,
+							GL_FLOAT, NULL );
+				else if ( hdr_fp16_scene )
 					glTexImage2D( GL_TEXTURE_2D, 0, 0x881A, bw, bh, 0, GL_RGBA,
 							0x140B, NULL );
 				else

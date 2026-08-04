@@ -667,7 +667,9 @@ void R_LoadARBProgram( int progIndex ) {
 		   is restart-required for exactly this reason.
 		*/
 		extern bool hdr_fp16_scene;
-		const char* extraLines = hdr_fp16_scene ?
+		extern bool hdr_fp32_scene;
+		extern bool hdr_unbounded_blend;
+		const char* extraLines = ( ( hdr_fp16_scene || hdr_fp32_scene ) && hdr_unbounded_blend ) ?
 			"# gamma correction in shader, injected by dhewm3 (unclamped high side for FP16 scene) \n"
 			"MAX dhewm3tmpres.xyz, dhewm3tmpres, 0.0;\n"
 			"MUL dhewm3tmpres.xyz, program.env[21], dhewm3tmpres;\n"

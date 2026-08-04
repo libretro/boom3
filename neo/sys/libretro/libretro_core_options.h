@@ -152,9 +152,32 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       {
          { "10bit", "10-bit" },
          { "fp16",  "FP16 (Half-Float)" },
+         { "fp32",  "FP32 (Full-Float)" },
          { NULL, NULL },
       },
       "10bit"
+   },
+   {
+      "doom_hdr_true_blend",
+      "HDR True Multi-Pass Blending (Restart Required)",
+      NULL,
+      "With an FP16/FP32 scene buffer, lets stacked translucent passes "
+      "accumulate past white instead of clamping at every pass - "
+      "overlapping smoke planes, thick fog volumes, and explosion "
+      "clouds keep their internal structure instead of saturating to "
+      "flat white, and the sum rolls off only at output. Disable to "
+      "restore per-pass clamping (the classic look, and an escape "
+      "hatch if heavy particle overdraw on a float buffer costs too "
+      "much fillrate on your GPU). No effect on the 10-bit buffer, "
+      "which clamps in hardware.",
+      NULL,
+      NULL,
+      {
+         { "enabled",  "Enabled" },
+         { "disabled", "Disabled" },
+         { NULL, NULL },
+      },
+      "enabled"
    },
    {
       "doom_hdr_headroom",

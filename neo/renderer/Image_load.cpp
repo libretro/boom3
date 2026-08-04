@@ -2220,9 +2220,12 @@ void idImage::CopyFramebuffer( int x, int y, int imageWidth, int imageHeight, bo
 				*/
 				extern bool hdr_output_active;
 				extern bool hdr_fp16_scene;
+				extern bool hdr_fp32_scene;
 				GLenum ifmt = GL_RGBA;
 				if ( hdr_output_active )
-					ifmt = hdr_fp16_scene ? 0x881A /* GL_RGBA16F */ : 0x8059 /* GL_RGB10_A2 */;
+					ifmt = hdr_fp32_scene ? 0x8814 /* GL_RGBA32F */
+					     : hdr_fp16_scene ? 0x881A /* GL_RGBA16F */
+					     : 0x8059 /* GL_RGB10_A2 */;
 				qglCopyTexImage2D( GL_TEXTURE_2D, 0, ifmt, x, y, imageWidth, imageHeight, 0 );
 			}
 #else
