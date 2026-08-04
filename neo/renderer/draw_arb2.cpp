@@ -387,6 +387,8 @@ static progDef_t	progs[MAX_GLPROGS] = {
 	// SteveL #3878: Particle softening applied by the engine
 	{ GL_VERTEX_PROGRAM_ARB, VPROG_SOFT_PARTICLE, "soft_particle.vfp" },
 	{ GL_FRAGMENT_PROGRAM_ARB, FPROG_SOFT_PARTICLE, "soft_particle.vfp" },
+	{ GL_FRAGMENT_PROGRAM_ARB, FPROG_FF_GAMMA, "ff_gamma.vfp" },
+	{ GL_FRAGMENT_PROGRAM_ARB, FPROG_FF_GAMMA_CUBE, "ff_gamma_cube.vfp" },
 
 	// additional programs can be dynamically specified in materials
 };
@@ -530,10 +532,51 @@ void R_LoadARBProgram( int progIndex ) {
 	char	*start = NULL, *end;
 
 #if D3_INTEGRATE_SOFTPART_SHADERS
-	if ( progs[progIndex].ident == VPROG_SOFT_PARTICLE || progs[progIndex].ident == FPROG_SOFT_PARTICLE ) {
+	if ( progs[progIndex].ident == VPROG_SOFT_PARTICLE || progs[progIndex].ident == FPROG_SOFT_PARTICLE
+	     || progs[progIndex].ident == FPROG_FF_GAMMA || progs[progIndex].ident == FPROG_FF_GAMMA_CUBE ) {
+		/*
+		   The fixed-function replication programs: old-style material
+		   stages historically rendered without fragment programs, which
+		   meant the gamma-in-shader epilogue never touched them -
+		   r_gamma/r_brightness silently skipped GUIs, 2D, and every
+		   plain textured stage, and (the reason these exist now) no
+		   uniform output-encoding scale could cover the whole frame.
+		   Each replicates the fixed-function math exactly:
+		   tex * lerp(vertexColor, 1-vertexColor, invFlag) * constColor
+		   with local[0] = constant color, local[1].x = inverse-modulate
+		   flag. The loader injects the standard gamma epilogue below,
+		   same as every other program.
+		*/
+		static const char ffGammaFShader[] =
+			"!!ARBfp1.0\n"
+			"PARAM cc = program.local[0];\n"
+			"PARAM inv = program.local[1];\n"
+			"TEMP t, v, w;\n"
+			"TEX t, fragment.texcoord[0], texture[0], 2D;\n"
+			"SUB v.rgb, 1.0, fragment.color;\n"
+			"LRP w.rgb, inv.x, v, fragment.color;\n"
+			"MOV w.a, fragment.color.a;\n"
+			"MUL t, t, w;\n"
+			"MUL result.color, t, cc;\n"
+			"END\n";
+		static const char ffGammaCubeFShader[] =
+			"!!ARBfp1.0\n"
+			"PARAM cc = program.local[0];\n"
+			"PARAM inv = program.local[1];\n"
+			"TEMP t, v, w;\n"
+			"TEX t, fragment.texcoord[0], texture[0], CUBE;\n"
+			"SUB v.rgb, 1.0, fragment.color;\n"
+			"LRP w.rgb, inv.x, v, fragment.color;\n"
+			"MOV w.a, fragment.color.a;\n"
+			"MUL t, t, w;\n"
+			"MUL result.color, t, cc;\n"
+			"END\n";
 		// these shaders are loaded directly from a string
 		common->Printf( "<internal> %s", progs[progIndex].name );
-		const char* srcstr = (progs[progIndex].ident == VPROG_SOFT_PARTICLE) ? softpartVShader : softpartFShader;
+		const char* srcstr = (progs[progIndex].ident == VPROG_SOFT_PARTICLE) ? softpartVShader
+			: (progs[progIndex].ident == FPROG_SOFT_PARTICLE) ? softpartFShader
+			: (progs[progIndex].ident == FPROG_FF_GAMMA) ? ffGammaFShader
+			: ffGammaCubeFShader;
 
 		// copy to stack memory
 		buffer = (char *)_alloca( strlen( srcstr ) + 1 );

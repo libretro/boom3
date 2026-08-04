@@ -1367,6 +1367,8 @@ typedef enum {
 	// SteveL #3878: soft particles
 	VPROG_SOFT_PARTICLE,
 	FPROG_SOFT_PARTICLE,
+	FPROG_FF_GAMMA,        // fixed-function old-style stage, routed through a program for gamma/brightness coverage
+	FPROG_FF_GAMMA_CUBE,   // same, cube-map sampling
 	//
 	PROG_USER
 } program_t;

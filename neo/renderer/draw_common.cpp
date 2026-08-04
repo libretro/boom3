@@ -1117,8 +1117,51 @@ void RB_STD_T_RenderShaderPasses( const drawSurf_t *surf ) {
 
 		RB_PrepareStageTexturing( pStage, surf, ac );
 
+		/*
+		   Route this fixed-function stage through the replication
+		   program so the gamma-in-shader epilogue covers it - the
+		   prerequisite for any uniform output-encoding scale, and it
+		   makes r_gamma/r_brightness finally apply to GUIs and 2D.
+		   Stages whose texturing setup binds its own programs
+		   (mirrored/warped surfaces) are left alone; cube-sampled
+		   stages take the CUBE variant. The texenv combiners set
+		   above become inert under a fragment program, which is fine:
+		   the program reproduces their math, and at neutral
+		   gamma/brightness the result is bit-identical.
+		*/
+		bool ffProg = r_gammaInShader.GetBool()
+			&& glConfig.ARBFragmentProgramAvailable
+			&& pStage->texture.texgen != TG_REFLECT_CUBE
+			&& pStage->texture.texgen != TG_GLASSWARP;
+		if ( ffProg ) {
+			bool cube = pStage->texture.image && pStage->texture.image->type == TT_CUBIC;
+			qglBindProgramARB( GL_FRAGMENT_PROGRAM_ARB, cube ? FPROG_FF_GAMMA_CUBE : FPROG_FF_GAMMA );
+			qglEnable( GL_FRAGMENT_PROGRAM_ARB );
+			float cc[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+			float inv[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+			if ( pStage->vertexColor != SVC_IGNORE ) {
+				// fragment.color carries the vertex colors; the
+				// register-evaluated constant modulates on top
+				cc[0] = color[0]; cc[1] = color[1]; cc[2] = color[2]; cc[3] = color[3];
+				if ( pStage->vertexColor == SVC_INVERSE_MODULATE ) {
+					inv[0] = 1.0f;
+				}
+			}
+			qglProgramLocalParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 0, cc );
+			qglProgramLocalParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 1, inv );
+			// brightness/gamma for the injected epilogue
+			float parm[4];
+			parm[0] = parm[1] = parm[2] = r_brightness.GetFloat();
+			parm[3] = 1.0f / r_gamma.GetFloat();
+			qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, PP_GAMMA_BRIGHTNESS, parm );
+		}
+
 		// draw it
 		RB_DrawElementsWithCounters( tri );
+
+		if ( ffProg ) {
+			qglDisable( GL_FRAGMENT_PROGRAM_ARB );
+		}
 
 		RB_FinishStageTexturing( pStage, surf, ac );
 
