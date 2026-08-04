@@ -126,11 +126,13 @@ static idCVar m_strafe( "m_strafe", "0.25", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_FL
    GLimp_SwapBuffers, the full design comment with it. */
 bool          hdr_output_active = false;   /* chosen at load, needs restart; read by draw_arb2 */
 float         hdr_specular_gain = 2.0f;    /* interaction specular scale in HDR mode; read by draw_arb2 */
+float         hdr_scene_encode_scale = 1.0f; /* 0.5 = one gamma-domain stop of scene headroom; read by the render backend */
 static bool   hdr_rolloff_aces  = false;   /* live-switchable */
 
 static GLuint hdr_fbo, hdr_tex, hdr_rbo, hdr_prog;
 static GLint  hdr_loc_pos, hdr_loc_tex, hdr_loc_mat, hdr_loc_parms;
-static GLint  hdr_loc_bloomT, hdr_loc_bloomW, hdr_loc_bloomAmt;
+static GLint  hdr_loc_bloomT, hdr_loc_bloomW, hdr_loc_bloomAmt, hdr_loc_encScale;
+static GLint  hdr_bright_loc_enc;
 static int    hdr_w, hdr_h;
 static bool   hdr_warned_sdr, hdr_warned_narrow;
 static float  hdr_bloom_amount = 1.0f;      /* 0 = off; live-switchable */
@@ -487,6 +489,11 @@ static void update_variables(bool startup)
 	 * frontend menu overrides it. Live-toggling works: the mixer reads
 	 * the cvar per block and the binaural path keeps its own history
 	 * validity, so switching mid-game is clean. */
+	var.key = "doom_hdr_headroom";
+	var.value = NULL;
+	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+		hdr_scene_encode_scale = (hdr_output_active && strcmp(var.value, "disabled") != 0) ? 0.5f : 1.0f;
+
 	var.key = "doom_hdr_specular";
 	var.value = NULL;
 	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) {
@@ -1649,6 +1656,7 @@ static const char *hdr_fs_src =
 	"uniform sampler2D uBloomT;\n"
 	"uniform sampler2D uBloomW;\n"
 	"uniform float uBloomAmt;\n"
+	"uniform float uEncScale;\n"
 	"uniform mat3 uGamut;\n"
 	/* parms: x = paperWhite/10000, y = headroom H (>=1), z = aces flag,
 	   w = knee (Reinhard) */
@@ -1676,7 +1684,7 @@ static const char *hdr_fs_src =
 	"  return pow((0.8359375 + 18.8515625 * p) / (1.0 + 18.6875 * p), 78.84375);\n"
 	"}\n"
 	"void main() {\n"
-	"  vec3 lin = srgbToLinear(texture2D(uScene, vUV).rgb);\n"
+	"  vec3 lin = srgbToLinear(texture2D(uScene, vUV).rgb * uEncScale);\n"
 	/* bloom joins in LINEAR, BEFORE the roll-off: bloomed highlights
 	   ride the same curve into the paper-white..peak headroom, which
 	   is the part SDR output cannot express at all */
@@ -1711,8 +1719,9 @@ static const char *hdr_bright_fs_src =
 	"  vec3 hi = pow((c + 0.055) / 1.055, vec3(2.4));\n"
 	"  return mix(lo, hi, step(0.04045, c));\n"
 	"}\n"
+	"uniform float uEncScale;\n"
 	"void main() {\n"
-	"  vec3 lin = srgbToLinear(texture2D(uScene, vUV).rgb);\n"
+	"  vec3 lin = srgbToLinear(texture2D(uScene, vUV).rgb * uEncScale);\n"
 	"  vec3 b = max(lin - vec3(uThresh), 0.0) / (1.0 - uThresh);\n"
 	"  float l = dot(b, vec3(0.2126, 0.7152, 0.0722));\n"
 	"  gl_FragColor = vec4(b / (1.0 + l), 1.0);\n"
@@ -1783,6 +1792,7 @@ static bool hdr_ensure_target( int w, int h ) {
 		hdr_loc_bloomT  = glGetUniformLocation( hdr_prog, "uBloomT" );
 		hdr_loc_bloomW  = glGetUniformLocation( hdr_prog, "uBloomW" );
 		hdr_loc_bloomAmt= glGetUniformLocation( hdr_prog, "uBloomAmt" );
+		hdr_loc_encScale= glGetUniformLocation( hdr_prog, "uEncScale" );
 	}
 	if ( hdr_prog_bright == 0 ) {
 		GLuint vs = hdr_compile( GL_VERTEX_SHADER, hdr_vs_src );
@@ -1800,6 +1810,7 @@ static bool hdr_ensure_target( int w, int h ) {
 			glBindAttribLocation( hdr_prog_blur, 0, "aPos" );
 			glLinkProgram( hdr_prog_blur );
 			hdr_bright_loc_thresh = glGetUniformLocation( hdr_prog_bright, "uThresh" );
+			hdr_bright_loc_enc    = glGetUniformLocation( hdr_prog_bright, "uEncScale" );
 			hdr_blur_loc_dir      = glGetUniformLocation( hdr_prog_blur, "uDir" );
 		}
 		if ( vs ) glDeleteShader( vs );
@@ -1965,6 +1976,7 @@ static void hdr_present( GLuint dstFbo ) {
 		glUseProgram( hdr_prog_bright );
 		glBindTexture( GL_TEXTURE_2D, hdr_tex );
 		glUniform1f( hdr_bright_loc_thresh, 0.62f );
+		glUniform1f( hdr_bright_loc_enc, 1.0f / hdr_scene_encode_scale );
 		glDrawArrays( GL_TRIANGLES, 0, 3 );
 		/* tight band blur: A -> B (H), B -> A (V) */
 		glUseProgram( hdr_prog_blur );
@@ -2007,6 +2019,7 @@ static void hdr_present( GLuint dstFbo ) {
 	glUniform1i( hdr_loc_bloomT, 1 );
 	glUniform1i( hdr_loc_bloomW, 2 );
 	glUniform1f( hdr_loc_bloomAmt, haveBloom ? hdr_bloom_amount : 0.0f );
+	glUniform1f( hdr_loc_encScale, 1.0f / hdr_scene_encode_scale );
 	glUniformMatrix3fv( hdr_loc_mat, 1, GL_FALSE, mat );
 	glUniform4f( hdr_loc_parms, paperWhite / 10000.0f, H,
 			hdr_rolloff_aces ? 1.0f : 0.0f, 0.75f /* Reinhard knee */ );

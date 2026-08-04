@@ -653,7 +653,8 @@ void RB_SetProgramEnvironment( bool isPostProcess ) {
 	if ( r_gammaInShader.GetBool() ) {
 		// program.env[4].xyz are all r_brightness, program.env[4].w is 1.0/r_gamma
 		if ( !isPostProcess ) {
-			parm[0] = parm[1] = parm[2] = r_brightness.GetFloat();
+			extern float hdr_scene_encode_scale;
+			parm[0] = parm[1] = parm[2] = r_brightness.GetFloat() * hdr_scene_encode_scale;
 			parm[3] = 1.0/r_gamma.GetFloat(); // 1.0/gamma so the shader doesn't have to do this calculation
 		} else {
 			// don't apply gamma/brightness in postprocess passes to avoid applying them twice
@@ -1151,7 +1152,8 @@ void RB_STD_T_RenderShaderPasses( const drawSurf_t *surf ) {
 			qglProgramLocalParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 1, inv );
 			// brightness/gamma for the injected epilogue
 			float parm[4];
-			parm[0] = parm[1] = parm[2] = r_brightness.GetFloat();
+			extern float hdr_scene_encode_scale;
+			parm[0] = parm[1] = parm[2] = r_brightness.GetFloat() * hdr_scene_encode_scale;
 			parm[3] = 1.0f / r_gamma.GetFloat();
 			qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, PP_GAMMA_BRIGHTNESS, parm );
 		}

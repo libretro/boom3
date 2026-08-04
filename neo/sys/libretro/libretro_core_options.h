@@ -136,6 +136,27 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "24bit"
    },
    {
+      "doom_hdr_headroom",
+      "HDR Scene Headroom",
+      NULL,
+      "Preserves overbright lighting in 30-bit HDR mode. The scene is "
+      "encoded at half intensity so light sums that previously clamped "
+      "at white survive into the buffer, and the output pass restores "
+      "scale - clipped highlights (stacked lights, muzzle flashes, "
+      "specular sums) regain their shape and land above paper white. "
+      "HUD and menus stay at exactly paper white. Costs about one bit "
+      "of shadow precision, covered by the output dither. No effect in "
+      "24-bit mode.",
+      NULL,
+      NULL,
+      {
+         { "enabled",  "Enabled" },
+         { "disabled", "Disabled" },
+         { NULL, NULL },
+      },
+      "enabled"
+   },
+   {
       "doom_hdr_specular",
       "HDR Specular Boost",
       NULL,
