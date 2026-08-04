@@ -1081,6 +1081,10 @@ Parms will typically be allocated with R_FrameAlloc
 ================
 */
 void R_RenderView( viewDef_t *parms ) {
+	{
+		extern void R_ParticleLightSubmit( viewDef_t * );
+		R_ParticleLightSubmit( parms );
+	}
 	viewDef_t		*oldView;
 
 	if ( parms->renderView.width <= 0 || parms->renderView.height <= 0 ) {

@@ -499,6 +499,15 @@ static void update_variables(bool startup)
 				&& !((hdr_fp16_scene || hdr_fp32_scene) && hdr_unbounded_blend)
 				&& strcmp(var.value, "disabled") != 0) ? 0.5f : 1.0f;
 
+	var.key = "doom_hdr_particle_lights";
+	var.value = NULL;
+	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) {
+		extern int hdr_particle_light_count_opt;
+		if (!strcmp(var.value, "disabled"))  hdr_particle_light_count_opt = 0;
+		else if (!strcmp(var.value, "4"))    hdr_particle_light_count_opt = 4;
+		else                                 hdr_particle_light_count_opt = 2;
+	}
+
 	var.key = "doom_hdr_specular";
 	var.value = NULL;
 	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) {

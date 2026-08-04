@@ -201,6 +201,27 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "enabled"
    },
    {
+      "doom_hdr_particle_lights",
+      "HDR Direct Light Projection",
+      NULL,
+      "Bright particle systems become real light sources in 30-bit HDR "
+      "mode: the largest spark/ember clusters in view drive a small "
+      "pool of genuine dynamic lights, casting localized diffuse and "
+      "specular highlights onto nearby surfaces through the engine's "
+      "normal shading path. Shadowless by design. Each active light "
+      "adds interaction passes on nearby geometry - the 4-light "
+      "setting is the performance-heavy choice. Live-switchable.",
+      NULL,
+      NULL,
+      {
+         { "disabled", "Disabled" },
+         { "2",        "2 Lights" },
+         { "4",        "4 Lights" },
+         { NULL, NULL },
+      },
+      "2"
+   },
+   {
       "doom_hdr_specular",
       "HDR Specular Boost",
       NULL,

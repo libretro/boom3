@@ -1197,6 +1197,14 @@ R_AddDrawSurf
 void R_AddDrawSurf( const srfTriangles_t *tri, const viewEntity_t *space, const renderEntity_t *renderEntity,
 					const idMaterial *shader, const idScreenRect &scissor, const float soft_particle_radius )
 {
+	{
+		extern void R_ParticleLightCollect( const srfTriangles_t *, const viewEntity_t * );
+		extern int hdr_particle_light_count_opt;
+		if ( hdr_particle_light_count_opt > 0 && shader != NULL
+				&& ( shader->Deform() == DFRM_PARTICLE || shader->Deform() == DFRM_PARTICLE2 ) ) {
+			R_ParticleLightCollect( tri, space );
+		}
+	}
 	drawSurf_t		*drawSurf;
 	const float		*shaderParms;
 	static float	refRegs[MAX_EXPRESSION_REGISTERS];	// don't put on stack, or VC++ will do a page touch

@@ -37,6 +37,7 @@ SRC_RENDERER	:=\
 	$(CORE_DIR)/renderer/RenderWorld_load.cpp \
 	$(CORE_DIR)/renderer/RenderWorld_portals.cpp \
 	$(CORE_DIR)/renderer/VertexCache.cpp \
+	$(CORE_DIR)/renderer/ParticleLights.cpp \
 	$(CORE_DIR)/renderer/draw_common.cpp \
 	$(CORE_DIR)/renderer/tr_backend.cpp \
 	$(CORE_DIR)/renderer/tr_deform.cpp \
