@@ -118,6 +118,42 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "auto"
    },
    {
+      "doom_color_format",
+      "Color Format (Restart Required)",
+      NULL,
+      "24-bit is the standard XRGB8888 output. 30-bit Color (HDR) renders "
+      "into a 10-bit surface and emits HDR10 (PQ, Rec.2020): use with the "
+      "frontend's HDR output enabled on an HDR display. The conversion "
+      "honors the frontend's paper white, peak luminance, and Colour Boost "
+      "settings, and dithers the 10-bit quantization.",
+      NULL,
+      NULL,
+      {
+         { "24bit",     "24-bit (Standard)" },
+         { "30bit-hdr", "30-bit Color (HDR)" },
+         { NULL, NULL },
+      },
+      "24bit"
+   },
+   {
+      "doom_hdr_rolloff",
+      "HDR Highlight Roll-Off",
+      NULL,
+      "How highlights use the headroom between paper white and the "
+      "display's peak in 30-bit HDR mode. Reinhard (Soft-Knee) keeps "
+      "mid-tones exact and eases the top end toward the peak. ACES "
+      "(Filmic) applies the ACES curve: filmic contrast through the "
+      "mid-tones and a gentler shoulder.",
+      NULL,
+      NULL,
+      {
+         { "reinhard", "Reinhard (Soft-Knee)" },
+         { "aces",     "ACES (Filmic)" },
+         { NULL, NULL },
+      },
+      "reinhard"
+   },
+   {
       "doom_hrtf",
       "Sound: HRTF (Headphones)",
       NULL,

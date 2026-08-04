@@ -38,6 +38,8 @@ HW-render contract.
 | `Resolution` | Internal render resolution. |
 | `Quality Preset` | Engine quality preset (`com_machineSpec`), auto-detected by default. Requires restart. |
 | `Invert Y Axis`, `Mouse Sensitivity` | Input tuning. Mouse deltas are accumulated fractionally — no motion is lost at any sensitivity. |
+| `Color Format (Restart Required)` | `24-bit (Standard)`: the stock XRGB8888 path. `30-bit Color (HDR)`: renders into a 10-bit target and emits HDR10 (PQ, Rec.2020) honoring the frontend's paper-white, peak-luminance, and Colour Boost settings, with dithered 10-bit quantization. Needs frontend HDR output and an HDR display; works under both the gl and glcore video drivers. |
+| `HDR Highlight Roll-Off` | Shape of highlight expansion into HDR headroom: `Reinhard (Soft-Knee)` keeps mid-tones exact; `ACES (Filmic)` adds filmic contrast with a gentler shoulder. |
 | `Sound: HRTF (Headphones)` | Binaural rendering via the built-in KEMAR HRTF. `Auto` (default) defers to the `s_HRTF` cvar; `Enabled`/`Disabled` override it. Headphones only. |
 | `Sound Samplerate (Hint)` | Audio output rate: 32000/44100/48000/96000 or `auto` (ask the frontend for its device rate and render directly at it, so nothing downstream resamples). Doom 3's assets are authored at 44100. Resolved once at startup. |
 

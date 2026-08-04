@@ -117,6 +117,18 @@ char *BUILD_DATADIR;
 
 extern struct retro_hw_render_callback hw_render;
 
+/* 30-bit / HDR10 output state; the implementation lives above
+   GLimp_SwapBuffers, the full design comment with it. */
+static bool   hdr_output_active = false;   /* chosen at load, needs restart */
+static bool   hdr_rolloff_aces  = false;   /* live-switchable */
+
+static GLuint hdr_fbo, hdr_tex, hdr_rbo, hdr_prog;
+static GLint  hdr_loc_pos, hdr_loc_tex, hdr_loc_mat, hdr_loc_parms;
+static int    hdr_w, hdr_h;
+static bool   hdr_warned_sdr, hdr_warned_narrow;
+static void hdr_bind_scene( void );
+static void hdr_present( GLuint dstFbo );
+
 static retro_log_printf_t log_cb;
 static retro_video_refresh_t video_cb;
 static retro_audio_sample_t audio_cb;
@@ -461,6 +473,11 @@ static void update_variables(bool startup)
 	 * frontend menu overrides it. Live-toggling works: the mixer reads
 	 * the cvar per block and the binaural path keeps its own history
 	 * validity, so switching mid-game is clean. */
+	var.key = "doom_hdr_rolloff";
+	var.value = NULL;
+	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+		hdr_rolloff_aces = strcmp(var.value, "aces") == 0;
+
 	var.key = "doom_hrtf";
 	var.value = NULL;
 	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value && strcmp(var.value, "auto") != 0)
@@ -511,6 +528,10 @@ static void extract_directory(char *buf, const char *path, size_t size)
 
 static void context_reset(void)
 {
+   /* previous context's HDR objects are gone with it */
+   hdr_fbo = hdr_tex = hdr_rbo = hdr_prog = 0;
+   hdr_w = hdr_h = 0;
+
    if (!first_boot)
       R_ReinitOpenGL();
 
@@ -1235,6 +1256,26 @@ void destroy_opengl(void)
 bool retro_load_game(const struct retro_game_info *info)
 {
 	enum retro_pixel_format fmt = RETRO_PIXEL_FORMAT_XRGB8888;
+	{
+		/* Color Format option, resolved once at load (the pixel format
+		   cannot change mid-session): 30-bit HDR asks for the HDR10
+		   surface and enables the PQ conversion pass; refusal by an
+		   older frontend falls back to the stock 24-bit path. */
+		struct retro_variable cfv = { "doom_color_format", NULL };
+		if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &cfv) && cfv.value
+				&& strcmp(cfv.value, "30bit-hdr") == 0) {
+			enum retro_pixel_format hf = RETRO_PIXEL_FORMAT_HDR10_2101010;
+			if (environ_cb(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &hf)) {
+				hdr_output_active = true;
+				if (log_cb)
+					log_cb(RETRO_LOG_INFO, "[boom3] 30-bit HDR10 output enabled\n");
+			} else if (log_cb) {
+				log_cb(RETRO_LOG_WARN, "[boom3] frontend refused HDR10_2101010; using 24-bit\n");
+			}
+		}
+	}
+	if (hdr_output_active)
+		fmt = RETRO_PIXEL_FORMAT_HDR10_2101010;
 	if (!environ_cb(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &fmt))
 	{
 		if (log_cb)
@@ -1462,7 +1503,9 @@ void retro_run(void)
 	bool updated = false;
 	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, &updated) && updated)
 		update_variables(false);
-	
+
+	hdr_bind_scene();
+
 	common->Frame();
 
    if (!libretro_shared_context)
@@ -1477,6 +1520,303 @@ void retro_run(void)
 GLimp_SwapBuffers
 ===================
 */
+/*
+===========================================================================
+30-bit / HDR10 output (doom_color_format).
+
+The engine renders exactly as it always has - gamma-encoded, SDR,
+Rec.709 content - but into a private RGB10_A2 scene target instead of
+the frontend framebuffer. At presentation a fullscreen pass converts
+that scene into what an HDR10 swapchain actually expects, per the
+contract in libretro.h:
+
+ - EOTF: the scene is sRGB-encoded and an HDR10 surface is PQ (SMPTE
+   ST 2084) absolute luminance; presenting sRGB numbers on a PQ
+   swapchain is the classic washed-out-and-dim mismatch. The pass
+   linearizes with the exact inverse-sRGB EOTF, anchors 1.0 at the
+   frontend's paper-white nits (RETRO_ENVIRONMENT_GET_HDR_PAPER_WHITE_
+   NITS, default 200), and PQ-encodes over the 0..10000 nit range.
+ - Gamut: Rec.709 -> Rec.2020 rotation on linear values, honouring the
+   frontend's Colour Boost setting (GET_HDR_EXPAND_GAMUT): Accurate is
+   the true colorimetric matrix, Super skips rotation so the display's
+   Rec.2020 interpretation provides the boost, Wide reinterprets the
+   709 coordinates as DCI-P3, Expanded sits halfway between Accurate
+   and Wide. The middle modes approximate the frontend's SDR
+   treatment; flagged for verification against RetroArch's own tables.
+ - Highlight roll-off (doom_hdr_rolloff): the headroom between paper
+   white and the display peak (GET_HDR_MAX_NITS, default 1000) is
+   where highlights may expand. Reinhard (Soft-Knee) is mid-tone
+   exact - identity up to the knee, then the same slope-continuous
+   rational approach the audio saturator uses, toward the peak
+   asymptote. ACES (Filmic) runs the Narkowicz ACES fit normalized to
+   the peak: filmic contrast through the mids, gentler shoulder. With
+   peak <= paper white the contract says treat as zero headroom: both
+   curves collapse to a clamp.
+ - Quantization: the scene target is 10-bit so the conversion source
+   never drops below the output depth, and the PQ result is dithered
+   with a +-0.5 LSB (of 10 bits) spatial hash before the hardware
+   quantizes - the sRGB->PQ curve remap otherwise bands visibly in
+   dark gradients, which is the classic 10-bit HDR quantization
+   artifact.
+ - Output mode (GET_HDR_OUTPUT_MODE): HDR10 and scRGB swapchains both
+   receive the same PQ Rec.2020 frame here. The colorimetric argument:
+   every gamut intent above is expressed as actual Rec.2020
+   coordinates, and a conversion to scRGB that respects colorimetry
+   preserves them. Flagged for verification against RetroArch's scRGB
+   decode on real hardware; if its rotation is applied differently,
+   this is the single place to compensate. Mode 0 (HDR off while the
+   HDR10 format is set) logs once and keeps encoding - the image
+   stays viewable, just tone-shifted - and the right fix is switching
+   the core option back to 24-bit.
+
+Shaders are legacy GLSL (attribute/varying/texture2D) with a small
+GLES precision prefix: the engine requests compatibility GL / GLES2
+contexts, which is what both the gl2 and glcore frontend drivers
+serve it, so one dialect covers every target.
+
+24-bit mode touches none of this: no scene FBO, no pass, the exact
+pre-existing XRGB8888 path byte for byte.
+===========================================================================
+*/
+
+
+#ifndef GL_RGB10_A2
+#define GL_RGB10_A2 0x8059
+#endif
+#ifndef GL_DEPTH24_STENCIL8
+#define GL_DEPTH24_STENCIL8 0x88F0
+#endif
+#ifndef GL_DEPTH_STENCIL_ATTACHMENT
+#define GL_DEPTH_STENCIL_ATTACHMENT 0x821A
+#endif
+
+static const char *hdr_vs_src =
+	"attribute vec2 aPos;\n"
+	"varying vec2 vUV;\n"
+	"void main() {\n"
+	"  vUV = aPos * 0.5 + 0.5;\n"
+	"  gl_Position = vec4(aPos, 0.0, 1.0);\n"
+	"}\n";
+
+static const char *hdr_fs_src =
+	"#ifdef GL_ES\nprecision highp float;\n#endif\n"
+	"varying vec2 vUV;\n"
+	"uniform sampler2D uScene;\n"
+	"uniform mat3 uGamut;\n"
+	/* parms: x = paperWhite/10000, y = headroom H (>=1), z = aces flag,
+	   w = knee (Reinhard) */
+	"uniform vec4 uParms;\n"
+	"vec3 srgbToLinear(vec3 c) {\n"
+	"  vec3 lo = c / 12.92;\n"
+	"  vec3 hi = pow((c + 0.055) / 1.055, vec3(2.4));\n"
+	"  return mix(lo, hi, step(0.04045, c));\n"
+	"}\n"
+	"float rolloff(float v) {\n"
+	"  float H = uParms.y;\n"
+	"  if (H <= 1.0001) return min(v, 1.0);\n"
+	"  if (uParms.z > 0.5) {\n"
+	/*   Narkowicz ACES fit, normalized so 1.0 lands on the peak */
+	"    float n = v * (2.51 * v + 0.03) / (v * (2.43 * v + 0.59) + 0.14);\n"
+	"    return H * n / 0.8037;\n"
+	"  }\n"
+	"  float K = uParms.w;\n"
+	"  if (v <= K) return v;\n"
+	"  float e = v - K, A = H - K;\n"
+	"  return K + e * A / (e + A);\n"
+	"}\n"
+	"float pq(float y) {\n"
+	"  float p = pow(max(y, 0.0), 0.1593017578125);\n"
+	"  return pow((0.8359375 + 18.8515625 * p) / (1.0 + 18.6875 * p), 78.84375);\n"
+	"}\n"
+	"void main() {\n"
+	"  vec3 lin = srgbToLinear(texture2D(uScene, vUV).rgb);\n"
+	"  lin = vec3(rolloff(lin.r), rolloff(lin.g), rolloff(lin.b));\n"
+	"  lin = uGamut * lin;\n"
+	"  vec3 y = clamp(lin * uParms.x, 0.0, 1.0);\n"
+	"  vec3 e = vec3(pq(y.r), pq(y.g), pq(y.b));\n"
+	/* +-0.5 LSB (10-bit) spatial hash dither against PQ-remap banding */
+	"  float d = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) - 0.5;\n"
+	"  gl_FragColor = vec4(e + d / 1023.0, 1.0);\n"
+	"}\n";
+
+static GLuint hdr_compile( GLenum type, const char *src ) {
+	GLuint sh = glCreateShader( type );
+	glShaderSource( sh, 1, &src, NULL );
+	glCompileShader( sh );
+	GLint ok = 0;
+	glGetShaderiv( sh, GL_COMPILE_STATUS, &ok );
+	if ( !ok ) {
+		char msg[512];
+		glGetShaderInfoLog( sh, sizeof( msg ), NULL, msg );
+		if ( log_cb ) log_cb( RETRO_LOG_ERROR, "[boom3] HDR shader: %s\n", msg );
+		glDeleteShader( sh );
+		return 0;
+	}
+	return sh;
+}
+
+/* (re)create GL objects for the current context and size; safe to call
+   per frame, does work only on change. Context loss zeroes the ids. */
+static bool hdr_ensure_target( int w, int h ) {
+	if ( hdr_prog == 0 ) {
+		GLuint vs = hdr_compile( GL_VERTEX_SHADER, hdr_vs_src );
+		GLuint fs = hdr_compile( GL_FRAGMENT_SHADER, hdr_fs_src );
+		if ( !vs || !fs )
+			return false;
+		hdr_prog = glCreateProgram();
+		glAttachShader( hdr_prog, vs );
+		glAttachShader( hdr_prog, fs );
+		glBindAttribLocation( hdr_prog, 0, "aPos" );
+		glLinkProgram( hdr_prog );
+		glDeleteShader( vs );
+		glDeleteShader( fs );
+		GLint ok = 0;
+		glGetProgramiv( hdr_prog, GL_LINK_STATUS, &ok );
+		if ( !ok ) {
+			glDeleteProgram( hdr_prog );
+			hdr_prog = 0;
+			return false;
+		}
+		hdr_loc_tex   = glGetUniformLocation( hdr_prog, "uScene" );
+		hdr_loc_mat   = glGetUniformLocation( hdr_prog, "uGamut" );
+		hdr_loc_parms = glGetUniformLocation( hdr_prog, "uParms" );
+	}
+	if ( hdr_fbo == 0 || w != hdr_w || h != hdr_h ) {
+		if ( hdr_tex ) glDeleteTextures( 1, &hdr_tex );
+		if ( hdr_rbo ) glDeleteRenderbuffers( 1, &hdr_rbo );
+		if ( hdr_fbo ) glDeleteFramebuffers( 1, &hdr_fbo );
+		glGenTextures( 1, &hdr_tex );
+		glBindTexture( GL_TEXTURE_2D, hdr_tex );
+		glTexImage2D( GL_TEXTURE_2D, 0, GL_RGB10_A2, w, h, 0, GL_RGBA,
+				GL_UNSIGNED_INT_2_10_10_10_REV, NULL );
+		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST );
+		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST );
+		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
+		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
+		glGenRenderbuffers( 1, &hdr_rbo );
+		glBindRenderbuffer( GL_RENDERBUFFER, hdr_rbo );
+		/* the engine needs depth AND stencil (stencil shadow volumes) */
+		glRenderbufferStorage( GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, w, h );
+		glGenFramebuffers( 1, &hdr_fbo );
+		glBindFramebuffer( RARCH_GL_FRAMEBUFFER, hdr_fbo );
+		glFramebufferTexture2D( RARCH_GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+				GL_TEXTURE_2D, hdr_tex, 0 );
+		glFramebufferRenderbuffer( RARCH_GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
+				GL_RENDERBUFFER, hdr_rbo );
+		if ( glCheckFramebufferStatus( RARCH_GL_FRAMEBUFFER ) != GL_FRAMEBUFFER_COMPLETE ) {
+			if ( log_cb ) log_cb( RETRO_LOG_ERROR, "[boom3] HDR scene FBO incomplete, disabling HDR pass\n" );
+			hdr_output_active = false;
+			return false;
+		}
+		hdr_w = w;
+		hdr_h = h;
+	}
+	return true;
+}
+
+/* bind the scene target as the engine's render destination */
+static void hdr_bind_scene( void ) {
+	if ( !hdr_output_active )
+		return;
+	if ( !hdr_ensure_target( scr_width, scr_height ) )
+		return;
+	glBindFramebuffer( RARCH_GL_FRAMEBUFFER, hdr_fbo );
+}
+
+/* Rec.709 -> Rec.2020 (column-major for glUniformMatrix3fv) */
+static const float hdr_m709to2020[9] = {
+	0.6274f, 0.0691f, 0.0164f,
+	0.3293f, 0.9195f, 0.0880f,
+	0.0433f, 0.0114f, 0.8956f
+};
+/* DCI-P3(D65) -> Rec.2020: for the Wide mode's 709-as-P3 reinterpretation */
+static const float hdr_mP3to2020[9] = {
+	0.7538f, 0.0457f, -0.0012f,
+	0.1986f, 0.9418f,  0.0176f,
+	0.0476f, 0.0125f,  0.9837f
+};
+static const float hdr_mIdentity[9] = {
+	1.0f, 0.0f, 0.0f,
+	0.0f, 1.0f, 0.0f,
+	0.0f, 0.0f, 1.0f
+};
+
+/* run the conversion pass from the scene target into dstFbo */
+static void hdr_present( GLuint dstFbo ) {
+	if ( !hdr_output_active || hdr_prog == 0 || hdr_fbo == 0 )
+		return;
+
+	/* frontend HDR state, re-queried per present as the contract asks */
+	float paperWhite = 200.0f, maxNits = 1000.0f;
+	unsigned gamutMode = 0, outMode = 1;
+	environ_cb( RETRO_ENVIRONMENT_GET_HDR_PAPER_WHITE_NITS, &paperWhite );
+	environ_cb( RETRO_ENVIRONMENT_GET_HDR_MAX_NITS, &maxNits );
+	environ_cb( RETRO_ENVIRONMENT_GET_HDR_EXPAND_GAMUT, &gamutMode );
+	if ( environ_cb( RETRO_ENVIRONMENT_GET_HDR_OUTPUT_MODE, &outMode ) ) {
+		if ( outMode == 0 && !hdr_warned_sdr && log_cb ) {
+			log_cb( RETRO_LOG_WARN, "[boom3] Color Format is 30-bit HDR but frontend HDR output is off; switch the core option to 24-bit for correct SDR colors\n" );
+			hdr_warned_sdr = true;
+		}
+	}
+	{
+		bool native10 = false;
+		if ( environ_cb( RETRO_ENVIRONMENT_GET_SCREEN_10BPC_CAPABLE, &native10 )
+				&& !native10 && !hdr_warned_narrow && log_cb ) {
+			log_cb( RETRO_LOG_WARN, "[boom3] video driver narrows 10-bit to 8-bit; 30-bit mode gains nothing here\n" );
+			hdr_warned_narrow = true;
+		}
+	}
+
+	float mat[9];
+	int i;
+	switch ( gamutMode ) {
+		case 3:   /* Super: no rotation, the display's interpretation boosts */
+			memcpy( mat, hdr_mIdentity, sizeof( mat ) );
+			break;
+		case 2:   /* Wide: 709 coordinates reinterpreted as DCI-P3 */
+			memcpy( mat, hdr_mP3to2020, sizeof( mat ) );
+			break;
+		case 1:   /* Expanded: halfway between Accurate and Wide */
+			for ( i = 0; i < 9; i++ )
+				mat[i] = 0.5f * ( hdr_m709to2020[i] + hdr_mP3to2020[i] );
+			break;
+		default:  /* Accurate */
+			memcpy( mat, hdr_m709to2020, sizeof( mat ) );
+			break;
+	}
+
+	float H = maxNits / ( paperWhite > 1.0f ? paperWhite : 1.0f );
+	if ( H < 1.0f )
+		H = 1.0f;   /* the contract's zero-headroom clamp */
+
+	glBindFramebuffer( RARCH_GL_FRAMEBUFFER, dstFbo );
+	glViewport( 0, 0, hdr_w, hdr_h );
+	glDisable( GL_DEPTH_TEST );
+	glDisable( GL_STENCIL_TEST );
+	glDisable( GL_BLEND );
+	glDisable( GL_CULL_FACE );
+	glDepthMask( GL_FALSE );
+
+	glUseProgram( hdr_prog );
+	glActiveTexture( GL_TEXTURE0 );
+	glBindTexture( GL_TEXTURE_2D, hdr_tex );
+	glUniform1i( hdr_loc_tex, 0 );
+	glUniformMatrix3fv( hdr_loc_mat, 1, GL_FALSE, mat );
+	glUniform4f( hdr_loc_parms, paperWhite / 10000.0f, H,
+			hdr_rolloff_aces ? 1.0f : 0.0f, 0.75f /* Reinhard knee */ );
+
+	static const float tri[6] = { -1.0f, -1.0f, 3.0f, -1.0f, -1.0f, 3.0f };
+	glBindBuffer( GL_ARRAY_BUFFER, 0 );
+	glEnableVertexAttribArray( 0 );
+	glVertexAttribPointer( 0, 2, GL_FLOAT, GL_FALSE, 0, tri );
+	glDrawArrays( GL_TRIANGLES, 0, 3 );
+	glDisableVertexAttribArray( 0 );
+	glUseProgram( 0 );
+	/* engine state is restored by glsm on the next STATE_BIND; the
+	   depth mask matters before that, so put it back */
+	glDepthMask( GL_TRUE );
+}
+
 void GLimp_SwapBuffers() {
    /*
       Frame-time fix: flush only when the frontend reads our FBO from a
@@ -1486,6 +1826,10 @@ void GLimp_SwapBuffers() {
       and an unconditional glFlush was one more per-frame driver
       synchronization with driver-dependent, variable cost.
    */
+   /* 30-bit HDR: convert the scene target into the frontend framebuffer
+      before presentation; 24-bit mode skips straight past. */
+   hdr_present((GLuint)hw_render.get_current_framebuffer());
+
    if (libretro_shared_context)
       glFlush();
    if (!libretro_shared_context)
@@ -1494,6 +1838,7 @@ void GLimp_SwapBuffers() {
    if (!libretro_shared_context)
       glsm_ctl(GLSM_CTL_STATE_BIND, NULL);
 	glBindFramebuffer(RARCH_GL_FRAMEBUFFER, hw_render.get_current_framebuffer());
+	hdr_bind_scene();   /* loading-screen pumps and the next frame render here */
 
 	/* A map load runs synchronously inside a single retro_run(): the engine
 	 * pumps the loading screen through UpdateScreen()->GLimp_SwapBuffers()
