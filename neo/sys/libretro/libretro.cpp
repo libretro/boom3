@@ -1289,7 +1289,16 @@ bool retro_load_game(const struct retro_game_info *info)
 	}
 
 	{
-		uint64_t quirks = RETRO_SERIALIZATION_QUIRK_CORE_VARIABLE_SIZE
+		/*
+		   MUST_INITIALIZE: retro_serialize_size() honestly returns 0
+		   until a map is loaded (there is no session to serialize), and
+		   without this quirk the frontend reads that early 0 as "this
+		   core cannot serialize at all" and disables rewind/savestate
+		   features permanently at init. The quirk says: support exists,
+		   ask again once content is actually running.
+		*/
+		uint64_t quirks = RETRO_SERIALIZATION_QUIRK_MUST_INITIALIZE
+		                | RETRO_SERIALIZATION_QUIRK_CORE_VARIABLE_SIZE
 		                | RETRO_SERIALIZATION_QUIRK_ENDIAN_DEPENDENT
 		                | RETRO_SERIALIZATION_QUIRK_PLATFORM_DEPENDENT;
 		environ_cb(RETRO_ENVIRONMENT_SET_SERIALIZATION_QUIRKS, &quirks);
