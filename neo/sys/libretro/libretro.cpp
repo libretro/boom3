@@ -1662,6 +1662,15 @@ pre-existing XRGB8888 path byte for byte.
 #ifndef GL_RGB10_A2
 #define GL_RGB10_A2 0x8059
 #endif
+#ifndef GL_UNSIGNED_INT_2_10_10_10_REV
+/* absent from GLES2 headers (it is a GLES3 enum) - the only place the
+   HDR module referenced a GL identifier its oldest target does not
+   define, which broke every GLES platform build while all desktop GL
+   targets passed. Runtime is unaffected either way: GLES2 has no
+   10-bit color-renderable format, so the scene FBO comes back
+   incomplete and the HDR pass disables itself with a log line. */
+#define GL_UNSIGNED_INT_2_10_10_10_REV 0x8368
+#endif
 #ifndef GL_DEPTH24_STENCIL8
 #define GL_DEPTH24_STENCIL8 0x88F0
 #endif
