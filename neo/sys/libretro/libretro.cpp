@@ -129,8 +129,16 @@ static bool   hdr_rolloff_aces  = false;   /* live-switchable */
 
 static GLuint hdr_fbo, hdr_tex, hdr_rbo, hdr_prog;
 static GLint  hdr_loc_pos, hdr_loc_tex, hdr_loc_mat, hdr_loc_parms;
+static GLint  hdr_loc_bloomT, hdr_loc_bloomW, hdr_loc_bloomAmt;
 static int    hdr_w, hdr_h;
 static bool   hdr_warned_sdr, hdr_warned_narrow;
+static float  hdr_bloom_amount = 1.0f;      /* 0 = off; live-switchable */
+
+/* bloom chain: two bands (1/4-res tight core, 1/16-res wide haze),
+   each with a ping-pong pair for the separable blur */
+static GLuint hdr_bloom_fbo[4], hdr_bloom_tex[4];   /* [0,1]=1/4 A/B, [2,3]=1/16 A/B */
+static GLuint hdr_prog_bright, hdr_prog_blur;
+static GLint  hdr_bright_loc_thresh, hdr_blur_loc_dir;
 static void hdr_bind_scene( void );
 static void hdr_present( GLuint dstFbo );
 
@@ -478,6 +486,15 @@ static void update_variables(bool startup)
 	 * frontend menu overrides it. Live-toggling works: the mixer reads
 	 * the cvar per block and the binaural path keeps its own history
 	 * validity, so switching mid-game is clean. */
+	var.key = "doom_hdr_bloom";
+	var.value = NULL;
+	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) {
+		if (!strcmp(var.value, "disabled"))      hdr_bloom_amount = 0.0f;
+		else if (!strcmp(var.value, "subtle"))   hdr_bloom_amount = 0.55f;
+		else if (!strcmp(var.value, "intense"))  hdr_bloom_amount = 1.7f;
+		else                                     hdr_bloom_amount = 1.0f;
+	}
+
 	var.key = "doom_hdr_rolloff";
 	var.value = NULL;
 	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
@@ -535,6 +552,9 @@ static void context_reset(void)
 {
    /* previous context's HDR objects are gone with it */
    hdr_fbo = hdr_tex = hdr_rbo = hdr_prog = 0;
+   hdr_prog_bright = hdr_prog_blur = 0;
+   memset(hdr_bloom_fbo, 0, sizeof hdr_bloom_fbo);
+   memset(hdr_bloom_tex, 0, sizeof hdr_bloom_tex);
    hdr_w = hdr_h = 0;
 
    if (!first_boot)
@@ -1616,6 +1636,9 @@ static const char *hdr_fs_src =
 	"#ifdef GL_ES\nprecision highp float;\n#endif\n"
 	"varying vec2 vUV;\n"
 	"uniform sampler2D uScene;\n"
+	"uniform sampler2D uBloomT;\n"
+	"uniform sampler2D uBloomW;\n"
+	"uniform float uBloomAmt;\n"
 	"uniform mat3 uGamut;\n"
 	/* parms: x = paperWhite/10000, y = headroom H (>=1), z = aces flag,
 	   w = knee (Reinhard) */
@@ -1644,6 +1667,11 @@ static const char *hdr_fs_src =
 	"}\n"
 	"void main() {\n"
 	"  vec3 lin = srgbToLinear(texture2D(uScene, vUV).rgb);\n"
+	/* bloom joins in LINEAR, BEFORE the roll-off: bloomed highlights
+	   ride the same curve into the paper-white..peak headroom, which
+	   is the part SDR output cannot express at all */
+	"  lin += uBloomAmt * (0.22 * texture2D(uBloomT, vUV).rgb\n"
+	"                    + 0.14 * texture2D(uBloomW, vUV).rgb);\n"
 	"  lin = vec3(rolloff(lin.r), rolloff(lin.g), rolloff(lin.b));\n"
 	"  lin = uGamut * lin;\n"
 	"  vec3 y = clamp(lin * uParms.x, 0.0, 1.0);\n"
@@ -1651,6 +1679,54 @@ static const char *hdr_fs_src =
 	/* +-0.5 LSB (10-bit) spatial hash dither against PQ-remap banding */
 	"  float d = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) - 0.5;\n"
 	"  gl_FragColor = vec4(e + d / 1023.0, 1.0);\n"
+	"}\n";
+
+/*
+   Bright pass: linearize, threshold with a normalized soft knee, and
+   Reinhard-compress the extraction ( b / (1 + luma) ) - the firefly
+   fix: a sub-pixel specular spike is energy-limited BEFORE it is
+   blurred across the neighborhood, so bloom cannot flicker with it
+   frame to frame. The scene is SDR-clamped at 1.0 by construction,
+   so the threshold sits below white (0.62 linear): saturated lamps,
+   plasma, and the engine's own additive glare quads extract; lit
+   walls do not.
+*/
+static const char *hdr_bright_fs_src =
+	"#ifdef GL_ES\nprecision highp float;\n#endif\n"
+	"varying vec2 vUV;\n"
+	"uniform sampler2D uScene;\n"
+	"uniform float uThresh;\n"
+	"vec3 srgbToLinear(vec3 c) {\n"
+	"  vec3 lo = c / 12.92;\n"
+	"  vec3 hi = pow((c + 0.055) / 1.055, vec3(2.4));\n"
+	"  return mix(lo, hi, step(0.04045, c));\n"
+	"}\n"
+	"void main() {\n"
+	"  vec3 lin = srgbToLinear(texture2D(uScene, vUV).rgb);\n"
+	"  vec3 b = max(lin - vec3(uThresh), 0.0) / (1.0 - uThresh);\n"
+	"  float l = dot(b, vec3(0.2126, 0.7152, 0.0722));\n"
+	"  gl_FragColor = vec4(b / (1.0 + l), 1.0);\n"
+	"}\n";
+
+/*
+   Separable Gaussian, 5 bilinear fetches for a 9-tap kernel
+   (offsets/weights are the classic linear-sampling optimization,
+   renormalized to sum exactly 1 so a (0,0) direction acts as a pure
+   downsample copy - which is how the wide band is seeded from the
+   tight band without a dedicated copy program).
+*/
+static const char *hdr_blur_fs_src =
+	"#ifdef GL_ES\nprecision highp float;\n#endif\n"
+	"varying vec2 vUV;\n"
+	"uniform sampler2D uScene;\n"
+	"uniform vec2 uDir;\n"   /* texel-size-scaled direction, or 0,0 for copy */
+	"void main() {\n"
+	"  vec3 c = texture2D(uScene, vUV).rgb * 0.23727;\n"
+	"  c += texture2D(uScene, vUV + uDir * 1.38461).rgb * 0.33053;\n"
+	"  c += texture2D(uScene, vUV - uDir * 1.38461).rgb * 0.33053;\n"
+	"  c += texture2D(uScene, vUV + uDir * 3.23077).rgb * 0.05084;\n"
+	"  c += texture2D(uScene, vUV - uDir * 3.23077).rgb * 0.05084;\n"
+	"  gl_FragColor = vec4(c, 1.0);\n"
 	"}\n";
 
 static GLuint hdr_compile( GLenum type, const char *src ) {
@@ -1694,6 +1770,31 @@ static bool hdr_ensure_target( int w, int h ) {
 		hdr_loc_tex   = glGetUniformLocation( hdr_prog, "uScene" );
 		hdr_loc_mat   = glGetUniformLocation( hdr_prog, "uGamut" );
 		hdr_loc_parms = glGetUniformLocation( hdr_prog, "uParms" );
+		hdr_loc_bloomT  = glGetUniformLocation( hdr_prog, "uBloomT" );
+		hdr_loc_bloomW  = glGetUniformLocation( hdr_prog, "uBloomW" );
+		hdr_loc_bloomAmt= glGetUniformLocation( hdr_prog, "uBloomAmt" );
+	}
+	if ( hdr_prog_bright == 0 ) {
+		GLuint vs = hdr_compile( GL_VERTEX_SHADER, hdr_vs_src );
+		GLuint fs = hdr_compile( GL_FRAGMENT_SHADER, hdr_bright_fs_src );
+		GLuint fs2 = hdr_compile( GL_VERTEX_SHADER == 0 ? 0 : GL_FRAGMENT_SHADER, hdr_blur_fs_src );
+		if ( vs && fs && fs2 ) {
+			hdr_prog_bright = glCreateProgram();
+			glAttachShader( hdr_prog_bright, vs );
+			glAttachShader( hdr_prog_bright, fs );
+			glBindAttribLocation( hdr_prog_bright, 0, "aPos" );
+			glLinkProgram( hdr_prog_bright );
+			hdr_prog_blur = glCreateProgram();
+			glAttachShader( hdr_prog_blur, vs );
+			glAttachShader( hdr_prog_blur, fs2 );
+			glBindAttribLocation( hdr_prog_blur, 0, "aPos" );
+			glLinkProgram( hdr_prog_blur );
+			hdr_bright_loc_thresh = glGetUniformLocation( hdr_prog_bright, "uThresh" );
+			hdr_blur_loc_dir      = glGetUniformLocation( hdr_prog_blur, "uDir" );
+		}
+		if ( vs ) glDeleteShader( vs );
+		if ( fs ) glDeleteShader( fs );
+		if ( fs2 ) glDeleteShader( fs2 );
 	}
 	if ( hdr_fbo == 0 || w != hdr_w || h != hdr_h ) {
 		if ( hdr_tex ) glDeleteTextures( 1, &hdr_tex );
@@ -1721,6 +1822,35 @@ static bool hdr_ensure_target( int w, int h ) {
 			if ( log_cb ) log_cb( RETRO_LOG_ERROR, "[boom3] HDR scene FBO incomplete, disabling HDR pass\n" );
 			hdr_output_active = false;
 			return false;
+		}
+		/* the scene texture is sampled with bilinear taps by the bright
+		   pass and 1:1 by the composite - LINEAR serves both */
+		glBindTexture( GL_TEXTURE_2D, hdr_tex );
+		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
+		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
+		/* bloom chain: [0,1] at 1/4 res, [2,3] at 1/16 */
+		{
+			int i;
+			for ( i = 0; i < 4; i++ ) {
+				int bw = ( i < 2 ) ? w / 4 : w / 16;
+				int bh = ( i < 2 ) ? h / 4 : h / 16;
+				if ( bw < 1 ) bw = 1;
+				if ( bh < 1 ) bh = 1;
+				if ( hdr_bloom_tex[i] ) glDeleteTextures( 1, &hdr_bloom_tex[i] );
+				if ( hdr_bloom_fbo[i] ) glDeleteFramebuffers( 1, &hdr_bloom_fbo[i] );
+				glGenTextures( 1, &hdr_bloom_tex[i] );
+				glBindTexture( GL_TEXTURE_2D, hdr_bloom_tex[i] );
+				glTexImage2D( GL_TEXTURE_2D, 0, GL_RGB10_A2, bw, bh, 0, GL_RGBA,
+						GL_UNSIGNED_INT_2_10_10_10_REV, NULL );
+				glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
+				glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
+				glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
+				glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
+				glGenFramebuffers( 1, &hdr_bloom_fbo[i] );
+				glBindFramebuffer( RARCH_GL_FRAMEBUFFER, hdr_bloom_fbo[i] );
+				glFramebufferTexture2D( RARCH_GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+						GL_TEXTURE_2D, hdr_bloom_tex[i], 0 );
+			}
 		}
 		hdr_w = w;
 		hdr_h = h;
@@ -1803,28 +1933,81 @@ static void hdr_present( GLuint dstFbo ) {
 	if ( H < 1.0f )
 		H = 1.0f;   /* the contract's zero-headroom clamp */
 
-	glBindFramebuffer( RARCH_GL_FRAMEBUFFER, dstFbo );
-	glViewport( 0, 0, hdr_w, hdr_h );
 	glDisable( GL_DEPTH_TEST );
 	glDisable( GL_STENCIL_TEST );
 	glDisable( GL_BLEND );
 	glDisable( GL_CULL_FACE );
 	glDepthMask( GL_FALSE );
 
+	static const float triV[6] = { -1.0f, -1.0f, 3.0f, -1.0f, -1.0f, 3.0f };
+	glBindBuffer( GL_ARRAY_BUFFER, 0 );
+	glEnableVertexAttribArray( 0 );
+	glVertexAttribPointer( 0, 2, GL_FLOAT, GL_FALSE, 0, triV );
+
+	int haveBloom = ( hdr_bloom_amount > 0.0f && hdr_prog_bright && hdr_prog_blur );
+	if ( haveBloom ) {
+		int qw = hdr_w / 4 < 1 ? 1 : hdr_w / 4,  qh = hdr_h / 4 < 1 ? 1 : hdr_h / 4;
+		int sw = hdr_w / 16 < 1 ? 1 : hdr_w / 16, sh = hdr_h / 16 < 1 ? 1 : hdr_h / 16;
+		glActiveTexture( GL_TEXTURE0 );
+		/* bright pass: scene -> tight A */
+		glBindFramebuffer( RARCH_GL_FRAMEBUFFER, hdr_bloom_fbo[0] );
+		glViewport( 0, 0, qw, qh );
+		glUseProgram( hdr_prog_bright );
+		glBindTexture( GL_TEXTURE_2D, hdr_tex );
+		glUniform1f( hdr_bright_loc_thresh, 0.62f );
+		glDrawArrays( GL_TRIANGLES, 0, 3 );
+		/* tight band blur: A -> B (H), B -> A (V) */
+		glUseProgram( hdr_prog_blur );
+		glBindFramebuffer( RARCH_GL_FRAMEBUFFER, hdr_bloom_fbo[1] );
+		glBindTexture( GL_TEXTURE_2D, hdr_bloom_tex[0] );
+		glUniform2f( hdr_blur_loc_dir, 1.0f / qw, 0.0f );
+		glDrawArrays( GL_TRIANGLES, 0, 3 );
+		glBindFramebuffer( RARCH_GL_FRAMEBUFFER, hdr_bloom_fbo[0] );
+		glBindTexture( GL_TEXTURE_2D, hdr_bloom_tex[1] );
+		glUniform2f( hdr_blur_loc_dir, 0.0f, 1.0f / qh );
+		glDrawArrays( GL_TRIANGLES, 0, 3 );
+		/* wide band: seeded from the blurred tight band via a (0,0)
+		   "blur" (pure downsample copy), then its own H+V at 1/16 */
+		glBindFramebuffer( RARCH_GL_FRAMEBUFFER, hdr_bloom_fbo[2] );
+		glViewport( 0, 0, sw, sh );
+		glBindTexture( GL_TEXTURE_2D, hdr_bloom_tex[0] );
+		glUniform2f( hdr_blur_loc_dir, 0.0f, 0.0f );
+		glDrawArrays( GL_TRIANGLES, 0, 3 );
+		glBindFramebuffer( RARCH_GL_FRAMEBUFFER, hdr_bloom_fbo[3] );
+		glBindTexture( GL_TEXTURE_2D, hdr_bloom_tex[2] );
+		glUniform2f( hdr_blur_loc_dir, 1.0f / sw, 0.0f );
+		glDrawArrays( GL_TRIANGLES, 0, 3 );
+		glBindFramebuffer( RARCH_GL_FRAMEBUFFER, hdr_bloom_fbo[2] );
+		glBindTexture( GL_TEXTURE_2D, hdr_bloom_tex[3] );
+		glUniform2f( hdr_blur_loc_dir, 0.0f, 1.0f / sh );
+		glDrawArrays( GL_TRIANGLES, 0, 3 );
+	}
+
+	glBindFramebuffer( RARCH_GL_FRAMEBUFFER, dstFbo );
+	glViewport( 0, 0, hdr_w, hdr_h );
+
 	glUseProgram( hdr_prog );
+	glActiveTexture( GL_TEXTURE1 );
+	glBindTexture( GL_TEXTURE_2D, hdr_bloom_tex[0] );
+	glActiveTexture( GL_TEXTURE2 );
+	glBindTexture( GL_TEXTURE_2D, hdr_bloom_tex[2] );
 	glActiveTexture( GL_TEXTURE0 );
 	glBindTexture( GL_TEXTURE_2D, hdr_tex );
 	glUniform1i( hdr_loc_tex, 0 );
+	glUniform1i( hdr_loc_bloomT, 1 );
+	glUniform1i( hdr_loc_bloomW, 2 );
+	glUniform1f( hdr_loc_bloomAmt, haveBloom ? hdr_bloom_amount : 0.0f );
 	glUniformMatrix3fv( hdr_loc_mat, 1, GL_FALSE, mat );
 	glUniform4f( hdr_loc_parms, paperWhite / 10000.0f, H,
 			hdr_rolloff_aces ? 1.0f : 0.0f, 0.75f /* Reinhard knee */ );
 
-	static const float tri[6] = { -1.0f, -1.0f, 3.0f, -1.0f, -1.0f, 3.0f };
-	glBindBuffer( GL_ARRAY_BUFFER, 0 );
-	glEnableVertexAttribArray( 0 );
-	glVertexAttribPointer( 0, 2, GL_FLOAT, GL_FALSE, 0, tri );
 	glDrawArrays( GL_TRIANGLES, 0, 3 );
 	glDisableVertexAttribArray( 0 );
+	glActiveTexture( GL_TEXTURE1 );
+	glBindTexture( GL_TEXTURE_2D, 0 );
+	glActiveTexture( GL_TEXTURE2 );
+	glBindTexture( GL_TEXTURE_2D, 0 );
+	glActiveTexture( GL_TEXTURE0 );
 	glUseProgram( 0 );
 	/* engine state is restored by glsm on the next STATE_BIND; the
 	   depth mask matters before that, so put it back */

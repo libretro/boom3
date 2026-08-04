@@ -136,6 +136,29 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "24bit"
    },
    {
+      "doom_hdr_bloom",
+      "HDR Bloom",
+      NULL,
+      "Multi-band bloom for 30-bit HDR mode: bright content (lamps, "
+      "plasma, the engine's own glare sprites) is extracted in linear "
+      "light, Gaussian-blurred at two scales (tight core plus wide "
+      "haze), and composited before the highlight roll-off - so glow "
+      "genuinely exceeds paper white and lands in the HDR headroom, "
+      "which standard output cannot express. Firefly-compressed at "
+      "extraction to prevent specular flicker. No effect in 24-bit "
+      "mode.",
+      NULL,
+      NULL,
+      {
+         { "disabled", "Disabled" },
+         { "subtle",   "Subtle" },
+         { "standard", "Standard" },
+         { "intense",  "Intense" },
+         { NULL, NULL },
+      },
+      "standard"
+   },
+   {
       "doom_hdr_rolloff",
       "HDR Highlight Roll-Off",
       NULL,
