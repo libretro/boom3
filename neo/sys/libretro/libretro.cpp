@@ -2169,7 +2169,16 @@ void retro_set_environment(retro_environment_t cb)
    };
 
    static const struct retro_controller_info ports[] = {
-      { port_1, 4 },
+      /*
+         num_types said 4 for a 3-entry array since this table was
+         written. The frontend only dereferences the phantom fourth
+         desc when debug logging is on, so it lay dormant until other
+         rodata (the HDR pass's -1.0f triangle constants, whose bit
+         pattern was the faulting "pointer") happened to land next to
+         the array. sizeof-derived so the count can never desync from
+         the table again.
+      */
+      { port_1, sizeof( port_1 ) / sizeof( port_1[0] ) },
       { 0 },
    };
 
