@@ -136,6 +136,27 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "24bit"
    },
    {
+      "doom_hdr_precision",
+      "HDR Scene Precision (Restart Required)",
+      NULL,
+      "Scene buffer depth in 30-bit HDR mode. 10-bit quantizes each "
+      "additive light pass to 10-bit steps and caps accumulation at one "
+      "stop of headroom via the encoding fold. FP16 (half-float) makes "
+      "per-pass quantization effectively disappear and removes the "
+      "accumulation ceiling entirely - light sums build unbounded and "
+      "roll off only at output. FP16 costs double the scene buffer "
+      "bandwidth and requires float render target support (any desktop "
+      "GPU).",
+      NULL,
+      NULL,
+      {
+         { "10bit", "10-bit" },
+         { "fp16",  "FP16 (Half-Float)" },
+         { NULL, NULL },
+      },
+      "10bit"
+   },
+   {
       "doom_hdr_headroom",
       "HDR Scene Headroom",
       NULL,

@@ -657,7 +657,26 @@ void R_LoadARBProgram( int progIndex ) {
 		// Note: program.env[21].xyz = r_brightness; program.env[21].w = 1.0/r_gamma
 		// outColor.rgb = pow(dhewm3tmpres.rgb*r_brightness, vec3(1.0/r_gamma))
 		// outColor.a = dhewm3tmpres.a;
-		const char* extraLines =
+		/*
+		   With the FP16 scene target the framebuffer no longer clamps
+		   at 1.0, so the epilogue must not either - MUL_SAT here would
+		   put the ceiling right back and defeat unbounded additive
+		   accumulation. The negative-base POW hazard is the only
+		   reason for a clamp at all, so the FP16 variant clamps the
+		   LOW side only. Chosen at program load; the precision option
+		   is restart-required for exactly this reason.
+		*/
+		extern bool hdr_fp16_scene;
+		const char* extraLines = hdr_fp16_scene ?
+			"# gamma correction in shader, injected by dhewm3 (unclamped high side for FP16 scene) \n"
+			"MAX dhewm3tmpres.xyz, dhewm3tmpres, 0.0;\n"
+			"MUL dhewm3tmpres.xyz, program.env[21], dhewm3tmpres;\n"
+			"POW result.color.x, dhewm3tmpres.x, program.env[21].w;\n"
+			"POW result.color.y, dhewm3tmpres.y, program.env[21].w;\n"
+			"POW result.color.z, dhewm3tmpres.z, program.env[21].w;\n"
+			"MOV result.color.w, dhewm3tmpres.w;\n"
+			"\nEND\n\n"
+		:
 			"# gamma correction in shader, injected by dhewm3 \n"
 			// MUL_SAT clamps the result to [0, 1] - it must not be negative because
 			// POW might not work with a negative base (it looks wrong with intel's Linux driver)

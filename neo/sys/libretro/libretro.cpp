@@ -127,6 +127,7 @@ static idCVar m_strafe( "m_strafe", "0.25", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_FL
 bool          hdr_output_active = false;   /* chosen at load, needs restart; read by draw_arb2 */
 float         hdr_specular_gain = 2.0f;    /* interaction specular scale in HDR mode; read by draw_arb2 */
 float         hdr_scene_encode_scale = 1.0f; /* 0.5 = one gamma-domain stop of scene headroom; read by the render backend */
+bool          hdr_fp16_scene = false;      /* FP16 scene target: per-pass quantization gone, accumulation unbounded */
 static bool   hdr_rolloff_aces  = false;   /* live-switchable */
 
 static GLuint hdr_fbo, hdr_tex, hdr_rbo, hdr_prog;
@@ -492,7 +493,8 @@ static void update_variables(bool startup)
 	var.key = "doom_hdr_headroom";
 	var.value = NULL;
 	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
-		hdr_scene_encode_scale = (hdr_output_active && strcmp(var.value, "disabled") != 0) ? 0.5f : 1.0f;
+		hdr_scene_encode_scale = (hdr_output_active && !hdr_fp16_scene
+				&& strcmp(var.value, "disabled") != 0) ? 0.5f : 1.0f;
 
 	var.key = "doom_hdr_specular";
 	var.value = NULL;
@@ -1315,8 +1317,14 @@ bool retro_load_game(const struct retro_game_info *info)
 			}
 		}
 	}
-	if (hdr_output_active)
+	if (hdr_output_active) {
 		fmt = RETRO_PIXEL_FORMAT_HDR10_2101010;
+		struct retro_variable pv = { "doom_hdr_precision", NULL };
+		if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &pv) && pv.value)
+			hdr_fp16_scene = strcmp(pv.value, "fp16") == 0;
+		if (hdr_fp16_scene && log_cb)
+			log_cb(RETRO_LOG_INFO, "[boom3] FP16 scene target: unbounded accumulation, fold disabled\n");
+	}
 	if (!environ_cb(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &fmt))
 	{
 		if (log_cb)
@@ -1823,8 +1831,20 @@ static bool hdr_ensure_target( int w, int h ) {
 		if ( hdr_fbo ) glDeleteFramebuffers( 1, &hdr_fbo );
 		glGenTextures( 1, &hdr_tex );
 		glBindTexture( GL_TEXTURE_2D, hdr_tex );
-		glTexImage2D( GL_TEXTURE_2D, 0, GL_RGB10_A2, w, h, 0, GL_RGBA,
-				GL_UNSIGNED_INT_2_10_10_10_REV, NULL );
+		/*
+		   Precision selection. RGB10_A2: 10-bit gamma-domain steps at
+		   every additive light pass. RGBA16F: per-pass write
+		   quantization effectively disappears (11-bit mantissa near
+		   1.0, far denser near 0), and together with the unclamped
+		   epilogue the accumulation ceiling disappears with it - no
+		   encoding fold needed, no darks cost.
+		*/
+		if ( hdr_fp16_scene )
+			glTexImage2D( GL_TEXTURE_2D, 0, 0x881A /* GL_RGBA16F */, w, h, 0, GL_RGBA,
+					0x140B /* GL_HALF_FLOAT */, NULL );
+		else
+			glTexImage2D( GL_TEXTURE_2D, 0, GL_RGB10_A2, w, h, 0, GL_RGBA,
+					GL_UNSIGNED_INT_2_10_10_10_REV, NULL );
 		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST );
 		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST );
 		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
@@ -1861,8 +1881,12 @@ static bool hdr_ensure_target( int w, int h ) {
 				if ( hdr_bloom_fbo[i] ) glDeleteFramebuffers( 1, &hdr_bloom_fbo[i] );
 				glGenTextures( 1, &hdr_bloom_tex[i] );
 				glBindTexture( GL_TEXTURE_2D, hdr_bloom_tex[i] );
-				glTexImage2D( GL_TEXTURE_2D, 0, GL_RGB10_A2, bw, bh, 0, GL_RGBA,
-						GL_UNSIGNED_INT_2_10_10_10_REV, NULL );
+				if ( hdr_fp16_scene )
+					glTexImage2D( GL_TEXTURE_2D, 0, 0x881A, bw, bh, 0, GL_RGBA,
+							0x140B, NULL );
+				else
+					glTexImage2D( GL_TEXTURE_2D, 0, GL_RGB10_A2, bw, bh, 0, GL_RGBA,
+							GL_UNSIGNED_INT_2_10_10_10_REV, NULL );
 				glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
 				glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
 				glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );

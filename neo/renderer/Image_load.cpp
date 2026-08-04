@@ -2208,7 +2208,23 @@ void idImage::CopyFramebuffer( int x, int y, int imageWidth, int imageHeight, bo
 		uploadHeight = potHeight;
 		if ( potWidth == imageWidth && potHeight == imageHeight ) {
 #ifdef HAVE_OPENGLES
-			qglCopyTexImage2D( GL_TEXTURE_2D, 0, GL_RGBA, x, y, imageWidth, imageHeight, 0 );
+			{
+				/*
+				   _currentRender feeds heat haze and glass warp: an
+				   8-bit copy here re-quantizes the whole scene mid-
+				   frame no matter how deep the scene target is. Under
+				   HDR the copy follows the scene's depth instead -
+				   10-bit, or half-float when the FP16 scene target is
+				   active (where clamping to [0,1] would also destroy
+				   the overbright range these effects then refract).
+				*/
+				extern bool hdr_output_active;
+				extern bool hdr_fp16_scene;
+				GLenum ifmt = GL_RGBA;
+				if ( hdr_output_active )
+					ifmt = hdr_fp16_scene ? 0x881A /* GL_RGBA16F */ : 0x8059 /* GL_RGB10_A2 */;
+				qglCopyTexImage2D( GL_TEXTURE_2D, 0, ifmt, x, y, imageWidth, imageHeight, 0 );
+			}
 #else
 			qglCopyTexImage2D( GL_TEXTURE_2D, 0, GL_RGB8, x, y, imageWidth, imageHeight, 0 );
 #endif
