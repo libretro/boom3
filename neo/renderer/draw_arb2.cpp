@@ -104,7 +104,32 @@ void	RB_ARB2_DrawInteraction( const drawInteraction_t *din ) {
 
 	// set the constant colors
 	qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 0, din->diffuseColor.ToFloatPtr() );
-	qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 1, din->specularColor.ToFloatPtr() );
+	{
+		/*
+		   HDR specular boost (30-bit mode): dielectric specular is
+		   physically a few percent of incident light, and under an SDR
+		   ceiling those few percent read as mud. The specular energy
+		   enters this program as a per-draw constant, so scaling it
+		   here lifts reflections on lit surfaces only - GUIs, 2D, and
+		   fullbright content never pass through this path. Boosted
+		   highlights that reach the bloom threshold then bleed into
+		   the paper-white..peak headroom, which is where reflective
+		   punch actually lives on an HDR display. Identity (1.0) when
+		   HDR is off or the option is disabled: bit-identical SDR.
+		*/
+		extern bool  hdr_output_active;
+		extern float hdr_specular_gain;
+		if ( hdr_output_active && hdr_specular_gain != 1.0f ) {
+			float sc[4];
+			sc[0] = din->specularColor[0] * hdr_specular_gain;
+			sc[1] = din->specularColor[1] * hdr_specular_gain;
+			sc[2] = din->specularColor[2] * hdr_specular_gain;
+			sc[3] = din->specularColor[3];
+			qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 1, sc );
+		} else {
+			qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 1, din->specularColor.ToFloatPtr() );
+		}
+	}
 
 	// DG: brightness and gamma in shader as program.env[4]
 	if ( r_gammaInShader.GetBool() ) {

@@ -136,6 +136,26 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "24bit"
    },
    {
+      "doom_hdr_specular",
+      "HDR Specular Boost",
+      NULL,
+      "Scales specular reflection energy on lit surfaces in 30-bit HDR "
+      "mode. Dielectric specular is physically a few percent of incident "
+      "light and reads as mud under an SDR ceiling; boosting it restores "
+      "reflective punch, and highlights that reach the bloom threshold "
+      "bleed into HDR headroom. Lit surfaces only - HUD, menus, and "
+      "fullbright content are untouched. No effect in 24-bit mode.",
+      NULL,
+      NULL,
+      {
+         { "disabled", "Disabled" },
+         { "moderate", "Moderate (2x)" },
+         { "strong",   "Strong (3x)" },
+         { NULL, NULL },
+      },
+      "moderate"
+   },
+   {
       "doom_hdr_bloom",
       "HDR Bloom",
       NULL,

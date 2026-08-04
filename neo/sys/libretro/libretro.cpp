@@ -124,7 +124,8 @@ static idCVar m_strafe( "m_strafe", "0.25", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_FL
 
 /* 30-bit / HDR10 output state; the implementation lives above
    GLimp_SwapBuffers, the full design comment with it. */
-static bool   hdr_output_active = false;   /* chosen at load, needs restart */
+bool          hdr_output_active = false;   /* chosen at load, needs restart; read by draw_arb2 */
+float         hdr_specular_gain = 2.0f;    /* interaction specular scale in HDR mode; read by draw_arb2 */
 static bool   hdr_rolloff_aces  = false;   /* live-switchable */
 
 static GLuint hdr_fbo, hdr_tex, hdr_rbo, hdr_prog;
@@ -486,6 +487,14 @@ static void update_variables(bool startup)
 	 * frontend menu overrides it. Live-toggling works: the mixer reads
 	 * the cvar per block and the binaural path keeps its own history
 	 * validity, so switching mid-game is clean. */
+	var.key = "doom_hdr_specular";
+	var.value = NULL;
+	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) {
+		if (!strcmp(var.value, "disabled"))     hdr_specular_gain = 1.0f;
+		else if (!strcmp(var.value, "strong"))  hdr_specular_gain = 3.0f;
+		else                                    hdr_specular_gain = 2.0f;
+	}
+
 	var.key = "doom_hdr_bloom";
 	var.value = NULL;
 	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) {
