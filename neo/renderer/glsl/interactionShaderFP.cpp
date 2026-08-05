@@ -32,7 +32,8 @@ varying vec3 var_H;
   
 // Uniforms
 uniform lowp vec4 u_diffuseColor;
-uniform lowp vec4 u_specularColor;
+uniform mediump vec4 u_specularColor;   // mediump, not lowp: lowp guarantees only [-2,2],
+                                        // which would clip any future HDR specular boost
 //uniform float u_specularExponent;   // Not used
 uniform sampler2D u_fragmentMap0;     // u_bumpTexture
 uniform sampler2D u_fragmentMap1;     // u_lightFalloffTexture

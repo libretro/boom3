@@ -116,10 +116,26 @@ void	RB_ARB2_DrawInteraction( const drawInteraction_t *din ) {
 		   the paper-white..peak headroom, which is where reflective
 		   punch actually lives on an HDR display. Identity (1.0) when
 		   HDR is off or the option is disabled: bit-identical SDR.
+
+		   Whether the boost produces highlights or just clipping
+		   depends on there being somewhere for the boosted energy to
+		   go. A float scene target has no ceiling and the encoding
+		   fold buys one stop, but with a 10-bit target AND the
+		   headroom option off, result.color saturates in the
+		   epilogue's MUL_SAT and RGB10_A2 clamps again behind it - the
+		   boost then only converts more pixels to flat white, which is
+		   the opposite of the intent. The two options are presented as
+		   independent and are not, so refuse the boost rather than let
+		   it act as a highlight clipper.
 		*/
 		extern bool  hdr_output_active;
 		extern float hdr_specular_gain;
-		if ( hdr_output_active && hdr_specular_gain != 1.0f ) {
+		extern float hdr_scene_encode_scale;
+		extern bool  hdr_fp16_scene;
+		extern bool  hdr_fp32_scene;
+		const bool haveHeadroom = hdr_fp16_scene || hdr_fp32_scene
+				|| hdr_scene_encode_scale != 1.0f;
+		if ( hdr_output_active && haveHeadroom && hdr_specular_gain != 1.0f ) {
 			float sc[4];
 			sc[0] = din->specularColor[0] * hdr_specular_gain;
 			sc[1] = din->specularColor[1] * hdr_specular_gain;

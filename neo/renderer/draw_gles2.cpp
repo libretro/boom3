@@ -555,6 +555,13 @@ static void RB_GLSL_DrawInteraction(const drawInteraction_t* din) {
 
   // set the constant colors
   GL_Uniform4fv(offsetof(shaderProgram_t, diffuseColor), din->diffuseColor.ToFloatPtr());
+  /* No HDR specular boost here, unlike the ARB2 path in draw_arb2.cpp: 30-bit
+     HDR self-disables on GLES2 (no 10-bit colour-renderable format, so the
+     scene FBO comes back incomplete), which makes the boost unreachable.
+     If that ever changes, note that u_specularColor is declared lowp in
+     glsl/interactionShaderFP.cpp - GLES lowp guarantees only [-2,2], so a
+     2x or 3x gain saturates for any specularColor above ~0.67 and must be
+     promoted to mediump first. */
   GL_Uniform4fv(offsetof(shaderProgram_t, specularColor), din->specularColor.ToFloatPtr());
 
   // set the textures
