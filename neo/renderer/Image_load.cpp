@@ -2176,6 +2176,50 @@ void idImage::BindFragment() {
 
 /*
 ====================
+R_CurrentRenderCopyFormat
+
+_currentRender feeds heat haze, glass warp and every SS_POST_PROCESS
+material. A copy narrower than the scene target re-quantizes the whole
+frame mid-render no matter how deep that target is, and on a float scene
+it also clamps to [0,1] - destroying exactly the overbright range
+doom_hdr_true_blend exists to preserve, the moment a refraction material
+samples the scene.
+
+Returns the internal format the copy should be allocated with, and fills
+in a format/type pair legal for it. The pixel data at these call sites is
+either NULL or immediately overwritten by a CopyTexSubImage, so the pair
+only has to be accepted, not honoured.
+
+fallbackInternal is the historical value for the call site, returned
+unchanged whenever 30-bit HDR is not active, so the 24-bit path allocates
+exactly what it always did.
+====================
+*/
+static GLenum R_CurrentRenderCopyFormat( GLenum fallbackInternal, GLenum *format, GLenum *type ) {
+	extern bool hdr_output_active;
+	extern bool hdr_fp16_scene;
+	extern bool hdr_fp32_scene;
+
+	*format = GL_RGBA;
+	*type   = GL_UNSIGNED_BYTE;
+
+	if ( !hdr_output_active ) {
+		return fallbackInternal;
+	}
+	if ( hdr_fp32_scene ) {
+		*type = GL_FLOAT;
+		return 0x8814;                  /* GL_RGBA32F */
+	}
+	if ( hdr_fp16_scene ) {
+		*type = 0x140B;                 /* GL_HALF_FLOAT */
+		return 0x881A;                  /* GL_RGBA16F */
+	}
+	*type = 0x8368;                     /* GL_UNSIGNED_INT_2_10_10_10_REV */
+	return 0x8059;                      /* GL_RGB10_A2 */
+}
+
+/*
+====================
 CopyFramebuffer
 ====================
 */
@@ -2206,40 +2250,33 @@ void idImage::CopyFramebuffer( int x, int y, int imageWidth, int imageHeight, bo
 		|| ( !useOversizedBuffer && ( uploadWidth != potWidth || uploadHeight != potHeight ) ) ) {
 		uploadWidth = potWidth;
 		uploadHeight = potHeight;
+		GLenum	copyFormat, copyType, copyInternal;
+
 		if ( potWidth == imageWidth && potHeight == imageHeight ) {
 #ifdef HAVE_OPENGLES
-			{
-				/*
-				   _currentRender feeds heat haze and glass warp: an
-				   8-bit copy here re-quantizes the whole scene mid-
-				   frame no matter how deep the scene target is. Under
-				   HDR the copy follows the scene's depth instead -
-				   10-bit, or half-float when the FP16 scene target is
-				   active (where clamping to [0,1] would also destroy
-				   the overbright range these effects then refract).
-				*/
-				extern bool hdr_output_active;
-				extern bool hdr_fp16_scene;
-				extern bool hdr_fp32_scene;
-				GLenum ifmt = GL_RGBA;
-				if ( hdr_output_active )
-					ifmt = hdr_fp32_scene ? 0x8814 /* GL_RGBA32F */
-					     : hdr_fp16_scene ? 0x881A /* GL_RGBA16F */
-					     : 0x8059 /* GL_RGB10_A2 */;
-				qglCopyTexImage2D( GL_TEXTURE_2D, 0, ifmt, x, y, imageWidth, imageHeight, 0 );
-			}
+			copyInternal = R_CurrentRenderCopyFormat( GL_RGBA, &copyFormat, &copyType );
 #else
-			qglCopyTexImage2D( GL_TEXTURE_2D, 0, GL_RGB8, x, y, imageWidth, imageHeight, 0 );
+			copyInternal = R_CurrentRenderCopyFormat( GL_RGB8, &copyFormat, &copyType );
 #endif
+			qglCopyTexImage2D( GL_TEXTURE_2D, 0, copyInternal, x, y, imageWidth, imageHeight, 0 );
 		} else {
-			byte	*junk;
 			// we need to create a dummy image with power of two dimensions,
-			// then do a qglCopyTexSubImage2D of the data we want
-			// this might be a 16+ meg allocation, which could fail on _alloca
-			junk = (byte *)Mem_Alloc( potWidth * potHeight * 4 );
-			memset( junk, 0, potWidth * potHeight * 4 );		//!@#
-			qglTexImage2D( GL_TEXTURE_2D, 0, GL_RGB, potWidth, potHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, junk );
-			Mem_Free( junk );
+			// then do a qglCopyTexSubImage2D of the data we want.
+			//
+			// This is the branch a normal desktop run actually takes:
+			// MakePowerOfTwo has no NPOT short-circuit, so any render size
+			// that is not itself a power of two (1920x1080, 2560x1440, ...)
+			// lands here. It has to follow the scene depth for the same
+			// reason the POT branch does.
+			//
+			// The contents are overwritten by the CopyTexSubImage below, so
+			// there is nothing to upload - id allocated and zeroed up to
+			// potW*potH*4 bytes (~16 MB at 2048^2, ~67 MB at 4096^2) to
+			// hand the driver a buffer it immediately discards. NULL does
+			// the same job.
+			copyInternal = R_CurrentRenderCopyFormat( GL_RGB, &copyFormat, &copyType );
+			qglTexImage2D( GL_TEXTURE_2D, 0, copyInternal, potWidth, potHeight, 0,
+					copyFormat, copyType, NULL );
 
 			qglCopyTexSubImage2D( GL_TEXTURE_2D, 0, 0, 0, x, y, imageWidth, imageHeight );
 		}
