@@ -144,7 +144,10 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "stop of headroom via the encoding fold. FP16 (half-float) makes "
       "per-pass quantization effectively disappear and removes the "
       "accumulation ceiling entirely - light sums build unbounded and "
-      "roll off only at output. FP16 costs double the scene buffer "
+      "roll off only at output. 10-bit also leaves only 2 bits of "
+      "destination alpha (4 levels instead of 256), so the handful of "
+      "materials that blend against destination alpha band visibly; "
+      "FP16 restores full alpha. FP16 costs double the scene buffer "
       "bandwidth and requires float render target support (any desktop "
       "GPU).",
       NULL,
@@ -279,11 +282,15 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "How highlights use the headroom between paper white and the "
       "display's peak in 30-bit HDR mode. Reinhard (Soft-Knee) is the "
       "reference: mid-tones match 24-bit output exactly, only the top "
-      "end eases toward the peak. ACES (Filmic) applies the ACES curve "
-      "normalized to the peak, which visibly LIFTS mid-tone brightness "
-      "as well as reshaping highlights - a deliberate, brighter filmic "
-      "look, not a calibration error. Pick Reinhard for a faithful "
-      "comparison against 24-bit.",
+      "end eases toward the peak, and highlights use the full headroom. "
+      "ACES (Filmic) applies the ACES curve normalized to paper white, "
+      "which visibly LIFTS mid-tone brightness (mid grey rises from "
+      "0.18 to 0.33) as well as reshaping highlights - a deliberate, "
+      "brighter filmic look, not a calibration error. In exchange its "
+      "highlights reach only 1.29x paper white rather than the display "
+      "peak, so it trades headroom for mid-tone brightness. Pick "
+      "Reinhard for a faithful comparison against 24-bit, or for the "
+      "most highlight range on a high-peak display.",
       NULL,
       NULL,
       {

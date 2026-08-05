@@ -1737,9 +1737,31 @@ static const char *hdr_fs_src =
 	"  float H = uParms.y;\n"
 	"  if (H <= 1.0001) return min(v, 1.0);\n"
 	"  if (uParms.z > 0.5) {\n"
-	/*   Narkowicz ACES fit, normalized so 1.0 lands on the peak */
+	/*   Narkowicz ACES fit, normalized so paper white lands on paper white.
+	     aces(1.0) == 0.8037, so dividing by it pins rolloff(1.0) == 1.0
+	     exactly, on every display, independent of H. The H factor that
+	     used to be here mapped paper white to the display PEAK instead -
+	     1000 nits for a 200-nit target - and mid grey to 1.66 against a
+	     reference of 0.18.
+
+	     The curve tops out at (2.51/2.43)/0.8037 = 1.285, so ACES reaches
+	     1.285x paper white and no further, whatever the panel can do.
+	     That is the trade a single Narkowicz shoulder forces. The three
+	     reachable behaviours are: exact paper white, lifted mids, short
+	     shoulder (this); exact paper white, full headroom, mids crushed
+	     from 0.18 to 0.077 (rescale the input so the asymptote lands on
+	     H); or exact mids, full headroom, paper white overshooting to
+	     2.5x (run it as a shoulder above a knee). The fit saturates
+	     within a few units of input, so it cannot span knee-to-H and
+	     stay well behaved at both ends - forcing unit slope at a knee
+	     makes it overshoot, forcing the asymptote onto H makes it crush.
+
+	     Lifted mids with a short shoulder is the variant that matches
+	     what this option is for, and what its description already
+	     claims. Reinhard stays the option for exact mids and full
+	     headroom. */
 	"    float n = v * (2.51 * v + 0.03) / (v * (2.43 * v + 0.59) + 0.14);\n"
-	"    return H * n / 0.8037;\n"
+	"    return n / 0.8037;\n"
 	"  }\n"
 	"  float K = uParms.w;\n"
 	"  if (v <= K) return v;\n"
