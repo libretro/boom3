@@ -137,6 +137,8 @@ static bool   hdr_rolloff_aces  = false;   /* live-switchable */
 static GLuint hdr_fbo, hdr_tex, hdr_rbo, hdr_prog;
 static GLint  hdr_loc_pos, hdr_loc_tex, hdr_loc_mat, hdr_loc_parms;
 static GLint  hdr_loc_bloomT, hdr_loc_bloomW, hdr_loc_bloomAmt, hdr_loc_encScale;
+static GLint  hdr_loc_frame;
+static unsigned hdr_frame_counter;
 static GLint  hdr_bright_loc_enc;
 static int    hdr_w, hdr_h;
 static bool   hdr_warned_sdr, hdr_warned_narrow;
@@ -150,7 +152,7 @@ static GLuint hdr_prog_bright, hdr_prog_blur;
    HDR pass itself. Kept apart so a resize that rebuilds the targets
    cannot resurrect a program that failed to link. */
 static bool   hdr_bloom_prog_bad, hdr_bloom_tex_bad;
-static GLint  hdr_bright_loc_thresh, hdr_blur_loc_dir;
+static GLint  hdr_bright_loc_thresh, hdr_blur_loc_dir, hdr_bright_loc_texel;
 static void hdr_bind_scene( void );
 static void hdr_present( GLuint dstFbo );
 
@@ -1721,6 +1723,7 @@ static const char *hdr_fs_src =
 	"uniform sampler2D uBloomW;\n"
 	"uniform float uBloomAmt;\n"
 	"uniform float uEncScale;\n"
+	"uniform float uFrame;\n"
 	"uniform mat3 uGamut;\n"
 	/* parms: x = paperWhite/10000, y = headroom H (>=1), z = aces flag,
 	   w = knee (Reinhard) */
@@ -1743,6 +1746,9 @@ static const char *hdr_fs_src =
 	"  float e = v - K, A = H - K;\n"
 	"  return K + e * A / (e + A);\n"
 	"}\n"
+	"float ign(vec2 p) {\n"
+	"  return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715))));\n"
+	"}\n"
 	"float pq(float y) {\n"
 	"  float p = pow(max(y, 0.0), 0.1593017578125);\n"
 	"  return pow((0.8359375 + 18.8515625 * p) / (1.0 + 18.6875 * p), 78.84375);\n"
@@ -1758,9 +1764,25 @@ static const char *hdr_fs_src =
 	"  lin = uGamut * lin;\n"
 	"  vec3 y = clamp(lin * uParms.x, 0.0, 1.0);\n"
 	"  vec3 e = vec3(pq(y.r), pq(y.g), pq(y.b));\n"
-	/* +-0.5 LSB (10-bit) spatial hash dither against PQ-remap banding */
-	"  float d = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) - 0.5;\n"
-	"  gl_FragColor = vec4(e + d / 1023.0, 1.0);\n"
+	/* +-0.5 LSB (10-bit) dither against PQ-remap banding.
+
+	   Interleaved gradient noise rather than the usual sin() hash: sin()
+	   hashes degenerate into visible structure once the argument gets
+	   large, and dot(gl_FragCoord, vec2(12.9898, 78.233)) reaches ~1e5 at
+	   1080p and ~2e5 at 4K, which is exactly where fp32 argument
+	   reduction starts costing significant bits. IGN is also better
+	   distributed and cheaper.
+
+	   Per channel, not one scalar for all three: a single shared offset
+	   dithers luminance only and leaves chroma contours - the thing PQ
+	   banding in near-neutral darks actually looks like - untouched.
+
+	   uFrame rotates the pattern so it dissolves into motion instead of
+	   sitting on top of it as a fixed grain. */
+	"  vec3 d = vec3(ign(gl_FragCoord.xy + vec2(0.0, 0.0) + uFrame),\n"
+	"                ign(gl_FragCoord.xy + vec2(11.0, 37.0) + uFrame),\n"
+	"                ign(gl_FragCoord.xy + vec2(23.0, 71.0) + uFrame)) - 0.5;\n"
+	"  gl_FragColor = vec4(clamp(e + d / 1023.0, 0.0, 1.0), 1.0);\n"
 	"}\n";
 
 /*
@@ -1784,8 +1806,13 @@ static const char *hdr_bright_fs_src =
 	"  return mix(lo, hi, step(0.04045, c));\n"
 	"}\n"
 	"uniform float uEncScale;\n"
+	"uniform vec2 uTexel;\n"
 	"void main() {\n"
-	"  vec3 lin = srgbToLinear(texture2D(uScene, vUV).rgb * uEncScale);\n"
+	"  vec3 s0 = texture2D(uScene, vUV + uTexel * vec2(-1.0, -1.0)).rgb;\n"
+	"  vec3 s1 = texture2D(uScene, vUV + uTexel * vec2( 1.0, -1.0)).rgb;\n"
+	"  vec3 s2 = texture2D(uScene, vUV + uTexel * vec2(-1.0,  1.0)).rgb;\n"
+	"  vec3 s3 = texture2D(uScene, vUV + uTexel * vec2( 1.0,  1.0)).rgb;\n"
+	"  vec3 lin = srgbToLinear(0.25 * (s0 + s1 + s2 + s3) * uEncScale);\n"
 	"  vec3 b = max(lin - vec3(uThresh), 0.0) / (1.0 - uThresh);\n"
 	"  float l = dot(b, vec3(0.2126, 0.7152, 0.0722));\n"
 	"  gl_FragColor = vec4(b / (1.0 + l), 1.0);\n"
@@ -1888,6 +1915,7 @@ static bool hdr_ensure_target( int w, int h ) {
 		hdr_loc_bloomW  = glGetUniformLocation( hdr_prog, "uBloomW" );
 		hdr_loc_bloomAmt= glGetUniformLocation( hdr_prog, "uBloomAmt" );
 		hdr_loc_encScale= glGetUniformLocation( hdr_prog, "uEncScale" );
+		hdr_loc_frame   = glGetUniformLocation( hdr_prog, "uFrame" );
 	}
 	if ( hdr_prog_bright == 0 && !hdr_bloom_prog_bad ) {
 		GLuint vs = hdr_compile( GL_VERTEX_SHADER, hdr_vs_src );
@@ -1926,6 +1954,7 @@ static bool hdr_ensure_target( int w, int h ) {
 			} else {
 				hdr_bright_loc_thresh = glGetUniformLocation( hdr_prog_bright, "uThresh" );
 				hdr_bright_loc_enc    = glGetUniformLocation( hdr_prog_bright, "uEncScale" );
+				hdr_bright_loc_texel  = glGetUniformLocation( hdr_prog_bright, "uTexel" );
 				hdr_blur_loc_dir      = glGetUniformLocation( hdr_prog_blur, "uDir" );
 			}
 		} else {
@@ -2134,22 +2163,29 @@ static void hdr_present( GLuint dstFbo ) {
 		}
 	}
 
-	float mat[9];
+	/* Only the Expanded midpoint costs anything to build, and all four
+	   change only when the user touches a frontend setting, so keep the
+	   last one. */
+	static float mat[9];
+	static unsigned matMode = ~0u;
 	int i;
-	switch ( gamutMode ) {
-		case 3:   /* Super: no rotation, the display's interpretation boosts */
-			memcpy( mat, hdr_mIdentity, sizeof( mat ) );
-			break;
-		case 2:   /* Wide: 709 coordinates reinterpreted as DCI-P3 */
-			memcpy( mat, hdr_mP3to2020, sizeof( mat ) );
-			break;
-		case 1:   /* Expanded: halfway between Accurate and Wide */
-			for ( i = 0; i < 9; i++ )
-				mat[i] = 0.5f * ( hdr_m709to2020[i] + hdr_mP3to2020[i] );
-			break;
-		default:  /* Accurate */
-			memcpy( mat, hdr_m709to2020, sizeof( mat ) );
-			break;
+	if ( gamutMode != matMode ) {
+		switch ( gamutMode ) {
+			case 3:   /* Super: no rotation, the display's interpretation boosts */
+				memcpy( mat, hdr_mIdentity, sizeof( mat ) );
+				break;
+			case 2:   /* Wide: 709 coordinates reinterpreted as DCI-P3 */
+				memcpy( mat, hdr_mP3to2020, sizeof( mat ) );
+				break;
+			case 1:   /* Expanded: halfway between Accurate and Wide */
+				for ( i = 0; i < 9; i++ )
+					mat[i] = 0.5f * ( hdr_m709to2020[i] + hdr_mP3to2020[i] );
+				break;
+			default:  /* Accurate */
+				memcpy( mat, hdr_m709to2020, sizeof( mat ) );
+				break;
+		}
+		matMode = gamutMode;
 	}
 
 	float H = maxNits / ( paperWhite > 1.0f ? paperWhite : 1.0f );
@@ -2193,6 +2229,7 @@ static void hdr_present( GLuint dstFbo ) {
 		glBindTexture( GL_TEXTURE_2D, hdr_tex );
 		glUniform1f( hdr_bright_loc_thresh, 0.62f );
 		glUniform1f( hdr_bright_loc_enc, 1.0f / hdr_scene_encode_scale );
+		glUniform2f( hdr_bright_loc_texel, 1.0f / (float)hdr_w, 1.0f / (float)hdr_h );
 		glDrawArrays( GL_TRIANGLES, 0, 3 );
 		/* tight band blur: A -> B (H), B -> A (V) */
 		glUseProgram( hdr_prog_blur );
@@ -2204,15 +2241,17 @@ static void hdr_present( GLuint dstFbo ) {
 		glBindTexture( GL_TEXTURE_2D, hdr_bloom_tex[1] );
 		glUniform2f( hdr_blur_loc_dir, 0.0f, 1.0f / qh );
 		glDrawArrays( GL_TRIANGLES, 0, 3 );
-		/* wide band: seeded from the blurred tight band via a (0,0)
-		   "blur" (pure downsample copy), then its own H+V at 1/16 */
-		glBindFramebuffer( RARCH_GL_FRAMEBUFFER, hdr_bloom_fbo[2] );
+		/* wide band: the horizontal pass runs at 1/16 sampling the
+		   already-blurred 1/4 band, so the 4x downsample rides along
+		   with it. The previous seed was a dedicated draw through the
+		   blur program with uDir = (0,0) - five bilinear fetches all
+		   landing on the same texel, weights summing to 1, i.e. an
+		   expensive copy. One draw and four fetches less per frame,
+		   and nothing about the result changes except that the wide
+		   band is no longer point-sampled at the downsample. */
+		glBindFramebuffer( RARCH_GL_FRAMEBUFFER, hdr_bloom_fbo[3] );
 		glViewport( 0, 0, sw, sh );
 		glBindTexture( GL_TEXTURE_2D, hdr_bloom_tex[0] );
-		glUniform2f( hdr_blur_loc_dir, 0.0f, 0.0f );
-		glDrawArrays( GL_TRIANGLES, 0, 3 );
-		glBindFramebuffer( RARCH_GL_FRAMEBUFFER, hdr_bloom_fbo[3] );
-		glBindTexture( GL_TEXTURE_2D, hdr_bloom_tex[2] );
 		glUniform2f( hdr_blur_loc_dir, 1.0f / sw, 0.0f );
 		glDrawArrays( GL_TRIANGLES, 0, 3 );
 		glBindFramebuffer( RARCH_GL_FRAMEBUFFER, hdr_bloom_fbo[2] );
@@ -2236,6 +2275,8 @@ static void hdr_present( GLuint dstFbo ) {
 	glUniform1i( hdr_loc_bloomW, 2 );
 	glUniform1f( hdr_loc_bloomAmt, haveBloom ? hdr_bloom_amount : 0.0f );
 	glUniform1f( hdr_loc_encScale, 1.0f / hdr_scene_encode_scale );
+	/* wraps every 64 frames; the pattern only has to keep moving */
+	glUniform1f( hdr_loc_frame, (float)( hdr_frame_counter++ & 63u ) );
 	glUniformMatrix3fv( hdr_loc_mat, 1, GL_FALSE, mat );
 	glUniform4f( hdr_loc_parms, paperWhite / 10000.0f, H,
 			hdr_rolloff_aces ? 1.0f : 0.0f, 0.75f /* Reinhard knee */ );
