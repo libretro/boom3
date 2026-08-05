@@ -154,7 +154,6 @@ static GLuint hdr_conv_fbo[HDR_CONV_MAX], hdr_conv_tex[HDR_CONV_MAX];
 static GLuint hdr_prog_down, hdr_prog_up;
 static GLint  hdr_down_loc_texel, hdr_up_loc_texel, hdr_up_loc_radius;
 static GLint  hdr_loc_bandW;
-static float  hdr_band_w0 = 0.22f, hdr_band_w1 = 0.14f;
 static bool   hdr_bloom_convolution;   /* live-switchable */
 static GLuint hdr_prog_bright, hdr_prog_blur;
 /* bloom is optional: either of these disables it without disabling the
@@ -2552,13 +2551,17 @@ static void hdr_present( GLuint dstFbo ) {
 	int haveBloom = ( hdr_bloom_amount > 0.0f
 			&& !hdr_bloom_prog_bad && !hdr_bloom_tex_bad
 			&& hdr_prog_bright && hdr_prog_blur );
+	/* Level count for the convolution pyramid, 0 when the option is off.
+	   Computed once: the chain below and the composite must agree, and
+	   the composite's band weight is derived from it. */
+	int convN = hdr_bloom_convolution ? hdr_conv_levels( hdr_w, hdr_h ) : 0;
+	float bandW0, bandW1;
 	if ( haveBloom ) {
 		int qw = hdr_w / 4 < 1 ? 1 : hdr_w / 4,  qh = hdr_h / 4 < 1 ? 1 : hdr_h / 4;
 		int sw = hdr_w / 16 < 1 ? 1 : hdr_w / 16, sh = hdr_h / 16 < 1 ? 1 : hdr_h / 16;
-		int conv = hdr_bloom_convolution ? hdr_conv_levels( hdr_w, hdr_h ) : 0;
 		glActiveTexture( GL_TEXTURE0 );
 		/* bright pass: scene -> tight A, or pyramid level 0 (both 1/4 res) */
-		glBindFramebuffer( RARCH_GL_FRAMEBUFFER, conv ? hdr_conv_fbo[0] : hdr_bloom_fbo[0] );
+		glBindFramebuffer( RARCH_GL_FRAMEBUFFER, convN ? hdr_conv_fbo[0] : hdr_bloom_fbo[0] );
 		glViewport( 0, 0, qw, qh );
 		glUseProgram( hdr_prog_bright );
 		glBindTexture( GL_TEXTURE_2D, hdr_tex );
@@ -2576,7 +2579,7 @@ static void hdr_present( GLuint dstFbo ) {
 		glUniform2f( hdr_bright_loc_texel, 1.0f / (float)hdr_w, 1.0f / (float)hdr_h );
 		glDrawArrays( GL_TRIANGLES, 0, 3 );
 
-		if ( conv ) {
+		if ( convN ) {
 			/*
 			   Convolution bloom: build a mip pyramid down from 1/4, then
 			   walk back up adding each level into the next larger one.
@@ -2588,7 +2591,7 @@ static void hdr_present( GLuint dstFbo ) {
 			*/
 			int i;
 			glUseProgram( hdr_prog_down );
-			for ( i = 1; i < conv; i++ ) {
+			for ( i = 1; i < convN; i++ ) {
 				int pw = ( hdr_w / 4 ) >> ( i - 1 ), ph = ( hdr_h / 4 ) >> ( i - 1 );
 				if ( pw < 1 ) pw = 1;
 				if ( ph < 1 ) ph = 1;
@@ -2605,7 +2608,7 @@ static void hdr_present( GLuint dstFbo ) {
 			glEnable( GL_BLEND );
 			glBlendFunc( GL_ONE, GL_ONE );
 			glUniform1f( hdr_up_loc_radius, 1.0f );
-			for ( i = conv - 1; i > 0; i-- ) {
+			for ( i = convN - 1; i > 0; i-- ) {
 				int pw = ( hdr_w / 4 ) >> i, ph = ( hdr_h / 4 ) >> i;
 				int dw = ( hdr_w / 4 ) >> ( i - 1 ), dh = ( hdr_h / 4 ) >> ( i - 1 );
 				if ( pw < 1 ) pw = 1;
@@ -2654,39 +2657,35 @@ static void hdr_present( GLuint dstFbo ) {
 	glViewport( 0, 0, hdr_w, hdr_h );
 
 	glUseProgram( hdr_prog );
-	{
-		/*
-		   Band weights, and with them the total bloom energy.
-		
-		   Every filter in both chains has weights summing to exactly 1,
-		   and both chains are linear, so the integrated bloom a given
-		   extraction produces is just the sum of the band weights - the
-		   ratio between the two modes is a constant, independent of scene
-		   content. The two-band path sums 0.22 + 0.14 = 0.36. The pyramid
-		   accumulates one unit-gain contribution per level, so dividing
-		   0.36 by the level count matches it exactly rather than by eye.
-		
-		   Convolution bloom will still look dimmer at the core of a
-		   highlight. That is the point: the same energy is spread over a
-		   far wider point spread, so the peak drops and the tail carries.
-		*/
-		int convN = hdr_bloom_convolution ? hdr_conv_levels( hdr_w, hdr_h ) : 0;
-		GLuint bT = convN ? hdr_conv_tex[0] : hdr_bloom_tex[0];
-		GLuint bW = convN ? hdr_conv_tex[0] : hdr_bloom_tex[2];
-		glActiveTexture( GL_TEXTURE1 );
-		glBindTexture( GL_TEXTURE_2D, bT );
-		glActiveTexture( GL_TEXTURE2 );
-		glBindTexture( GL_TEXTURE_2D, bW );
-		hdr_band_w0 = convN ? 0.36f / (float)convN : 0.22f;
-		hdr_band_w1 = convN ? 0.0f : 0.14f;
-	}
+
+	/*
+	   Band weights, and with them the total bloom energy.
+
+	   Every filter in both chains has weights summing to exactly 1, and
+	   both chains are linear, so the integrated bloom a given extraction
+	   produces is just the sum of the band weights - the ratio between
+	   the two modes is a constant, independent of scene content. The
+	   two-band path sums 0.22 + 0.14 = 0.36. The pyramid contributes one
+	   unit-gain term per level, so dividing 0.36 by the level count
+	   matches it exactly rather than by eye.
+
+	   Convolution bloom still looks dimmer at the core of a highlight.
+	   That is the trade: the same energy spread over a far wider point
+	   spread means a lower peak and a longer tail.
+	*/
+	bandW0 = convN ? 0.36f / (float)convN : 0.22f;
+	bandW1 = convN ? 0.0f : 0.14f;
+	glActiveTexture( GL_TEXTURE1 );
+	glBindTexture( GL_TEXTURE_2D, convN ? hdr_conv_tex[0] : hdr_bloom_tex[0] );
+	glActiveTexture( GL_TEXTURE2 );
+	glBindTexture( GL_TEXTURE_2D, convN ? hdr_conv_tex[0] : hdr_bloom_tex[2] );
 	glActiveTexture( GL_TEXTURE0 );
 	glBindTexture( GL_TEXTURE_2D, hdr_tex );
 	glUniform1i( hdr_loc_tex, 0 );
 	glUniform1i( hdr_loc_bloomT, 1 );
 	glUniform1i( hdr_loc_bloomW, 2 );
 	glUniform1f( hdr_loc_bloomAmt, haveBloom ? hdr_bloom_amount : 0.0f );
-	glUniform2f( hdr_loc_bandW, hdr_band_w0, hdr_band_w1 );
+	glUniform2f( hdr_loc_bandW, bandW0, bandW1 );
 	glUniform1f( hdr_loc_encScale, 1.0f / hdr_scene_encode_scale );
 	/* wraps every 64 frames; the pattern only has to keep moving */
 	glUniform1f( hdr_loc_frame, (float)( hdr_frame_counter++ & 63u ) );
