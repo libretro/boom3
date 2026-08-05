@@ -1098,6 +1098,26 @@ void RB_STD_T_RenderShaderPasses( const drawSurf_t *surf ) {
 				parm[3] = 1.0f;						// leave the alpha channel at full strength
 			}
 			qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, PP_PARTICLE_COLCHAN_MASK, parm );
+
+			/*
+			   program.env[25] is the HDR scene encoding fold. This
+			   program carries "nodhewm3gammahack" so R_LoadARBProgram
+			   skips the gamma epilogue for it - and the epilogue is
+			   where every other stage picks the fold up. Without this
+			   the particle writes at full scale into a scene stored at
+			   hdr_scene_encode_scale and hdr_present's 1/s expand
+			   returns it at 2x: additive gives scene + 2*src, alpha
+			   gives 2a*src + (1-a)*scene. r_useSoftParticles and
+			   doom_hdr_headroom both default on, so smoke, fire, steam
+			   and glare sprites were blown out in the shipped 30-bit
+			   configuration. 1.0 outside 30-bit HDR, so no change there.
+			*/
+			{
+				extern float hdr_scene_encode_scale;
+				const float s = hdr_scene_encode_scale;
+				float fold[4] = { s, s, s, 1.0f };
+				qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, PP_HDR_SCENE_FOLD, fold );
+			}
 			
 			// draw it
 			RB_DrawElementsWithCounters( tri );

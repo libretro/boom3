@@ -1434,6 +1434,10 @@ typedef enum {
 	//     Particles with additive blend need their RGB channels modifying to blend them out
 	//     Particles with an alpha blend need their alpha channel modifying.
 	PP_PARTICLE_COLCHAN_MASK = 24,
+	// HDR scene encoding fold, { s, s, s, 1 }, for programs that opt out of the
+	// injected gamma epilogue and so cannot pick the fold up from env[21].
+	// 1.0 outside 30-bit HDR mode.
+	PP_HDR_SCENE_FOLD = 25,
 } programParameter_t;
 
 #ifdef HAVE_OPENGLES
