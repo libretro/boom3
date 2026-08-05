@@ -618,6 +618,56 @@ including by light interactions, and its size might in theory differ from _curre
 Parameters 23 and 24 are used by soft particles #3878. Note these can be freely reused by different draw calls.
 ==================
 */
+/*
+==================
+RB_HDRGammaBrightness
+
+The value for env[21].xyz (PP_GAMMA_BRIGHTNESS). The injected gamma
+epilogue consumes it as
+
+    stored = pow( env[21].xyz * c, env[21].w )      // env[21].w == 1/r_gamma
+
+so a fold placed there lands BEFORE the gamma encode, while hdr_present
+undoes it AFTER, in the stored domain:
+
+    lin = srgbToLinear( stored * (1/s) )
+
+Folding with a bare s gives stored = s^(1/g) * (c*b)^(1/g), and the two
+cancel only at r_gamma == 1. Folding with s^g gives
+
+    stored = ( c * b * s^g )^(1/g) = s * (c*b)^(1/g)
+
+which cancels exactly at any gamma. It also pins the encoded headroom at
+a constant 2x of the stored range instead of letting it drift with the
+brightness slider: the MUL_SAT ceiling moves to c*b == 1/s^g, which is
+precisely the input that stores as 1.0.
+
+r_gamma is CVAR_ARCHIVE and reachable from the in-game brightness menu,
+so the non-unity path is not theoretical - at r_gamma 1.5 the old
+expression was 26% bright, at 2.0 it was 41% bright, at 0.7 it was 23%
+dark, all of it clipping into the roll-off.
+
+Filter-blend stages ship unscaled: a filter multiplies against a
+destination that already carries the fold, so scaling the source as well
+would square it.
+
+Bit-identical to the pre-HDR path whenever s == 1 (HDR off, or the
+headroom option disabled), and bit-identical to the previous HDR path at
+r_gamma == 1, which is the default.
+==================
+*/
+float RB_HDRGammaBrightness( bool filterBlend ) {
+	extern float hdr_scene_encode_scale;
+
+	const float b = r_brightness.GetFloat();
+	const float s = hdr_scene_encode_scale;
+
+	if ( filterBlend || s == 1.0f ) {
+		return b;
+	}
+	return b * idMath::Pow( s, r_gamma.GetFloat() );
+}
+
 void RB_SetProgramEnvironment( bool isPostProcess ) {
 	float	parm[4];
 	int		pot;
@@ -653,8 +703,7 @@ void RB_SetProgramEnvironment( bool isPostProcess ) {
 	if ( r_gammaInShader.GetBool() ) {
 		// program.env[4].xyz are all r_brightness, program.env[4].w is 1.0/r_gamma
 		if ( !isPostProcess ) {
-			extern float hdr_scene_encode_scale;
-			parm[0] = parm[1] = parm[2] = r_brightness.GetFloat() * hdr_scene_encode_scale;
+			parm[0] = parm[1] = parm[2] = RB_HDRGammaBrightness( false );
 			parm[3] = 1.0/r_gamma.GetFloat(); // 1.0/gamma so the shader doesn't have to do this calculation
 		} else {
 			// don't apply gamma/brightness in postprocess passes to avoid applying them twice
@@ -899,7 +948,6 @@ void RB_STD_T_RenderShaderPasses( const drawSurf_t *surf ) {
 			   filter blend now gets the correct unscaled source too.
 			*/
 			if ( r_gammaInShader.GetBool() ) {
-				extern float hdr_scene_encode_scale;
 				int nsrcB = pStage->drawStateBits & GLS_SRCBLEND_BITS;
 				int ndstB = pStage->drawStateBits & GLS_DSTBLEND_BITS;
 				bool nFilter =
@@ -908,8 +956,7 @@ void RB_STD_T_RenderShaderPasses( const drawSurf_t *surf ) {
 					ndstB == GLS_DSTBLEND_SRC_COLOR ||
 					ndstB == GLS_DSTBLEND_ONE_MINUS_SRC_COLOR;
 				float nparm[4];
-				nparm[0] = nparm[1] = nparm[2] = r_brightness.GetFloat()
-					* ( nFilter ? 1.0f : hdr_scene_encode_scale );
+				nparm[0] = nparm[1] = nparm[2] = RB_HDRGammaBrightness( nFilter );
 				nparm[3] = 1.0f / r_gamma.GetFloat();
 				qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, PP_GAMMA_BRIGHTNESS, nparm );
 			}
@@ -1181,7 +1228,6 @@ void RB_STD_T_RenderShaderPasses( const drawSurf_t *surf ) {
 			qglProgramLocalParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 1, inv );
 			// brightness/gamma for the injected epilogue
 			float parm[4];
-			extern float hdr_scene_encode_scale;
 			/*
 			   The encoding fold must NOT apply to filter blends. A
 			   filter stage multiplies against the destination, and the
@@ -1201,8 +1247,7 @@ void RB_STD_T_RenderShaderPasses( const drawSurf_t *surf ) {
 				srcB == GLS_SRCBLEND_ONE_MINUS_DST_COLOR ||
 				dstB == GLS_DSTBLEND_SRC_COLOR ||
 				dstB == GLS_DSTBLEND_ONE_MINUS_SRC_COLOR;
-			float encScale = filterBlend ? 1.0f : hdr_scene_encode_scale;
-			parm[0] = parm[1] = parm[2] = r_brightness.GetFloat() * encScale;
+			parm[0] = parm[1] = parm[2] = RB_HDRGammaBrightness( filterBlend );
 			parm[3] = 1.0f / r_gamma.GetFloat();
 			qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, PP_GAMMA_BRIGHTNESS, parm );
 		}

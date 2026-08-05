@@ -135,8 +135,7 @@ void	RB_ARB2_DrawInteraction( const drawInteraction_t *din ) {
 	if ( r_gammaInShader.GetBool() ) {
 		// program.env[4].xyz are all r_brightness, program.env[4].w is 1.0/r_gamma
 		float parm[4];
-		extern float hdr_scene_encode_scale;
-		parm[0] = parm[1] = parm[2] = r_brightness.GetFloat() * hdr_scene_encode_scale;
+		parm[0] = parm[1] = parm[2] = RB_HDRGammaBrightness( false );
 		parm[3] = 1.0/r_gamma.GetFloat(); // 1.0/gamma so the shader doesn't have to do this calculation
 		qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, PP_GAMMA_BRIGHTNESS, parm );
 	}
