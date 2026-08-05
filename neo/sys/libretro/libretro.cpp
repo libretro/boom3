@@ -117,7 +117,7 @@ char *BUILD_DATADIR;
 
 extern struct retro_hw_render_callback hw_render;
 
-extern "C" void hybrid_vfs_init( retro_environment_t, retro_log_printf_t );
+#include <vfs/vfs_hybrid.h>
 
 /* retail default.cfg sets these Win32-era cvars; register them as inert
    so every boot doesn't print "Unknown command" twice */
@@ -2465,7 +2465,7 @@ void retro_set_environment(retro_environment_t cb)
 
    environ_cb = cb;
 
-   hybrid_vfs_init( environ_cb, log_cb );
+   vfs_hybrid_init( environ_cb, log_cb );
 
    libretro_set_core_options(environ_cb,
          &libretro_supports_option_categories);

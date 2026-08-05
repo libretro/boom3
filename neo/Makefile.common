@@ -234,7 +234,6 @@ SRC_SYS	:=\
 	$(CORE_DIR)/sys/libretro/retro_net.cpp \
 	$(CORE_DIR)/sys/libretro/retro_main.cpp \
 	$(CORE_DIR)/sys/libretro/libretro.cpp \
-	$(CORE_DIR)/sys/libretro/vfs_hybrid.cpp \
 	$(CORE_DIR)/sys/libretro/stubs.cpp
 
 SRC_GAME_D3XP	:=\
@@ -327,6 +326,7 @@ SRC_LIBRETRO := \
 	$(LIBRETRO_COMM_DIR)/time/rtime.c \
 	$(LIBRETRO_COMM_DIR)/streams/file_stream.c \
 	$(LIBRETRO_COMM_DIR)/vfs/vfs_implementation.c \
+	$(LIBRETRO_COMM_DIR)/vfs/vfs_hybrid.c \
 	$(LIBRETRO_COMM_DIR)/queues/retro_spsc.c \
 	$(LIBRETRO_COMM_DIR)/file/nbio/nbio_intf.c \
 	$(LIBRETRO_COMM_DIR)/file/nbio/nbio_stdio.c \

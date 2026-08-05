@@ -1,6 +1,13 @@
 /*
 ===========================================================================
-Hybrid VFS: frontend coverage without giving up zero-copy.
+Hybrid VFS: frontend coverage without giving up direct I/O.
+
+Generic - intended for libretro-common. A core adopts it with one
+call at retro_set_environment:
+
+    vfs_hybrid_init(environ_cb, log_cb);
+
+which replaces the wholesale filestream_vfs_init(frontend) pattern.
 
 The tension this resolves: platforms with sandboxed storage (Android
 scoped storage / SAF content URIs) can only reach content through the
@@ -60,11 +67,17 @@ typedef struct {
 static struct retro_vfs_interface *hyb_front;
 static uint32_t hyb_front_version;
 
+/* A sandboxed platform tries the frontend after ANY local failure;
+   elsewhere only URI-shaped paths reach the frontend, so plain-path
+   misses cost nothing extra. Overridable per platform/port. */
+#ifndef VFS_HYBRID_SANDBOXED
 #if defined(ANDROID) || defined(__ANDROID__)
-#define HYB_SANDBOXED 1
+#define VFS_HYBRID_SANDBOXED 1
 #else
-#define HYB_SANDBOXED 0
+#define VFS_HYBRID_SANDBOXED 0
 #endif
+#endif
+#define HYB_SANDBOXED VFS_HYBRID_SANDBOXED
 
 static int hyb_is_uri( const char *path ) {
 	return path && strstr( path, "://" ) != NULL;
@@ -312,7 +325,7 @@ static struct retro_vfs_interface hyb_iface = {
 	hyb_dirent_get_name, hyb_dirent_is_dir, hyb_closedir
 };
 
-extern "C" void hybrid_vfs_init( retro_environment_t env_cb, retro_log_printf_t log ) {
+void vfs_hybrid_init( retro_environment_t env_cb, retro_log_printf_t log ) {
 	struct retro_vfs_interface_info info;
 
 	info.required_interface_version = 3;
@@ -341,6 +354,6 @@ extern "C" void hybrid_vfs_init( retro_environment_t env_cb, retro_log_printf_t 
 
 	if ( log )
 		log( RETRO_LOG_INFO,
-			"[boom3] hybrid VFS: local-first with frontend v%u fallback%s\n",
+			"[vfs] hybrid: local-first with frontend v%u fallback%s\n",
 			hyb_front_version, HYB_SANDBOXED ? " (sandboxed platform: full fallback)" : " (URI paths only)" );
 }
