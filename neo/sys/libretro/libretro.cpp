@@ -190,6 +190,20 @@ typedef struct {
    } bind[GP_MAXBINDS];
 } gp_layout_t;
 
+/* Keyboard/mouse mode. Keyboard and mouse are polled unconditionally in
+ * Sys_SetKeys()/Sys_SetMouse() regardless of the selected device, so this
+ * mode only has to switch the joypad path off: an empty descriptor table
+ * clears the frontend's remap list and the empty bind table releases all
+ * JOY_* binds via gp_layout_set_bind(). */
+static gp_layout_t kb_mouse = {
+   {
+      { 0 },
+   },
+   {
+      { 0 },
+   },
+};
+
 static bool kb_mouse_btn[5] = { false, false, false, false, false };
 static const int kb_mouse_keys[5] = {
     K_MOUSE1, K_MOUSE2, K_MOUSE3, K_MOUSE4, K_MOUSE5
@@ -977,6 +991,7 @@ void Sys_SetKeys(){
 			old_ret = ret;
 		}
 		break;
+		case RETRO_DEVICE_KEYBOARD:
 		case RETRO_DEVICE_NONE:
 			break;
 		}
@@ -1544,6 +1559,11 @@ void retro_set_controller_port_device(unsigned port, unsigned device)
             doom_devices[port] = RETRO_DEVICE_MODERN;
             environ_cb(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, modern.desc);
             pending_layout = &modern;
+            break;
+         case RETRO_DEVICE_KEYBOARD:
+            doom_devices[port] = RETRO_DEVICE_KEYBOARD;
+            environ_cb(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, kb_mouse.desc);
+            pending_layout = &kb_mouse;
             break;
          case RETRO_DEVICE_NONE:
          default:
@@ -2446,7 +2466,8 @@ void retro_set_environment(retro_environment_t cb)
    static const struct retro_controller_description port_1[] = {
       { "Gamepad Classic", RETRO_DEVICE_JOYPAD },
       { "Gamepad Classic Alt", RETRO_DEVICE_JOYPAD_ALT },
-      { "Gamepad Modern", RETRO_DEVICE_MODERN }
+      { "Gamepad Modern", RETRO_DEVICE_MODERN },
+      { "RetroKeyboard/RetroMouse", RETRO_DEVICE_KEYBOARD }
    };
 
    static const struct retro_controller_info ports[] = {
