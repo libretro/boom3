@@ -1728,10 +1728,29 @@ static const char *hdr_fs_src =
 	/* parms: x = paperWhite/10000, y = headroom H (>=1), z = aces flag,
 	   w = knee (Reinhard) */
 	"uniform vec4 uParms;\n"
+	/* Decode with a pure 2.4 power, matching RetroArch.
+
+	   The frontend converts SDR core output for an HDR swapchain with
+	   pow(abs(sdr.rgb), 2.4) - identically in hdr.frag and
+	   hdr_sm5.hlsl.h - and re-encodes with 1/2.4. That is also what
+	   BT.1886 specifies, so it is what an HDR display applies to the
+	   24-bit signal this mode is meant to be compared against.
+
+	   The inverse-sRGB curve that used to be here differs from it
+	   almost entirely in the toe: sRGB is linear below 0.04045, a much
+	   shallower approach to black than any power function, so decoded
+	   shadows came out 18.5x too bright at code 0.02, 5.2x at 0.05 and
+	   2.5x at 0.10, converging by mid grey (1.13x at 0.50) and exact at
+	   1.0. Paper white is unaffected either way - only the shape below
+	   it changes. On a game built around its shadows that was the most
+	   visible remaining difference between 30-bit and 24-bit output,
+	   and it made boom3 inconsistent with every other core the frontend
+	   renders.
+
+	   abs() rather than max(): parity with the frontend, and the FP16
+	   epilogue already clamps its low side. */
 	"vec3 srgbToLinear(vec3 c) {\n"
-	"  vec3 lo = c / 12.92;\n"
-	"  vec3 hi = pow((c + 0.055) / 1.055, vec3(2.4));\n"
-	"  return mix(lo, hi, step(0.04045, c));\n"
+	"  return pow(abs(c), vec3(2.4));\n"
 	"}\n"
 	"float rolloff(float v) {\n"
 	"  float H = uParms.y;\n"
@@ -1822,10 +1841,29 @@ static const char *hdr_bright_fs_src =
 	"varying vec2 vUV;\n"
 	"uniform sampler2D uScene;\n"
 	"uniform float uThresh;\n"
+	/* Decode with a pure 2.4 power, matching RetroArch.
+
+	   The frontend converts SDR core output for an HDR swapchain with
+	   pow(abs(sdr.rgb), 2.4) - identically in hdr.frag and
+	   hdr_sm5.hlsl.h - and re-encodes with 1/2.4. That is also what
+	   BT.1886 specifies, so it is what an HDR display applies to the
+	   24-bit signal this mode is meant to be compared against.
+
+	   The inverse-sRGB curve that used to be here differs from it
+	   almost entirely in the toe: sRGB is linear below 0.04045, a much
+	   shallower approach to black than any power function, so decoded
+	   shadows came out 18.5x too bright at code 0.02, 5.2x at 0.05 and
+	   2.5x at 0.10, converging by mid grey (1.13x at 0.50) and exact at
+	   1.0. Paper white is unaffected either way - only the shape below
+	   it changes. On a game built around its shadows that was the most
+	   visible remaining difference between 30-bit and 24-bit output,
+	   and it made boom3 inconsistent with every other core the frontend
+	   renders.
+
+	   abs() rather than max(): parity with the frontend, and the FP16
+	   epilogue already clamps its low side. */
 	"vec3 srgbToLinear(vec3 c) {\n"
-	"  vec3 lo = c / 12.92;\n"
-	"  vec3 hi = pow((c + 0.055) / 1.055, vec3(2.4));\n"
-	"  return mix(lo, hi, step(0.04045, c));\n"
+	"  return pow(abs(c), vec3(2.4));\n"
 	"}\n"
 	"uniform float uEncScale;\n"
 	"uniform vec2 uTexel;\n"
@@ -2249,7 +2287,13 @@ static void hdr_present( GLuint dstFbo ) {
 		glViewport( 0, 0, qw, qh );
 		glUseProgram( hdr_prog_bright );
 		glBindTexture( GL_TEXTURE_2D, hdr_tex );
-		glUniform1f( hdr_bright_loc_thresh, 0.62f );
+		/* 0.602 not 0.62: the threshold lives in the decoded linear
+		   domain, so changing the decode moves which pixels bloom.
+		   0.62 under inverse-sRGB corresponded to gamma code 0.8095;
+		   that same code under a 2.4 power is 0.6021. Retuned together
+		   so bloom extraction picks out the same pixels it did before
+		   and the decode change is not silently also a bloom change. */
+		glUniform1f( hdr_bright_loc_thresh, 0.6021f );
 		glUniform1f( hdr_bright_loc_enc, 1.0f / hdr_scene_encode_scale );
 		glUniform2f( hdr_bright_loc_texel, 1.0f / (float)hdr_w, 1.0f / (float)hdr_h );
 		glDrawArrays( GL_TRIANGLES, 0, 3 );
