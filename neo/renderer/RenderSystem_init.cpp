@@ -40,6 +40,10 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "renderer/tr_local.h"
 
+#ifndef GL_FRAMEBUFFER_BINDING
+#define GL_FRAMEBUFFER_BINDING 0x8CA6
+#endif
+
 #include "framework/GameCallbacks_local.h"
 #include "framework/Game.h"
 
@@ -1464,14 +1468,29 @@ void R_ReadTiledPixels( int width, int height, byte *buffer, renderView_t *ref =
 				qglReadPixels(0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, temp);
 #else
 				GLint oldReadBuf = GL_BACK;
+				GLint boundFbo  = 0;
 
 				qglReadPixels(0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, temp);
-				qglGetIntegerv( GL_READ_BUFFER, &oldReadBuf );
-				qglReadBuffer( GL_FRONT );
 
-				qglReadPixels( 0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, temp );
+				/*
+				   GL_FRONT, like GL_BACK, is only legal for the
+				   default framebuffer. Under libretro the core always
+				   renders into an FBO, so this second pass raised
+				   GL_INVALID_OPERATION, re-read the same attachment
+				   the first ReadPixels already got, and left the error
+				   flag set. There is no front buffer to consult in
+				   that configuration - skip it and keep the pixels
+				   from above.
+				*/
+				qglGetIntegerv( GL_FRAMEBUFFER_BINDING, &boundFbo );
+				if ( !boundFbo ) {
+					qglGetIntegerv( GL_READ_BUFFER, &oldReadBuf );
+					qglReadBuffer( GL_FRONT );
 
-				qglReadBuffer( oldReadBuf );
+					qglReadPixels( 0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, temp );
+
+					qglReadBuffer( oldReadBuf );
+				}
 #endif
 			}
 

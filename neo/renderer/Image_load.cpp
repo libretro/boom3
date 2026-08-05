@@ -2174,6 +2174,13 @@ void idImage::BindFragment() {
 }
 
 
+#ifndef GL_FRAMEBUFFER_BINDING
+#define GL_FRAMEBUFFER_BINDING 0x8CA6
+#endif
+#ifndef GL_COLOR_ATTACHMENT0
+#define GL_COLOR_ATTACHMENT0 0x8CE0
+#endif
+
 /*
 ====================
 R_CurrentRenderCopyFormat
@@ -2241,7 +2248,26 @@ void idImage::CopyFramebuffer( int x, int y, int imageWidth, int imageHeight, bo
 	GetDownsize( imageWidth, imageHeight );
 	GetDownsize( potWidth, potHeight );
 
-	qglReadBuffer( GL_BACK );
+	/*
+	   The read buffer is per-framebuffer state, and GL_BACK is only a
+	   legal value for the default framebuffer. Under libretro the core
+	   never renders to the default framebuffer - it draws into the
+	   frontend's hw_render target, or into the HDR scene target - so
+	   this call raised GL_INVALID_OPERATION on every _currentRender
+	   capture.
+
+	   The pixels were still correct: a non-default framebuffer's read
+	   buffer defaults to GL_COLOR_ATTACHMENT0 and the failed call left
+	   it there. But a permanently set error flag masks real errors for
+	   anything downstream that checks glGetError, and debug contexts
+	   spam on it. Ask for the attachment when an FBO is bound and
+	   GL_BACK only when one is not.
+	*/
+	{
+		GLint boundFbo = 0;
+		qglGetIntegerv( GL_FRAMEBUFFER_BINDING, &boundFbo );
+		qglReadBuffer( boundFbo ? GL_COLOR_ATTACHMENT0 : GL_BACK );
+	}
 #endif
 
 	// only resize if the current dimensions can't hold it at all,
