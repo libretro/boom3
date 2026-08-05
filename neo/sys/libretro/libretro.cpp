@@ -146,6 +146,10 @@ static float  hdr_bloom_amount = 1.0f;      /* 0 = off; live-switchable */
    each with a ping-pong pair for the separable blur */
 static GLuint hdr_bloom_fbo[4], hdr_bloom_tex[4];   /* [0,1]=1/4 A/B, [2,3]=1/16 A/B */
 static GLuint hdr_prog_bright, hdr_prog_blur;
+/* bloom is optional: either of these disables it without disabling the
+   HDR pass itself. Kept apart so a resize that rebuilds the targets
+   cannot resurrect a program that failed to link. */
+static bool   hdr_bloom_prog_bad, hdr_bloom_tex_bad;
 static GLint  hdr_bright_loc_thresh, hdr_blur_loc_dir;
 static void hdr_bind_scene( void );
 static void hdr_present( GLuint dstFbo );
@@ -599,6 +603,7 @@ static void context_reset(void)
    /* previous context's HDR objects are gone with it */
    hdr_fbo = hdr_tex = hdr_rbo = hdr_prog = 0;
    hdr_prog_bright = hdr_prog_blur = 0;
+   hdr_bloom_prog_bad = hdr_bloom_tex_bad = false;
    memset(hdr_bloom_fbo, 0, sizeof hdr_bloom_fbo);
    memset(hdr_bloom_tex, 0, sizeof hdr_bloom_tex);
    hdr_w = hdr_h = 0;
@@ -1823,14 +1828,44 @@ static GLuint hdr_compile( GLenum type, const char *src ) {
 	return sh;
 }
 
+/*
+   Give up on the HDR pass for this session.
+
+   Without this, a shader that fails to build leaves hdr_prog at 0 and
+   hdr_ensure_target returning false, so hdr_bind_scene never binds the
+   scene FBO and the engine draws straight into the frontend's HDR10
+   framebuffer - with hdr_output_active still true, so the encoding fold
+   and the specular boost stay on while nothing ever expands or
+   PQ-encodes them. That is sRGB code values on a PQ swapchain, the
+   exact washed-out-and-dim failure this module exists to prevent, plus
+   a full shader recompile attempt every frame forever.
+
+   Turning hdr_output_active off instead makes the fold and the boost
+   identity, so the frame is at least internally consistent - still
+   tone-shifted, because the pixel format was fixed at load and cannot
+   change mid-session, but viewable and with a log line saying why. Same
+   handling the FBO-incomplete path already had.
+*/
+static void hdr_fail( const char *why ) {
+	if ( log_cb )
+		log_cb( RETRO_LOG_ERROR,
+				"[boom3] HDR: %s; disabling the HDR pass. Switch Color Format "
+				"to 24-bit for correct colors.\n", why );
+	hdr_output_active = false;
+}
+
 /* (re)create GL objects for the current context and size; safe to call
    per frame, does work only on change. Context loss zeroes the ids. */
 static bool hdr_ensure_target( int w, int h ) {
 	if ( hdr_prog == 0 ) {
 		GLuint vs = hdr_compile( GL_VERTEX_SHADER, hdr_vs_src );
 		GLuint fs = hdr_compile( GL_FRAGMENT_SHADER, hdr_fs_src );
-		if ( !vs || !fs )
+		if ( !vs || !fs ) {
+			if ( vs ) glDeleteShader( vs );
+			if ( fs ) glDeleteShader( fs );
+			hdr_fail( "composite shader did not compile" );
 			return false;
+		}
 		hdr_prog = glCreateProgram();
 		glAttachShader( hdr_prog, vs );
 		glAttachShader( hdr_prog, fs );
@@ -1843,6 +1878,7 @@ static bool hdr_ensure_target( int w, int h ) {
 		if ( !ok ) {
 			glDeleteProgram( hdr_prog );
 			hdr_prog = 0;
+			hdr_fail( "composite program did not link" );
 			return false;
 		}
 		hdr_loc_tex   = glGetUniformLocation( hdr_prog, "uScene" );
@@ -1853,11 +1889,12 @@ static bool hdr_ensure_target( int w, int h ) {
 		hdr_loc_bloomAmt= glGetUniformLocation( hdr_prog, "uBloomAmt" );
 		hdr_loc_encScale= glGetUniformLocation( hdr_prog, "uEncScale" );
 	}
-	if ( hdr_prog_bright == 0 ) {
+	if ( hdr_prog_bright == 0 && !hdr_bloom_prog_bad ) {
 		GLuint vs = hdr_compile( GL_VERTEX_SHADER, hdr_vs_src );
 		GLuint fs = hdr_compile( GL_FRAGMENT_SHADER, hdr_bright_fs_src );
-		GLuint fs2 = hdr_compile( GL_VERTEX_SHADER == 0 ? 0 : GL_FRAGMENT_SHADER, hdr_blur_fs_src );
+		GLuint fs2 = hdr_compile( GL_FRAGMENT_SHADER, hdr_blur_fs_src );
 		if ( vs && fs && fs2 ) {
+			GLint okB = 0, okL = 0;
 			hdr_prog_bright = glCreateProgram();
 			glAttachShader( hdr_prog_bright, vs );
 			glAttachShader( hdr_prog_bright, fs );
@@ -1868,9 +1905,33 @@ static bool hdr_ensure_target( int w, int h ) {
 			glAttachShader( hdr_prog_blur, fs2 );
 			glBindAttribLocation( hdr_prog_blur, 0, "aPos" );
 			glLinkProgram( hdr_prog_blur );
-			hdr_bright_loc_thresh = glGetUniformLocation( hdr_prog_bright, "uThresh" );
-			hdr_bright_loc_enc    = glGetUniformLocation( hdr_prog_bright, "uEncScale" );
-			hdr_blur_loc_dir      = glGetUniformLocation( hdr_prog_blur, "uDir" );
+			/*
+			   Unlike hdr_prog these two never checked GL_LINK_STATUS.
+			   On a link failure the ids are still non-zero, so
+			   haveBloom stayed true, glGetUniformLocation returned -1,
+			   and the bloom chain drew with an unlinked program -
+			   undefined output composited into the frame at up to
+			   1.7x amplitude. Bloom is optional, so a failure here
+			   disables bloom rather than the whole HDR pass.
+			*/
+			glGetProgramiv( hdr_prog_bright, GL_LINK_STATUS, &okB );
+			glGetProgramiv( hdr_prog_blur,   GL_LINK_STATUS, &okL );
+			if ( !okB || !okL ) {
+				glDeleteProgram( hdr_prog_bright );
+				glDeleteProgram( hdr_prog_blur );
+				hdr_prog_bright = hdr_prog_blur = 0;
+				hdr_bloom_prog_bad = true;
+				if ( log_cb )
+					log_cb( RETRO_LOG_WARN, "[boom3] HDR: bloom program did not link; bloom disabled\n" );
+			} else {
+				hdr_bright_loc_thresh = glGetUniformLocation( hdr_prog_bright, "uThresh" );
+				hdr_bright_loc_enc    = glGetUniformLocation( hdr_prog_bright, "uEncScale" );
+				hdr_blur_loc_dir      = glGetUniformLocation( hdr_prog_blur, "uDir" );
+			}
+		} else {
+			hdr_bloom_prog_bad = true;
+			if ( log_cb )
+				log_cb( RETRO_LOG_WARN, "[boom3] HDR: bloom shader did not compile; bloom disabled\n" );
 		}
 		if ( vs ) glDeleteShader( vs );
 		if ( fs ) glDeleteShader( fs );
@@ -1899,8 +1960,10 @@ static bool hdr_ensure_target( int w, int h ) {
 		else
 			glTexImage2D( GL_TEXTURE_2D, 0, GL_RGB10_A2, w, h, 0, GL_RGBA,
 					GL_UNSIGNED_INT_2_10_10_10_REV, NULL );
-		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST );
-		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST );
+		/* the scene texture is sampled with bilinear taps by the bright
+		   pass and 1:1 by the composite - LINEAR serves both */
+		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
+		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
 		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
 		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
 		glGenRenderbuffers( 1, &hdr_rbo );
@@ -1914,44 +1977,102 @@ static bool hdr_ensure_target( int w, int h ) {
 		glFramebufferRenderbuffer( RARCH_GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
 				GL_RENDERBUFFER, hdr_rbo );
 		if ( glCheckFramebufferStatus( RARCH_GL_FRAMEBUFFER ) != GL_FRAMEBUFFER_COMPLETE ) {
-			if ( log_cb ) log_cb( RETRO_LOG_ERROR, "[boom3] HDR scene FBO incomplete, disabling HDR pass\n" );
-			hdr_output_active = false;
+			/* release what we just built: the ids are non-zero and
+			   hdr_w/hdr_h are still stale, so leaving them behind
+			   hands a later context-loss handler objects it will
+			   either double-manage or leak outright */
+			glBindFramebuffer( RARCH_GL_FRAMEBUFFER, 0 );
+			glDeleteFramebuffers( 1, &hdr_fbo );
+			glDeleteRenderbuffers( 1, &hdr_rbo );
+			glDeleteTextures( 1, &hdr_tex );
+			hdr_fbo = hdr_rbo = hdr_tex = 0;
+			hdr_fail( "scene FBO incomplete" );
 			return false;
 		}
-		/* the scene texture is sampled with bilinear taps by the bright
-		   pass and 1:1 by the composite - LINEAR serves both */
-		glBindTexture( GL_TEXTURE_2D, hdr_tex );
-		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
-		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
 		/* bloom chain: [0,1] at 1/4 res, [2,3] at 1/16 */
 		{
-			int i;
-			for ( i = 0; i < 4; i++ ) {
-				int bw = ( i < 2 ) ? w / 4 : w / 16;
-				int bh = ( i < 2 ) ? h / 4 : h / 16;
-				if ( bw < 1 ) bw = 1;
-				if ( bh < 1 ) bh = 1;
-				if ( hdr_bloom_tex[i] ) glDeleteTextures( 1, &hdr_bloom_tex[i] );
-				if ( hdr_bloom_fbo[i] ) glDeleteFramebuffers( 1, &hdr_bloom_fbo[i] );
-				glGenTextures( 1, &hdr_bloom_tex[i] );
-				glBindTexture( GL_TEXTURE_2D, hdr_bloom_tex[i] );
-				if ( hdr_fp32_scene )
-					glTexImage2D( GL_TEXTURE_2D, 0, 0x8814, bw, bh, 0, GL_RGBA,
-							GL_FLOAT, NULL );
-				else if ( hdr_fp16_scene )
-					glTexImage2D( GL_TEXTURE_2D, 0, 0x881A, bw, bh, 0, GL_RGBA,
-							0x140B, NULL );
-				else
-					glTexImage2D( GL_TEXTURE_2D, 0, GL_RGB10_A2, bw, bh, 0, GL_RGBA,
-							GL_UNSIGNED_INT_2_10_10_10_REV, NULL );
-				glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
-				glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
-				glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
-				glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
-				glGenFramebuffers( 1, &hdr_bloom_fbo[i] );
-				glBindFramebuffer( RARCH_GL_FRAMEBUFFER, hdr_bloom_fbo[i] );
-				glFramebufferTexture2D( RARCH_GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-						GL_TEXTURE_2D, hdr_bloom_tex[i], 0 );
+			/*
+			   The bright pass writes LINEAR light here, so the target's
+			   encoding matters more than its nominal bit depth.
+			   RGB10_A2 is a UNORM: uniform absolute steps, therefore
+			   poor relative precision exactly where bloom lives. After
+			   the threshold subtract, the firefly clamp and two
+			   Gaussians, typical values sit under 0.05, where 10-bit
+			   linear leaves ~50 distinct levels - which the composite
+			   then multiplies by up to 1.7 and adds, landing as
+			   contouring in the haze around lamps.
+
+			   R11F_G11F_B10F is the right target: same 32 bits per
+			   texel as RGB10_A2, float encoding so the precision
+			   follows the data, no alpha (the passes write 1.0 and
+			   nothing reads it), core in GL 3.0 and GLES 3.0 and
+			   colour-renderable in both.
+
+			   Renderability is not guaranteed on every GLES3 driver
+			   without EXT_color_buffer_float, so try it, check, and
+			   fall back to the scene's own format - and if that fails
+			   too, disable bloom rather than the whole HDR pass. These
+			   four framebuffers previously had no completeness check at
+			   all.
+			*/
+			GLenum tryInt[2], tryFmt[2], tryType[2];
+			int attempt, i;
+
+			tryInt[0]  = 0x8C3A;        /* GL_R11F_G11F_B10F */
+			tryFmt[0]  = GL_RGB;
+			tryType[0] = 0x140B;        /* GL_HALF_FLOAT */
+
+			if ( hdr_fp32_scene ) {
+				tryInt[1] = 0x8814; tryFmt[1] = GL_RGBA; tryType[1] = GL_FLOAT;
+			} else if ( hdr_fp16_scene ) {
+				tryInt[1] = 0x881A; tryFmt[1] = GL_RGBA; tryType[1] = 0x140B;
+			} else {
+				tryInt[1] = GL_RGB10_A2; tryFmt[1] = GL_RGBA;
+				tryType[1] = GL_UNSIGNED_INT_2_10_10_10_REV;
+			}
+
+			hdr_bloom_tex_bad = true;
+			for ( attempt = 0; attempt < 2 && hdr_bloom_tex_bad; attempt++ ) {
+				bool allOk = true;
+				for ( i = 0; i < 4; i++ ) {
+					int bw = ( i < 2 ) ? w / 4 : w / 16;
+					int bh = ( i < 2 ) ? h / 4 : h / 16;
+					if ( bw < 1 ) bw = 1;
+					if ( bh < 1 ) bh = 1;
+					if ( hdr_bloom_tex[i] ) glDeleteTextures( 1, &hdr_bloom_tex[i] );
+					if ( hdr_bloom_fbo[i] ) glDeleteFramebuffers( 1, &hdr_bloom_fbo[i] );
+					hdr_bloom_tex[i] = hdr_bloom_fbo[i] = 0;
+					glGenTextures( 1, &hdr_bloom_tex[i] );
+					glBindTexture( GL_TEXTURE_2D, hdr_bloom_tex[i] );
+					glTexImage2D( GL_TEXTURE_2D, 0, tryInt[attempt], bw, bh, 0,
+							tryFmt[attempt], tryType[attempt], NULL );
+					glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
+					glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
+					glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
+					glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
+					glGenFramebuffers( 1, &hdr_bloom_fbo[i] );
+					glBindFramebuffer( RARCH_GL_FRAMEBUFFER, hdr_bloom_fbo[i] );
+					glFramebufferTexture2D( RARCH_GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+							GL_TEXTURE_2D, hdr_bloom_tex[i], 0 );
+					if ( glCheckFramebufferStatus( RARCH_GL_FRAMEBUFFER )
+							!= GL_FRAMEBUFFER_COMPLETE ) {
+						allOk = false;
+						break;
+					}
+				}
+				if ( allOk )
+					hdr_bloom_tex_bad = false;
+				else if ( log_cb )
+					log_cb( RETRO_LOG_WARN, "[boom3] HDR: bloom target 0x%04X not renderable%s\n",
+							(unsigned)tryInt[attempt],
+							attempt == 0 ? ", falling back to the scene format" : "; bloom disabled" );
+			}
+			if ( hdr_bloom_tex_bad ) {
+				for ( i = 0; i < 4; i++ ) {
+					if ( hdr_bloom_tex[i] ) glDeleteTextures( 1, &hdr_bloom_tex[i] );
+					if ( hdr_bloom_fbo[i] ) glDeleteFramebuffers( 1, &hdr_bloom_fbo[i] );
+					hdr_bloom_tex[i] = hdr_bloom_fbo[i] = 0;
+				}
 			}
 		}
 		hdr_w = w;
@@ -2040,13 +2161,27 @@ static void hdr_present( GLuint dstFbo ) {
 	glDisable( GL_BLEND );
 	glDisable( GL_CULL_FACE );
 	glDepthMask( GL_FALSE );
+	/*
+	   RB_SwapBuffers re-enables GL_SCISSOR_TEST immediately before
+	   calling GLimp_SwapBuffers, and the scissor box holds whatever the
+	   last view or 2D pass set. RB_SetGL2D puts it full-screen, which
+	   covers the common case - but a frame that ends on a subview or
+	   mirror scissor without a following 2D pass would have this
+	   fullscreen composite clipped to that sub-rect, leaving stale
+	   framebuffer content everywhere outside it. The colour mask is the
+	   same hazard at lower probability.
+	*/
+	glDisable( GL_SCISSOR_TEST );
+	glColorMask( GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE );
 
 	static const float triV[6] = { -1.0f, -1.0f, 3.0f, -1.0f, -1.0f, 3.0f };
 	glBindBuffer( GL_ARRAY_BUFFER, 0 );
 	glEnableVertexAttribArray( 0 );
 	glVertexAttribPointer( 0, 2, GL_FLOAT, GL_FALSE, 0, triV );
 
-	int haveBloom = ( hdr_bloom_amount > 0.0f && hdr_prog_bright && hdr_prog_blur );
+	int haveBloom = ( hdr_bloom_amount > 0.0f
+			&& !hdr_bloom_prog_bad && !hdr_bloom_tex_bad
+			&& hdr_prog_bright && hdr_prog_blur );
 	if ( haveBloom ) {
 		int qw = hdr_w / 4 < 1 ? 1 : hdr_w / 4,  qh = hdr_h / 4 < 1 ? 1 : hdr_h / 4;
 		int sw = hdr_w / 16 < 1 ? 1 : hdr_w / 16, sh = hdr_h / 16 < 1 ? 1 : hdr_h / 16;
