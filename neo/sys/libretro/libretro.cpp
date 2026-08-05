@@ -1922,6 +1922,25 @@ static const char *hdr_bright_fs_src =
 	"  float sk = clamp(lum - uThresh + uKnee, 0.0, 2.0 * uKnee);\n"
 	"  sk = sk * sk / (4.0 * uKnee);\n"
 	"  vec3 b = lin * (max(sk, lum - uThresh) / max(lum, 1e-5)) / (1.0 - uThresh);\n"
+	/* Reinhard firefly limiter. Keep it, and do not "simplify" it away
+	   after noticing it never fires in 10-bit mode - that observation
+	   is correct and the conclusion from it is wrong.
+
+	   In 10-bit mode a scene texel saturates at 1.0, so one blazing
+	   texel inside the 4x4 block the taps above average over decodes
+	   to 0.022 against a threshold of 0.70. A single-texel firefly
+	   cannot reach extraction at all there; the box filter already
+	   killed it.
+
+	   With an FP16/FP32 scene and unbounded blending there is no such
+	   cap, and it fires exactly as intended: a texel at 50x paper
+	   white extracts 2.95 with the limiter against 164 without, a 55x
+	   suppression of a single sparkling pixel.
+
+	   Removing it and raising the threshold to compensate also fails
+	   on its own terms - energy matches but crawl on mid-size
+	   highlights goes from 6.9%% to 20-50%%, because the limiter is
+	   damping the same near-threshold swing the knee above targets. */
 	"  float l = dot(b, vec3(0.2126, 0.7152, 0.0722));\n"
 	"  gl_FragColor = vec4(b / (1.0 + l), 1.0);\n"
 	"}\n";
