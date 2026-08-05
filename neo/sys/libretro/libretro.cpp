@@ -147,6 +147,15 @@ static float  hdr_bloom_amount = 1.0f;      /* 0 = off; live-switchable */
 /* bloom chain: two bands (1/4-res tight core, 1/16-res wide haze),
    each with a ping-pong pair for the separable blur */
 static GLuint hdr_bloom_fbo[4], hdr_bloom_tex[4];   /* [0,1]=1/4 A/B, [2,3]=1/16 A/B */
+/* Convolution bloom pyramid: level 0 at 1/4, halving to 1/128. Separate from
+   the two-band buffers above so switching the option needs no reallocation. */
+#define HDR_CONV_MAX 6
+static GLuint hdr_conv_fbo[HDR_CONV_MAX], hdr_conv_tex[HDR_CONV_MAX];
+static GLuint hdr_prog_down, hdr_prog_up;
+static GLint  hdr_down_loc_texel, hdr_up_loc_texel, hdr_up_loc_radius;
+static GLint  hdr_loc_bandW;
+static float  hdr_band_w0 = 0.22f, hdr_band_w1 = 0.14f;
+static bool   hdr_bloom_convolution;   /* live-switchable */
 static GLuint hdr_prog_bright, hdr_prog_blur;
 /* bloom is optional: either of these disables it without disabling the
    HDR pass itself. Kept apart so a resize that rebuilds the targets
@@ -548,6 +557,11 @@ static void update_variables(bool startup)
 		else                                     hdr_bloom_amount = 1.0f;
 	}
 
+	var.key = "doom_hdr_bloom_convolution";
+	var.value = NULL;
+	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+		hdr_bloom_convolution = !strcmp(var.value, "enabled");
+
 	var.key = "doom_hdr_rolloff";
 	var.value = NULL;
 	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
@@ -607,6 +621,9 @@ static void context_reset(void)
    hdr_fbo = hdr_tex = hdr_rbo = hdr_prog = 0;
    hdr_prog_bright = hdr_prog_blur = 0;
    hdr_bloom_prog_bad = hdr_bloom_tex_bad = false;
+   hdr_prog_down = hdr_prog_up = 0;
+   memset(hdr_conv_fbo, 0, sizeof hdr_conv_fbo);
+   memset(hdr_conv_tex, 0, sizeof hdr_conv_tex);
    memset(hdr_bloom_fbo, 0, sizeof hdr_bloom_fbo);
    memset(hdr_bloom_tex, 0, sizeof hdr_bloom_tex);
    hdr_w = hdr_h = 0;
@@ -1723,6 +1740,7 @@ static const char *hdr_fs_src =
 	"uniform sampler2D uBloomT;\n"
 	"uniform sampler2D uBloomW;\n"
 	"uniform float uBloomAmt;\n"
+	"uniform vec2 uBandW;\n"
 	"uniform float uEncScale;\n"
 	"uniform float uFrame;\n"
 	"uniform mat3 uGamut;\n"
@@ -1800,8 +1818,8 @@ static const char *hdr_fs_src =
 	/* bloom joins in LINEAR, BEFORE the roll-off: bloomed highlights
 	   ride the same curve into the paper-white..peak headroom, which
 	   is the part SDR output cannot express at all */
-	"  lin += uBloomAmt * (0.22 * texture2D(uBloomT, vUV).rgb\n"
-	"                    + 0.14 * texture2D(uBloomW, vUV).rgb);\n"
+	"  lin += uBloomAmt * (uBandW.x * texture2D(uBloomT, vUV).rgb\n"
+	"                    + uBandW.y * texture2D(uBloomW, vUV).rgb);\n"
 	"  lin = vec3(rolloff(lin.r), rolloff(lin.g), rolloff(lin.b));\n"
 	"  lin = uGamut * lin;\n"
 	"  vec3 y = clamp(lin * uParms.x, 0.0, 1.0);\n"
@@ -1952,6 +1970,77 @@ static const char *hdr_bright_fs_src =
    downsample copy - which is how the wide band is seeded from the
    tight band without a dedicated copy program).
 */
+/*
+   Convolution bloom, downsample stage. The 13-tap filter from Jimenez's
+   SIGGRAPH 2014 course notes (the one Call of Duty: Advanced Warfare
+   used): a centre tap, a ring of four at +-1 texel and a ring of eight
+   at +-2, weights summing to exactly 1. The overlapping inner quad is
+   what keeps successive halvings from aliasing the way a plain box
+   would - and aliasing at the top of the chain is what shows up as
+   bloom crawling when the camera moves.
+
+   uTexel is the SOURCE texel size, so the offsets are in source texels
+   while the viewport is the half-size destination.
+*/
+static const char *hdr_down_fs_src =
+	"#ifdef GL_ES\nprecision highp float;\n#endif\n"
+	"varying vec2 vUV;\n"
+	"uniform sampler2D uScene;\n"
+	"uniform vec2 uTexel;\n"
+	"void main() {\n"
+	"  vec3 a = texture2D(uScene, vUV + uTexel * vec2(-2.0,  2.0)).rgb;\n"
+	"  vec3 b = texture2D(uScene, vUV + uTexel * vec2( 0.0,  2.0)).rgb;\n"
+	"  vec3 c = texture2D(uScene, vUV + uTexel * vec2( 2.0,  2.0)).rgb;\n"
+	"  vec3 d = texture2D(uScene, vUV + uTexel * vec2(-2.0,  0.0)).rgb;\n"
+	"  vec3 e = texture2D(uScene, vUV).rgb;\n"
+	"  vec3 f = texture2D(uScene, vUV + uTexel * vec2( 2.0,  0.0)).rgb;\n"
+	"  vec3 g = texture2D(uScene, vUV + uTexel * vec2(-2.0, -2.0)).rgb;\n"
+	"  vec3 h = texture2D(uScene, vUV + uTexel * vec2( 0.0, -2.0)).rgb;\n"
+	"  vec3 i = texture2D(uScene, vUV + uTexel * vec2( 2.0, -2.0)).rgb;\n"
+	"  vec3 j = texture2D(uScene, vUV + uTexel * vec2(-1.0,  1.0)).rgb;\n"
+	"  vec3 k = texture2D(uScene, vUV + uTexel * vec2( 1.0,  1.0)).rgb;\n"
+	"  vec3 l = texture2D(uScene, vUV + uTexel * vec2(-1.0, -1.0)).rgb;\n"
+	"  vec3 m = texture2D(uScene, vUV + uTexel * vec2( 1.0, -1.0)).rgb;\n"
+	"  vec3 o = e * 0.125;\n"
+	"  o += (a + c + g + i) * 0.03125;\n"
+	"  o += (b + d + f + h) * 0.0625;\n"
+	"  o += (j + k + l + m) * 0.125;\n"
+	"  gl_FragColor = vec4(o, 1.0);\n"
+	"}\n";
+
+/*
+   Convolution bloom, upsample stage: a 3x3 tent, weights 1/2/1 2/4/2
+   1/2/1 over 16, blended additively into the next larger level.
+
+   A tent rather than the hardware's bilinear tap because a single
+   bilinear fetch magnified 2x leaves the low-resolution grid visible as
+   diamond-shaped creasing, and that creasing crawls under motion. The
+   tent is what makes the accumulated pyramid read as one smooth falloff
+   instead of a stack of resampled buffers.
+
+   uRadius scales the tent in source texels. Above 1.0 the levels
+   overlap more and the glow spreads wider and softer.
+*/
+static const char *hdr_up_fs_src =
+	"#ifdef GL_ES\nprecision highp float;\n#endif\n"
+	"varying vec2 vUV;\n"
+	"uniform sampler2D uScene;\n"
+	"uniform vec2 uTexel;\n"
+	"uniform float uRadius;\n"
+	"void main() {\n"
+	"  vec2 o = uTexel * uRadius;\n"
+	"  vec3 s = texture2D(uScene, vUV + vec2(-o.x, -o.y)).rgb;\n"
+	"  s += texture2D(uScene, vUV + vec2( 0.0, -o.y)).rgb * 2.0;\n"
+	"  s += texture2D(uScene, vUV + vec2( o.x, -o.y)).rgb;\n"
+	"  s += texture2D(uScene, vUV + vec2(-o.x,  0.0)).rgb * 2.0;\n"
+	"  s += texture2D(uScene, vUV).rgb * 4.0;\n"
+	"  s += texture2D(uScene, vUV + vec2( o.x,  0.0)).rgb * 2.0;\n"
+	"  s += texture2D(uScene, vUV + vec2(-o.x,  o.y)).rgb;\n"
+	"  s += texture2D(uScene, vUV + vec2( 0.0,  o.y)).rgb * 2.0;\n"
+	"  s += texture2D(uScene, vUV + vec2( o.x,  o.y)).rgb;\n"
+	"  gl_FragColor = vec4(s * 0.0625, 1.0);\n"
+	"}\n";
+
 static const char *hdr_blur_fs_src =
 	"#ifdef GL_ES\nprecision highp float;\n#endif\n"
 	"varying vec2 vUV;\n"
@@ -2039,6 +2128,18 @@ static void hdr_fail( const char *why ) {
 	hdr_output_active = false;
 }
 
+/* Levels in the convolution pyramid for a given scene size. Level 0 is
+   1/4 res and each step halves. Stops before a level would drop under 4
+   texels on either axis: upsampling from a 2x1 buffer contributes a flat
+   wash rather than a glow, and the tent has nothing left to work with. */
+static int hdr_conv_levels( int w, int h ) {
+	int n = 0, bw = w / 4, bh = h / 4;
+	while ( n < HDR_CONV_MAX && bw >= 4 && bh >= 4 ) {
+		n++; bw >>= 1; bh >>= 1;
+	}
+	return n < 1 ? 1 : n;
+}
+
 /* (re)create GL objects for the current context and size; safe to call
    per frame, does work only on change. Context loss zeroes the ids. */
 static bool hdr_ensure_target( int w, int h ) {
@@ -2072,6 +2173,7 @@ static bool hdr_ensure_target( int w, int h ) {
 		hdr_loc_bloomT  = glGetUniformLocation( hdr_prog, "uBloomT" );
 		hdr_loc_bloomW  = glGetUniformLocation( hdr_prog, "uBloomW" );
 		hdr_loc_bloomAmt= glGetUniformLocation( hdr_prog, "uBloomAmt" );
+		hdr_loc_bandW   = glGetUniformLocation( hdr_prog, "uBandW" );
 		hdr_loc_encScale= glGetUniformLocation( hdr_prog, "uEncScale" );
 		hdr_loc_frame   = glGetUniformLocation( hdr_prog, "uFrame" );
 	}
@@ -2124,6 +2226,49 @@ static bool hdr_ensure_target( int w, int h ) {
 		if ( vs ) glDeleteShader( vs );
 		if ( fs ) glDeleteShader( fs );
 		if ( fs2 ) glDeleteShader( fs2 );
+	}
+
+	/* Convolution pyramid programs. Built alongside the two-band ones and
+	   sharing their failure flag: if either fails the option cannot run,
+	   and haveBloom already gates on hdr_bloom_prog_bad. */
+	if ( hdr_prog_down == 0 && !hdr_bloom_prog_bad ) {
+		GLuint vs  = hdr_compile( GL_VERTEX_SHADER, hdr_vs_src );
+		GLuint fsd = hdr_compile( GL_FRAGMENT_SHADER, hdr_down_fs_src );
+		GLuint fsu = hdr_compile( GL_FRAGMENT_SHADER, hdr_up_fs_src );
+		if ( vs && fsd && fsu ) {
+			GLint okD = 0, okU = 0;
+			hdr_prog_down = glCreateProgram();
+			glAttachShader( hdr_prog_down, vs );
+			glAttachShader( hdr_prog_down, fsd );
+			glBindAttribLocation( hdr_prog_down, 0, "aPos" );
+			glLinkProgram( hdr_prog_down );
+			hdr_prog_up = glCreateProgram();
+			glAttachShader( hdr_prog_up, vs );
+			glAttachShader( hdr_prog_up, fsu );
+			glBindAttribLocation( hdr_prog_up, 0, "aPos" );
+			glLinkProgram( hdr_prog_up );
+			glGetProgramiv( hdr_prog_down, GL_LINK_STATUS, &okD );
+			glGetProgramiv( hdr_prog_up,   GL_LINK_STATUS, &okU );
+			if ( !okD || !okU ) {
+				glDeleteProgram( hdr_prog_down );
+				glDeleteProgram( hdr_prog_up );
+				hdr_prog_down = hdr_prog_up = 0;
+				hdr_bloom_prog_bad = true;
+				if ( log_cb )
+					log_cb( RETRO_LOG_WARN, "[boom3] HDR: convolution bloom program did not link; bloom disabled\n" );
+			} else {
+				hdr_down_loc_texel = glGetUniformLocation( hdr_prog_down, "uTexel" );
+				hdr_up_loc_texel   = glGetUniformLocation( hdr_prog_up, "uTexel" );
+				hdr_up_loc_radius  = glGetUniformLocation( hdr_prog_up, "uRadius" );
+			}
+		} else {
+			hdr_bloom_prog_bad = true;
+			if ( log_cb )
+				log_cb( RETRO_LOG_WARN, "[boom3] HDR: convolution bloom shader did not compile; bloom disabled\n" );
+		}
+		if ( vs )  glDeleteShader( vs );
+		if ( fsd ) glDeleteShader( fsd );
+		if ( fsu ) glDeleteShader( fsu );
 	}
 	if ( hdr_fbo == 0 || w != hdr_w || h != hdr_h ) {
 		if ( hdr_tex ) glDeleteTextures( 1, &hdr_tex );
@@ -2248,6 +2393,31 @@ static bool hdr_ensure_target( int w, int h ) {
 						break;
 					}
 				}
+				for ( i = 0; allOk && i < HDR_CONV_MAX; i++ ) {
+					int bw = ( w / 4 ) >> i, bh = ( h / 4 ) >> i;
+					if ( bw < 1 ) bw = 1;
+					if ( bh < 1 ) bh = 1;
+					if ( hdr_conv_tex[i] ) glDeleteTextures( 1, &hdr_conv_tex[i] );
+					if ( hdr_conv_fbo[i] ) glDeleteFramebuffers( 1, &hdr_conv_fbo[i] );
+					hdr_conv_tex[i] = hdr_conv_fbo[i] = 0;
+					glGenTextures( 1, &hdr_conv_tex[i] );
+					glBindTexture( GL_TEXTURE_2D, hdr_conv_tex[i] );
+					glTexImage2D( GL_TEXTURE_2D, 0, tryInt[attempt], bw, bh, 0,
+							tryFmt[attempt], tryType[attempt], NULL );
+					glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
+					glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
+					glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
+					glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
+					glGenFramebuffers( 1, &hdr_conv_fbo[i] );
+					glBindFramebuffer( RARCH_GL_FRAMEBUFFER, hdr_conv_fbo[i] );
+					glFramebufferTexture2D( RARCH_GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+							GL_TEXTURE_2D, hdr_conv_tex[i], 0 );
+					if ( glCheckFramebufferStatus( RARCH_GL_FRAMEBUFFER )
+							!= GL_FRAMEBUFFER_COMPLETE ) {
+						allOk = false;
+						break;
+					}
+				}
 				if ( allOk )
 					hdr_bloom_tex_bad = false;
 				else if ( log_cb )
@@ -2260,6 +2430,11 @@ static bool hdr_ensure_target( int w, int h ) {
 					if ( hdr_bloom_tex[i] ) glDeleteTextures( 1, &hdr_bloom_tex[i] );
 					if ( hdr_bloom_fbo[i] ) glDeleteFramebuffers( 1, &hdr_bloom_fbo[i] );
 					hdr_bloom_tex[i] = hdr_bloom_fbo[i] = 0;
+				}
+				for ( i = 0; i < HDR_CONV_MAX; i++ ) {
+					if ( hdr_conv_tex[i] ) glDeleteTextures( 1, &hdr_conv_tex[i] );
+					if ( hdr_conv_fbo[i] ) glDeleteFramebuffers( 1, &hdr_conv_fbo[i] );
+					hdr_conv_tex[i] = hdr_conv_fbo[i] = 0;
 				}
 			}
 		}
@@ -2380,9 +2555,10 @@ static void hdr_present( GLuint dstFbo ) {
 	if ( haveBloom ) {
 		int qw = hdr_w / 4 < 1 ? 1 : hdr_w / 4,  qh = hdr_h / 4 < 1 ? 1 : hdr_h / 4;
 		int sw = hdr_w / 16 < 1 ? 1 : hdr_w / 16, sh = hdr_h / 16 < 1 ? 1 : hdr_h / 16;
+		int conv = hdr_bloom_convolution ? hdr_conv_levels( hdr_w, hdr_h ) : 0;
 		glActiveTexture( GL_TEXTURE0 );
-		/* bright pass: scene -> tight A */
-		glBindFramebuffer( RARCH_GL_FRAMEBUFFER, hdr_bloom_fbo[0] );
+		/* bright pass: scene -> tight A, or pyramid level 0 (both 1/4 res) */
+		glBindFramebuffer( RARCH_GL_FRAMEBUFFER, conv ? hdr_conv_fbo[0] : hdr_bloom_fbo[0] );
 		glViewport( 0, 0, qw, qh );
 		glUseProgram( hdr_prog_bright );
 		glBindTexture( GL_TEXTURE_2D, hdr_tex );
@@ -2399,6 +2575,51 @@ static void hdr_present( GLuint dstFbo ) {
 		glUniform1f( hdr_bright_loc_enc, 1.0f / hdr_scene_encode_scale );
 		glUniform2f( hdr_bright_loc_texel, 1.0f / (float)hdr_w, 1.0f / (float)hdr_h );
 		glDrawArrays( GL_TRIANGLES, 0, 3 );
+
+		if ( conv ) {
+			/*
+			   Convolution bloom: build a mip pyramid down from 1/4, then
+			   walk back up adding each level into the next larger one.
+			   The accumulated level 0 is the scene convolved with the sum
+			   of all the levels' kernels - a wide, heavy-tailed point
+			   spread rather than the two discrete Gaussians of the
+			   default path, which is what makes a glow read as carrying
+			   far past its source instead of stopping at a visible edge.
+			*/
+			int i;
+			glUseProgram( hdr_prog_down );
+			for ( i = 1; i < conv; i++ ) {
+				int pw = ( hdr_w / 4 ) >> ( i - 1 ), ph = ( hdr_h / 4 ) >> ( i - 1 );
+				if ( pw < 1 ) pw = 1;
+				if ( ph < 1 ) ph = 1;
+				glBindFramebuffer( RARCH_GL_FRAMEBUFFER, hdr_conv_fbo[i] );
+				glViewport( 0, 0, pw > 1 ? pw / 2 : 1, ph > 1 ? ph / 2 : 1 );
+				glBindTexture( GL_TEXTURE_2D, hdr_conv_tex[i - 1] );
+				glUniform2f( hdr_down_loc_texel, 1.0f / (float)pw, 1.0f / (float)ph );
+				glDrawArrays( GL_TRIANGLES, 0, 3 );
+			}
+			/* additive accumulation upward. Blend rather than ping-pong so
+			   each level needs only one buffer; hdr_present disabled blend
+			   on entry, so turn it off again afterwards. */
+			glUseProgram( hdr_prog_up );
+			glEnable( GL_BLEND );
+			glBlendFunc( GL_ONE, GL_ONE );
+			glUniform1f( hdr_up_loc_radius, 1.0f );
+			for ( i = conv - 1; i > 0; i-- ) {
+				int pw = ( hdr_w / 4 ) >> i, ph = ( hdr_h / 4 ) >> i;
+				int dw = ( hdr_w / 4 ) >> ( i - 1 ), dh = ( hdr_h / 4 ) >> ( i - 1 );
+				if ( pw < 1 ) pw = 1;
+				if ( ph < 1 ) ph = 1;
+				if ( dw < 1 ) dw = 1;
+				if ( dh < 1 ) dh = 1;
+				glBindFramebuffer( RARCH_GL_FRAMEBUFFER, hdr_conv_fbo[i - 1] );
+				glViewport( 0, 0, dw, dh );
+				glBindTexture( GL_TEXTURE_2D, hdr_conv_tex[i] );
+				glUniform2f( hdr_up_loc_texel, 1.0f / (float)pw, 1.0f / (float)ph );
+				glDrawArrays( GL_TRIANGLES, 0, 3 );
+			}
+			glDisable( GL_BLEND );
+		} else {
 		/* tight band blur: A -> B (H), B -> A (V) */
 		glUseProgram( hdr_prog_blur );
 		glBindFramebuffer( RARCH_GL_FRAMEBUFFER, hdr_bloom_fbo[1] );
@@ -2426,22 +2647,46 @@ static void hdr_present( GLuint dstFbo ) {
 		glBindTexture( GL_TEXTURE_2D, hdr_bloom_tex[3] );
 		glUniform2f( hdr_blur_loc_dir, 0.0f, 1.0f / sh );
 		glDrawArrays( GL_TRIANGLES, 0, 3 );
+		}
 	}
 
 	glBindFramebuffer( RARCH_GL_FRAMEBUFFER, dstFbo );
 	glViewport( 0, 0, hdr_w, hdr_h );
 
 	glUseProgram( hdr_prog );
-	glActiveTexture( GL_TEXTURE1 );
-	glBindTexture( GL_TEXTURE_2D, hdr_bloom_tex[0] );
-	glActiveTexture( GL_TEXTURE2 );
-	glBindTexture( GL_TEXTURE_2D, hdr_bloom_tex[2] );
+	{
+		/*
+		   Band weights, and with them the total bloom energy.
+		
+		   Every filter in both chains has weights summing to exactly 1,
+		   and both chains are linear, so the integrated bloom a given
+		   extraction produces is just the sum of the band weights - the
+		   ratio between the two modes is a constant, independent of scene
+		   content. The two-band path sums 0.22 + 0.14 = 0.36. The pyramid
+		   accumulates one unit-gain contribution per level, so dividing
+		   0.36 by the level count matches it exactly rather than by eye.
+		
+		   Convolution bloom will still look dimmer at the core of a
+		   highlight. That is the point: the same energy is spread over a
+		   far wider point spread, so the peak drops and the tail carries.
+		*/
+		int convN = hdr_bloom_convolution ? hdr_conv_levels( hdr_w, hdr_h ) : 0;
+		GLuint bT = convN ? hdr_conv_tex[0] : hdr_bloom_tex[0];
+		GLuint bW = convN ? hdr_conv_tex[0] : hdr_bloom_tex[2];
+		glActiveTexture( GL_TEXTURE1 );
+		glBindTexture( GL_TEXTURE_2D, bT );
+		glActiveTexture( GL_TEXTURE2 );
+		glBindTexture( GL_TEXTURE_2D, bW );
+		hdr_band_w0 = convN ? 0.36f / (float)convN : 0.22f;
+		hdr_band_w1 = convN ? 0.0f : 0.14f;
+	}
 	glActiveTexture( GL_TEXTURE0 );
 	glBindTexture( GL_TEXTURE_2D, hdr_tex );
 	glUniform1i( hdr_loc_tex, 0 );
 	glUniform1i( hdr_loc_bloomT, 1 );
 	glUniform1i( hdr_loc_bloomW, 2 );
 	glUniform1f( hdr_loc_bloomAmt, haveBloom ? hdr_bloom_amount : 0.0f );
+	glUniform2f( hdr_loc_bandW, hdr_band_w0, hdr_band_w1 );
 	glUniform1f( hdr_loc_encScale, 1.0f / hdr_scene_encode_scale );
 	/* wraps every 64 frames; the pattern only has to keep moving */
 	glUniform1f( hdr_loc_frame, (float)( hdr_frame_counter++ & 63u ) );

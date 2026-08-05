@@ -276,6 +276,30 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "standard"
    },
    {
+      "doom_hdr_bloom_convolution",
+      "HDR Convolution Bloom",
+      NULL,
+      "Replaces HDR Bloom's two fixed blur scales with a six-octave "
+      "pyramid, accumulated back up with a tent filter. The result "
+      "approximates convolving the scene with one wide, heavy-tailed "
+      "point spread instead of adding two discrete Gaussians. Glow "
+      "carries much further from its source and fades smoothly out, "
+      "rather than stopping at a visible edge where the blur kernel "
+      "ends - the halo look older engines had. Total bloom energy is "
+      "held identical to the two-band path, so the same light is spread "
+      "wider: expect softer, dimmer highlight cores and far more "
+      "spill. Costs a handful of extra passes on small buffers. "
+      "Requires HDR Bloom to be enabled; no effect in 24-bit mode.",
+      NULL,
+      NULL,
+      {
+         { "disabled", "Disabled" },
+         { "enabled",  "Enabled" },
+         { NULL, NULL },
+      },
+      "disabled"
+   },
+   {
       "doom_hdr_rolloff",
       "HDR Highlight Roll-Off",
       NULL,
