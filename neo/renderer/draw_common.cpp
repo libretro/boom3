@@ -1226,10 +1226,37 @@ void RB_STD_T_RenderShaderPasses( const drawSurf_t *surf ) {
 		   the program reproduces their math, and at neutral
 		   gamma/brightness the result is bit-identical.
 		*/
-		bool ffProg = r_gammaInShader.GetBool()
-			&& glConfig.ARBFragmentProgramAvailable
-			&& pStage->texture.texgen != TG_REFLECT_CUBE
-			&& pStage->texture.texgen != TG_GLASSWARP;
+		bool gammaProg = r_gammaInShader.GetBool()
+			&& glConfig.ARBFragmentProgramAvailable;
+		bool ownProg = pStage->texture.texgen == TG_REFLECT_CUBE
+			|| pStage->texture.texgen == TG_GLASSWARP;
+		bool ffProg = gammaProg && !ownProg;
+
+		/*
+		   The two texgens above bound their own programs in
+		   RB_PrepareStageTexturing (FPROG_ENVIRONMENT,
+		   FPROG_GLASSWARP). Those come from glprogs/ and so DO carry
+		   the injected epilogue - but nothing here used to set
+		   env[21] for them, so they consumed whatever the last
+		   interaction or shader stage left behind. Under the
+		   blend-aware routing that is either r_brightness or
+		   r_brightness folded, depending on draw order: the same bug
+		   class the newStage comment above describes fixing, with the
+		   ffProg == false branch left open.
+
+		   Glass warp is an SS_POST_PROCESS replace of _currentRender,
+		   which already carries the scene's encoding, so it ships
+		   unscaled. Reflect-cube is ordinary scene energy and takes
+		   the fold.
+		*/
+		if ( gammaProg && ownProg ) {
+			float oparm[4];
+			oparm[0] = oparm[1] = oparm[2] = RB_HDRGammaBrightness(
+					pStage->texture.texgen == TG_GLASSWARP );
+			oparm[3] = 1.0f / r_gamma.GetFloat();
+			qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, PP_GAMMA_BRIGHTNESS, oparm );
+		}
+
 		if ( ffProg ) {
 			bool cube = pStage->texture.image && pStage->texture.image->type == TT_CUBIC;
 			qglBindProgramARB( GL_FRAGMENT_PROGRAM_ARB, cube ? FPROG_FF_GAMMA_CUBE : FPROG_FF_GAMMA );
