@@ -50,6 +50,16 @@ void R_ParticleLightCollect( const srfTriangles_t *tri, const viewEntity_t *spac
 	if ( hdr_particle_light_count_opt <= 0 || tri == NULL || space == NULL ) {
 		return;
 	}
+	/*
+	   R_AddDrawSurf runs for every view, including the separate
+	   idRenderWorlds that idRenderWindow and the menu background
+	   allocate. Their particle surfaces are in a different coordinate
+	   space entirely, so collecting them here would place primary-world
+	   lights at positions taken from a GUI model.
+	*/
+	if ( tr.viewDef == NULL || tr.viewDef->renderWorld != tr.primaryWorld ) {
+		return;
+	}
 	idVec3 localCenter = ( tri->bounds[0] + tri->bounds[1] ) * 0.5f;
 	idVec3 worldCenter;
 	R_LocalPointToGlobal( space->modelMatrix, localCenter, worldCenter );
@@ -93,9 +103,39 @@ void R_ParticleLightCollect( const srfTriangles_t *tri, const viewEntity_t *spac
    pool from LAST frame's candidates, then reset collection */
 void R_ParticleLightSubmit( viewDef_t *parms ) {
 	extern bool hdr_output_active;
-	int active = ( hdr_output_active && parms->renderWorld == tr.primaryWorld )
-		? hdr_particle_light_count_opt : 0;
+	int active;
 	int i;
+
+	/*
+	   R_RenderView also runs for mirrors, remote cameras and 3D views on
+	   GUI surfaces. Mirrors and remote views share the primary world,
+	   but idRenderWindow (ui/RenderWindow.cpp) and the menu background
+	   (Session.cpp) each call AllocRenderWorld and get their own - and
+	   Doom 3 puts a 3D GUI on wall monitors and the PDA throughout the
+	   game.
+
+	   Letting those views reach the pool flipped plWorld every frame,
+	   which forgot the primary world's handles WITHOUT freeing them and
+	   left the next primary view to allocate four fresh lightDefs. The
+	   orphans kept whatever parameters they were last given - a real
+	   spark position, warm colour and a radius up to 240 units - and
+	   nothing ever updated or freed them again, so they stayed lit where
+	   they were. Up to four permanent ghost lights leaked per frame,
+	   each generating interaction surfaces, for as long as a 3D GUI was
+	   on screen.
+
+	   Nothing outside the primary world has any business here, so leave
+	   every piece of pool state alone for those views. That also makes
+	   the "world changed" branch below mean what it says: with this
+	   gate, plWorld only ever holds the primary world, so a change to it
+	   really is a map change, and FreeRenderWorld has already released
+	   the lightDefs.
+	*/
+	if ( parms->renderWorld != tr.primaryWorld ) {
+		return;
+	}
+
+	active = hdr_output_active ? hdr_particle_light_count_opt : 0;
 
 	if ( plWorld != parms->renderWorld ) {
 		/* world changed (map change frees all lightDefs) - forget handles */
