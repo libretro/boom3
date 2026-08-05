@@ -1957,12 +1957,43 @@ static const char *hdr_blur_fs_src =
 	"varying vec2 vUV;\n"
 	"uniform sampler2D uScene;\n"
 	"uniform vec2 uDir;\n"   /* texel-size-scaled direction, or 0,0 for copy */
+	/* 13-tap Gaussian (sigma 1.631 texels) as 7 bilinear fetches.
+
+	   This was 9 taps, which truncates at 2.45 sigma - where the
+	   kernel still carries 4.95% of its centre weight. Convolving
+	   anything with a kernel that has a 4.95% discontinuity at its
+	   edge leaves a step in the output at exactly that radius, and
+	   the glow drops to hard zero past it.
+
+	   In SDR that step is invisible: the source clamps at 1.0, so the
+	   rim is at most 0.05. In HDR the source is many multiples of
+	   paper white, so the same 4.95% is 0.25x paper white at a 5x
+	   source and 2.5x at a 50x source - a bright, hard-edged ring.
+	   That is why this reads as an HDR bloom artifact specifically.
+
+	   Confirmed against a 4K capture: the glow around a steam vent
+	   fell to exactly 0.0000 at 52 screen pixels from the source. The
+	   outermost tap of the wide band sits at 3.23077 texels of a
+	   1/16-res buffer, which at 3840 wide is 51.7 pixels.
+
+	   Extending to 13 taps moves the cut to 3.68 sigma, where the
+	   weight is 0.115% of centre, so the tail decays 0.44 -> 0.076 ->
+	   0.009 -> 0.001 instead of 0.36 -> 0. Two extra fetches per pass
+	   on quarter- and sixteenth-res buffers. Same sigma, so the glow
+	   radius and total energy are unchanged; only the hard edge goes.
+
+	   Note this does not make the falloff wide or gentle - measured,
+	   the tail shape past 13 taps is the Gaussian's own steepness and
+	   does not improve with more taps. Bloom that carries far past its
+	   source needs more octaves, not a longer kernel. */
 	"void main() {\n"
-	"  vec3 c = texture2D(uScene, vUV).rgb * 0.23727;\n"
-	"  c += texture2D(uScene, vUV + uDir * 1.38461).rgb * 0.33053;\n"
-	"  c += texture2D(uScene, vUV - uDir * 1.38461).rgb * 0.33053;\n"
-	"  c += texture2D(uScene, vUV + uDir * 3.23077).rgb * 0.05084;\n"
-	"  c += texture2D(uScene, vUV - uDir * 3.23077).rgb * 0.05084;\n"
+	"  vec3 c = texture2D(uScene, vUV).rgb * 0.24458;\n"
+	"  c += texture2D(uScene, vUV + uDir * 1.36268).rgb * 0.31802;\n"
+	"  c += texture2D(uScene, vUV - uDir * 1.36268).rgb * 0.31802;\n"
+	"  c += texture2D(uScene, vUV + uDir * 3.21159).rgb * 0.05717;\n"
+	"  c += texture2D(uScene, vUV - uDir * 3.21159).rgb * 0.05717;\n"
+	"  c += texture2D(uScene, vUV + uDir * 5.11234).rgb * 0.00251;\n"
+	"  c += texture2D(uScene, vUV - uDir * 5.11234).rgb * 0.00251;\n"
 	"  gl_FragColor = vec4(c, 1.0);\n"
 	"}\n";
 
