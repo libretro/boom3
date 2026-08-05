@@ -40,6 +40,13 @@ scene precisions need float render-target support (any desktop GPU).
 On frontends or drivers without a 10-bit path the core logs the refusal
 and falls back to 24-bit.
 
+File I/O uses a hybrid VFS: local-first (memory-mapped paks and all
+zero-copy paths intact, byte-identical on desktop), with the
+frontend's VFS as fallback for URI-shaped paths and on sandboxed
+platforms (Android scoped storage) - where content unreachable by
+direct I/O works through the frontend, at the cost of the zero-copy
+tier for those files only.
+
 ## Core options
 
 | Option | Meaning |

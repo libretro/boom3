@@ -49,6 +49,7 @@ If you have questions concerning this license or the applicable additional terms
 
 extern "C" {
 #include <file/file_path.h>
+#include <retro_dirent.h>
 }
 
 #define					COMMAND_HISTORY 64
@@ -142,55 +143,57 @@ Sys_ListFiles
 ================
 */
 int Sys_ListFiles( const char *directory, const char *extension, idStrList &list ) {
-	struct dirent *d;
-	DIR *fdir;
+	/*
+	   Routed through retro_dirent instead of raw POSIX opendir so that
+	   directory scanning follows the same hybrid VFS the rest of file
+	   I/O uses: on desktop this resolves to the identical local
+	   implementation; on sandboxed platforms it is the difference
+	   between finding the pk4s and finding nothing.
+	*/
+	struct RDIR *rdir;
 	bool dironly = false;
-	char search[MAX_OSPATH];
-	struct stat st;
 	bool debug;
 
 	list.Clear();
 
 	debug = cvarSystem->GetCVarBool( "fs_debug" );
 
-	if (!extension)
+	if ( !extension )
 		extension = "";
 
 	// passing a slash as extension will find directories
-	if (extension[0] == '/' && extension[1] == 0) {
+	if ( extension[0] == '/' && extension[1] == 0 ) {
 		extension = "";
 		dironly = true;
 	}
 
-	// search
-	// NOTE: case sensitivity of directory path can screw us up here
-	if ((fdir = opendir(directory)) == NULL)
-	{
-		if (debug)
-			common->Printf("Sys_ListFiles: opendir %s failed\n", directory);
+	rdir = retro_opendir( directory );
+	if ( rdir == NULL ) {
+		if ( debug )
+			common->Printf( "Sys_ListFiles: opendir %s failed\n", directory );
 		return -1;
 	}
 
-	while ((d = readdir(fdir)) != NULL) {
-		idStr::snPrintf(search, sizeof(search), "%s/%s", directory, d->d_name);
-		if (stat(search, &st) == -1)
+	while ( retro_readdir( rdir ) ) {
+		const char *name = retro_dirent_get_name( rdir );
+		if ( !name || !name[0] || !strcmp( name, "." ) || !strcmp( name, ".." ) ) {
 			continue;
-		if (!dironly) {
-			idStr look(search);
+		}
+		bool isDir = retro_dirent_is_dir( rdir, NULL );
+		if ( dironly && !isDir ) {
+			continue;
+		}
+		if ( !dironly ) {
+			idStr look( name );
 			idStr ext;
-			look.ExtractFileExtension(ext);
-			if (extension[0] != '\0' && ext.Icmp(&extension[1]) != 0) {
+			look.ExtractFileExtension( ext );
+			if ( extension[0] != '\0' && ext.Icmp( &extension[1] ) != 0 ) {
 				continue;
 			}
 		}
-		if ((dironly && !(st.st_mode & S_IFDIR)) ||
-			(!dironly && (st.st_mode & S_IFDIR)))
-			continue;
-
-		list.Append(d->d_name);
+		list.Append( name );
 	}
-
-	closedir(fdir);
+	retro_closedir( rdir );
 
 	if ( debug ) {
 		common->Printf( "Sys_ListFiles: %d entries in %s\n", list.Num(), directory );

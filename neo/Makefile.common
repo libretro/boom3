@@ -234,6 +234,7 @@ SRC_SYS	:=\
 	$(CORE_DIR)/sys/libretro/retro_net.cpp \
 	$(CORE_DIR)/sys/libretro/retro_main.cpp \
 	$(CORE_DIR)/sys/libretro/libretro.cpp \
+	$(CORE_DIR)/sys/libretro/vfs_hybrid.cpp \
 	$(CORE_DIR)/sys/libretro/stubs.cpp
 
 SRC_GAME_D3XP	:=\
