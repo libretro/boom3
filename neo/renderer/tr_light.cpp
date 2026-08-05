@@ -1200,7 +1200,15 @@ void R_AddDrawSurf( const srfTriangles_t *tri, const viewEntity_t *space, const 
 	{
 		extern void R_ParticleLightCollect( const srfTriangles_t *, const viewEntity_t * );
 		extern int hdr_particle_light_count_opt;
-		if ( hdr_particle_light_count_opt > 0 && shader != NULL
+		extern bool hdr_output_active;
+		/*
+		   R_ParticleLightSubmit gates on hdr_output_active, but the
+		   collect step did not - so a 24-bit build still walked every
+		   particle surface's triangles into the candidate pool each
+		   frame and threw the result away. The option defaults to 2,
+		   so that was every 24-bit run.
+		*/
+		if ( hdr_output_active && hdr_particle_light_count_opt > 0 && shader != NULL
 				&& ( shader->Deform() == DFRM_PARTICLE || shader->Deform() == DFRM_PARTICLE2 ) ) {
 			R_ParticleLightCollect( tri, space );
 		}
