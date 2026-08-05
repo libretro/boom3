@@ -188,9 +188,14 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "at white survive into the buffer, and the output pass restores "
       "scale - clipped highlights (stacked lights, muzzle flashes, "
       "specular sums) regain their shape and land above paper white. "
-      "HUD and menus stay at exactly paper white. Costs about one bit "
-      "of shadow precision, covered by the output dither. No effect in "
-      "24-bit mode.",
+      "HUD and menus stay at exactly paper white. Costs exactly one bit "
+      "of the 10-bit scene buffer, everywhere and not just in shadows: "
+      "the scene occupies 512 of 1024 codes, and the output dither "
+      "cannot recover it, because the expand happens before the decode "
+      "so each surviving code is already two output codes wide. FP16 "
+      "scene precision is the better answer if your GPU supports it "
+      "(any desktop GPU does) and makes this option unnecessary - it is "
+      "automatically bypassed there. No effect in 24-bit mode.",
       NULL,
       NULL,
       {
@@ -230,7 +235,10 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "light and reads as mud under an SDR ceiling; boosting it restores "
       "reflective punch, and highlights that reach the bloom threshold "
       "bleed into HDR headroom. Lit surfaces only - HUD, menus, and "
-      "fullbright content are untouched. No effect in 24-bit mode.",
+      "fullbright content are untouched. Needs somewhere to put the "
+      "boosted energy, so it is ignored when the scene buffer is 10-bit "
+      "AND HDR Scene Headroom is disabled - in that combination it would "
+      "only clip more pixels to white. No effect in 24-bit mode.",
       NULL,
       NULL,
       {
