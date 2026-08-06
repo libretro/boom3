@@ -650,36 +650,21 @@ idGameBustOutWindow::HandleEvent
 =============================
 */
 const char *idGameBustOutWindow::HandleEvent(const sysEvent_t *event, bool *updateVisuals) {
-	int key = event->evValue;
+    // need to call this to allow proper focus and capturing on embedded children
+    const char *ret = idWindow::HandleEvent(event, updateVisuals);
 
-	// need to call this to allow proper focus and capturing on embedded children
-	const char *ret = idWindow::HandleEvent(event, updateVisuals);
+    if ( event->evType == SE_KEY && event->evValue2 && event->evValue == K_MOUSE1 && ballsInPlay == 0 ) {
+        BOEntity *ball = CreateNewBall();
+        ball->SetVisible( true );
+        ball->position.x = paddle->ent->position.x + 48.f;
+        ball->position.y = 430.f;
+        ball->velocity.x = ballSpeed;
+        ball->velocity.y = -ballSpeed * 2.f;
+        ball->velocity.NormalizeFast();
+        ball->velocity *= ballSpeed;
+    }
 
-	if ( event->evType == SE_KEY ) {
-
-		if ( !event->evValue2 ) {
-			return ret;
-		}
-		if ( key == K_MOUSE1) {
-			// Mouse was clicked
-			if ( ballsInPlay == 0 ) {
-				BOEntity *ball = CreateNewBall();
-
-				ball->SetVisible( true );
-				ball->position.x = paddle->ent->position.x + 48.f;
-				ball->position.y = 430.f;
-
-				ball->velocity.x = ballSpeed;
-				ball->velocity.y = -ballSpeed*2.f;
-				ball->velocity.NormalizeFast();
-				ball->velocity *= ballSpeed;
-			}
-		} else {
-			return ret;
-		}
-	}
-
-	return ret;
+    return ret;
 }
 
 /*
@@ -725,24 +710,16 @@ idGameBustOutWindow::GetWinVarByName
 =============================
 */
 idWinVar *idGameBustOutWindow::GetWinVarByName(const char *_name, bool winLookup, drawWin_t** owner) {
-	idWinVar *retVar = NULL;
-
-	if ( idStr::Icmp(_name, "gamerunning") == 0 ) {
-		retVar = &gamerunning;
-	} else	if ( idStr::Icmp(_name, "onFire") == 0 ) {
-		retVar = &onFire;
-	} else	if ( idStr::Icmp(_name, "onContinue") == 0 ) {
-		retVar = &onContinue;
-	} else	if ( idStr::Icmp(_name, "onNewGame") == 0 ) {
-		retVar = &onNewGame;
-	} else	if ( idStr::Icmp(_name, "onNewLevel") == 0 ) {
-		retVar = &onNewLevel;
-	}
-
-	if(retVar) {
-		return retVar;
-	}
-
+	if ( idStr::Icmp(_name, "gamerunning") == 0 )
+		return &gamerunning;
+	else	if ( idStr::Icmp(_name, "onFire") == 0 )
+		return &onFire;
+	else	if ( idStr::Icmp(_name, "onContinue") == 0 )
+		return &onContinue;
+	else	if ( idStr::Icmp(_name, "onNewGame") == 0 )
+		return &onNewGame;
+	else	if ( idStr::Icmp(_name, "onNewLevel") == 0 )
+		return &onNewLevel;
 	return idWindow::GetWinVarByName(_name, winLookup, owner);
 }
 

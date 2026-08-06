@@ -439,24 +439,8 @@ idGameBearShootWindow::HandleEvent
 =============================
 */
 const char *idGameBearShootWindow::HandleEvent(const sysEvent_t *event, bool *updateVisuals) {
-	int key = event->evValue;
-
 	// need to call this to allow proper focus and capturing on embedded children
-	const char *ret = idWindow::HandleEvent(event, updateVisuals);
-
-	if ( event->evType == SE_KEY ) {
-
-		if ( !event->evValue2 ) {
-			return ret;
-		}
-		if ( key == K_MOUSE1) {
-			// Mouse was clicked
-		} else {
-			return ret;
-		}
-	}
-
-	return ret;
+	return idWindow::HandleEvent(event, updateVisuals);
 }
 
 /*
@@ -491,22 +475,14 @@ idGameBearShootWindow::GetWinVarByName
 =============================
 */
 idWinVar *idGameBearShootWindow::GetWinVarByName(const char *_name, bool winLookup, drawWin_t** owner) {
-	idWinVar *retVar = NULL;
-
-	if ( idStr::Icmp(_name, "gamerunning") == 0 ) {
-		retVar = &gamerunning;
-	} else	if ( idStr::Icmp(_name, "onFire") == 0 ) {
-		retVar = &onFire;
-	} else	if ( idStr::Icmp(_name, "onContinue") == 0 ) {
-		retVar = &onContinue;
-	} else	if ( idStr::Icmp(_name, "onNewGame") == 0 ) {
-		retVar = &onNewGame;
-	}
-
-	if(retVar) {
-		return retVar;
-	}
-
+	if ( idStr::Icmp(_name, "gamerunning") == 0 )
+		return &gamerunning;
+	else	if ( idStr::Icmp(_name, "onFire") == 0 )
+		return &onFire;
+	else	if ( idStr::Icmp(_name, "onContinue") == 0 )
+		return &onContinue;
+	else	if ( idStr::Icmp(_name, "onNewGame") == 0 )
+		return &onNewGame;
 	return idWindow::GetWinVarByName(_name, winLookup, owner);
 }
 

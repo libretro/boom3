@@ -1330,24 +1330,11 @@ const char *idGameSSDWindow::HandleEvent(const sysEvent_t *event, bool *updateVi
 
 	// need to call this to allow proper focus and capturing on embedded children
 	const char *ret = idWindow::HandleEvent(event, updateVisuals);
-
-	if(!gameStats.gameRunning) {
-		return ret;
-	}
-
-	int key = event->evValue;
-
-	if ( event->evType == SE_KEY ) {
-
-		if ( !event->evValue2 ) {
-			return ret;
-		}
-
-		if ( key == K_MOUSE1 || key == K_MOUSE2) {
+	if(gameStats.gameRunning)
+	{
+		int key = event->evValue;
+		if ( event->evType == SE_KEY && event->evValue2 && (key == K_MOUSE1 || key == K_MOUSE2))
 			FireWeapon(key);
-		} else {
-			return ret;
-		}
 	}
 	return ret;
 }
@@ -1355,27 +1342,14 @@ const char *idGameSSDWindow::HandleEvent(const sysEvent_t *event, bool *updateVi
 idWinVar *idGameSSDWindow::GetWinVarByName	(const char *_name, bool winLookup, drawWin_t** owner) {
 
 	idWinVar *retVar = NULL;
-
-	if (idStr::Icmp(_name, "beginLevel") == 0) {
-		retVar = &beginLevel;
-	}
-
-	if (idStr::Icmp(_name, "resetGame") == 0) {
-		retVar = &resetGame;
-	}
-
-	if (idStr::Icmp(_name, "continueGame") == 0) {
-		retVar = &continueGame;
-	}
-	if (idStr::Icmp(_name, "refreshGuiData") == 0) {
-		retVar = &refreshGuiData;
-	}
-
-
-	if(retVar) {
-		return retVar;
-	}
-
+	if (idStr::Icmp(_name, "beginLevel") == 0)
+		return &beginLevel;
+	else if (idStr::Icmp(_name, "resetGame") == 0)
+		return &resetGame;
+	else if (idStr::Icmp(_name, "continueGame") == 0)
+		return &continueGame;
+	else if (idStr::Icmp(_name, "refreshGuiData") == 0)
+		return &refreshGuiData;
 	return idWindow::GetWinVarByName(_name, winLookup, owner);
 }
 
@@ -1703,25 +1677,19 @@ void idGameSSDWindow::LevelComplete() {
 	gameStats.prebonusscore = gameStats.score;
 
 	// Add the bonuses
-	int accuracy;
-	if( !gameStats.levelStats.shotCount ) {
-		accuracy = 0;
-	} else {
+	int accuracy = 0;
+	if( gameStats.levelStats.shotCount )
 		accuracy = (int)( ( (float)gameStats.levelStats.hitCount / (float)gameStats.levelStats.shotCount ) * 100.0f );
-	}
 	int accuracyPoints = Max( 0, accuracy - 50 ) * 20;
 
 	gui->SetStateString("player_accuracy_score", va("%i", accuracyPoints));
 
 	gameStats.score += accuracyPoints;
 
-	int saveAccuracy;
-	int totalAst = gameStats.levelStats.savedAstronauts + gameStats.levelStats.killedAstronauts;
-	if( !totalAst ) {
-		saveAccuracy = 0;
-	} else {
+	int saveAccuracy = 0;
+	int totalAst     = gameStats.levelStats.savedAstronauts + gameStats.levelStats.killedAstronauts;
+	if( totalAst )
 		saveAccuracy = (int)( ( (float)gameStats.levelStats.savedAstronauts / (float)totalAst ) * 100.0f );
-	}
 	accuracyPoints = Max( 0, saveAccuracy - 50 ) * 20;
 
 	gui->SetStateString("save_accuracy_score", va("%i", accuracyPoints));
@@ -1738,10 +1706,6 @@ void idGameSSDWindow::LevelComplete() {
 		//Have they beaten the game
 		GameComplete();
 	} else {
-
-		//Make sure we don't go above the levelcount
-		//min(gameStats.nextLevel, levelCount-1);
-
 		StopGame();
 		gui->HandleNamedEvent("levelComplete");
 	}
@@ -1902,12 +1866,11 @@ void idGameSSDWindow::FireWeapon(int key) {
 
 	idVec2 cursorWorld = GetCursorWorld();
 	idVec2 cursor;
-	//GetCursor(cursor);
 	cursor.x = gui->CursorX();
 	cursor.y = gui->CursorY();
 
-	if(key == K_MOUSE1) {
-
+	if(key == K_MOUSE1)
+	{
 		gameStats.levelStats.shotCount++;
 
 		if(gameStats.levelStats.targetEnt) {
@@ -1946,13 +1909,7 @@ void idGameSSDWindow::FireWeapon(int key) {
 		//Play the blaster sound
 		PlaySound("arcade_blaster");
 
-	} /*else if (key == K_MOUSE2) {
-		if(gameStats.levelStats.targetEnt) {
-			if(gameStats.levelStats.targetEnt->type == SSD_ENTITY_ASTRONAUT) {
-				HitAstronaut(static_cast<SSDAstronaut*>(gameStats.levelStats.targetEnt), key);
-			}
-		}
-	}*/
+	}
 }
 
 SSDEntity* idGameSSDWindow::EntityHitTest(const idVec2& pt) {
@@ -2107,14 +2064,10 @@ void idGameSSDWindow::RefreshGuiData() {
 	}
 	gui->SetStateString( "player_accuracy", va("%d%%", (int)accuracy));
 
-	float saveAccuracy;
+	float saveAccuracy = 0;
 	int totalAst = gameStats.levelStats.savedAstronauts + gameStats.levelStats.killedAstronauts;
-
-	if(!totalAst) {
-		saveAccuracy = 0;
-	} else {
+	if(totalAst)
 		saveAccuracy = ((float)gameStats.levelStats.savedAstronauts/(float)totalAst)*100.0f;
-	}
 	gui->SetStateString( "save_accuracy", va("%d%%", (int)saveAccuracy));
 
 
