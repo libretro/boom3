@@ -551,6 +551,10 @@ static ID_INLINE bool isARBidentifierChar( int c ) {
 	      || (c >= 'a' && c <= 'z');
 }
 
+/* r_gamma unity-ness the currently loaded ARB programs were built for.
+   R_CheckCvars reloads them when the live cvar crosses that boundary. */
+bool arbProgramsUnityGamma = true;
+
 void R_LoadARBProgram( int progIndex ) {
 	int		ofs;
 	int		err;
@@ -694,7 +698,50 @@ void R_LoadARBProgram( int progIndex ) {
 		extern bool hdr_fp16_scene;
 		extern bool hdr_fp32_scene;
 		extern bool hdr_unbounded_blend;
-		const char* extraLines = ( ( hdr_fp16_scene || hdr_fp32_scene ) && hdr_unbounded_blend ) ?
+		const bool unbounded = ( hdr_fp16_scene || hdr_fp32_scene ) && hdr_unbounded_blend;
+
+		/*
+		   env[21].w is 1.0/r_gamma, and r_gamma defaults to 1 - so on a
+		   default install every one of these programs was issuing three
+		   POW instructions per fragment to compute the identity.
+
+		   That is not a rounding-error cost. The epilogue goes into
+		   every ARB fragment program the renderer has, and Doom 3
+		   re-shades every lit surface once per light, so the POWs scale
+		   with overdraw rather than with screen area. At 4K with five
+		   lights averaged over the frame it works out around 124M POW,
+		   i.e. ~250M transcendental ops per frame - roughly twice what
+		   the entire HDR composite pass costs, to do nothing.
+
+		   POW is the only transcendental in the epilogue, so dropping it
+		   at unity gamma removes the whole cost. MUL_SAT can write
+		   straight to result.color with a write mask, so the unity
+		   variants are two instructions rather than five.
+
+		   Not byte-identical, and worth being straight about why: the
+		   hardware evaluates POW as exp2(y*log2(x)) to roughly 22 bits,
+		   so pow(x, 1.0) returns x to within ~2.4e-7 relative rather
+		   than exactly x. Removing it makes the result MORE accurate,
+		   by an amount ~4000x smaller than one 10-bit output code.
+
+		   R_CheckCvars reloads the programs when r_gamma crosses the
+		   unity boundary, so the live cvar keeps working.
+		*/
+		const bool unityGamma = ( r_gamma.GetFloat() == 1.0f );
+		arbProgramsUnityGamma = unityGamma;
+
+		const char* extraLines = unityGamma ? ( unbounded ?
+			"# gamma correction in shader, injected by dhewm3 (unity gamma, unclamped high side) \n"
+			"MAX dhewm3tmpres.xyz, dhewm3tmpres, 0.0;\n"
+			"MUL result.color.xyz, program.env[21], dhewm3tmpres;\n"
+			"MOV result.color.w, dhewm3tmpres.w;\n"
+			"\nEND\n\n"
+		:
+			"# gamma correction in shader, injected by dhewm3 (unity gamma) \n"
+			"MUL_SAT result.color.xyz, program.env[21], dhewm3tmpres;\n"
+			"MOV result.color.w, dhewm3tmpres.w;\n"
+			"\nEND\n\n"
+		) : unbounded ?
 			"# gamma correction in shader, injected by dhewm3 (unclamped high side for FP16 scene) \n"
 			"MAX dhewm3tmpres.xyz, dhewm3tmpres, 0.0;\n"
 			"MUL dhewm3tmpres.xyz, program.env[21], dhewm3tmpres;\n"

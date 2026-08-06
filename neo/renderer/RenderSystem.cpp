@@ -249,6 +249,23 @@ static void R_CheckCvars( void ) {
 		r_gamma.ClearModified();
 		r_brightness.ClearModified();
 		R_SetColorMappings();
+#ifndef HAVE_OPENGLES
+		/*
+		   The injected gamma epilogue has a unity-gamma variant that
+		   drops the three per-fragment POW instructions, since at
+		   r_gamma == 1 they compute the identity. Which variant is
+		   compiled in is fixed at program load, so crossing the
+		   boundary in either direction has to rebuild them - otherwise
+		   moving the in-game brightness slider off 1 would silently
+		   stop applying gamma, or moving it back to 1 would leave the
+		   POWs in place forever.
+		*/
+		extern bool arbProgramsUnityGamma;
+		if ( r_gammaInShader.GetBool()
+				&& arbProgramsUnityGamma != ( r_gamma.GetFloat() == 1.0f ) ) {
+			R_ReloadARBPrograms_f( idCmdArgs() );
+		}
+#endif
 	}
 
 	if ( r_gammaInShader.IsModified() ) {
