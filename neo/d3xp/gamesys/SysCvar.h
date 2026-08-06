@@ -51,7 +51,6 @@ extern idCVar	g_doubleVision;
 extern idCVar	g_hitEffect;
 extern idCVar	g_muzzleFlash;
 
-extern idCVar	g_disasm;
 extern idCVar	g_debugBounds;
 extern idCVar	g_debugAnim;
 extern idCVar	g_debugMove;
@@ -84,7 +83,6 @@ extern idCVar	g_showTestModelFrame;
 extern idCVar	g_showActiveEntities;
 extern idCVar	g_showEnemies;
 
-extern idCVar	g_frametime;
 extern idCVar	g_timeentities;
 
 extern idCVar	ai_debugScript;

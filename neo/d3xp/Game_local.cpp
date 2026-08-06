@@ -2677,13 +2677,6 @@ gameReturn_t idGameLocal::RunFrame(const usercmd_t* clientCmds) {
 			mpGame.Run();
 		}
 
-		// display how long it took to calculate the current game frame
-		if ( g_frametime.GetBool() ) {
-			Printf( "game %d: all:%u th:%u ev:%u %d ents \n",
-				time, timer_think.Milliseconds() + timer_events.Milliseconds(),
-				timer_think.Milliseconds(), timer_events.Milliseconds(), num );
-		}
-
 		// build the return value
 		ret.consistencyHash = 0;
 		ret.sessionCommand[0] = 0;

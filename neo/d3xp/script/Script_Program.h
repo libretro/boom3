@@ -502,8 +502,6 @@ public:
 	void										CompileFile( const char *filename );
 	void										BeginCompilation( void );
 	void										FinishCompilation( void );
-	void										DisassembleStatement( idFile *file, int instructionPointer ) const;
-	void										Disassemble( void ) const;
 	void										FreeData( void );
 
 	const char									*GetFilename( int num );

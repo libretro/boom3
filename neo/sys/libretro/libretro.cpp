@@ -135,7 +135,7 @@ bool          hdr_unbounded_blend = true;  /* unclamped epilogue on float target
 static bool   hdr_rolloff_aces  = false;   /* live-switchable */
 
 static GLuint hdr_fbo, hdr_tex, hdr_rbo, hdr_prog;
-static GLint  hdr_loc_pos, hdr_loc_tex, hdr_loc_mat, hdr_loc_parms;
+static GLint  hdr_loc_tex, hdr_loc_mat, hdr_loc_parms;
 static GLint  hdr_loc_bloomT, hdr_loc_bloomW, hdr_loc_bloomAmt, hdr_loc_encScale;
 static GLint  hdr_loc_frame;
 static unsigned hdr_frame_counter;

@@ -1681,69 +1681,6 @@ void idProgram::BeginCompilation( void ) {
 
 /*
 ==============
-idProgram::DisassembleStatement
-==============
-*/
-void idProgram::DisassembleStatement( idFile *file, int instructionPointer ) const {
-	const opcode_t		*op;
-	const statement_t	*statement;
-
-	statement = &statements[ instructionPointer ];
-	op = &idCompiler::opcodes[ statement->op ];
-	file->Printf( "%20s(%d):\t%6d: %15s\t", fileList[ statement->file ].c_str(), statement->linenumber, instructionPointer, op->opname );
-
-	if ( statement->a ) {
-		file->Printf( "\ta: " );
-		statement->a->PrintInfo( file, instructionPointer );
-	}
-
-	if ( statement->b ) {
-		file->Printf( "\tb: " );
-		statement->b->PrintInfo( file, instructionPointer );
-	}
-
-	if ( statement->c ) {
-		file->Printf( "\tc: " );
-		statement->c->PrintInfo( file, instructionPointer );
-	}
-
-	file->Printf( "\n" );
-}
-
-/*
-==============
-idProgram::Disassemble
-==============
-*/
-void idProgram::Disassemble( void ) const {
-	int					i;
-	int					instructionPointer;
-	const function_t	*func;
-	idFile				*file;
-
-	file = fileSystem->OpenFileByMode( "script/disasm.txt", FS_WRITE );
-
-	for( i = 0; i < functions.Num(); i++ ) {
-		func = &functions[ i ];
-		if ( func->eventdef ) {
-			// skip eventdefs
-			continue;
-		}
-
-		file->Printf( "\nfunction %s() %d stack used, %d parms, %d locals {\n", func->Name(), func->locals, func->parmTotal, func->locals - func->parmTotal );
-
-		for( instructionPointer = 0; instructionPointer < func->numStatements; instructionPointer++ ) {
-			DisassembleStatement( file, func->firstStatement + instructionPointer );
-		}
-
-		file->Printf( "}\n" );
-	}
-
-	fileSystem->CloseFile( file );
-}
-
-/*
-==============
 idProgram::FinishCompilation
 
 Called after all files are compiled to check for errors
@@ -1871,18 +1808,9 @@ idProgram::CompileFunction
 ================
 */
 const function_t *idProgram::CompileFunction( const char *functionName, const char *text ) {
-	bool result;
-
-	result = CompileText( functionName, text, false );
-
-	if ( g_disasm.GetBool() ) {
-		Disassemble();
-	}
-
-	if ( !result ) {
+	bool result = CompileText( functionName, text, false );
+	if ( !result )
 		gameLocal.Error( "Compile failed." );
-	}
-
 	return FindFunction( functionName );
 }
 
@@ -1902,10 +1830,6 @@ void idProgram::CompileFile( const char *filename ) {
 	result = CompileText( filename, src, false );
 
 	fileSystem->FreeFile( src );
-
-	if ( g_disasm.GetBool() ) {
-		Disassemble();
-	}
 
 	if ( !result ) {
 		gameLocal.Error( "Compile failed in file %s.", filename );
