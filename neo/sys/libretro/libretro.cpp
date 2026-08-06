@@ -1817,8 +1817,24 @@ static const char *hdr_fs_src =
 	/* bloom joins in LINEAR, BEFORE the roll-off: bloomed highlights
 	   ride the same curve into the paper-white..peak headroom, which
 	   is the part SDR output cannot express at all */
-	"  lin += uBloomAmt * (uBandW.x * texture2D(uBloomT, vUV).rgb\n"
-	"                    + uBandW.y * texture2D(uBloomW, vUV).rgb);\n"
+	/* The second band is fetched only when it is weighted. Convolution
+	   bloom puts everything in one accumulated pyramid and sets
+	   uBandW.y to zero, but the fetch still executed - a full-res
+	   bilinear sample per pixel, 8.3M of them a frame at 4K, whose
+	   result was multiplied by zero. uBandW is a uniform, so this
+	   branch is uniform across the whole draw: every lane agrees, no
+	   divergence, and the compiler can hoist it.
+
+	   Bit-exact in both modes, and the shape matters. Accumulating into
+	   a local and multiplying once at the end preserves the original
+	   uBloomAmt * (w0*a + w1*b) association - folding uBloomAmt into
+	   each term instead would have rounded differently and changed the
+	   two-band path. With w1 == 0 the skipped term was w*b for finite
+	   b, and adding +0.0 to a finite value is exact. */
+	"  vec3 bl = uBandW.x * texture2D(uBloomT, vUV).rgb;\n"
+	"  if (uBandW.y > 0.0)\n"
+	"    bl += uBandW.y * texture2D(uBloomW, vUV).rgb;\n"
+	"  lin += uBloomAmt * bl;\n"
 	"  lin = vec3(rolloff(lin.r), rolloff(lin.g), rolloff(lin.b));\n"
 	"  lin = uGamut * lin;\n"
 	"  vec3 y = clamp(lin * uParms.x, 0.0, 1.0);\n"
