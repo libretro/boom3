@@ -62,20 +62,68 @@ static void GL_SelectTextureNoClient( int unit ) {
 RB_ARB2_DrawInteraction
 ==================
 */
+/*
+Redundant-upload filter for the interaction programs' env parameters.
+
+RB_CreateSingleDrawInteractions calls RB_ARB2_DrawInteraction once per
+(light stage x surface stage) pair, and re-sends all twelve vertex
+parameters every time.  Six of them - the light and view origin and the
+four light projection planes - are set once per surface before the stage
+loops and never change inside them, and the two colour-modulate
+parameters follow din->vertexColor, which is a property of the surface
+stage's vertex colour mode rather than of the light.  On a surface with
+several stages, or a light with several stages, those uploads repeat
+with identical contents.
+
+The cache stores what was last handed to the driver and skips a call
+whose four floats are unchanged.  It is reset at the top and bottom of
+RB_ARB2_CreateDrawInteractions, so its lifetime never extends past the
+loop where this file is the only writer of these parameters - anything
+outside (RB_SetProgramEnvironment, the fog and blend light passes, the
+post-process chain) starts from a cleared cache.
+
+Values that do reach the driver are exactly the values the old code
+sent, so rendering is unchanged.
+*/
+#define RB_ENV_CACHE_SIZE ( PP_COLOR_ADD + 1 )
+
+static float	rb_envCache[RB_ENV_CACHE_SIZE][4];
+static bool	rb_envCacheValid[RB_ENV_CACHE_SIZE];
+
+static ID_INLINE void RB_EnvCacheReset( void ) {
+	memset( rb_envCacheValid, 0, sizeof( rb_envCacheValid ) );
+}
+
+static ID_INLINE void RB_VertexEnvParm( int index, const float *v ) {
+	if ( index < RB_ENV_CACHE_SIZE ) {
+		/* Bitwise comparison, not float equality: -0.0f == 0.0f is true
+		 * but the two are different values to hand a shader, and a NaN
+		 * compares unequal to itself and would defeat the skip in the
+		 * other direction.  memcmp gives "same bits, same upload". */
+		float * const c = rb_envCache[index];
+		if ( rb_envCacheValid[index] && !memcmp( c, v, 4 * sizeof( float ) ) ) {
+			return;
+		}
+		memcpy( c, v, 4 * sizeof( float ) );
+		rb_envCacheValid[index] = true;
+	}
+	qglProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, index, v );
+}
+
 void	RB_ARB2_DrawInteraction( const drawInteraction_t *din ) {
 	// load all the vertex program parameters
-	qglProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, PP_LIGHT_ORIGIN, din->localLightOrigin.ToFloatPtr() );
-	qglProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, PP_VIEW_ORIGIN, din->localViewOrigin.ToFloatPtr() );
-	qglProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, PP_LIGHT_PROJECT_S, din->lightProjection[0].ToFloatPtr() );
-	qglProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, PP_LIGHT_PROJECT_T, din->lightProjection[1].ToFloatPtr() );
-	qglProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, PP_LIGHT_PROJECT_Q, din->lightProjection[2].ToFloatPtr() );
-	qglProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, PP_LIGHT_FALLOFF_S, din->lightProjection[3].ToFloatPtr() );
-	qglProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, PP_BUMP_MATRIX_S, din->bumpMatrix[0].ToFloatPtr() );
-	qglProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, PP_BUMP_MATRIX_T, din->bumpMatrix[1].ToFloatPtr() );
-	qglProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, PP_DIFFUSE_MATRIX_S, din->diffuseMatrix[0].ToFloatPtr() );
-	qglProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, PP_DIFFUSE_MATRIX_T, din->diffuseMatrix[1].ToFloatPtr() );
-	qglProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, PP_SPECULAR_MATRIX_S, din->specularMatrix[0].ToFloatPtr() );
-	qglProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, PP_SPECULAR_MATRIX_T, din->specularMatrix[1].ToFloatPtr() );
+	RB_VertexEnvParm( PP_LIGHT_ORIGIN, din->localLightOrigin.ToFloatPtr() );
+	RB_VertexEnvParm( PP_VIEW_ORIGIN, din->localViewOrigin.ToFloatPtr() );
+	RB_VertexEnvParm( PP_LIGHT_PROJECT_S, din->lightProjection[0].ToFloatPtr() );
+	RB_VertexEnvParm( PP_LIGHT_PROJECT_T, din->lightProjection[1].ToFloatPtr() );
+	RB_VertexEnvParm( PP_LIGHT_PROJECT_Q, din->lightProjection[2].ToFloatPtr() );
+	RB_VertexEnvParm( PP_LIGHT_FALLOFF_S, din->lightProjection[3].ToFloatPtr() );
+	RB_VertexEnvParm( PP_BUMP_MATRIX_S, din->bumpMatrix[0].ToFloatPtr() );
+	RB_VertexEnvParm( PP_BUMP_MATRIX_T, din->bumpMatrix[1].ToFloatPtr() );
+	RB_VertexEnvParm( PP_DIFFUSE_MATRIX_S, din->diffuseMatrix[0].ToFloatPtr() );
+	RB_VertexEnvParm( PP_DIFFUSE_MATRIX_T, din->diffuseMatrix[1].ToFloatPtr() );
+	RB_VertexEnvParm( PP_SPECULAR_MATRIX_S, din->specularMatrix[0].ToFloatPtr() );
+	RB_VertexEnvParm( PP_SPECULAR_MATRIX_T, din->specularMatrix[1].ToFloatPtr() );
 
 	// testing fragment based normal mapping
 	if ( r_testARBProgram.GetBool() ) {
@@ -89,16 +137,16 @@ void	RB_ARB2_DrawInteraction( const drawInteraction_t *din ) {
 
 	switch ( din->vertexColor ) {
 	case SVC_IGNORE:
-		qglProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, PP_COLOR_MODULATE, zero );
-		qglProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, PP_COLOR_ADD, one );
+		RB_VertexEnvParm( PP_COLOR_MODULATE, zero );
+		RB_VertexEnvParm( PP_COLOR_ADD, one );
 		break;
 	case SVC_MODULATE:
-		qglProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, PP_COLOR_MODULATE, one );
-		qglProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, PP_COLOR_ADD, zero );
+		RB_VertexEnvParm( PP_COLOR_MODULATE, one );
+		RB_VertexEnvParm( PP_COLOR_ADD, zero );
 		break;
 	case SVC_INVERSE_MODULATE:
-		qglProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, PP_COLOR_MODULATE, negOne );
-		qglProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, PP_COLOR_ADD, one );
+		RB_VertexEnvParm( PP_COLOR_MODULATE, negOne );
+		RB_VertexEnvParm( PP_COLOR_ADD, one );
 		break;
 	}
 
@@ -147,15 +195,6 @@ void	RB_ARB2_DrawInteraction( const drawInteraction_t *din ) {
 		}
 	}
 
-	// DG: brightness and gamma in shader as program.env[4]
-	if ( r_gammaInShader.GetBool() ) {
-		// program.env[4].xyz are all r_brightness, program.env[4].w is 1.0/r_gamma
-		float parm[4];
-		parm[0] = parm[1] = parm[2] = RB_HDRGammaBrightness( false );
-		parm[3] = 1.0/r_gamma.GetFloat(); // 1.0/gamma so the shader doesn't have to do this calculation
-		qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, PP_GAMMA_BRIGHTNESS, parm );
-	}
-
 	// set the textures
 
 	// texture 1 will be the per-surface bump map
@@ -189,8 +228,6 @@ RB_ARB2_CreateDrawInteractions
 
 =============
 */
-static char rb_ctxBuf[256];
-
 void RB_ARB2_CreateDrawInteractions( const drawSurf_t *surf ) {
 	if ( !surf ) {
 		return;
@@ -235,11 +272,25 @@ void RB_ARB2_CreateDrawInteractions( const drawSurf_t *surf ) {
 	}
 
 
+	/* DG: brightness and gamma in shader as program.env[21].
+	 *
+	 * This was uploaded from RB_ARB2_DrawInteraction, so every light
+	 * stage x surface stage pair paid for it - including the pow() that
+	 * RB_HDRGammaBrightness does when the scene encode scale is not 1,
+	 * and a float division.  Its inputs (r_brightness, r_gamma, the
+	 * encode scale) cannot change while this loop runs, and nothing
+	 * inside the loop writes env[21], so it is computed and sent once
+	 * for the whole set of interactions. */
+	if ( r_gammaInShader.GetBool() ) {
+		float parm[4];
+		parm[0] = parm[1] = parm[2] = RB_HDRGammaBrightness( false );
+		parm[3] = 1.0/r_gamma.GetFloat(); // 1.0/gamma so the shader doesn't have to do this calculation
+		qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, PP_GAMMA_BRIGHTNESS, parm );
+	}
+
+	RB_EnvCacheReset();
+
 	for ( ; surf ; surf=surf->nextOnLight ) {
-		idStr::snPrintf( rb_ctxBuf, sizeof( rb_ctxBuf ), "%s on %s",
-			surf->material ? surf->material->GetName() : "<nomat>",
-			( surf->space && surf->space->entityDef && surf->space->entityDef->parms.hModel )
-				? surf->space->entityDef->parms.hModel->Name() : "<nomodel>" );
 		// perform setup here that will not change over multiple interaction passes
 
 		// set the vertex pointers
@@ -255,6 +306,8 @@ void RB_ARB2_CreateDrawInteractions( const drawSurf_t *surf ) {
 		// times with different colors and images if the surface or light have multiple layers
 		RB_CreateSingleDrawInteractions( surf, RB_ARB2_DrawInteraction );
 	}
+
+	RB_EnvCacheReset();
 
 	qglDisableVertexAttribArrayARB( 8 );
 	qglDisableVertexAttribArrayARB( 9 );
