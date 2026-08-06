@@ -98,7 +98,9 @@ static asyncLoadState_t	async;
 R_AsyncDecodeWorker
 
 Worker thread: pop decode requests, run the CPU decode, push results back.
-Runs until stop is set AND the request queue is drained.
+Runs until stop is set. Stop is honoured immediately rather than after
+draining the request queue - see the comment on the check below for why
+that is both safe on the normal path and necessary on the teardown one.
 ====================
 */
 static int R_AsyncDecodeWorker( void *parm ) {
@@ -106,6 +108,28 @@ static int R_AsyncDecodeWorker( void *parm ) {
 
 	for ( ; ; ) {
 		asyncLoadReq_t req;
+
+		// Stop is checked BEFORE the request queue, so it means "stop
+		// now" rather than "stop once the queue is drained".
+		//
+		// On the normal path the distinction cannot matter: the main
+		// loop only exits once completed == count, which requires every
+		// queued request to have been consumed and its result drained,
+		// so reqQ is provably empty by the time stop is set.
+		//
+		// It matters a great deal on the teardown path. Stop is set
+		// there because an upload threw, and up to ASYNC_MAX_INFLIGHT
+		// requests can still be queued. Draining them first would run
+		// sixteen full image decodes - the expensive half of a load -
+		// while the main thread sits blocked in Sys_DestroyThread,
+		// turning a drop to the menu into a multi-second freeze. The
+		// abandoned requests carry only an idImage pointer and own
+		// nothing, so leaving them in the queue leaks nothing; the
+		// teardown frees the queue itself.
+		if ( retro_atomic_load_acquire_int( &s->stop ) ) {
+			break;
+		}
+
 		if ( retro_spsc_read_avail( &s->reqQ ) >= sizeof( req ) ) {
 			retro_spsc_read( &s->reqQ, &req, sizeof( req ) );
 
@@ -138,12 +162,9 @@ static int R_AsyncDecodeWorker( void *parm ) {
 			continue;
 		}
 
-		if ( retro_atomic_load_acquire_int( &s->stop ) ) {
-			// stop requested and no more requests pending
-			break;
-		}
-
-		// nothing to do: sleep until main submits or sets stop
+		// nothing to do: sleep until main submits or sets stop.
+		// Sys_TriggerEvent latches when nobody is waiting, so a wake
+		// raised between the checks above and this wait is not lost.
 		Sys_WaitForEvent( TRIGGER_EVENT_ASYNC_WORKER );
 	}
 	return 0;
