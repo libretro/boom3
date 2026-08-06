@@ -2845,6 +2845,38 @@ bool retro_load_game_special(unsigned type, const struct retro_game_info *info, 
 extern bool retro_savestate_active;
 #define RETRO_STATE_NAME "retro_state"
 
+/*
+   Scoped owner for retro_savestate_active.
+
+   idCommonLocal::Frame() wraps its whole body in catch( idException & ),
+   which is what makes retro_run survive an ERP_DROP. The savestate
+   entry points do not go through Frame(): they call sessLocal.SaveGame
+   and sessLocal.LoadGame directly, so nothing was catching an
+   idException thrown underneath them.
+
+   That is not a theoretical path. ExecuteMapChange calls
+   common->Error( "couldn't load %s" ) when the map named in the state
+   is missing, and common->Error throws for ERP_DROP. A state carried
+   between installs, mods, or core versions - which the format
+   deliberately allows to be version- and platform-dependent - lands
+   exactly there.
+
+   The consequences were both bad. The flag stayed true forever, and
+   every user of it fails closed: UpdateScreen returns immediately, so
+   no frame is ever rendered again and the HDR present pass never runs.
+   A permanently black screen from one bad state. And the exception
+   unwound out of retro_unserialize into the frontend, which is C and
+   has no handler for it - undefined behaviour at the ABI boundary.
+
+   The destructor restores the flag on every exit path, and the callers
+   below stop anything escaping into the frontend.
+*/
+class RetroSaveStateScope {
+public:
+	RetroSaveStateScope()  { retro_savestate_active = true; }
+	~RetroSaveStateScope() { retro_savestate_active = false; }
+};
+
 static idList<byte> retro_state_cache;
 static int retro_state_cache_tic = -1;
 
@@ -2867,9 +2899,17 @@ static bool RetroBuildState(void)
 	if (retro_state_cache.Num() > 0)
 		mem.SetGranularity(retro_state_cache.Num() + 65536);
 	int stT0 = Core_Milliseconds();
-	retro_savestate_active = true;
-	bool ok = sessLocal.SaveGame(RETRO_STATE_NAME, true, NULL, &mem);
-	retro_savestate_active = false;
+	bool ok = false;
+	try {
+		RetroSaveStateScope guard;
+		ok = sessLocal.SaveGame(RETRO_STATE_NAME, true, NULL, &mem);
+	} catch ( idException &e ) {
+		if (log_cb) log_cb(RETRO_LOG_ERROR, "[boom3] state: SaveGame threw: %s\n", e.error);
+		return false;
+	} catch ( ... ) {
+		if (log_cb) log_cb(RETRO_LOG_ERROR, "[boom3] state: SaveGame threw\n");
+		return false;
+	}
 	int stT1 = Core_Milliseconds();
 	if (ok) {
 		/* Append the mixer's DSP section (see WriteDSPState) with a
@@ -2948,9 +2988,20 @@ bool retro_unserialize(const void *data_, size_t size)
 	                                       (const char *)data_, (int)size);
 
 	int stT0 = Core_Milliseconds();
-	retro_savestate_active = true;
-	bool ok = sessLocal.LoadGame(RETRO_STATE_NAME, mem);
-	retro_savestate_active = false;
+	bool ok = false;
+	try {
+		RetroSaveStateScope guard;
+		ok = sessLocal.LoadGame(RETRO_STATE_NAME, mem);
+	} catch ( idException &e ) {
+		/* LoadGame owns mem's lifetime through savegameFile and closes it
+		   on every exit path it takes, including the error one, so it is
+		   not ours to free here. */
+		if (log_cb) log_cb(RETRO_LOG_ERROR, "[boom3] state restore: LoadGame threw: %s\n", e.error);
+		return false;
+	} catch ( ... ) {
+		if (log_cb) log_cb(RETRO_LOG_ERROR, "[boom3] state restore: LoadGame threw\n");
+		return false;
+	}
 	/* the restore is a synchronous map change today: this number is the
 	 * whole case for the same-map fast-restore architecture. */
 	if (log_cb) log_cb(RETRO_LOG_INFO, "[boom3] state restore: %dms ok=%d\n",
