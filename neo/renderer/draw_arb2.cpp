@@ -86,12 +86,17 @@ Values that do reach the driver are exactly the values the old code
 sent, so rendering is unchanged.
 */
 #define RB_ENV_CACHE_SIZE ( PP_COLOR_ADD + 1 )
+#define RB_FRAG_ENV_CACHE_SIZE 2
 
 static float	rb_envCache[RB_ENV_CACHE_SIZE][4];
 static bool	rb_envCacheValid[RB_ENV_CACHE_SIZE];
 
+static float	rb_fragEnvCache[RB_FRAG_ENV_CACHE_SIZE][4];
+static bool	rb_fragEnvCacheValid[RB_FRAG_ENV_CACHE_SIZE];
+
 static ID_INLINE void RB_EnvCacheReset( void ) {
 	memset( rb_envCacheValid, 0, sizeof( rb_envCacheValid ) );
+	memset( rb_fragEnvCacheValid, 0, sizeof( rb_fragEnvCacheValid ) );
 }
 
 static ID_INLINE void RB_VertexEnvParm( int index, const float *v ) {
@@ -108,6 +113,23 @@ static ID_INLINE void RB_VertexEnvParm( int index, const float *v ) {
 		rb_envCacheValid[index] = true;
 	}
 	qglProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, index, v );
+}
+
+/* Same filter for the fragment target's two interaction colours.  These
+ * are lightColor * the surface stage's colour registers, so they repeat
+ * across surfaces that share a material under one light - how often is
+ * content-dependent, and the filter simply costs a comparison when they
+ * do not. */
+static ID_INLINE void RB_FragmentEnvParm( int index, const float *v ) {
+	if ( index < RB_FRAG_ENV_CACHE_SIZE ) {
+		float * const c = rb_fragEnvCache[index];
+		if ( rb_fragEnvCacheValid[index] && !memcmp( c, v, 4 * sizeof( float ) ) ) {
+			return;
+		}
+		memcpy( c, v, 4 * sizeof( float ) );
+		rb_fragEnvCacheValid[index] = true;
+	}
+	qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, index, v );
 }
 
 void	RB_ARB2_DrawInteraction( const drawInteraction_t *din ) {
@@ -151,7 +173,7 @@ void	RB_ARB2_DrawInteraction( const drawInteraction_t *din ) {
 	}
 
 	// set the constant colors
-	qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 0, din->diffuseColor.ToFloatPtr() );
+	RB_FragmentEnvParm( 0, din->diffuseColor.ToFloatPtr() );
 	{
 		/*
 		   HDR specular boost (30-bit mode): dielectric specular is
@@ -189,9 +211,9 @@ void	RB_ARB2_DrawInteraction( const drawInteraction_t *din ) {
 			sc[1] = din->specularColor[1] * hdr_specular_gain;
 			sc[2] = din->specularColor[2] * hdr_specular_gain;
 			sc[3] = din->specularColor[3];
-			qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 1, sc );
+			RB_FragmentEnvParm( 1, sc );
 		} else {
-			qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 1, din->specularColor.ToFloatPtr() );
+			RB_FragmentEnvParm( 1, din->specularColor.ToFloatPtr() );
 		}
 	}
 
