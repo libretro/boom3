@@ -2883,13 +2883,18 @@ static int retro_state_cache_tic = -1;
 static bool RetroBuildState(void)
 {
 	extern volatile int com_ticNumber;
-	if (retro_state_cache_tic == com_ticNumber && retro_state_cache.Num() > 0)
-		return true;	// still current: state can only change on a tic
 
+	/* mapSpawned gates the cache, not the other way round. A cache entry
+	 * describes a spawned map; if there is no longer one, the entry is
+	 * stale no matter what tic it carries, and serving it would hand the
+	 * frontend a state for a session that has ended. */
 	if (!sessLocal.mapSpawned) {
 		if (log_cb) log_cb(RETRO_LOG_INFO, "[boom3] state: refused, mapSpawned=false\n");
 		return false;
 	}
+
+	if (retro_state_cache_tic == com_ticNumber && retro_state_cache.Num() > 0)
+		return true;	// still current: state can only change on a tic
 
 	// serialize straight into memory: no disk I/O anywhere in this path
 	idFile_Memory mem(RETRO_STATE_NAME ".save");
@@ -2987,6 +2992,16 @@ bool retro_unserialize(const void *data_, size_t size)
 	idFile_Memory *mem = new idFile_Memory(RETRO_STATE_NAME ".save",
 	                                       (const char *)data_, (int)size);
 
+	/* Invalidate before the restore rather than after it. The moment we
+	 * commit to loading, the cache describes a game state that is being
+	 * torn down, and that is true whether LoadGame succeeds, returns
+	 * false, or throws. Doing it on the success path only left the throw
+	 * path holding a cache still stamped with the current tic - and
+	 * RetroBuildState's cache-hit check would then hand the frontend the
+	 * pre-restore state back, after the engine had already dropped to the
+	 * menu. */
+	retro_state_cache_tic = -1;
+
 	int stT0 = Core_Milliseconds();
 	bool ok = false;
 	try {
@@ -3043,8 +3058,6 @@ bool retro_unserialize(const void *data_, size_t size)
 		}
 	}
 
-	// state changed out from under the cache
-	retro_state_cache_tic = -1;
 	return ok;
 }
 
