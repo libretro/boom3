@@ -132,6 +132,54 @@ static ID_INLINE void RB_FragmentEnvParm( int index, const float *v ) {
 	qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, index, v );
 }
 
+/*
+   HDR specular boost: dielectric specular is physically a few percent
+   of incident light, and under an SDR ceiling those few percent read as
+   mud.  The specular energy enters the interaction program as a per-draw
+   constant, so scaling it lifts reflections on lit surfaces only - GUIs,
+   2D and fullbright content never pass through this path.  Boosted
+   highlights that reach the bloom threshold then bleed into the
+   paper-white..peak headroom, which is where reflective punch actually
+   lives on an HDR display.  Identity (1.0) when HDR is off or the
+   option is disabled: bit-identical SDR.
+
+   Whether the boost produces highlights or just clipping depends on
+   there being somewhere for the boosted energy to go, and that is
+   decided by two other options, not one:
+
+     - the encoding fold (doom_hdr_headroom) buys one gamma-domain stop
+       by scaling the scene down before the epilogue;
+     - a float scene target only carries values past 1.0 if the epilogue
+       is the unclamped variant, which is what doom_hdr_true_blend
+       selects.  With true_blend disabled the epilogue is MUL_SAT and
+       clamps every pass at 1.0 exactly as an integer target does, so an
+       FP16 target on its own is not headroom.
+
+   The gate below therefore mirrors the epilogue's own condition.  It
+   previously tested the float target alone, which made the boost act as
+   a highlight clipper in the one configuration where the user had
+   turned off both true_blend and the headroom fold - the boost pushed
+   specular past a ceiling that was still there, converting highlights
+   to flat white.  That is the opposite of the intent, so refuse the
+   boost instead.
+*/
+static float	rb_specularBoost = 1.0f;
+
+static void RB_UpdateSpecularBoost( void ) {
+	extern bool  hdr_output_active;
+	extern float hdr_specular_gain;
+	extern float hdr_scene_encode_scale;
+	extern bool  hdr_fp16_scene;
+	extern bool  hdr_fp32_scene;
+	extern bool  hdr_unbounded_blend;
+
+	const bool floatHeadroom = ( hdr_fp16_scene || hdr_fp32_scene ) && hdr_unbounded_blend;
+	const bool foldHeadroom  = hdr_scene_encode_scale != 1.0f;
+
+	rb_specularBoost = ( hdr_output_active && ( floatHeadroom || foldHeadroom ) )
+			? hdr_specular_gain : 1.0f;
+}
+
 void	RB_ARB2_DrawInteraction( const drawInteraction_t *din ) {
 	// load all the vertex program parameters
 	RB_VertexEnvParm( PP_LIGHT_ORIGIN, din->localLightOrigin.ToFloatPtr() );
@@ -174,47 +222,15 @@ void	RB_ARB2_DrawInteraction( const drawInteraction_t *din ) {
 
 	// set the constant colors
 	RB_FragmentEnvParm( 0, din->diffuseColor.ToFloatPtr() );
-	{
-		/*
-		   HDR specular boost (30-bit mode): dielectric specular is
-		   physically a few percent of incident light, and under an SDR
-		   ceiling those few percent read as mud. The specular energy
-		   enters this program as a per-draw constant, so scaling it
-		   here lifts reflections on lit surfaces only - GUIs, 2D, and
-		   fullbright content never pass through this path. Boosted
-		   highlights that reach the bloom threshold then bleed into
-		   the paper-white..peak headroom, which is where reflective
-		   punch actually lives on an HDR display. Identity (1.0) when
-		   HDR is off or the option is disabled: bit-identical SDR.
-
-		   Whether the boost produces highlights or just clipping
-		   depends on there being somewhere for the boosted energy to
-		   go. A float scene target has no ceiling and the encoding
-		   fold buys one stop, but with a 10-bit target AND the
-		   headroom option off, result.color saturates in the
-		   epilogue's MUL_SAT and RGB10_A2 clamps again behind it - the
-		   boost then only converts more pixels to flat white, which is
-		   the opposite of the intent. The two options are presented as
-		   independent and are not, so refuse the boost rather than let
-		   it act as a highlight clipper.
-		*/
-		extern bool  hdr_output_active;
-		extern float hdr_specular_gain;
-		extern float hdr_scene_encode_scale;
-		extern bool  hdr_fp16_scene;
-		extern bool  hdr_fp32_scene;
-		const bool haveHeadroom = hdr_fp16_scene || hdr_fp32_scene
-				|| hdr_scene_encode_scale != 1.0f;
-		if ( hdr_output_active && haveHeadroom && hdr_specular_gain != 1.0f ) {
-			float sc[4];
-			sc[0] = din->specularColor[0] * hdr_specular_gain;
-			sc[1] = din->specularColor[1] * hdr_specular_gain;
-			sc[2] = din->specularColor[2] * hdr_specular_gain;
-			sc[3] = din->specularColor[3];
-			RB_FragmentEnvParm( 1, sc );
-		} else {
-			RB_FragmentEnvParm( 1, din->specularColor.ToFloatPtr() );
-		}
+	if ( rb_specularBoost != 1.0f ) {
+		float sc[4];
+		sc[0] = din->specularColor[0] * rb_specularBoost;
+		sc[1] = din->specularColor[1] * rb_specularBoost;
+		sc[2] = din->specularColor[2] * rb_specularBoost;
+		sc[3] = din->specularColor[3];
+		RB_FragmentEnvParm( 1, sc );
+	} else {
+		RB_FragmentEnvParm( 1, din->specularColor.ToFloatPtr() );
 	}
 
 	// set the textures
@@ -311,6 +327,7 @@ void RB_ARB2_CreateDrawInteractions( const drawSurf_t *surf ) {
 	}
 
 	RB_EnvCacheReset();
+	RB_UpdateSpecularBoost();
 
 	for ( ; surf ; surf=surf->nextOnLight ) {
 		// perform setup here that will not change over multiple interaction passes
