@@ -47,7 +47,6 @@ public:
 	static void			Init( void );
 	static void			InitProcessor( const char *module, bool forceGeneric );
 	static void			Shutdown( void );
-	static void			Test_f( const class idCmdArgs &args );
 };
 
 
