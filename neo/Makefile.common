@@ -188,7 +188,6 @@ SRC_IDLIB	:=\
 	$(CORE_DIR)/idlib/geometry/Surface_Patch.cpp \
 	$(CORE_DIR)/idlib/geometry/TraceModel.cpp \
 	$(CORE_DIR)/idlib/geometry/JointTransform.cpp \
-	$(CORE_DIR)/idlib/hashing/CRC32.cpp \
 	$(CORE_DIR)/idlib/hashing/MD4.cpp \
 	$(CORE_DIR)/idlib/hashing/MD5.cpp \
 	$(CORE_DIR)/idlib/math/Angles.cpp \

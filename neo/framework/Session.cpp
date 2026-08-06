@@ -27,7 +27,7 @@ If you have questions concerning this license or the applicable additional terms
 */
 
 #include "sys/platform.h"
-#include "idlib/hashing/CRC32.h"
+#include <encodings/crc32.h>
 #include "idlib/LangDict.h"
 #include "framework/async/AsyncNetwork.h"
 #include "framework/Console.h"
@@ -3551,7 +3551,7 @@ bool idSessionLocal::CheckKey( const char *key, bool netConnect, bool offline_va
 
 		if ( edited_key[ i_key ] ) {
 			// verify the checksum for edited keys only
-			checksum = CRC32_BlockChecksum( lkey[i_key], CDKEY_BUF_LEN - 1 );
+			checksum = encoding_crc32( 0, (const uint8_t *)lkey[i_key], CDKEY_BUF_LEN - 1 );
 			chk8 = ( checksum & 0xff ) ^ ( ( ( checksum & 0xff00 ) >> 8 ) ^ ( ( ( checksum & 0xff0000 ) >> 16 ) ^ ( ( checksum & 0xff000000 ) >> 24 ) ) );
 			idStr::snPrintf( s_chk, 3, "%02X", chk8 );
 			if ( idStr::Icmp( l_chk[i_key], s_chk ) != 0 ) {

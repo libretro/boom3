@@ -93,7 +93,6 @@
 #include "idlib/containers/PlaneSet.h"
 
 // hashing
-#include "idlib/hashing/CRC32.h"
 #include "idlib/hashing/MD4.h"
 #include "idlib/hashing/MD5.h"
 

@@ -27,7 +27,7 @@ If you have questions concerning this license or the applicable additional terms
 */
 
 #include "sys/platform.h"
-#include "idlib/hashing/CRC32.h"
+#include <encodings/crc32.h>
 #include "framework/Common.h"
 #include "framework/File.h"
 
@@ -245,12 +245,11 @@ int	idDict::Checksum( void ) const {
 	idList<idKeyValue> sorted = args;
 	sorted.Sort( KeyCompare );
 	n = sorted.Num();
-	CRC32_InitChecksum( ret );
+	ret = 0;
 	for( i = 0; i < n; i++ ) {
-		CRC32_UpdateChecksum( ret, sorted[i].GetKey().c_str(), sorted[i].GetKey().Length() );
-		CRC32_UpdateChecksum( ret, sorted[i].GetValue().c_str(), sorted[i].GetValue().Length() );
+		ret = encoding_crc32( ret, (const uint8_t *)sorted[i].GetKey().c_str(), sorted[i].GetKey().Length() );
+		ret = encoding_crc32( ret, (const uint8_t *)sorted[i].GetValue().c_str(), sorted[i].GetValue().Length() );
 	}
-	CRC32_FinishChecksum( ret );
 	return ret;
 }
 
