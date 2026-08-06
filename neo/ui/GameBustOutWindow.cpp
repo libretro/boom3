@@ -650,21 +650,21 @@ idGameBustOutWindow::HandleEvent
 =============================
 */
 const char *idGameBustOutWindow::HandleEvent(const sysEvent_t *event, bool *updateVisuals) {
-    // need to call this to allow proper focus and capturing on embedded children
-    const char *ret = idWindow::HandleEvent(event, updateVisuals);
+	// need to call this to allow proper focus and capturing on embedded children
+	const char *ret = idWindow::HandleEvent(event, updateVisuals);
 
-    if ( event->evType == SE_KEY && event->evValue2 && event->evValue == K_MOUSE1 && ballsInPlay == 0 ) {
-        BOEntity *ball = CreateNewBall();
-        ball->SetVisible( true );
-        ball->position.x = paddle->ent->position.x + 48.f;
-        ball->position.y = 430.f;
-        ball->velocity.x = ballSpeed;
-        ball->velocity.y = -ballSpeed * 2.f;
-        ball->velocity.NormalizeFast();
-        ball->velocity *= ballSpeed;
-    }
+	if ( event->evType == SE_KEY && event->evValue2 && event->evValue == K_MOUSE1 && ballsInPlay == 0 ) {
+		BOEntity *ball = CreateNewBall();
+		ball->SetVisible( true );
+		ball->position.x = paddle->ent->position.x + 48.f;
+		ball->position.y = 430.f;
+		ball->velocity.x = ballSpeed;
+		ball->velocity.y = -ballSpeed * 2.f;
+		ball->velocity.NormalizeFast();
+		ball->velocity *= ballSpeed;
+	}
 
-    return ret;
+	return ret;
 }
 
 /*

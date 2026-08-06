@@ -1341,7 +1341,6 @@ const char *idGameSSDWindow::HandleEvent(const sysEvent_t *event, bool *updateVi
 
 idWinVar *idGameSSDWindow::GetWinVarByName	(const char *_name, bool winLookup, drawWin_t** owner) {
 
-	idWinVar *retVar = NULL;
 	if (idStr::Icmp(_name, "beginLevel") == 0)
 		return &beginLevel;
 	else if (idStr::Icmp(_name, "resetGame") == 0)
