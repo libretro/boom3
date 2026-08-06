@@ -116,8 +116,21 @@ static int R_AsyncDecodeWorker( void *parm ) {
 			res.image = req.image;
 			res.decoded = req.image->DecodeImageDataWorker( res.data );
 
-			// block until there is room in the result queue (main drains it)
+			// Block until there is room in the result queue (main drains
+			// it) - but honour stop while blocked. If the main thread
+			// left this loop early, nothing will ever drain resQ again,
+			// and waiting unconditionally would turn a teardown into a
+			// hang inside Sys_DestroyThread. Drop the decode we are
+			// holding rather than block: main is no longer going to
+			// upload it, and it owns no other reference.
 			while ( retro_spsc_write_avail( &s->resQ ) < sizeof( res ) ) {
+				if ( retro_atomic_load_acquire_int( &s->stop ) ) {
+					if ( res.decoded && res.data.pic ) {
+						R_StaticFree( res.data.pic );
+						res.data.pic = NULL;
+					}
+					return 0;
+				}
 				Sys_WaitForEvent( TRIGGER_EVENT_ASYNC_WORKER );
 			}
 			retro_spsc_write( &s->resQ, &res, sizeof( res ) );
@@ -135,6 +148,64 @@ static int R_AsyncDecodeWorker( void *parm ) {
 	}
 	return 0;
 }
+
+/*
+====================
+R_AsyncLoadShutdown
+
+Teardown for the decode worker, as a destructor so it runs on every exit
+path from R_AsyncLoadImages - including the one nobody was thinking
+about.
+
+The body of that function calls into idImage::UploadImageData, which
+reaches R_CreateImage, which calls common->Error( "R_CreateImage: not a
+power of 2 image" ) among others. common->Error throws idException for
+ERP_DROP, and idCommonLocal::Frame() catches it several frames up the
+stack - so the throw is a normal, survivable event that skipped every
+line below the loop.
+
+What that left behind: the worker never told to stop and never reaped,
+still running and blocked in Sys_WaitForEvent; Mem_EnableLock stuck on
+for the rest of the session, putting a mutex on every allocation the
+engine makes; and both queue buffers leaked.
+
+The corruption came on the next map load. R_AsyncLoadImages would
+retro_spsc_init the same file-static queues while the orphaned worker
+was still polling them, so two workers shared one single-producer/
+single-consumer ring. That invariant is the whole basis for the
+lock-free hand-off: break it and records are lost or read twice, which
+means decoded buffers double-freed in UploadImageData.
+
+Also drains anything still sitting in the result queue. Those records
+hold R_StaticAlloc'd pixels that only the main thread's upload frees.
+====================
+*/
+class AsyncLoadShutdown {
+public:
+	AsyncLoadShutdown( asyncLoadState_t *s ) : st( s ) { }
+	~AsyncLoadShutdown() {
+		retro_atomic_store_release_int( &st->stop, 1 );
+		Sys_TriggerEvent( TRIGGER_EVENT_ASYNC_WORKER );
+		Sys_DestroyThread( st->thread );
+		st->running = false;
+
+		// the worker is joined, so this is now single-threaded: free any
+		// decodes it finished that were never uploaded
+		asyncLoadRes_t res;
+		while ( retro_spsc_read_avail( &st->resQ ) >= sizeof( res ) ) {
+			retro_spsc_read( &st->resQ, &res, sizeof( res ) );
+			if ( res.decoded && res.data.pic ) {
+				R_StaticFree( res.data.pic );
+			}
+		}
+
+		Mem_EnableLock( false );
+		retro_spsc_free( &st->reqQ );
+		retro_spsc_free( &st->resQ );
+	}
+private:
+	asyncLoadState_t *st;
+};
 
 /*
 ====================
@@ -177,6 +248,9 @@ void R_AsyncLoadImages( idImage **list, int count ) {
 
 	Sys_CreateThread( R_AsyncDecodeWorker, &async, async.thread, "imageDecode" );
 	async.running = true;
+
+	// from here on every exit path, normal or thrown, runs the teardown
+	AsyncLoadShutdown shutdown( &async );
 
 	int submitted = 0;
 	int completed = 0;
@@ -245,16 +319,4 @@ void R_AsyncLoadImages( idImage **list, int count ) {
 			Sys_WaitForEvent( TRIGGER_EVENT_ASYNC_MAIN );
 		}
 	}
-
-	// tell the worker to exit and reap it; it may be blocked in
-	// Sys_WaitForEvent, so wake it after setting the flag
-	retro_atomic_store_release_int( &async.stop, 1 );
-	Sys_TriggerEvent( TRIGGER_EVENT_ASYNC_WORKER );
-	Sys_DestroyThread( async.thread );
-	async.running = false;
-
-	Mem_EnableLock( false );
-
-	retro_spsc_free( &async.reqQ );
-	retro_spsc_free( &async.resQ );
 }
