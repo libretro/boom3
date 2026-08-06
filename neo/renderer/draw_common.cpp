@@ -665,7 +665,34 @@ float RB_HDRGammaBrightness( bool filterBlend ) {
 	if ( filterBlend || s == 1.0f ) {
 		return b;
 	}
-	return b * idMath::Pow( s, r_gamma.GetFloat() );
+
+	/* pow(s, gamma) is the only transcendental here, and both of its
+	 * arguments are fixed for the duration of a frame - the encode scale
+	 * is set from a core option and r_gamma from a cvar, neither of
+	 * which moves while the backend is drawing.  The callers are not:
+	 * the material stage paths call this per stage, per surface, so the
+	 * pow was being evaluated thousands of times a frame for one value.
+	 *
+	 * Memoized on the exact bits of both arguments, so a recomputation
+	 * happens whenever either actually changes and the returned value is
+	 * always the one powf() would have produced for the current
+	 * arguments.  Backend-thread only, like every RB_ function. */
+	const float g = r_gamma.GetFloat();
+	static float	memoS = 0.0f;
+	static float	memoG = 0.0f;
+	static float	memoPow = 0.0f;
+	static bool	memoValid = false;
+
+	if ( !memoValid
+			|| memcmp( &memoS, &s, sizeof( float ) ) != 0
+			|| memcmp( &memoG, &g, sizeof( float ) ) != 0 ) {
+		memoPow = idMath::Pow( s, g );
+		memoS = s;
+		memoG = g;
+		memoValid = true;
+	}
+
+	return b * memoPow;
 }
 
 void RB_SetProgramEnvironment( bool isPostProcess ) {
