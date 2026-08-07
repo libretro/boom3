@@ -2948,6 +2948,14 @@ static bool hdr_ensure_target( int w, int h ) {
 		if ( fsd ) glDeleteShader( fsd );
 		if ( fsu ) glDeleteShader( fsu );
 	}
+#endif /* HAVE_OPENGLES */
+
+	/* Everything from here down builds framebuffers and textures, which
+	   both backends need.  It ended up inside the GLES-only region when
+	   the GLSL program creation above it was gated: the desktop build
+	   then had no scene target at all, hdr_fbo stayed zero, hdr_present
+	   returned on its first line, and the screen was black with nothing
+	   to log. */
 	if ( hdr_fbo == 0 || w != hdr_w || h != hdr_h ) {
 		if ( hdr_tex ) glDeleteTextures( 1, &hdr_tex );
 		if ( hdr_rbo ) glDeleteRenderbuffers( 1, &hdr_rbo );
@@ -3119,7 +3127,6 @@ static bool hdr_ensure_target( int w, int h ) {
 		hdr_w = w;
 		hdr_h = h;
 	}
-#endif /* HAVE_OPENGLES */
 	return true;
 }
 
