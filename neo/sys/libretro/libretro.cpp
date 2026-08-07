@@ -3150,9 +3150,26 @@ static const float hdr_mIdentity[9] = {
 	0.0f, 0.0f, 1.0f
 };
 
+/* Is the chain this build actually uses loaded?
+ *
+ * These used to be written as direct tests of the GLSL program handles,
+ * which was fine while GLSL was the only chain.  Once the desktop build
+ * stopped compiling GLSL those handles are permanently zero there, so
+ * the composite guard below refused every frame and the screen went
+ * black with nothing logged - the pass was not failing, it was never
+ * running.  Name the programs per build instead. */
+#ifdef HAVE_OPENGLES
+#define HDR_COMPOSITE_READY	( hdr_prog != 0 )
+#define HDR_BLOOM_READY		( hdr_prog_bright != 0 && hdr_prog_blur != 0 )
+#else
+#define HDR_COMPOSITE_READY	( hdr_arb_vp != 0 && hdr_arb_comp1 != 0 && hdr_arb_comp2 != 0 )
+#define HDR_BLOOM_READY		( hdr_arb_bright != 0 && hdr_arb_blur != 0 \
+				  && hdr_arb_down != 0 && hdr_arb_up != 0 )
+#endif
+
 /* run the conversion pass from the scene target into dstFbo */
 static void hdr_present( GLuint dstFbo ) {
-	if ( !hdr_output_active || hdr_prog == 0 || hdr_fbo == 0 )
+	if ( !hdr_output_active || !HDR_COMPOSITE_READY || hdr_fbo == 0 )
 		return;
 
 	/* frontend HDR state, re-queried per present as the contract asks */
@@ -3230,7 +3247,7 @@ static void hdr_present( GLuint dstFbo ) {
 
 	int haveBloom = ( hdr_bloom_amount > 0.0f
 			&& !hdr_bloom_prog_bad && !hdr_bloom_tex_bad
-			&& hdr_prog_bright && hdr_prog_blur );
+			&& HDR_BLOOM_READY );
 	/* Level count for the convolution pyramid, 0 when the option is off.
 	   Computed once: the chain below and the composite must agree, and
 	   the composite's band weight is derived from it. */
@@ -3412,11 +3429,25 @@ static void hdr_present( GLuint dstFbo ) {
 		glBindFramebuffer( RARCH_GL_FRAMEBUFFER, hdr_bloom_fbo[3] );
 		glViewport( 0, 0, sw, sh );
 		glBindTexture( GL_TEXTURE_2D, hdr_bloom_tex[0] );
+#ifdef HAVE_OPENGLES
 		glUniform2f( hdr_blur_loc_dir, 1.0f / sw, 0.0f );
+#else
+		{
+			const float dh[4] = { 1.0f / sw, 0.0f, 0.0f, 0.0f };
+			qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 0, dh );
+		}
+#endif
 		glDrawArrays( GL_TRIANGLES, 0, 3 );
 		glBindFramebuffer( RARCH_GL_FRAMEBUFFER, hdr_bloom_fbo[2] );
 		glBindTexture( GL_TEXTURE_2D, hdr_bloom_tex[3] );
+#ifdef HAVE_OPENGLES
 		glUniform2f( hdr_blur_loc_dir, 0.0f, 1.0f / sh );
+#else
+		{
+			const float dv[4] = { 0.0f, 1.0f / sh, 0.0f, 0.0f };
+			qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 0, dv );
+		}
+#endif
 		glDrawArrays( GL_TRIANGLES, 0, 3 );
 		}
 	}
