@@ -367,6 +367,42 @@ void idGuiModel::SetColor( float r, float g, float b, float a ) {
 DrawStretchPic
 =============
 */
+/*
+=============
+idGuiModel::AllocPrim
+
+Surface bookkeeping and list growth for one primitive, returning where
+its vertices and indices go.  Callers that build their own vertices fill
+these directly; the array-taking DrawStretchPic still copies, because its
+source is somebody else's memory.
+=============
+*/
+idDrawVert *idGuiModel::AllocPrim( const idMaterial *material, int vertCount, int indexCount,
+								   glIndex_t **outIndexes, int *outFirstIndexValue ) {
+	// break the current surface if we are changing to a new material
+	if ( material != surf->material ) {
+		if ( surf->numVerts ) {
+			AdvanceSurf();
+		}
+		const_cast<idMaterial *>(material)->EnsureNotPurged();	// in case it was a gui item started before a level change
+		surf->material = material;
+	}
+
+	const int numVerts = verts.Num();
+	const int numIndexes = indexes.Num();
+
+	verts.AssureSize( numVerts + vertCount );
+	indexes.AssureSize( numIndexes + indexCount );
+
+	surf->numVerts += vertCount;
+	surf->numIndexes += indexCount;
+
+	*outIndexes = &indexes[numIndexes];
+	*outFirstIndexValue = numVerts - surf->firstVert;
+
+	return &verts[numVerts];
+}
+
 void idGuiModel::DrawStretchPic( const idDrawVert *dverts, const glIndex_t *dindexes, int vertCount, int indexCount, const idMaterial *hShader,
 									   bool clip, float min_x, float min_y, float max_x, float max_y ) {
 	if ( !glConfig.isInitialized ) {
@@ -468,8 +504,6 @@ x/y/w/h are in the 0,0 to 640,480 range
 =============
 */
 void idGuiModel::DrawStretchPic( float x, float y, float w, float h, float s1, float t1, float s2, float t2, const idMaterial *hShader ) {
-	idDrawVert verts[4];
-	glIndex_t indexes[6];
 
 	if ( !glConfig.isInitialized ) {
 		return;
@@ -503,70 +537,49 @@ void idGuiModel::DrawStretchPic( float x, float y, float w, float h, float s1, f
 		return;		// completely clipped away
 	}
 
-	indexes[0] = 3;
-	indexes[1] = 0;
-	indexes[2] = 2;
-	indexes[3] = 2;
-	indexes[4] = 0;
-	indexes[5] = 1;
-	verts[0].xyz[0] = x;
-	verts[0].xyz[1] = y;
-	verts[0].xyz[2] = 0;
-	verts[0].st[0] = s1;
-	verts[0].st[1] = t1;
-	verts[0].normal[0] = 0;
-	verts[0].normal[1] = 0;
-	verts[0].normal[2] = 1;
-	verts[0].tangents[0][0] = 1;
-	verts[0].tangents[0][1] = 0;
-	verts[0].tangents[0][2] = 0;
-	verts[0].tangents[1][0] = 0;
-	verts[0].tangents[1][1] = 1;
-	verts[0].tangents[1][2] = 0;
-	verts[1].xyz[0] = x + w;
-	verts[1].xyz[1] = y;
-	verts[1].xyz[2] = 0;
-	verts[1].st[0] = s2;
-	verts[1].st[1] = t1;
-	verts[1].normal[0] = 0;
-	verts[1].normal[1] = 0;
-	verts[1].normal[2] = 1;
-	verts[1].tangents[0][0] = 1;
-	verts[1].tangents[0][1] = 0;
-	verts[1].tangents[0][2] = 0;
-	verts[1].tangents[1][0] = 0;
-	verts[1].tangents[1][1] = 1;
-	verts[1].tangents[1][2] = 0;
-	verts[2].xyz[0] = x + w;
-	verts[2].xyz[1] = y + h;
-	verts[2].xyz[2] = 0;
-	verts[2].st[0] = s2;
-	verts[2].st[1] = t2;
-	verts[2].normal[0] = 0;
-	verts[2].normal[1] = 0;
-	verts[2].normal[2] = 1;
-	verts[2].tangents[0][0] = 1;
-	verts[2].tangents[0][1] = 0;
-	verts[2].tangents[0][2] = 0;
-	verts[2].tangents[1][0] = 0;
-	verts[2].tangents[1][1] = 1;
-	verts[2].tangents[1][2] = 0;
-	verts[3].xyz[0] = x;
-	verts[3].xyz[1] = y + h;
-	verts[3].xyz[2] = 0;
-	verts[3].st[0] = s1;
-	verts[3].st[1] = t2;
-	verts[3].normal[0] = 0;
-	verts[3].normal[1] = 0;
-	verts[3].normal[2] = 1;
-	verts[3].tangents[0][0] = 1;
-	verts[3].tangents[0][1] = 0;
-	verts[3].tangents[0][2] = 0;
-	verts[3].tangents[1][0] = 0;
-	verts[3].tangents[1][1] = 1;
-	verts[3].tangents[1][2] = 0;
+	/* The 640x480 path never clips and never rebases indices, so the
+	   staging quad it used to build and hand to the array overload can
+	   be written straight into the surface instead. */
+	static const glIndex_t quadIndexes[6] = { 3, 0, 2, 2, 0, 1 };
+	glIndex_t *dstIndexes;
+	int firstIndexValue;
+	idDrawVert *v = AllocPrim( hShader, 4, 6, &dstIndexes, &firstIndexValue );
 
-	DrawStretchPic( &verts[0], &indexes[0], 4, 6, hShader, false, 0.0f, 0.0f, 640.0f, 480.0f );
+	for ( int i = 0; i < 6; i++ ) {
+		dstIndexes[i] = firstIndexValue + quadIndexes[i];
+	}
+
+	v[0].xyz[0] = x;
+	v[0].xyz[1] = y;
+	v[0].xyz[2] = 0;
+	v[0].st[0] = s1;
+	v[0].st[1] = t1;
+	v[1].xyz[0] = x + w;
+	v[1].xyz[1] = y;
+	v[1].xyz[2] = 0;
+	v[1].st[0] = s2;
+	v[1].st[1] = t1;
+	v[2].xyz[0] = x + w;
+	v[2].xyz[1] = y + h;
+	v[2].xyz[2] = 0;
+	v[2].st[0] = s2;
+	v[2].st[1] = t2;
+	v[3].xyz[0] = x;
+	v[3].xyz[1] = y + h;
+	v[3].xyz[2] = 0;
+	v[3].st[0] = s1;
+	v[3].st[1] = t2;
+	for ( int i = 0; i < 4; i++ ) {
+		v[i].normal[0] = 0;
+		v[i].normal[1] = 0;
+		v[i].normal[2] = 1;
+		v[i].tangents[0][0] = 1;
+		v[i].tangents[0][1] = 0;
+		v[i].tangents[0][2] = 0;
+		v[i].tangents[1][0] = 0;
+		v[i].tangents[1][1] = 1;
+		v[i].tangents[1][2] = 0;
+	}
 }
 
 /*
@@ -577,10 +590,9 @@ x/y/w/h are in the 0,0 to 640,480 range
 =============
 */
 void idGuiModel::DrawStretchTri( idVec2 p1, idVec2 p2, idVec2 p3, idVec2 t1, idVec2 t2, idVec2 t3, const idMaterial *material ) {
-	idDrawVert tempVerts[3];
-	glIndex_t tempIndexes[3];
-	int vertCount = 3;
-	int indexCount = 3;
+	static const glIndex_t triIndexes[3] = { 1, 0, 2 };
+	const int vertCount = 3;
+	const int indexCount = 3;
 
 	if ( !glConfig.isInitialized ) {
 		return;
@@ -589,74 +601,57 @@ void idGuiModel::DrawStretchTri( idVec2 p1, idVec2 p2, idVec2 p3, idVec2 t1, idV
 		return;
 	}
 
-	tempIndexes[0] = 1;
-	tempIndexes[1] = 0;
-	tempIndexes[2] = 2;
-	tempVerts[0].xyz[0] = p1.x;
-	tempVerts[0].xyz[1] = p1.y;
-	tempVerts[0].xyz[2] = 0;
-	tempVerts[0].st[0] = t1.x;
-	tempVerts[0].st[1] = t1.y;
-	tempVerts[0].normal[0] = 0;
-	tempVerts[0].normal[1] = 0;
-	tempVerts[0].normal[2] = 1;
-	tempVerts[0].tangents[0][0] = 1;
-	tempVerts[0].tangents[0][1] = 0;
-	tempVerts[0].tangents[0][2] = 0;
-	tempVerts[0].tangents[1][0] = 0;
-	tempVerts[0].tangents[1][1] = 1;
-	tempVerts[0].tangents[1][2] = 0;
-	tempVerts[1].xyz[0] = p2.x;
-	tempVerts[1].xyz[1] = p2.y;
-	tempVerts[1].xyz[2] = 0;
-	tempVerts[1].st[0] = t2.x;
-	tempVerts[1].st[1] = t2.y;
-	tempVerts[1].normal[0] = 0;
-	tempVerts[1].normal[1] = 0;
-	tempVerts[1].normal[2] = 1;
-	tempVerts[1].tangents[0][0] = 1;
-	tempVerts[1].tangents[0][1] = 0;
-	tempVerts[1].tangents[0][2] = 0;
-	tempVerts[1].tangents[1][0] = 0;
-	tempVerts[1].tangents[1][1] = 1;
-	tempVerts[1].tangents[1][2] = 0;
-	tempVerts[2].xyz[0] = p3.x;
-	tempVerts[2].xyz[1] = p3.y;
-	tempVerts[2].xyz[2] = 0;
-	tempVerts[2].st[0] = t3.x;
-	tempVerts[2].st[1] = t3.y;
-	tempVerts[2].normal[0] = 0;
-	tempVerts[2].normal[1] = 0;
-	tempVerts[2].normal[2] = 1;
-	tempVerts[2].tangents[0][0] = 1;
-	tempVerts[2].tangents[0][1] = 0;
-	tempVerts[2].tangents[0][2] = 0;
-	tempVerts[2].tangents[1][0] = 0;
-	tempVerts[2].tangents[1][1] = 1;
-	tempVerts[2].tangents[1][2] = 0;
-
-	// break the current surface if we are changing to a new material
-	if ( material != surf->material ) {
-		if ( surf->numVerts ) {
-			AdvanceSurf();
-		}
-		const_cast<idMaterial *>(material)->EnsureNotPurged();	// in case it was a gui item started before a level change
-		surf->material = material;
-	}
-
-
-	int numVerts = verts.Num();
-	int numIndexes = indexes.Num();
-
-	verts.AssureSize( numVerts + vertCount );
-	indexes.AssureSize( numIndexes + indexCount );
-
-	surf->numVerts += vertCount;
-	surf->numIndexes += indexCount;
+	/* Reserve first, then build the vertices where they will live.  The
+	   surface bookkeeping AllocPrim does cannot depend on the vertices,
+	   so nothing is observed out of order. */
+	glIndex_t *dstIndexes;
+	int firstIndexValue;
+	idDrawVert *v = AllocPrim( material, vertCount, indexCount, &dstIndexes, &firstIndexValue );
 
 	for ( int i = 0; i < indexCount; i++ ) {
-		indexes[numIndexes + i] = numVerts + tempIndexes[i] - surf->firstVert;
+		dstIndexes[i] = firstIndexValue + triIndexes[i];
 	}
 
-	memcpy( &verts[numVerts], tempVerts, vertCount * sizeof( verts[0] ) );
+	v[0].xyz[0] = p1.x;
+	v[0].xyz[1] = p1.y;
+	v[0].xyz[2] = 0;
+	v[0].st[0] = t1.x;
+	v[0].st[1] = t1.y;
+	v[0].normal[0] = 0;
+	v[0].normal[1] = 0;
+	v[0].normal[2] = 1;
+	v[0].tangents[0][0] = 1;
+	v[0].tangents[0][1] = 0;
+	v[0].tangents[0][2] = 0;
+	v[0].tangents[1][0] = 0;
+	v[0].tangents[1][1] = 1;
+	v[0].tangents[1][2] = 0;
+	v[1].xyz[0] = p2.x;
+	v[1].xyz[1] = p2.y;
+	v[1].xyz[2] = 0;
+	v[1].st[0] = t2.x;
+	v[1].st[1] = t2.y;
+	v[1].normal[0] = 0;
+	v[1].normal[1] = 0;
+	v[1].normal[2] = 1;
+	v[1].tangents[0][0] = 1;
+	v[1].tangents[0][1] = 0;
+	v[1].tangents[0][2] = 0;
+	v[1].tangents[1][0] = 0;
+	v[1].tangents[1][1] = 1;
+	v[1].tangents[1][2] = 0;
+	v[2].xyz[0] = p3.x;
+	v[2].xyz[1] = p3.y;
+	v[2].xyz[2] = 0;
+	v[2].st[0] = t3.x;
+	v[2].st[1] = t3.y;
+	v[2].normal[0] = 0;
+	v[2].normal[1] = 0;
+	v[2].normal[2] = 1;
+	v[2].tangents[0][0] = 1;
+	v[2].tangents[0][1] = 0;
+	v[2].tangents[0][2] = 0;
+	v[2].tangents[1][0] = 0;
+	v[2].tangents[1][1] = 1;
+	v[2].tangents[1][2] = 0;
 }

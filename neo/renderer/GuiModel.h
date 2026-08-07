@@ -61,6 +61,15 @@ public:
 									float s1, float t1, float s2, float t2, const idMaterial *hShader);
 	void	DrawStretchTri ( idVec2 p1, idVec2 p2, idVec2 p3, idVec2 t1, idVec2 t2, idVec2 t3, const idMaterial *material );
 
+	/* Reserves space for one primitive on the current surface and hands
+	   back where to write it, so a caller that generates its vertices
+	   can generate them in place instead of building a stack copy and
+	   handing that over.  The reservation is complete before either
+	   pointer is returned - no further AssureSize can run underneath
+	   them - and both are invalidated by the next call. */
+	idDrawVert *AllocPrim( const idMaterial *material, int vertCount, int indexCount,
+						   glIndex_t **outIndexes, int *outFirstIndexValue );
+
 	//---------------------------
 private:
 	void	AdvanceSurf();
