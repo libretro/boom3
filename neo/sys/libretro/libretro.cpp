@@ -134,11 +134,13 @@ bool          hdr_fp32_scene = false;      /* FP32 scene target: full-float accu
 bool          hdr_luma_clamp = false;      /* luminance-aware highlight blending in the clamped epilogue; live-switchable */
 bool          hdr_unbounded_blend = true;  /* unclamped epilogue on float targets: true multi-pass accumulation past 1.0 */
 static bool   hdr_rolloff_aces  = false;   /* live-switchable */
+static int    hdr_expand_mode   = 0;       /* 0 none, 1 per-channel inverse tonemap, 2 hue-preserving; live-switchable */
 
 static GLuint hdr_fbo, hdr_tex, hdr_rbo, hdr_prog;
 static GLint  hdr_loc_tex, hdr_loc_mat, hdr_loc_parms;
 static GLint  hdr_loc_bloomT, hdr_loc_bloomW, hdr_loc_bloomAmt, hdr_loc_encScale;
 static GLint  hdr_loc_frame;
+static GLint  hdr_loc_expand;
 static unsigned hdr_frame_counter;
 static GLint  hdr_bright_loc_enc;
 static int    hdr_w, hdr_h;
@@ -541,6 +543,14 @@ static void update_variables(bool startup)
 		hdr_luma_clamp = hdr_output_active
 				&& !((hdr_fp16_scene || hdr_fp32_scene) && hdr_unbounded_blend)
 				&& strcmp(var.value, "enabled") == 0;
+
+	var.key = "doom_hdr_expansion";
+	var.value = NULL;
+	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) {
+		if (!strcmp(var.value, "inverse"))       hdr_expand_mode = 1;
+		else if (!strcmp(var.value, "hue"))      hdr_expand_mode = 2;
+		else                                     hdr_expand_mode = 0;
+	}
 
 	var.key = "doom_hdr_particle_lights";
 	var.value = NULL;
@@ -1758,6 +1768,7 @@ static const char *hdr_fs_src =
 	/* parms: x = paperWhite/10000, y = headroom H (>=1), z = aces flag,
 	   w = knee (Reinhard) */
 	"uniform vec4 uParms;\n"
+	"uniform vec2 uExpand;\n"   /* x: mode (0 none, 1 per-channel, 2 hue-preserving), y: knee */
 	/* Decode with a pure 2.4 power, matching RetroArch.
 
 	   The frontend converts SDR core output for an HDR swapchain with
@@ -1817,6 +1828,67 @@ static const char *hdr_fs_src =
 	"  float e = v - K, A = H - K;\n"
 	"  return K + e * A / (e + A);\n"
 	"}\n"
+	/*
+	   HDR expansion.
+
+	   The scene arrives in the 0..1 range the game renders into, so
+	   without this the headroom above paper white only ever carries
+	   bloom and whatever the FP16 path accumulated past 1.0 - the
+	   ordinary bright pixels of the image sit at paper white and stop.
+	   Expansion pushes the top end of that range up into the headroom so
+	   highlights read as brighter than white rather than as white.
+
+	   Below the knee nothing moves: those are the diffuse mid-tones that
+	   should stay exactly where the game put them, and lifting them is
+	   what makes naive inverse tonemapping look washed out. Above it, a
+	   quadratic carries knee..1 onto knee..E:
+
+	     t   = (v - K) / (1 - K)
+	     v'  = K + (1 - K) * t + (E - 1) * t^2
+
+	   The linear term is chosen so the slope is continuous at the knee -
+	   no visible crease where expansion starts - and the quadratic term
+	   is exactly what lands v = 1 on E. At E = 1 the quadratic term
+	   vanishes and the whole thing is the identity, which is why "None"
+	   and an SDR display both come out bit-identical to the old path.
+
+	   Mode 1 runs that per channel. It is the straightforward reading of
+	   "inverse tonemap", and it does to colour what per-channel clipping
+	   does in reverse: channels expand by different factors, so an
+	   already-saturated highlight gets more saturated and its hue drifts
+	   toward whichever channel was largest.
+
+	   Mode 2 runs the same curve once, on the pixel's peak channel, and
+	   scales all three channels by the resulting ratio. A uniform scale
+	   leaves chromaticity untouched by construction, so the pixel gets
+	   brighter along its own colour and only the amount of light
+	   changes, which is what expansion should mean.
+
+	   Driven by the peak channel rather than by luminance, deliberately.
+	   Luminance is the textbook choice, but it makes the mode fire on
+	   different pixels than mode 1 does: a saturated highlight like
+	   (0.95, 0.55, 0.20) has a peak of 0.95, well over the knee, and a
+	   luminance of 0.61, well under it - so a luminance-driven version
+	   returns it untouched while mode 1 expands it hard. Coloured lights
+	   and fire are exactly the content this option is for, and having
+	   the hue-preserving setting quietly skip them would read as the
+	   option not working. Peak-driven, the two modes reach the same
+	   pixels and differ only in whether the channels move together.
+	*/
+	"vec3 expandCurve(vec3 v, float E, float K) {\n"
+	"  vec3 t = max(v - K, 0.0) / max(1.0 - K, 1e-4);\n"
+	"  vec3 hi = K + (1.0 - K) * t + (E - 1.0) * t * t;\n"
+	"  return mix(v, hi, step(K, v));\n"
+	"}\n"
+	"vec3 expand(vec3 c) {\n"
+	"  float E = uParms.y;\n"
+	"  if (uExpand.x < 0.5 || E <= 1.0001) return c;\n"
+	"  float K = uExpand.y;\n"
+	"  if (uExpand.x < 1.5) return expandCurve(c, E, K);\n"
+	"  float p = max(c.r, max(c.g, c.b));\n"
+	"  if (p <= 1e-5) return c;\n"
+	"  return c * (expandCurve(vec3(p), E, K).x / p);\n"
+	"}\n"
 	"float ign(vec2 p) {\n"
 	"  return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715))));\n"
 	"}\n"
@@ -1847,6 +1919,9 @@ static const char *hdr_fs_src =
 	"  if (uBandW.y > 0.0)\n"
 	"    bl += uBandW.y * texture2D(uBloomW, vUV).rgb;\n"
 	"  lin += uBloomAmt * bl;\n"
+	/* SDR-range content expanded into the display's headroom before the
+	   roll-off sees it - see the expand() comment. */
+	"  lin = expand(lin);\n"
 	"  lin = vec3(rolloff(lin.r), rolloff(lin.g), rolloff(lin.b));\n"
 	"  lin = uGamut * lin;\n"
 	"  vec3 y = clamp(lin * uParms.x, 0.0, 1.0);\n"
@@ -2203,6 +2278,7 @@ static bool hdr_ensure_target( int w, int h ) {
 		hdr_loc_bandW   = glGetUniformLocation( hdr_prog, "uBandW" );
 		hdr_loc_encScale= glGetUniformLocation( hdr_prog, "uEncScale" );
 		hdr_loc_frame   = glGetUniformLocation( hdr_prog, "uFrame" );
+		hdr_loc_expand  = glGetUniformLocation( hdr_prog, "uExpand" );
 	}
 	if ( hdr_prog_bright == 0 && !hdr_bloom_prog_bad ) {
 		GLuint vs = hdr_compile( GL_VERTEX_SHADER, hdr_vs_src );
@@ -2720,6 +2796,9 @@ static void hdr_present( GLuint dstFbo ) {
 	glUniformMatrix3fv( hdr_loc_mat, 1, GL_FALSE, mat );
 	glUniform4f( hdr_loc_parms, paperWhite / 10000.0f, H,
 			hdr_rolloff_aces ? 1.0f : 0.0f, 0.75f /* Reinhard knee */ );
+	/* Same 0.75 knee as the Reinhard roll-off: expansion starts where
+	 * the diffuse range ends, so the two meet at the same place. */
+	glUniform2f( hdr_loc_expand, (float)hdr_expand_mode, 0.75f );
 
 	glDrawArrays( GL_TRIANGLES, 0, 3 );
 	glDisableVertexAttribArray( 0 );

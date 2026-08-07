@@ -324,6 +324,32 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "disabled"
    },
    {
+      "doom_hdr_expansion",
+      "HDR Expansion",
+      NULL,
+      "The game renders into a 0-1 range, so without expansion the "
+      "brightness above paper white carries only bloom and whatever "
+      "accumulated past white - ordinary bright pixels stop at paper "
+      "white. Expansion lifts the top of the range into that headroom "
+      "so highlights read as brighter than white. Mid-tones below the "
+      "knee are never moved, which is what keeps the image from "
+      "looking washed out. 'Inverse Tonemap' expands each colour "
+      "channel on its own: simple, and it over-saturates bright "
+      "colours and shifts their hue toward whichever channel was "
+      "strongest. 'Hue-Preserving' expands the luminance and scales "
+      "the channels together, so a highlight gets brighter along its "
+      "own colour instead of drifting. No effect on SDR output.",
+      NULL,
+      NULL,
+      {
+         { "disabled", "None" },
+         { "inverse",  "Inverse Tonemap (Basic Expansion)" },
+         { "hue",      "Hue-Preserving Expansion" },
+         { NULL, NULL },
+      },
+      "disabled"
+   },
+   {
       "doom_hdr_rolloff",
       "HDR Highlight Roll-Off",
       NULL,
