@@ -1399,8 +1399,12 @@ void idCommonLocal::LocalizeMapData( const char *fileName, idLangDict &langDict 
 
 	common->SetRefreshOnPrint( true );
 
-	if ( fileSystem->ReadFile( fileName, (void**)&buffer ) > 0 ) {
-		src.LoadMemory( buffer, strlen(buffer), fileName );
+	/* Take the length from the filesystem rather than from strlen: the
+	 * lexer is bounded by it, and measuring the buffer is what forces
+	 * the loader to own a NUL-terminated copy of it. */
+	int bufferLen = fileSystem->ReadFile( fileName, (void**)&buffer );
+	if ( bufferLen > 0 ) {
+		src.LoadMemory( buffer, bufferLen, fileName );
 		if ( src.IsLoaded() ) {
 			common->Printf( "Processing %s\n", fileName );
 			idStr mapFileName;
@@ -1446,8 +1450,12 @@ void idCommonLocal::LocalizeGui( const char *fileName, idLangDict &langDict ) {
 	char tab = 't';
 	char nl = 'n';
 	idLexer src( LEXFL_NOFATALERRORS | LEXFL_NOSTRINGCONCAT | LEXFL_ALLOWMULTICHARLITERALS | LEXFL_ALLOWBACKSLASHSTRINGCONCAT );
-	if ( fileSystem->ReadFile( fileName, (void**)&buffer ) > 0 ) {
-		src.LoadMemory( buffer, strlen(buffer), fileName );
+	/* Take the length from the filesystem rather than from strlen: the
+	 * lexer is bounded by it, and measuring the buffer is what forces
+	 * the loader to own a NUL-terminated copy of it. */
+	int bufferLen = fileSystem->ReadFile( fileName, (void**)&buffer );
+	if ( bufferLen > 0 ) {
+		src.LoadMemory( buffer, bufferLen, fileName );
 		if ( src.IsLoaded() ) {
 			idFile *outFile = fileSystem->OpenFileWrite( fileName );
 			common->Printf( "Processing %s\n", fileName );
@@ -1535,8 +1543,12 @@ void LoadMapLocalizeData(ListHash& listHash) {
 	const char *buffer = NULL;
 	idLexer src( LEXFL_NOFATALERRORS | LEXFL_NOSTRINGCONCAT | LEXFL_ALLOWMULTICHARLITERALS | LEXFL_ALLOWBACKSLASHSTRINGCONCAT );
 
-	if ( fileSystem->ReadFile( fileName, (void**)&buffer ) > 0 ) {
-		src.LoadMemory( buffer, strlen(buffer), fileName );
+	/* Take the length from the filesystem rather than from strlen: the
+	 * lexer is bounded by it, and measuring the buffer is what forces
+	 * the loader to own a NUL-terminated copy of it. */
+	int bufferLen = fileSystem->ReadFile( fileName, (void**)&buffer );
+	if ( bufferLen > 0 ) {
+		src.LoadMemory( buffer, bufferLen, fileName );
 		if ( src.IsLoaded() ) {
 			idStr classname;
 			idToken token;
@@ -1569,8 +1581,12 @@ void LoadGuiParmExcludeList(idStrList& list) {
 	const char *buffer = NULL;
 	idLexer src( LEXFL_NOFATALERRORS | LEXFL_NOSTRINGCONCAT | LEXFL_ALLOWMULTICHARLITERALS | LEXFL_ALLOWBACKSLASHSTRINGCONCAT );
 
-	if ( fileSystem->ReadFile( fileName, (void**)&buffer ) > 0 ) {
-		src.LoadMemory( buffer, strlen(buffer), fileName );
+	/* Take the length from the filesystem rather than from strlen: the
+	 * lexer is bounded by it, and measuring the buffer is what forces
+	 * the loader to own a NUL-terminated copy of it. */
+	int bufferLen = fileSystem->ReadFile( fileName, (void**)&buffer );
+	if ( bufferLen > 0 ) {
+		src.LoadMemory( buffer, bufferLen, fileName );
 		if ( src.IsLoaded() ) {
 			idStr classname;
 			idToken token;

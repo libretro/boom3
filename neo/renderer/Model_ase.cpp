@@ -782,13 +782,17 @@ static void ASE_KeyGROUP( const char *token )
 ASE_Parse
 =================
 */
-aseModel_t *ASE_Parse( const char *buffer, bool verbose ) {
+aseModel_t *ASE_Parse( const char *buffer, int length, bool verbose ) {
 	memset( &ase, 0, sizeof( ase ) );
 
 	ase.verbose = verbose;
 
 	ase.buffer = buffer;
-	ase.len = strlen( buffer );
+	/* Length is passed in rather than measured with strlen: the scanner
+	 * below is bounded by ase.len already, and taking the length from
+	 * the caller is what lets the text be a borrowed view of the pak
+	 * instead of a NUL-terminated private copy. */
+	ase.len = length;
 	ase.curpos = ase.buffer;
 	ase.currentObject = NULL;
 
@@ -835,15 +839,30 @@ aseModel_t *ASE_Load( const char *fileName ) {
 	ID_TIME_T timeStamp;
 	aseModel_t *ase;
 
-	fileSystem->ReadFile( fileName, (void **)&buf, &timeStamp );
-	if ( !buf ) {
+	/* Borrow the model text where the pak allows it; ReadFile's copy is
+	 * the fallback for loose files and compressed entries. */
+	int length = 0;
+	const char *view = (const char *)fileSystem->GetFileView( fileName, &length, &timeStamp );
+	if ( view != NULL ) {
+		buf = (char *)view;
+	} else {
+		length = fileSystem->ReadFile( fileName, (void **)&buf, &timeStamp );
+	}
+	if ( !buf || length <= 0 ) {
+		if ( view != NULL ) {
+			fileSystem->ReleaseFileView( view );
+		}
 		return NULL;
 	}
 
-	ase = ASE_Parse( buf, false );
+	ase = ASE_Parse( buf, length, false );
 	ase->timeStamp = timeStamp;
 
-	fileSystem->FreeFile( buf );
+	if ( view != NULL ) {
+		fileSystem->ReleaseFileView( view );
+	} else {
+		fileSystem->FreeFile( buf );
+	}
 
 	return ase;
 }
