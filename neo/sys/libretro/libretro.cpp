@@ -158,6 +158,7 @@ static GLuint hdr_prog_down, hdr_prog_up;
 #ifndef HAVE_OPENGLES
 static GLuint hdr_arb_vp, hdr_arb_down, hdr_arb_up;
 static GLuint hdr_arb_bright, hdr_arb_blur;
+static GLuint hdr_arb_comp1, hdr_arb_comp2;
 static bool   hdr_arb_pyramid;   /* the pyramid runs on ARB programs */
 #endif
 static GLint  hdr_down_loc_texel, hdr_up_loc_texel, hdr_up_loc_radius;
@@ -651,6 +652,7 @@ static void context_reset(void)
 #ifndef HAVE_OPENGLES
    hdr_arb_vp = hdr_arb_down = hdr_arb_up = 0;
    hdr_arb_bright = hdr_arb_blur = 0;
+   hdr_arb_comp1 = hdr_arb_comp2 = 0;
    hdr_arb_pyramid = false;
 #endif
    memset(hdr_conv_fbo, 0, sizeof hdr_conv_fbo);
@@ -2112,6 +2114,185 @@ static const char *hdr_arb_up_fs_src =
 	"MOV result.color, s;\n"
 	"END\n";
 
+/*
+   ARB composite.
+
+   Statement for statement the same chain as hdr_fs_src: linearize,
+   add bloom, expand, roll off, gamut, PQ encode, dither.  Two things
+   are shaped differently because ARB is not GLSL.
+
+   No branches.  rolloff() and expand() both select between forms with
+   CMP, which means every form is evaluated and the unused one thrown
+   away.  That is fine for the arithmetic but not for division: the
+   guards that keep the unused branch's RCP away from zero have to be
+   real, not just correct-when-taken.  Every RCP below is preceded by
+   the MAX that bounds its argument.
+
+   The reciprocals that are pass constants are computed on the CPU and
+   arrive in env: 1/(1-expandKnee) and the PQ and dither scales.  The
+   per-pixel ones - the ACES and Reinhard denominators and the PQ
+   denominator - are per channel and stay here, three RCPs each,
+   because ARB's RCP is scalar.
+
+   env[0] = uParms   (paperWhite/10000, H, acesFlag, reinhardKnee)
+   env[1] = uExpand  (mode, knee, 1/max(1-knee,1e-4), 0)
+   env[2] =          (encScale, bloomAmt, bandW.x, bandW.y)
+   env[3] =          (frame*3, golden ratio, 1/1023, 0)
+   env[4..6] = gamut matrix rows
+   texture[0] scene, texture[1] bloom band 0, texture[2] bloom band 1
+*/
+#define HDR_ARB_COMPOSITE_BODY \
+	"TEMP s, lin, bl, t, u, v, e, a, r, m, y, p, n, d;\n" \
+	/* lin = pow(abs(scene * encScale), 2.4) */ \
+	"TEX s, fragment.texcoord[0], texture[0], 2D;\n" \
+	"MUL s, s, program.env[2].x;\n" \
+	"ABS s, s;\n" \
+	"POW lin.x, s.x, 2.4;\n" \
+	"POW lin.y, s.y, 2.4;\n" \
+	"POW lin.z, s.z, 2.4;\n"
+
+#define HDR_ARB_COMPOSITE_TAIL \
+	/* lin += bloomAmt * bl */ \
+	"MAD lin, bl, program.env[2].y, lin;\n" \
+	/* ---- expand(): t = clamp((v-K)*invK, 0, 1)
+	   hi = K + (1-K)t + (E-1)t^2 + max(v-1,0), taken where v >= K */ \
+	"SUB t, lin, program.env[1].y;\n" \
+	"MUL t, t, program.env[1].z;\n" \
+	"MAX t, t, 0.0;\n" \
+	"MIN t, t, 1.0;\n" \
+	"SUB u, 1.0, program.env[1].y;\n" \
+	"MUL v, t, u;\n" \
+	"ADD v, v, program.env[1].y;\n" \
+	"SUB u, program.env[0].y, 1.0;\n" \
+	"MUL a, t, t;\n" \
+	"MAD v, a, u, v;\n" \
+	"SUB a, lin, 1.0;\n" \
+	"MAX a, a, 0.0;\n" \
+	"ADD v, v, a;\n" \
+	/* below the knee keep the input: CMP picks v when (lin - K) >= 0 */ \
+	"SUB a, lin, program.env[1].y;\n" \
+	"CMP e, a, lin, v;\n" \
+	/* mode 2 drives the same curve from the peak channel and scales
+	   uniformly.  peak in m.x, curve(peak) in m.y, ratio in m.z. */ \
+	"MAX m.x, lin.x, lin.y;\n" \
+	"MAX m.x, m.x, lin.z;\n" \
+	"SUB t.x, m.x, program.env[1].y;\n" \
+	"MUL t.x, t.x, program.env[1].z;\n" \
+	"MAX t.x, t.x, 0.0;\n" \
+	"MIN t.x, t.x, 1.0;\n" \
+	"SUB u.x, 1.0, program.env[1].y;\n" \
+	"MUL v.x, t.x, u.x;\n" \
+	"ADD v.x, v.x, program.env[1].y;\n" \
+	"SUB u.x, program.env[0].y, 1.0;\n" \
+	"MUL a.x, t.x, t.x;\n" \
+	"MAD v.x, a.x, u.x, v.x;\n" \
+	"SUB a.x, m.x, 1.0;\n" \
+	"MAX a.x, a.x, 0.0;\n" \
+	"ADD v.x, v.x, a.x;\n" \
+	"SUB a.x, m.x, program.env[1].y;\n" \
+	"CMP m.y, a.x, m.x, v.x;\n" \
+	"MAX m.z, m.x, 0.00001;\n" \
+	"RCP m.z, m.z;\n" \
+	"MUL m.w, m.y, m.z;\n" \
+	"MUL r, lin, m.w;\n" \
+	/* mode < 1.5 picks the per-channel form, else the peak form */ \
+	"SUB a.x, program.env[1].x, 1.5;\n" \
+	"CMP e, a.x, e, r;\n" \
+	/* mode < 0.5, or no headroom at all, keeps the input untouched */ \
+	"SUB a.x, program.env[1].x, 0.5;\n" \
+	"CMP e, a.x, lin, e;\n" \
+	"SUB a.x, program.env[0].y, 1.0001;\n" \
+	"CMP lin, a.x, lin, e;\n" \
+	/* ---- rolloff(), per channel, all three forms then select ---- */ \
+	/* ACES: n = v*(2.51v + 0.03) / (v*(2.43v + 0.59) + 0.14), /0.8037 */ \
+	"MAD t, lin, 2.51, 0.03;\n" \
+	"MUL t, t, lin;\n" \
+	"MAD u, lin, 2.43, 0.59;\n" \
+	"MAD u, u, lin, 0.14;\n" \
+	"MAX u, u, 0.00001;\n" \
+	"RCP a.x, u.x;\n" \
+	"RCP a.y, u.y;\n" \
+	"RCP a.z, u.z;\n" \
+	"MUL t, t, a;\n" \
+	"MUL t, t, 1.2442454;\n" \
+	/* Reinhard shoulder above the knee: K + e*A/(e + A), A = H - K */ \
+	"SUB u, lin, program.env[0].w;\n" \
+	"SUB v.x, program.env[0].y, program.env[0].w;\n" \
+	"ADD a, u, v.x;\n" \
+	"MAX a, a, 0.00001;\n" \
+	"RCP m.x, a.x;\n" \
+	"RCP m.y, a.y;\n" \
+	"RCP m.z, a.z;\n" \
+	"MUL a, u, v.x;\n" \
+	"MUL a, a, m;\n" \
+	"ADD a, a, program.env[0].w;\n" \
+	/* below the knee Reinhard is the identity */ \
+	"SUB v, lin, program.env[0].w;\n" \
+	"CMP a, v, lin, a;\n" \
+	/* aces flag > 0.5 selects the ACES form */ \
+	"SUB v.x, program.env[0].z, 0.5;\n" \
+	"CMP r, v.x, a, t;\n" \
+	/* no headroom: plain min(v, 1) */ \
+	"MIN t, lin, 1.0;\n" \
+	"SUB v.x, program.env[0].y, 1.0001;\n" \
+	"CMP lin, v.x, t, r;\n" \
+	/* ---- gamut, scale, PQ ---- */ \
+	"DP3 r.x, lin, program.env[4];\n" \
+	"DP3 r.y, lin, program.env[5];\n" \
+	"DP3 r.z, lin, program.env[6];\n" \
+	"MUL_SAT y, r, program.env[0].x;\n" \
+	"POW p.x, y.x, 0.1593017578125;\n" \
+	"POW p.y, y.y, 0.1593017578125;\n" \
+	"POW p.z, y.z, 0.1593017578125;\n" \
+	"MAD t, p, 18.8515625, 0.8359375;\n" \
+	"MAD u, p, 18.6875, 1.0;\n" \
+	"RCP a.x, u.x;\n" \
+	"RCP a.y, u.y;\n" \
+	"RCP a.z, u.z;\n" \
+	"MUL t, t, a;\n" \
+	"POW e.x, t.x, 78.84375;\n" \
+	"POW e.y, t.y, 78.84375;\n" \
+	"POW e.z, t.z, 78.84375;\n" \
+	/* ---- interleaved gradient noise, per channel, rotated by frame ---- */ \
+	"MUL n.x, fragment.position.x, 0.06711056;\n" \
+	"MAD n.x, fragment.position.y, 0.00583715, n.x;\n" \
+	"FRC n.x, n.x;\n" \
+	"MUL n.x, n.x, 52.9829189;\n" \
+	"FRC n.x, n.x;\n" \
+	"MAD d.x, program.env[3].x, program.env[3].y, n.x;\n" \
+	"ADD t.x, program.env[3].x, 1.0;\n" \
+	"MAD d.y, t.x, program.env[3].y, n.x;\n" \
+	"ADD t.x, program.env[3].x, 2.0;\n" \
+	"MAD d.z, t.x, program.env[3].y, n.x;\n" \
+	"FRC d, d;\n" \
+	"SUB d, d, 0.5;\n" \
+	"MAD_SAT e, d, program.env[3].z, e;\n" \
+	"MOV e.w, 1.0;\n" \
+	"MOV result.color, e;\n" \
+	"END\n"
+
+/* One band: the second bloom fetch is skipped entirely rather than
+   multiplied by a zero weight.  The GLSL does this with a branch on a
+   uniform; ARB has no branches, so it is two programs and the choice
+   moves to bind time. */
+static const char *hdr_arb_comp1_fs_src =
+	"!!ARBfp1.0\n"
+	"OPTION ARB_precision_hint_nicest;\n"
+	HDR_ARB_COMPOSITE_BODY
+	"TEX bl, fragment.texcoord[0], texture[1], 2D;\n"
+	"MUL bl, bl, program.env[2].z;\n"
+	HDR_ARB_COMPOSITE_TAIL;
+
+static const char *hdr_arb_comp2_fs_src =
+	"!!ARBfp1.0\n"
+	"OPTION ARB_precision_hint_nicest;\n"
+	HDR_ARB_COMPOSITE_BODY
+	"TEX bl, fragment.texcoord[0], texture[1], 2D;\n"
+	"MUL bl, bl, program.env[2].z;\n"
+	"TEX t, fragment.texcoord[0], texture[2], 2D;\n"
+	"MAD bl, t, program.env[2].w, bl;\n"
+	HDR_ARB_COMPOSITE_TAIL;
+
 static const char *hdr_arb_bright_fs_src =
 	"!!ARBfp1.0\n"
 	"OPTION ARB_precision_hint_nicest;\n"
@@ -2554,6 +2735,19 @@ static int hdr_conv_levels( int w, int h ) {
 /* (re)create GL objects for the current context and size; safe to call
    per frame, does work only on change. Context loss zeroes the ids. */
 static bool hdr_ensure_target( int w, int h ) {
+#ifndef HAVE_OPENGLES
+	if ( hdr_arb_comp1 == 0 && hdr_arb_available() ) {
+		if ( !hdr_arb_load( GL_VERTEX_PROGRAM_ARB, hdr_arb_vp_src,
+					&hdr_arb_vp, "hdr vertex program" )
+				|| !hdr_arb_load( GL_FRAGMENT_PROGRAM_ARB, hdr_arb_comp1_fs_src,
+					&hdr_arb_comp1, "hdr composite program (one band)" )
+				|| !hdr_arb_load( GL_FRAGMENT_PROGRAM_ARB, hdr_arb_comp2_fs_src,
+					&hdr_arb_comp2, "hdr composite program (two bands)" ) ) {
+			return false;
+		}
+		hdr_arb_pyramid = true;
+	}
+#endif
 	if ( hdr_prog == 0 ) {
 		GLuint vs = hdr_compile( GL_VERTEX_SHADER, hdr_vs_src );
 		GLuint fs = hdr_compile( GL_FRAGMENT_SHADER, hdr_fs_src );
@@ -3197,6 +3391,14 @@ static void hdr_present( GLuint dstFbo ) {
 	glBindFramebuffer( RARCH_GL_FRAMEBUFFER, dstFbo );
 	glViewport( 0, 0, hdr_w, hdr_h );
 
+#ifndef HAVE_OPENGLES
+	if ( hdr_arb_pyramid ) {
+		glUseProgram( 0 );
+		qglEnable( GL_VERTEX_PROGRAM_ARB );
+		qglEnable( GL_FRAGMENT_PROGRAM_ARB );
+		qglBindProgramARB( GL_VERTEX_PROGRAM_ARB, hdr_arb_vp );
+	} else
+#endif
 	glUseProgram( hdr_prog );
 
 	/*
@@ -3222,22 +3424,70 @@ static void hdr_present( GLuint dstFbo ) {
 	glBindTexture( GL_TEXTURE_2D, convN ? hdr_conv_tex[0] : hdr_bloom_tex[2] );
 	glActiveTexture( GL_TEXTURE0 );
 	glBindTexture( GL_TEXTURE_2D, hdr_tex );
+	/* wraps every 64 frames; the pattern only has to keep moving */
+	const float frameN = (float)( hdr_frame_counter++ & 63u );
+
+#ifndef HAVE_OPENGLES
+	if ( !hdr_arb_pyramid ) {
+#endif
 	glUniform1i( hdr_loc_tex, 0 );
 	glUniform1i( hdr_loc_bloomT, 1 );
 	glUniform1i( hdr_loc_bloomW, 2 );
 	glUniform1f( hdr_loc_bloomAmt, haveBloom ? hdr_bloom_amount : 0.0f );
 	glUniform2f( hdr_loc_bandW, bandW0, bandW1 );
 	glUniform1f( hdr_loc_encScale, 1.0f / hdr_scene_encode_scale );
-	/* wraps every 64 frames; the pattern only has to keep moving */
-	glUniform1f( hdr_loc_frame, (float)( hdr_frame_counter++ & 63u ) );
+	glUniform1f( hdr_loc_frame, frameN );
 	glUniformMatrix3fv( hdr_loc_mat, 1, GL_FALSE, mat );
 	glUniform4f( hdr_loc_parms, paperWhite / 10000.0f, H,
 			hdr_rolloff_aces ? 1.0f : 0.0f, 0.75f /* Reinhard knee */ );
 	/* Same 0.75 knee as the Reinhard roll-off: expansion starts where
 	 * the diffuse range ends, so the two meet at the same place. */
 	glUniform2f( hdr_loc_expand, (float)hdr_expand_mode, 0.75f );
+#ifndef HAVE_OPENGLES
+	}
+	/* The uniform uploads above address hdr_prog; with the ARB path
+	   active no program object is in use, so issuing them would raise
+	   GL_INVALID_OPERATION on every frame and the frame counter would
+	   advance twice. */
+#endif
+
+#ifndef HAVE_OPENGLES
+	if ( hdr_arb_pyramid ) {
+		/* The band-weight branch the GLSL takes on a uniform becomes a
+		   choice of program here, so the second bloom fetch is still
+		   skipped rather than multiplied by zero. */
+		const float eknee = 0.75f;
+		const float p0[4] = { paperWhite / 10000.0f, H,
+				hdr_rolloff_aces ? 1.0f : 0.0f, 0.75f };
+		const float p1[4] = { (float)hdr_expand_mode, eknee,
+				1.0f / ( 1.0f - eknee < 1e-4f ? 1e-4f : 1.0f - eknee ), 0.0f };
+		const float p2[4] = { 1.0f / hdr_scene_encode_scale,
+				haveBloom ? hdr_bloom_amount : 0.0f, bandW0, bandW1 };
+		const float p3[4] = { frameN * 3.0f, 0.6180339887f, 1.0f / 1023.0f, 0.0f };
+		/* rows, from the column-major matrix the GLSL upload uses */
+		const float r0[4] = { mat[0], mat[3], mat[6], 0.0f };
+		const float r1[4] = { mat[1], mat[4], mat[7], 0.0f };
+		const float r2[4] = { mat[2], mat[5], mat[8], 0.0f };
+		qglBindProgramARB( GL_FRAGMENT_PROGRAM_ARB,
+				bandW1 > 0.0f ? hdr_arb_comp2 : hdr_arb_comp1 );
+		qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 0, p0 );
+		qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 1, p1 );
+		qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 2, p2 );
+		qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 3, p3 );
+		qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 4, r0 );
+		qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 5, r1 );
+		qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 6, r2 );
+	}
+#endif
 
 	glDrawArrays( GL_TRIANGLES, 0, 3 );
+
+#ifndef HAVE_OPENGLES
+	if ( hdr_arb_pyramid ) {
+		qglDisable( GL_FRAGMENT_PROGRAM_ARB );
+		qglDisable( GL_VERTEX_PROGRAM_ARB );
+	}
+#endif
 	glDisableVertexAttribArray( 0 );
 	glActiveTexture( GL_TEXTURE1 );
 	glBindTexture( GL_TEXTURE_2D, 0 );
