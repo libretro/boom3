@@ -3829,7 +3829,14 @@ public:
 	~RetroSaveStateScope() { retro_savestate_active = false; }
 };
 
-static idList<byte> retro_state_cache;
+/* The built state lives in the memory file it was serialized into, and
+ * retro_serialize copies from there straight to the frontend's buffer.
+ * It used to be copied out into a byte list first, so every state cost
+ * two full-size copies instead of one - a multi-megabyte memcpy per
+ * build, and under run-ahead that is per frame.  idFile_Memory owns the
+ * buffer for as long as it lives, so the file is what persists. */
+static idFile_Memory retro_state_file( RETRO_STATE_NAME ".save" );
+static int retro_state_len;
 static int retro_state_cache_tic = -1;
 
 static bool RetroBuildState(void)
@@ -3845,16 +3852,19 @@ static bool RetroBuildState(void)
 		return false;
 	}
 
-	if (retro_state_cache_tic == com_ticNumber && retro_state_cache.Num() > 0)
+	if (retro_state_cache_tic == com_ticNumber && retro_state_len > 0)
 		return true;	// still current: state can only change on a tic
 
 	// serialize straight into memory: no disk I/O anywhere in this path
-	idFile_Memory mem(RETRO_STATE_NAME ".save");
-	/* seed the buffer from the previous state's size: state sizes are
-	 * stable frame to frame, so the steady state is exactly one
-	 * allocation and zero growth copies per build */
-	if (retro_state_cache.Num() > 0)
-		mem.SetGranularity(retro_state_cache.Num() + 65536);
+	/* Reuse the file, keeping its allocation: Clear(false) rewinds it
+	 * without giving the buffer back, so a steady-state build neither
+	 * allocates nor grows. */
+	idFile_Memory &mem = retro_state_file;
+	const int prevLen = retro_state_len;
+	retro_state_len = 0;
+	mem.Clear(false);
+	if (prevLen > 0)
+		mem.SetGranularity(prevLen + 65536);
 	int stT0 = Core_Milliseconds();
 	bool ok = false;
 	try {
@@ -3910,8 +3920,7 @@ static bool RetroBuildState(void)
 		return false;
 	}
 
-	retro_state_cache.SetNum(mem.Length());
-	memcpy(retro_state_cache.Ptr(), mem.GetDataPtr(), mem.Length());
+	retro_state_len = mem.Length();
 	retro_state_cache_tic = com_ticNumber;
 	return true;
 }
@@ -3920,16 +3929,16 @@ size_t retro_serialize_size(void)
 {
 	if (!RetroBuildState())
 		return 0;
-	return (size_t)retro_state_cache.Num();
+	return (size_t)retro_state_len;
 }
 
 bool retro_serialize(void *data_, size_t size)
 {
 	if (!RetroBuildState())
 		return false;
-	if (size < (size_t)retro_state_cache.Num())
+	if (size < (size_t)retro_state_len)
 		return false;
-	memcpy(data_, retro_state_cache.Ptr(), retro_state_cache.Num());
+	memcpy(data_, retro_state_file.GetDataPtr(), retro_state_len);
 	return true;
 }
 
