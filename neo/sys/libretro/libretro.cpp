@@ -141,6 +141,7 @@ static GLint  hdr_loc_tex, hdr_loc_mat, hdr_loc_parms;
 static GLint  hdr_loc_bloomT, hdr_loc_bloomW, hdr_loc_bloomAmt, hdr_loc_encScale;
 static GLint  hdr_loc_frame;
 static GLint  hdr_loc_expand;
+static GLint  hdr_loc_aces;
 static unsigned hdr_frame_counter;
 static GLint  hdr_bright_loc_enc;
 static int    hdr_w, hdr_h;
@@ -1786,7 +1787,8 @@ static const char *hdr_fs_src =
 	/* parms: x = paperWhite/10000, y = headroom H (>=1), z = aces flag,
 	   w = knee (Reinhard) */
 	"uniform vec4 uParms;\n"
-	"uniform vec2 uExpand;\n"   /* x: mode (0 none, 1 per-channel, 2 hue-preserving), y: knee */
+	"uniform vec2 uExpand;\n"
+	"uniform vec2 uAces;\n"    /* x: input stretch, y: renormalisation */   /* x: mode (0 none, 1 per-channel, 2 hue-preserving), y: knee */
 	/* Decode with a pure 2.4 power, matching RetroArch.
 
 	   The frontend converts SDR core output for an HDR swapchain with
@@ -1838,8 +1840,9 @@ static const char *hdr_fs_src =
 	     what this option is for, and what its description already
 	     claims. Reinhard stays the option for exact mids and full
 	     headroom. */
-	"    float n = v * (2.51 * v + 0.03) / (v * (2.43 * v + 0.59) + 0.14);\n"
-	"    return n / 0.8037;\n"
+	"    float s = v * uAces.x;\n"
+	"    float n = s * (2.51 * s + 0.03) / (s * (2.43 * s + 0.59) + 0.14);\n"
+	"    return n * uAces.y;\n"
 	"  }\n"
 	"  float K = uParms.w;\n"
 	"  if (v <= K) return v;\n"
@@ -2220,7 +2223,18 @@ static const char *hdr_arb_up_fs_src =
 	"SUB a.x, program.env[0].y, 1.0001;\n" \
 	"CMP lin, a.x, lin, e;\n" \
 	/* ---- rolloff(), per channel, all three forms then select ---- */ \
-	/* ACES: n = v*(2.51v + 0.03) / (v*(2.43v + 0.59) + 0.14), /0.8037 */ \
+	/* ACES below paper white, unchanged, then a shoulder carrying
+	   everything above it out to the display's headroom.
+	   
+	   The normalised curve's asymptote is 1.285x paper white however
+	   much headroom the display has, so at H = 4 two thirds of the
+	   range was unreachable and a very bright light looked no brighter
+	   than a moderately bright one.  Stretching the curve's input fixes
+	   the asymptote but darkens mid-tones - measured, 0.5 fell from
+	   0.767 to 0.402 - so nothing below 1 moves at all and the shoulder
+	   starts where the old curve stopped being useful.  env[7].x is
+	   A = (H-1)/slope, env[7].y is the curve's own gradient at 1, so
+	   the join is slope-continuous. */ \
 	"MAD t, lin, 2.51, 0.03;\n" \
 	"MUL t, t, lin;\n" \
 	"MAD u, lin, 2.43, 0.59;\n" \
@@ -2231,6 +2245,18 @@ static const char *hdr_arb_up_fs_src =
 	"RCP a.z, u.z;\n" \
 	"MUL t, t, a;\n" \
 	"MUL t, t, 1.2442454;\n" \
+	"SUB v, lin, 1.0;\n" \
+	"MAX v, v, 0.0;\n" \
+	"ADD u, v, program.env[7].x;\n" \
+	"MAX u, u, 0.00001;\n" \
+	"RCP a.x, u.x;\n" \
+	"RCP a.y, u.y;\n" \
+	"RCP a.z, u.z;\n" \
+	"MUL u, v, program.env[7].x;\n" \
+	"MUL u, u, program.env[7].y;\n" \
+	"MAD u, u, a, 1.0;\n" \
+	"SUB v, lin, 1.0;\n" \
+	"CMP t, v, t, u;\n" \
 	/* Reinhard shoulder above the knee: K + e*A/(e + A), A = H - K */ \
 	"SUB u, lin, program.env[0].w;\n" \
 	"SUB v.x, program.env[0].y, program.env[0].w;\n" \
@@ -3157,6 +3183,49 @@ static const float hdr_mIdentity[9] = {
 	0.0f, 0.0f, 1.0f
 };
 
+/* ACES stretch for the current headroom.
+ *
+ * The curve's asymptote is (2.51/2.43) and it is normalised by aces(1)
+ * so that diffuse white lands on paper white.  That pins its ceiling at
+ * 1.285 x paper white no matter how much headroom the display has - at
+ * H = 4 more than two thirds of the range is unreachable, which is why
+ * a bright light could never look brighter than a moderately bright
+ * one.  Reinhard did not have this problem; it is built from H.
+ *
+ * Scaling the input by x and renormalising by 1/aces(x) keeps unity at
+ * v = 1 and moves the asymptote to (2.51/2.43)/aces(x).  Solving
+ * aces(x) = (2.51/2.43)/H puts the asymptote exactly on H.  Monotonic
+ * in x, so a bisection converges in a few dozen steps and this runs
+ * once per present, not per pixel.
+ */
+static void hdr_aces_stretch( float H, float *scale, float *norm ) {
+	const double inf = 2.51 / 2.43;
+	double lo = 1e-5, hi = 1.0, target, x, a;
+	int i;
+
+	if ( H <= 1.0001f ) {
+		x = 1.0;
+		a = 1.0 * ( 2.51 * 1.0 + 0.03 ) / ( 1.0 * ( 2.43 * 1.0 + 0.59 ) + 0.14 );
+		*scale = 1.0f;
+		*norm = (float)( 1.0 / a );
+		return;
+	}
+
+	target = inf / (double)H;
+	for ( i = 0; i < 60; i++ ) {
+		double mid = 0.5 * ( lo + hi );
+		double v = mid * ( 2.51 * mid + 0.03 ) / ( mid * ( 2.43 * mid + 0.59 ) + 0.14 );
+		if ( v < target )
+			lo = mid;
+		else
+			hi = mid;
+	}
+	x = 0.5 * ( lo + hi );
+	a = x * ( 2.51 * x + 0.03 ) / ( x * ( 2.43 * x + 0.59 ) + 0.14 );
+	*scale = (float)x;
+	*norm = (float)( 1.0 / a );
+}
+
 /* Is the chain this build actually uses loaded?
  *
  * These used to be written as direct tests of the GLSL program handles,
@@ -3507,6 +3576,11 @@ static void hdr_present( GLuint dstFbo ) {
 	/* Same 0.75 knee as the Reinhard roll-off: expansion starts where
 	 * the diffuse range ends, so the two meet at the same place. */
 	glUniform2f( hdr_loc_expand, (float)hdr_expand_mode, 0.75f );
+	{
+		float as, an;
+		hdr_aces_stretch( H, &as, &an );
+		glUniform2f( hdr_loc_aces, as, an );
+	}
 #endif
 
 #ifndef HAVE_OPENGLES
@@ -3535,6 +3609,12 @@ static void hdr_present( GLuint dstFbo ) {
 		qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 4, r0 );
 		qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 5, r1 );
 		qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 6, r2 );
+		{
+			float as, an, p7[4];
+			hdr_aces_stretch( H, &as, &an );
+			p7[0] = as; p7[1] = an; p7[2] = 0.0f; p7[3] = 0.0f;
+			qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 7, p7 );
+		}
 	}
 #endif
 
