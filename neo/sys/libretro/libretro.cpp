@@ -3237,11 +3237,21 @@ static void hdr_present( GLuint dstFbo ) {
 	int convN = hdr_bloom_convolution ? hdr_conv_levels( hdr_w, hdr_h ) : 0;
 	float bandW0, bandW1;
 #ifndef HAVE_OPENGLES
-	/* Enabled once for the whole post chain and handed back at the end
+	/* Unbind whatever program object is in use before enabling the ARB
+	   targets.  This is not tidying: a program object in use overrides
+	   the ARB program enables entirely, so with one bound - and the
+	   frontend has its own bound around the core's frame - every pass
+	   below draws with that program instead of ours, which is a black
+	   screen rather than an error.  The GLSL path used to do this
+	   implicitly by binding its own program per pass; when those binds
+	   went, this had to become explicit and did not.
+	   
+	   Enabled once for the whole post chain and handed back at the end
 	   of it, rather than per pass.  Bloom is optional and the composite
 	   is not, so an enable that lived inside the bloom block would
 	   leave the composite drawing with no program bound whenever bloom
-	   was off - which is not a GL error, just nothing on screen. */
+	   was off. */
+	glUseProgram( 0 );
 	qglEnable( GL_VERTEX_PROGRAM_ARB );
 	qglEnable( GL_FRAGMENT_PROGRAM_ARB );
 	qglBindProgramARB( GL_VERTEX_PROGRAM_ARB, hdr_arb_vp );
