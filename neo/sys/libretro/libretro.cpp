@@ -155,6 +155,10 @@ static GLuint hdr_bloom_fbo[4], hdr_bloom_tex[4];   /* [0,1]=1/4 A/B, [2,3]=1/16
 #define HDR_CONV_MAX 6
 static GLuint hdr_conv_fbo[HDR_CONV_MAX], hdr_conv_tex[HDR_CONV_MAX];
 static GLuint hdr_prog_down, hdr_prog_up;
+#ifndef HAVE_OPENGLES
+static GLuint hdr_arb_vp, hdr_arb_down, hdr_arb_up;
+static bool   hdr_arb_pyramid;   /* the pyramid runs on ARB programs */
+#endif
 static GLint  hdr_down_loc_texel, hdr_up_loc_texel, hdr_up_loc_radius;
 static GLint  hdr_loc_bandW;
 static bool   hdr_bloom_convolution;   /* live-switchable */
@@ -643,6 +647,10 @@ static void context_reset(void)
    hdr_prog_bright = hdr_prog_blur = 0;
    hdr_bloom_prog_bad = hdr_bloom_tex_bad = false;
    hdr_prog_down = hdr_prog_up = 0;
+#ifndef HAVE_OPENGLES
+   hdr_arb_vp = hdr_arb_down = hdr_arb_up = 0;
+   hdr_arb_pyramid = false;
+#endif
    memset(hdr_conv_fbo, 0, sizeof hdr_conv_fbo);
    memset(hdr_conv_tex, 0, sizeof hdr_conv_tex);
    memset(hdr_bloom_fbo, 0, sizeof hdr_bloom_fbo);
@@ -1992,6 +2000,117 @@ static const char *hdr_fs_src =
    plasma, and the engine's own additive glare quads extract; lit
    walls do not.
 */
+#ifndef HAVE_OPENGLES
+/*
+   ARB versions of the bloom pyramid's downsample and upsample passes.
+
+   Same taps and the same weights as the GLSL above, written as ARB
+   assembly so a desktop build running the ARB2 renderer has no GLSL in
+   this part of the chain.  program.env[0].xy carries what uTexel did;
+   for the upsample, env[0].zw carries the radius-scaled offset so the
+   multiply is not repeated per tap.
+
+   These are the two simplest passes in the chain and go first
+   deliberately: they exercise the loader, the env-parameter path and
+   the state discipline around ARB programs with the least that can go
+   wrong, before the bright pass and the composite follow.
+*/
+static const char *hdr_arb_vp_src =
+	"!!ARBvp1.0\n"
+	"PARAM half = { 0.5, 0.5, 0.0, 0.0 };\n"
+	"MOV result.position, vertex.attrib[0];\n"
+	"MAD result.texcoord[0], vertex.attrib[0], half, half;\n"
+	"END\n";
+
+static const char *hdr_arb_down_fs_src =
+	"!!ARBfp1.0\n"
+	"OPTION ARB_precision_hint_nicest;\n"
+	"PARAM texel = program.env[0];\n"
+	"TEMP uv, a, b, c, d, e, f, g, h, i, j, k, l, m, o, s;\n"
+	/* the four corners of the outer ring */
+	"MAD uv, texel, { -2.0,  2.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
+	"TEX a, uv, texture[0], 2D;\n"
+	"MAD uv, texel, {  0.0,  2.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
+	"TEX b, uv, texture[0], 2D;\n"
+	"MAD uv, texel, {  2.0,  2.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
+	"TEX c, uv, texture[0], 2D;\n"
+	"MAD uv, texel, { -2.0,  0.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
+	"TEX d, uv, texture[0], 2D;\n"
+	"TEX e, fragment.texcoord[0], texture[0], 2D;\n"
+	"MAD uv, texel, {  2.0,  0.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
+	"TEX f, uv, texture[0], 2D;\n"
+	"MAD uv, texel, { -2.0, -2.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
+	"TEX g, uv, texture[0], 2D;\n"
+	"MAD uv, texel, {  0.0, -2.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
+	"TEX h, uv, texture[0], 2D;\n"
+	"MAD uv, texel, {  2.0, -2.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
+	"TEX i, uv, texture[0], 2D;\n"
+	/* the inner quad */
+	"MAD uv, texel, { -1.0,  1.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
+	"TEX j, uv, texture[0], 2D;\n"
+	"MAD uv, texel, {  1.0,  1.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
+	"TEX k, uv, texture[0], 2D;\n"
+	"MAD uv, texel, { -1.0, -1.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
+	"TEX l, uv, texture[0], 2D;\n"
+	"MAD uv, texel, {  1.0, -1.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
+	"TEX m, uv, texture[0], 2D;\n"
+	/* o = e*0.125 + (a+c+g+i)*0.03125 + (b+d+f+h)*0.0625 + (j+k+l+m)*0.125,
+	   summed in the same association as the GLSL: each group is added up
+	   first and scaled once. */
+	"MUL o, e, 0.125;\n"
+	"ADD s, a, c;\n"
+	"ADD s, s, g;\n"
+	"ADD s, s, i;\n"
+	"MAD o, s, 0.03125, o;\n"
+	"ADD s, b, d;\n"
+	"ADD s, s, f;\n"
+	"ADD s, s, h;\n"
+	"MAD o, s, 0.0625, o;\n"
+	"ADD s, j, k;\n"
+	"ADD s, s, l;\n"
+	"ADD s, s, m;\n"
+	"MAD o, s, 0.125, o;\n"
+	"MOV o.w, 1.0;\n"
+	"MOV result.color, o;\n"
+	"END\n";
+
+static const char *hdr_arb_up_fs_src =
+	"!!ARBfp1.0\n"
+	"OPTION ARB_precision_hint_nicest;\n"
+	/* env[0].xy = texel * radius, precomputed on the CPU */
+	"PARAM o = program.env[0];\n"
+	"TEMP uv, t, s;\n"
+	"MAD uv, o, { -1.0, -1.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
+	"TEX s, uv, texture[0], 2D;\n"
+	"MAD uv, o, {  0.0, -1.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
+	"TEX t, uv, texture[0], 2D;\n"
+	"MAD s, t, 2.0, s;\n"
+	"MAD uv, o, {  1.0, -1.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
+	"TEX t, uv, texture[0], 2D;\n"
+	"ADD s, s, t;\n"
+	"MAD uv, o, { -1.0,  0.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
+	"TEX t, uv, texture[0], 2D;\n"
+	"MAD s, t, 2.0, s;\n"
+	"TEX t, fragment.texcoord[0], texture[0], 2D;\n"
+	"MAD s, t, 4.0, s;\n"
+	"MAD uv, o, {  1.0,  0.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
+	"TEX t, uv, texture[0], 2D;\n"
+	"MAD s, t, 2.0, s;\n"
+	"MAD uv, o, { -1.0,  1.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
+	"TEX t, uv, texture[0], 2D;\n"
+	"ADD s, s, t;\n"
+	"MAD uv, o, {  0.0,  1.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
+	"TEX t, uv, texture[0], 2D;\n"
+	"MAD s, t, 2.0, s;\n"
+	"MAD uv, o, {  1.0,  1.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
+	"TEX t, uv, texture[0], 2D;\n"
+	"ADD s, s, t;\n"
+	"MUL s, s, 0.0625;\n"
+	"MOV s.w, 1.0;\n"
+	"MOV result.color, s;\n"
+	"END\n";
+#endif /* !HAVE_OPENGLES */
+
 static const char *hdr_bright_fs_src =
 	"#ifdef GL_ES\nprecision highp float;\n#endif\n"
 	"varying vec2 vUV;\n"
@@ -2239,6 +2358,95 @@ static void hdr_fail( const char *why ) {
 	hdr_output_active = false;
 }
 
+#ifndef HAVE_OPENGLES
+/*
+===========================================================================
+ARB program loading for the HDR chain.
+
+The composite and bloom passes are GLSL today, which means a desktop
+build running the ARB2 renderer compiles GLSL for its post chain and ARB
+assembly for everything else.  This is the loader for the ARB side of
+that split; the programs themselves land in following commits, and the
+GLSL sources stay until they do.
+
+There is deliberately no GLSL fallback.  The ARB2 renderer cannot draw a
+single interaction without GL_ARB_fragment_program, so a driver that
+cannot give us an ARB program here has already failed something much
+larger - and a fallback would only ever cover a mistake in our own
+program text, while keeping GLSL compiled into every desktop build to do
+it.  A refusal drops to the 24-bit path, which is the pre-existing,
+well-travelled one.
+
+The check that matters is not "did it compile".  ARB has two tiers of
+limits: the virtual ones a program is validated against, and the native
+ones the hardware can actually run.  A program over the native limits
+loads cleanly, sets no error, and then executes in software - which on a
+full-screen pass reads as the core hanging rather than as a bug.  So
+GL_PROGRAM_UNDER_NATIVE_LIMITS_ARB is queried explicitly and treated as
+a hard failure.
+===========================================================================
+*/
+static bool hdr_arb_available( void ) {
+	return glConfig.ARBFragmentProgramAvailable
+			&& glConfig.ARBVertexProgramAvailable
+			&& qglProgramStringARB != NULL
+			&& qglGenProgramsARB != NULL
+			&& qglBindProgramARB != NULL
+			&& qglProgramEnvParameter4fvARB != NULL;
+}
+
+static bool hdr_arb_load( GLenum target, const char *text, GLuint *out, const char *what ) {
+	GLuint id = 0;
+	GLint  ofs = -1;
+	GLint  native = GL_TRUE;
+
+	*out = 0;
+
+	qglGenProgramsARB( 1, &id );
+	if ( id == 0 ) {
+		hdr_fail( "could not allocate an ARB program id" );
+		return false;
+	}
+
+	qglBindProgramARB( target, id );
+	qglGetError();
+	qglProgramStringARB( target, GL_PROGRAM_FORMAT_ASCII_ARB,
+			(GLsizei)strlen( text ), text );
+
+	if ( qglGetError() == GL_INVALID_OPERATION ) {
+		const GLubyte *err = qglGetString( GL_PROGRAM_ERROR_STRING_ARB );
+		qglGetIntegerv( GL_PROGRAM_ERROR_POSITION_ARB, &ofs );
+		if ( log_cb ) {
+			log_cb( RETRO_LOG_ERROR, "[boom3] HDR: %s rejected at %d: %s\n",
+					what, (int)ofs, err ? (const char *)err : "(no message)" );
+		}
+		hdr_fail( "an ARB program did not load" );
+		return false;
+	}
+
+	/* Loaded, no error - but that only means it fits the virtual limits. */
+	glGetProgramivARB( target, GL_PROGRAM_UNDER_NATIVE_LIMITS_ARB, &native );
+	if ( native != GL_TRUE ) {
+		GLint alu = 0, tex = 0, tmp = 0;
+		glGetProgramivARB( target, GL_PROGRAM_NATIVE_ALU_INSTRUCTIONS_ARB, &alu );
+		glGetProgramivARB( target, GL_PROGRAM_NATIVE_TEX_INSTRUCTIONS_ARB, &tex );
+		glGetProgramivARB( target, GL_PROGRAM_NATIVE_TEMPORARIES_ARB, &tmp );
+		if ( log_cb ) {
+			log_cb( RETRO_LOG_ERROR,
+					"[boom3] HDR: %s exceeds this GPU's native limits "
+					"(%d ALU, %d TEX, %d temporaries) and would run in "
+					"software\n", what, (int)alu, (int)tex, (int)tmp );
+		}
+		hdr_fail( "an ARB program would not run in hardware" );
+		return false;
+	}
+
+	*out = id;
+	return true;
+}
+#endif /* !HAVE_OPENGLES */
+
+
 /* Levels in the convolution pyramid for a given scene size. Level 0 is
    1/4 res and each step halves. Stops before a level would drop under 4
    texels on either axis: upsampling from a 2x1 buffer contributes a flat
@@ -2354,6 +2562,24 @@ static bool hdr_ensure_target( int w, int h ) {
 			glAttachShader( hdr_prog_down, fsd );
 			glBindAttribLocation( hdr_prog_down, 0, "aPos" );
 			glLinkProgram( hdr_prog_down );
+#ifndef HAVE_OPENGLES
+			/* ARB first: on a desktop build the renderer is ARB2 and this
+			   keeps the whole chain in one dialect.  A failure here has
+			   already disabled HDR through hdr_fail, so there is nothing
+			   to fall back to and nothing to fall back for. */
+			if ( !hdr_arb_pyramid && hdr_arb_available() ) {
+				if ( hdr_arb_load( GL_VERTEX_PROGRAM_ARB, hdr_arb_vp_src,
+							&hdr_arb_vp, "bloom vertex program" )
+						&& hdr_arb_load( GL_FRAGMENT_PROGRAM_ARB, hdr_arb_down_fs_src,
+							&hdr_arb_down, "bloom downsample program" )
+						&& hdr_arb_load( GL_FRAGMENT_PROGRAM_ARB, hdr_arb_up_fs_src,
+							&hdr_arb_up, "bloom upsample program" ) ) {
+					hdr_arb_pyramid = true;
+				} else {
+					return false;
+				}
+			}
+#endif
 			hdr_prog_up = glCreateProgram();
 			glAttachShader( hdr_prog_up, vs );
 			glAttachShader( hdr_prog_up, fsu );
@@ -2703,6 +2929,19 @@ static void hdr_present( GLuint dstFbo ) {
 			   far past its source instead of stopping at a visible edge.
 			*/
 			int i;
+#ifndef HAVE_OPENGLES
+			/* ARB programs are enabled around the pyramid only, and the
+			   GLSL program object is unbound while they are: the two
+			   pipelines must not both be active, and the passes after
+			   this one are still GLSL. */
+			if ( hdr_arb_pyramid ) {
+				glUseProgram( 0 );
+				qglEnable( GL_VERTEX_PROGRAM_ARB );
+				qglEnable( GL_FRAGMENT_PROGRAM_ARB );
+				qglBindProgramARB( GL_VERTEX_PROGRAM_ARB, hdr_arb_vp );
+				qglBindProgramARB( GL_FRAGMENT_PROGRAM_ARB, hdr_arb_down );
+			} else
+#endif
 			glUseProgram( hdr_prog_down );
 			for ( i = 1; i < convN; i++ ) {
 				int pw = ( hdr_w / 4 ) >> ( i - 1 ), ph = ( hdr_h / 4 ) >> ( i - 1 );
@@ -2711,15 +2950,32 @@ static void hdr_present( GLuint dstFbo ) {
 				glBindFramebuffer( RARCH_GL_FRAMEBUFFER, hdr_conv_fbo[i] );
 				glViewport( 0, 0, pw > 1 ? pw / 2 : 1, ph > 1 ? ph / 2 : 1 );
 				glBindTexture( GL_TEXTURE_2D, hdr_conv_tex[i - 1] );
+#ifndef HAVE_OPENGLES
+				if ( hdr_arb_pyramid ) {
+					const float texel[4] = { 1.0f / (float)pw, 1.0f / (float)ph, 0.0f, 0.0f };
+					qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 0, texel );
+				} else
+#endif
 				glUniform2f( hdr_down_loc_texel, 1.0f / (float)pw, 1.0f / (float)ph );
 				glDrawArrays( GL_TRIANGLES, 0, 3 );
 			}
 			/* additive accumulation upward. Blend rather than ping-pong so
 			   each level needs only one buffer; hdr_present disabled blend
 			   on entry, so turn it off again afterwards. */
+#ifndef HAVE_OPENGLES
+			if ( hdr_arb_pyramid ) {
+				qglBindProgramARB( GL_FRAGMENT_PROGRAM_ARB, hdr_arb_up );
+			} else
+#endif
 			glUseProgram( hdr_prog_up );
 			glEnable( GL_BLEND );
 			glBlendFunc( GL_ONE, GL_ONE );
+#ifndef HAVE_OPENGLES
+			/* radius is 1.0 here, so env[0].xy is just the texel size;
+			   the ARB pass takes the already-scaled offset rather than
+			   multiplying per tap. */
+			if ( !hdr_arb_pyramid )
+#endif
 			glUniform1f( hdr_up_loc_radius, 1.0f );
 			for ( i = convN - 1; i > 0; i-- ) {
 				int pw = ( hdr_w / 4 ) >> i, ph = ( hdr_h / 4 ) >> i;
@@ -2731,9 +2987,25 @@ static void hdr_present( GLuint dstFbo ) {
 				glBindFramebuffer( RARCH_GL_FRAMEBUFFER, hdr_conv_fbo[i - 1] );
 				glViewport( 0, 0, dw, dh );
 				glBindTexture( GL_TEXTURE_2D, hdr_conv_tex[i] );
+#ifndef HAVE_OPENGLES
+				if ( hdr_arb_pyramid ) {
+					const float texel[4] = { 1.0f / (float)pw, 1.0f / (float)ph, 0.0f, 0.0f };
+					qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 0, texel );
+				} else
+#endif
 				glUniform2f( hdr_up_loc_texel, 1.0f / (float)pw, 1.0f / (float)ph );
 				glDrawArrays( GL_TRIANGLES, 0, 3 );
 			}
+#ifndef HAVE_OPENGLES
+			/* Hand the pipeline back before the GLSL passes: leaving the
+			   ARB targets enabled would override every program object
+			   bound after this, including the game's own rendering on
+			   the next frame. */
+			if ( hdr_arb_pyramid ) {
+				qglDisable( GL_FRAGMENT_PROGRAM_ARB );
+				qglDisable( GL_VERTEX_PROGRAM_ARB );
+			}
+#endif
 			glDisable( GL_BLEND );
 		} else {
 		/* tight band blur: A -> B (H), B -> A (V) */
