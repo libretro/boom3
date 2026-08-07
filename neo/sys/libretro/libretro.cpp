@@ -1875,9 +1875,18 @@ static const char *hdr_fs_src =
 	   option not working. Peak-driven, the two modes reach the same
 	   pixels and differ only in whether the channels move together.
 	*/
+	/* t is clamped to 1, and anything above 1.0 keeps its distance
+	 * above it.  The quadratic is only defined as an expansion of the
+	 * knee..1 range; extended past 1 it grows as the square, so a scene
+	 * value of 2.0 - ordinary on the unbounded FP16 path, where
+	 * translucent passes accumulate past white on purpose - would come
+	 * out at 77.0 instead of 5.0, and 4.0 at 511.0.  Clamping keeps the
+	 * curve on the domain it was derived for and leaves already-HDR
+	 * content alone: it arrives above paper white and stays where it
+	 * was, shifted by the expansion applied at 1.0. */
 	"vec3 expandCurve(vec3 v, float E, float K) {\n"
-	"  vec3 t = max(v - K, 0.0) / max(1.0 - K, 1e-4);\n"
-	"  vec3 hi = K + (1.0 - K) * t + (E - 1.0) * t * t;\n"
+	"  vec3 t = clamp((v - K) / max(1.0 - K, 1e-4), 0.0, 1.0);\n"
+	"  vec3 hi = K + (1.0 - K) * t + (E - 1.0) * t * t + max(v - 1.0, 0.0);\n"
 	"  return mix(v, hi, step(K, v));\n"
 	"}\n"
 	"vec3 expand(vec3 c) {\n"
