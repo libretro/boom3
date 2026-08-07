@@ -270,6 +270,9 @@ private:
 
 private:
 	void			CreatePunctuationTable( const punctuation_t *punctuations );
+	char				Read( void );				// current byte then advance
+	char				Peek( void ) const;			// current byte, or 0 at end of buffer
+	char				PeekAhead( int n ) const;	// byte n ahead, or 0 past the end
 	int				ReadWhiteSpace( void );
 	int				ReadEscapeCharacter( char *ch );
 	int				ReadString( idToken *token, int quote );

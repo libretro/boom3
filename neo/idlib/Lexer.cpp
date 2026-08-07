@@ -286,63 +286,94 @@ Reads spaces, tabs, C-like comments etc.
 When a newline character is found the scripts line counter is increased.
 ================
 */
+/*
+================
+idLexer::Peek / PeekAhead
+
+The scanner used to dereference script_p directly and stop on the '\0'
+that the file loaders append.  That works only because every caller
+hands it a NUL-terminated copy of the file - which is exactly what makes
+a zero-copy load impossible: a pak entry borrowed from the mapped
+archive is followed by the next local header, not by a terminator, and
+the scanner runs straight on into it.
+
+These read through end_p instead and report end of buffer as '\0', so
+the terminator becomes an implementation detail of the loader rather
+than a contract with it.  Behaviour on a terminated buffer is unchanged:
+the '\0' is at end_p and both forms return it.
+================
+*/
+ID_INLINE char idLexer::Peek( void ) const {
+	return idLexer::script_p < idLexer::end_p ? idLexer::script_p[0] : '\0';
+}
+
+ID_INLINE char idLexer::PeekAhead( int n ) const {
+	return idLexer::script_p + n < idLexer::end_p ? idLexer::script_p[n] : '\0';
+}
+
+ID_INLINE char idLexer::Read( void ) {
+	const char c = idLexer::Peek();
+	idLexer::script_p++;
+	return c;
+}
+
 int idLexer::ReadWhiteSpace( void ) {
 	while(1) {
 		// skip white space
-		while(*idLexer::script_p <= ' ') {
-			if (!*idLexer::script_p) {
+		while(idLexer::Peek() <= ' ') {
+			if (!idLexer::Peek()) {
 				return 0;
 			}
-			if (*idLexer::script_p == '\n') {
+			if (idLexer::Peek() == '\n') {
 				idLexer::line++;
 			}
 			idLexer::script_p++;
 		}
 		// skip comments
-		if (*idLexer::script_p == '/') {
+		if (idLexer::Peek() == '/') {
 			// comments //
-			if (*(idLexer::script_p+1) == '/') {
+			if (idLexer::PeekAhead(1) == '/') {
 				idLexer::script_p++;
 				do {
 					idLexer::script_p++;
-					if ( !*idLexer::script_p ) {
+					if ( !idLexer::Peek() ) {
 						return 0;
 					}
 				}
-				while( *idLexer::script_p != '\n' );
+				while( idLexer::Peek() != '\n' );
 				idLexer::line++;
 				idLexer::script_p++;
-				if ( !*idLexer::script_p ) {
+				if ( !idLexer::Peek() ) {
 					return 0;
 				}
 				continue;
 			}
 			// comments /* */
-			else if (*(idLexer::script_p+1) == '*') {
+			else if (idLexer::PeekAhead(1) == '*') {
 				idLexer::script_p++;
 				while( 1 ) {
 					idLexer::script_p++;
-					if ( !*idLexer::script_p ) {
+					if ( !idLexer::Peek() ) {
 						return 0;
 					}
-					if ( *idLexer::script_p == '\n' ) {
+					if ( idLexer::Peek() == '\n' ) {
 						idLexer::line++;
 					}
-					else if ( *idLexer::script_p == '/' ) {
+					else if ( idLexer::Peek() == '/' ) {
 						if ( *(idLexer::script_p-1) == '*' ) {
 							break;
 						}
-						if ( *(idLexer::script_p+1) == '*' ) {
+						if ( idLexer::PeekAhead(1) == '*' ) {
 							idLexer::Warning( "nested comment" );
 						}
 					}
 				}
 				idLexer::script_p++;
-				if ( !*idLexer::script_p ) {
+				if ( !idLexer::Peek() ) {
 					return 0;
 				}
 				idLexer::script_p++;
-				if ( !*idLexer::script_p ) {
+				if ( !idLexer::Peek() ) {
 					return 0;
 				}
 				continue;
@@ -364,7 +395,7 @@ int idLexer::ReadEscapeCharacter( char *ch ) {
 	// step over the leading '\\'
 	idLexer::script_p++;
 	// determine the escape character
-	switch(*idLexer::script_p) {
+	switch(idLexer::Peek()) {
 		case '\\': c = '\\'; break;
 		case 'n': c = '\n'; break;
 		case 'r': c = '\r'; break;
@@ -381,7 +412,7 @@ int idLexer::ReadEscapeCharacter( char *ch ) {
 			int i;
 			idLexer::script_p++;
 			for (i = 0, val = 0; ; i++, idLexer::script_p++) {
-				c = *idLexer::script_p;
+				c = idLexer::Peek();
 				if (c >= '0' && c <= '9')
 					c = c - '0';
 				else if (c >= 'A' && c <= 'Z')
@@ -403,10 +434,10 @@ int idLexer::ReadEscapeCharacter( char *ch ) {
 		default: //NOTE: decimal ASCII code, NOT octal
 		{
 			int i;
-			if (*idLexer::script_p < '0' || *idLexer::script_p > '9')
+			if (idLexer::Peek() < '0' || idLexer::Peek() > '9')
 				idLexer::Error("unknown escape char");
 			for (i = 0, val = 0; ; i++, idLexer::script_p++) {
-				c = *idLexer::script_p;
+				c = idLexer::Peek();
 				if (c >= '0' && c <= '9')
 					c = c - '0';
 				else
@@ -454,14 +485,14 @@ int idLexer::ReadString( idToken *token, int quote ) {
 
 	while(1) {
 		// if there is an escape character and escape characters are allowed
-		if (*idLexer::script_p == '\\' && !(idLexer::flags & LEXFL_NOSTRINGESCAPECHARS)) {
+		if (idLexer::Peek() == '\\' && !(idLexer::flags & LEXFL_NOSTRINGESCAPECHARS)) {
 			if ( !idLexer::ReadEscapeCharacter( &ch ) ) {
 				return 0;
 			}
 			token->AppendDirty( ch );
 		}
 		// if a trailing quote
-		else if (*idLexer::script_p == quote) {
+		else if (idLexer::Peek() == quote) {
 			// step over the quote
 			idLexer::script_p++;
 			// if consecutive strings should not be concatenated
@@ -480,21 +511,21 @@ int idLexer::ReadString( idToken *token, int quote ) {
 			}
 
 			if ( idLexer::flags & LEXFL_NOSTRINGCONCAT ) {
-				if ( *idLexer::script_p != '\\' ) {
+				if ( idLexer::Peek() != '\\' ) {
 					idLexer::script_p = tmpscript_p;
 					idLexer::line = tmpline;
 					break;
 				}
 				// step over the '\\'
 				idLexer::script_p++;
-				if ( !idLexer::ReadWhiteSpace() || ( *idLexer::script_p != quote ) ) {
+				if ( !idLexer::ReadWhiteSpace() || ( idLexer::Peek() != quote ) ) {
 					idLexer::Error( "expecting string after '\' terminated line" );
 					return 0;
 				}
 			}
 
 			// if there's no leading qoute
-			if ( *idLexer::script_p != quote ) {
+			if ( idLexer::Peek() != quote ) {
 				idLexer::script_p = tmpscript_p;
 				idLexer::line = tmpline;
 				break;
@@ -503,15 +534,15 @@ int idLexer::ReadString( idToken *token, int quote ) {
 			idLexer::script_p++;
 		}
 		else {
-			if (*idLexer::script_p == '\0') {
+			if (idLexer::Peek() == '\0') {
 				idLexer::Error( "missing trailing quote" );
 				return 0;
 			}
-			if (*idLexer::script_p == '\n') {
+			if (idLexer::Peek() == '\n') {
 				idLexer::Error( "newline inside string" );
 				return 0;
 			}
-			token->AppendDirty( *idLexer::script_p++ );
+			token->AppendDirty( idLexer::Read() );
 		}
 	}
 	token->data[token->len] = '\0';
@@ -541,8 +572,8 @@ int idLexer::ReadName( idToken *token ) {
 
 	token->type = TT_NAME;
 	do {
-		token->AppendDirty( *idLexer::script_p++ );
-		c = *idLexer::script_p;
+		token->AppendDirty( idLexer::Read() );
+		c = idLexer::Peek();
 	} while ((c >= 'a' && c <= 'z') ||
 				(c >= 'A' && c <= 'Z') ||
 				(c >= '0' && c <= '9') ||
@@ -566,7 +597,7 @@ ID_INLINE int idLexer::CheckString( const char *str ) const {
 	int i;
 
 	for ( i = 0; str[i]; i++ ) {
-		if ( idLexer::script_p[i] != str[i] ) {
+		if ( idLexer::PeekAhead( i ) != str[i] ) {
 			return false;
 		}
 	}
@@ -588,15 +619,15 @@ int idLexer::ReadNumber( idToken *token ) {
 	token->intvalue = 0;
 	token->floatvalue = 0;
 
-	c = *idLexer::script_p;
+	c = idLexer::Peek();
 	c2 = *(idLexer::script_p + 1);
 
 	if ( c == '0' && c2 != '.' ) {
 		// check for a hexadecimal number
 		if ( c2 == 'x' || c2 == 'X' ) {
-			token->AppendDirty( *idLexer::script_p++ );
-			token->AppendDirty( *idLexer::script_p++ );
-			c = *idLexer::script_p;
+			token->AppendDirty( idLexer::Read() );
+			token->AppendDirty( idLexer::Read() );
+			c = idLexer::Peek();
 			while((c >= '0' && c <= '9') ||
 						(c >= 'a' && c <= 'f') ||
 						(c >= 'A' && c <= 'F')) {
@@ -607,9 +638,9 @@ int idLexer::ReadNumber( idToken *token ) {
 		}
 		// check for a binary number
 		else if ( c2 == 'b' || c2 == 'B' ) {
-			token->AppendDirty( *idLexer::script_p++ );
-			token->AppendDirty( *idLexer::script_p++ );
-			c = *idLexer::script_p;
+			token->AppendDirty( idLexer::Read() );
+			token->AppendDirty( idLexer::Read() );
+			c = idLexer::Peek();
 			while( c == '0' || c == '1' ) {
 				token->AppendDirty( c );
 				c = *(++idLexer::script_p);
@@ -618,8 +649,8 @@ int idLexer::ReadNumber( idToken *token ) {
 		}
 		// its an octal number
 		else {
-			token->AppendDirty( *idLexer::script_p++ );
-			c = *idLexer::script_p;
+			token->AppendDirty( idLexer::Read() );
+			c = idLexer::Peek();
 			while( c >= '0' && c <= '7' ) {
 				token->AppendDirty( c );
 				c = *(++idLexer::script_p);
@@ -794,8 +825,8 @@ int idLexer::ReadPunctuation( idToken *token ) {
 #endif
 		p = punc->p;
 		// check for this punctuation in the script
-		for ( l = 0; p[l] && idLexer::script_p[l]; l++ ) {
-			if ( idLexer::script_p[l] != p[l] ) {
+		for ( l = 0; p[l] && idLexer::PeekAhead( l ); l++ ) {
+			if ( idLexer::PeekAhead( l ) != p[l] ) {
 				break;
 			}
 		}
@@ -860,7 +891,7 @@ int idLexer::ReadToken( idToken *token ) {
 	// clear token flags
 	token->flags = 0;
 
-	c = *idLexer::script_p;
+	c = idLexer::Peek();
 
 	// if we're keeping everything as whitespace deliminated strings
 	if ( idLexer::flags & LEXFL_ONLYSTRINGS ) {
@@ -881,7 +912,7 @@ int idLexer::ReadToken( idToken *token ) {
 		}
 		// if names are allowed to start with a number
 		if ( idLexer::flags & LEXFL_ALLOWNUMBERNAMES ) {
-			c = *idLexer::script_p;
+			c = idLexer::Peek();
 			if ( (c >= 'a' && c <= 'z') ||	(c >= 'A' && c <= 'Z') || c == '_' ) {
 				if ( !idLexer::ReadName( token ) ) {
 					return 0;
@@ -1202,19 +1233,19 @@ idLexer::ReadRestOfLine
 const char*	idLexer::ReadRestOfLine(idStr& out) {
 	while(1) {
 
-		if(*idLexer::script_p == '\n') {
+		if(idLexer::Peek() == '\n') {
 			idLexer::line++;
 			break;
 		}
 
-		if(!*idLexer::script_p) {
+		if(!idLexer::Peek()) {
 			break;
 		}
 
-		if(*idLexer::script_p <= ' ') {
+		if(idLexer::Peek() <= ' ') {
 			out += " ";
 		} else {
-			out += *idLexer::script_p;
+			out += idLexer::Peek();
 		}
 		idLexer::script_p++;
 
@@ -1394,7 +1425,7 @@ const char *idLexer::ParseBracedSectionExact( idStr &out, int tabs ) {
 	skipWhite = false;
 	doTabs = tabs >= 0;
 
-	while( depth && *idLexer::script_p ) {
+	while( depth && idLexer::Peek() ) {
 		char c = *(idLexer::script_p++);
 
 		switch ( c ) {
