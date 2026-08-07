@@ -157,6 +157,7 @@ static GLuint hdr_conv_fbo[HDR_CONV_MAX], hdr_conv_tex[HDR_CONV_MAX];
 static GLuint hdr_prog_down, hdr_prog_up;
 #ifndef HAVE_OPENGLES
 static GLuint hdr_arb_vp, hdr_arb_down, hdr_arb_up;
+static GLuint hdr_arb_bright, hdr_arb_blur;
 static bool   hdr_arb_pyramid;   /* the pyramid runs on ARB programs */
 #endif
 static GLint  hdr_down_loc_texel, hdr_up_loc_texel, hdr_up_loc_radius;
@@ -649,6 +650,7 @@ static void context_reset(void)
    hdr_prog_down = hdr_prog_up = 0;
 #ifndef HAVE_OPENGLES
    hdr_arb_vp = hdr_arb_down = hdr_arb_up = 0;
+   hdr_arb_bright = hdr_arb_blur = 0;
    hdr_arb_pyramid = false;
 #endif
    memset(hdr_conv_fbo, 0, sizeof hdr_conv_fbo);
@@ -2109,6 +2111,96 @@ static const char *hdr_arb_up_fs_src =
 	"MOV s.w, 1.0;\n"
 	"MOV result.color, s;\n"
 	"END\n";
+
+static const char *hdr_arb_bright_fs_src =
+	"!!ARBfp1.0\n"
+	"OPTION ARB_precision_hint_nicest;\n"
+	/* env[0] = (threshold, knee, encodeScale, 1/(1 - threshold))
+	   env[1] = (texelX, texelY, 0, 0)
+	   The reciprocals are computed on the CPU: 1/(1-uThresh) and
+	   1/(4*uKnee) are constant for the whole pass, and RCP here would
+	   pay for them per fragment. */
+	"PARAM p = program.env[0];\n"
+	"PARAM q = program.env[1];\n"
+	"PARAM texel = program.env[2];\n"
+	"PARAM luma = { 0.2126, 0.7152, 0.0722, 0.0 };\n"
+	"TEMP uv, s, lin, lum, sk, t, b, l;\n"
+	/* four-tap box, matching the GLSL's tap positions */
+	"MAD uv, texel, { -1.0, -1.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
+	"TEX s, uv, texture[0], 2D;\n"
+	"MAD uv, texel, {  1.0, -1.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
+	"TEX t, uv, texture[0], 2D;\n"
+	"ADD s, s, t;\n"
+	"MAD uv, texel, { -1.0,  1.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
+	"TEX t, uv, texture[0], 2D;\n"
+	"ADD s, s, t;\n"
+	"MAD uv, texel, {  1.0,  1.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
+	"TEX t, uv, texture[0], 2D;\n"
+	"ADD s, s, t;\n"
+	/* lin = pow(abs(0.25 * sum * encScale), 2.4) - abs() for the same
+	   reason the GLSL uses it: POW with a negative base is undefined and
+	   at least one driver returns nonsense rather than clamping. */
+	"MUL s, s, 0.25;\n"
+	"MUL s, s, p.z;\n"
+	"ABS s, s;\n"
+	"POW lin.x, s.x, 2.4;\n"
+	"POW lin.y, s.y, 2.4;\n"
+	"POW lin.z, s.z, 2.4;\n"
+	"DP3 lum.x, lin, luma;\n"
+	/* sk = clamp(lum - thresh + knee, 0, 2*knee); sk = sk*sk * (1/(4*knee)) */
+	"SUB sk.x, lum.x, p.x;\n"
+	"ADD sk.x, sk.x, p.y;\n"
+	"MAX sk.x, sk.x, 0.0;\n"
+	"ADD t.x, p.y, p.y;\n"
+	"MIN sk.x, sk.x, t.x;\n"
+	"MUL sk.x, sk.x, sk.x;\n"
+	"MUL sk.x, sk.x, q.y;\n"
+	/* b = lin * (max(sk, lum - thresh) / max(lum, 1e-5)) * (1/(1 - thresh)) */
+	"SUB t.x, lum.x, p.x;\n"
+	"MAX t.x, sk.x, t.x;\n"
+	"MAX l.x, lum.x, 0.00001;\n"
+	"RCP l.x, l.x;\n"
+	"MUL t.x, t.x, l.x;\n"
+	"MUL t.x, t.x, p.w;\n"
+	"MUL b, lin, t.x;\n"
+	/* out = b / (1 + luminance(b)) */
+	"DP3 l.x, b, luma;\n"
+	"ADD l.x, l.x, 1.0;\n"
+	"RCP l.x, l.x;\n"
+	"MUL b, b, l.x;\n"
+	"MOV b.w, 1.0;\n"
+	"MOV result.color, b;\n"
+	"END\n";
+
+static const char *hdr_arb_blur_fs_src =
+	"!!ARBfp1.0\n"
+	"OPTION ARB_precision_hint_nicest;\n"
+	/* env[0].xy = direction scaled by texel size, or (0,0) for a copy */
+	"PARAM d = program.env[0];\n"
+	"TEMP uv, c, t;\n"
+	"TEX c, fragment.texcoord[0], texture[0], 2D;\n"
+	"MUL c, c, 0.24458;\n"
+	"MAD uv, d, 1.36268, fragment.texcoord[0];\n"
+	"TEX t, uv, texture[0], 2D;\n"
+	"MAD c, t, 0.31802, c;\n"
+	"MAD uv, d, -1.36268, fragment.texcoord[0];\n"
+	"TEX t, uv, texture[0], 2D;\n"
+	"MAD c, t, 0.31802, c;\n"
+	"MAD uv, d, 3.21159, fragment.texcoord[0];\n"
+	"TEX t, uv, texture[0], 2D;\n"
+	"MAD c, t, 0.05717, c;\n"
+	"MAD uv, d, -3.21159, fragment.texcoord[0];\n"
+	"TEX t, uv, texture[0], 2D;\n"
+	"MAD c, t, 0.05717, c;\n"
+	"MAD uv, d, 5.11234, fragment.texcoord[0];\n"
+	"TEX t, uv, texture[0], 2D;\n"
+	"MAD c, t, 0.00251, c;\n"
+	"MAD uv, d, -5.11234, fragment.texcoord[0];\n"
+	"TEX t, uv, texture[0], 2D;\n"
+	"MAD c, t, 0.00251, c;\n"
+	"MOV c.w, 1.0;\n"
+	"MOV result.color, c;\n"
+	"END\n";
 #endif /* !HAVE_OPENGLES */
 
 static const char *hdr_bright_fs_src =
@@ -2503,6 +2595,16 @@ static bool hdr_ensure_target( int w, int h ) {
 		GLuint fs2 = hdr_compile( GL_FRAGMENT_SHADER, hdr_blur_fs_src );
 		if ( vs && fs && fs2 ) {
 			GLint okB = 0, okL = 0;
+#ifndef HAVE_OPENGLES
+			if ( hdr_arb_bright == 0 && hdr_arb_available() ) {
+				if ( !hdr_arb_load( GL_FRAGMENT_PROGRAM_ARB, hdr_arb_bright_fs_src,
+							&hdr_arb_bright, "bloom bright-pass program" )
+						|| !hdr_arb_load( GL_FRAGMENT_PROGRAM_ARB, hdr_arb_blur_fs_src,
+							&hdr_arb_blur, "bloom blur program" ) ) {
+					return false;
+				}
+			}
+#endif
 			hdr_prog_bright = glCreateProgram();
 			glAttachShader( hdr_prog_bright, vs );
 			glAttachShader( hdr_prog_bright, fs );
@@ -2902,6 +3004,15 @@ static void hdr_present( GLuint dstFbo ) {
 		/* bright pass: scene -> tight A, or pyramid level 0 (both 1/4 res) */
 		glBindFramebuffer( RARCH_GL_FRAMEBUFFER, convN ? hdr_conv_fbo[0] : hdr_bloom_fbo[0] );
 		glViewport( 0, 0, qw, qh );
+#ifndef HAVE_OPENGLES
+		if ( hdr_arb_pyramid ) {
+			glUseProgram( 0 );
+			qglEnable( GL_VERTEX_PROGRAM_ARB );
+			qglEnable( GL_FRAGMENT_PROGRAM_ARB );
+			qglBindProgramARB( GL_VERTEX_PROGRAM_ARB, hdr_arb_vp );
+			qglBindProgramARB( GL_FRAGMENT_PROGRAM_ARB, hdr_arb_bright );
+		} else
+#endif
 		glUseProgram( hdr_prog_bright );
 		glBindTexture( GL_TEXTURE_2D, hdr_tex );
 		/* Threshold and knee are tuned together: the knee lets
@@ -2912,9 +3023,32 @@ static void hdr_present( GLuint dstFbo ) {
 		   cutting frame-to-frame energy swing by 1.4x to 2.4x.
 		   (0.6021 itself came from matching gamma code 0.8095 across
 		   the inverse-sRGB to gamma-2.4 decode change.) */
+#ifndef HAVE_OPENGLES
+		if ( hdr_arb_pyramid ) {
+			/* 1/(1-thresh) and 1/(4*knee) are pass constants; computing
+			   them here keeps two RCPs out of every fragment. */
+			const float thresh = 0.70f, knee = 0.25f;
+			const float p[4] = { thresh, knee, 1.0f / hdr_scene_encode_scale,
+					1.0f / ( 1.0f - thresh ) };
+			const float q[4] = { 0.0f, 1.0f / ( 4.0f * knee ), 0.0f, 0.0f };
+			qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 0, p );
+			qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 1, q );
+		} else {
 		glUniform1f( hdr_bright_loc_thresh, 0.70f );
 		glUniform1f( hdr_bright_loc_knee, 0.25f );
 		glUniform1f( hdr_bright_loc_enc, 1.0f / hdr_scene_encode_scale );
+		}
+#else
+		glUniform1f( hdr_bright_loc_thresh, 0.70f );
+		glUniform1f( hdr_bright_loc_knee, 0.25f );
+		glUniform1f( hdr_bright_loc_enc, 1.0f / hdr_scene_encode_scale );
+#endif
+#ifndef HAVE_OPENGLES
+		if ( hdr_arb_pyramid ) {
+			const float texel[4] = { 1.0f / (float)hdr_w, 1.0f / (float)hdr_h, 0.0f, 0.0f };
+			qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 2, texel );
+		} else
+#endif
 		glUniform2f( hdr_bright_loc_texel, 1.0f / (float)hdr_w, 1.0f / (float)hdr_h );
 		glDrawArrays( GL_TRIANGLES, 0, 3 );
 
@@ -2996,19 +3130,24 @@ static void hdr_present( GLuint dstFbo ) {
 				glUniform2f( hdr_up_loc_texel, 1.0f / (float)pw, 1.0f / (float)ph );
 				glDrawArrays( GL_TRIANGLES, 0, 3 );
 			}
-#ifndef HAVE_OPENGLES
-			/* Hand the pipeline back before the GLSL passes: leaving the
-			   ARB targets enabled would override every program object
-			   bound after this, including the game's own rendering on
-			   the next frame. */
-			if ( hdr_arb_pyramid ) {
-				qglDisable( GL_FRAGMENT_PROGRAM_ARB );
-				qglDisable( GL_VERTEX_PROGRAM_ARB );
-			}
-#endif
 			glDisable( GL_BLEND );
 		} else {
 		/* tight band blur: A -> B (H), B -> A (V) */
+#ifndef HAVE_OPENGLES
+		if ( hdr_arb_pyramid ) {
+			const float dh[4] = { 1.0f / qw, 0.0f, 0.0f, 0.0f };
+			const float dv[4] = { 0.0f, 1.0f / qh, 0.0f, 0.0f };
+			qglBindProgramARB( GL_FRAGMENT_PROGRAM_ARB, hdr_arb_blur );
+			glBindFramebuffer( RARCH_GL_FRAMEBUFFER, hdr_bloom_fbo[1] );
+			glBindTexture( GL_TEXTURE_2D, hdr_bloom_tex[0] );
+			qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 0, dh );
+			glDrawArrays( GL_TRIANGLES, 0, 3 );
+			glBindFramebuffer( RARCH_GL_FRAMEBUFFER, hdr_bloom_fbo[0] );
+			glBindTexture( GL_TEXTURE_2D, hdr_bloom_tex[1] );
+			qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 0, dv );
+			glDrawArrays( GL_TRIANGLES, 0, 3 );
+		} else {
+#endif
 		glUseProgram( hdr_prog_blur );
 		glBindFramebuffer( RARCH_GL_FRAMEBUFFER, hdr_bloom_fbo[1] );
 		glBindTexture( GL_TEXTURE_2D, hdr_bloom_tex[0] );
@@ -3018,6 +3157,9 @@ static void hdr_present( GLuint dstFbo ) {
 		glBindTexture( GL_TEXTURE_2D, hdr_bloom_tex[1] );
 		glUniform2f( hdr_blur_loc_dir, 0.0f, 1.0f / qh );
 		glDrawArrays( GL_TRIANGLES, 0, 3 );
+#ifndef HAVE_OPENGLES
+		}
+#endif
 		/* wide band: the horizontal pass runs at 1/16 sampling the
 		   already-blurred 1/4 band, so the 4x downsample rides along
 		   with it. The previous seed was a dedicated draw through the
@@ -3037,6 +3179,20 @@ static void hdr_present( GLuint dstFbo ) {
 		glDrawArrays( GL_TRIANGLES, 0, 3 );
 		}
 	}
+
+#ifndef HAVE_OPENGLES
+	/* One exit point for the whole bloom section, covering both the
+	   convolution pyramid and the two-band blur.  While an ARB program
+	   target is enabled it overrides any bound program object, so
+	   leaving it on would take the composite pass below - and the
+	   game's own rendering next frame - with it.  An earlier version
+	   disabled inside the pyramid branch only, which left exactly that
+	   hole on the other path. */
+	if ( hdr_arb_pyramid ) {
+		qglDisable( GL_FRAGMENT_PROGRAM_ARB );
+		qglDisable( GL_VERTEX_PROGRAM_ARB );
+	}
+#endif
 
 	glBindFramebuffer( RARCH_GL_FRAMEBUFFER, dstFbo );
 	glViewport( 0, 0, hdr_w, hdr_h );
