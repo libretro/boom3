@@ -159,7 +159,10 @@ static GLuint hdr_prog_down, hdr_prog_up;
 static GLuint hdr_arb_vp, hdr_arb_down, hdr_arb_up;
 static GLuint hdr_arb_bright, hdr_arb_blur;
 static GLuint hdr_arb_comp1, hdr_arb_comp2;
-static bool   hdr_arb_pyramid;   /* the pyramid runs on ARB programs */
+/* Every program in the chain is loaded.  On this build there is no other
+   chain to run, so this is a load-state flag rather than a path
+   selector - the dispatch below is not conditional. */
+static bool   hdr_arb_pyramid;
 #endif
 static GLint  hdr_down_loc_texel, hdr_up_loc_texel, hdr_up_loc_radius;
 static GLint  hdr_loc_bandW;
@@ -1758,6 +1761,7 @@ pre-existing XRGB8888 path byte for byte.
 #define GL_DEPTH_STENCIL_ATTACHMENT 0x821A
 #endif
 
+#ifdef HAVE_OPENGLES
 static const char *hdr_vs_src =
 	"attribute vec2 aPos;\n"
 	"varying vec2 vUV;\n"
@@ -1765,7 +1769,9 @@ static const char *hdr_vs_src =
 	"  vUV = aPos * 0.5 + 0.5;\n"
 	"  gl_Position = vec4(aPos, 0.0, 1.0);\n"
 	"}\n";
+#endif /* HAVE_OPENGLES */
 
+#ifdef HAVE_OPENGLES
 static const char *hdr_fs_src =
 	"#ifdef GL_ES\nprecision highp float;\n#endif\n"
 	"varying vec2 vUV;\n"
@@ -1993,6 +1999,7 @@ static const char *hdr_fs_src =
 	"                fract(n + (k + 2.0) * 0.6180339887)) - 0.5;\n"
 	"  gl_FragColor = vec4(clamp(e + d / 1023.0, 0.0, 1.0), 1.0);\n"
 	"}\n";
+#endif /* HAVE_OPENGLES */
 
 /*
    Bright pass: linearize, threshold with a normalized soft knee, and
@@ -2394,6 +2401,7 @@ static const char *hdr_arb_blur_fs_src =
 	"END\n";
 #endif /* !HAVE_OPENGLES */
 
+#ifdef HAVE_OPENGLES
 static const char *hdr_bright_fs_src =
 	"#ifdef GL_ES\nprecision highp float;\n#endif\n"
 	"varying vec2 vUV;\n"
@@ -2475,6 +2483,7 @@ static const char *hdr_bright_fs_src =
 	"  float l = dot(b, vec3(0.2126, 0.7152, 0.0722));\n"
 	"  gl_FragColor = vec4(b / (1.0 + l), 1.0);\n"
 	"}\n";
+#endif /* HAVE_OPENGLES */
 
 /*
    Separable Gaussian, 5 bilinear fetches for a 9-tap kernel
@@ -2495,6 +2504,7 @@ static const char *hdr_bright_fs_src =
    uTexel is the SOURCE texel size, so the offsets are in source texels
    while the viewport is the half-size destination.
 */
+#ifdef HAVE_OPENGLES
 static const char *hdr_down_fs_src =
 	"#ifdef GL_ES\nprecision highp float;\n#endif\n"
 	"varying vec2 vUV;\n"
@@ -2520,6 +2530,7 @@ static const char *hdr_down_fs_src =
 	"  o += (j + k + l + m) * 0.125;\n"
 	"  gl_FragColor = vec4(o, 1.0);\n"
 	"}\n";
+#endif /* HAVE_OPENGLES */
 
 /*
    Convolution bloom, upsample stage: a 3x3 tent, weights 1/2/1 2/4/2
@@ -2534,6 +2545,7 @@ static const char *hdr_down_fs_src =
    uRadius scales the tent in source texels. Above 1.0 the levels
    overlap more and the glow spreads wider and softer.
 */
+#ifdef HAVE_OPENGLES
 static const char *hdr_up_fs_src =
 	"#ifdef GL_ES\nprecision highp float;\n#endif\n"
 	"varying vec2 vUV;\n"
@@ -2553,7 +2565,9 @@ static const char *hdr_up_fs_src =
 	"  s += texture2D(uScene, vUV + vec2( o.x,  o.y)).rgb;\n"
 	"  gl_FragColor = vec4(s * 0.0625, 1.0);\n"
 	"}\n";
+#endif /* HAVE_OPENGLES */
 
+#ifdef HAVE_OPENGLES
 static const char *hdr_blur_fs_src =
 	"#ifdef GL_ES\nprecision highp float;\n#endif\n"
 	"varying vec2 vUV;\n"
@@ -2598,6 +2612,7 @@ static const char *hdr_blur_fs_src =
 	"  c += texture2D(uScene, vUV - uDir * 5.11234).rgb * 0.00251;\n"
 	"  gl_FragColor = vec4(c, 1.0);\n"
 	"}\n";
+#endif /* HAVE_OPENGLES */
 
 static GLuint hdr_compile( GLenum type, const char *src ) {
 	GLuint sh = glCreateShader( type );
@@ -2802,6 +2817,7 @@ static bool hdr_ensure_target( int w, int h ) {
 		return false;
 	}
 #endif
+#ifdef HAVE_OPENGLES
 	if ( hdr_prog == 0 ) {
 		GLuint vs = hdr_compile( GL_VERTEX_SHADER, hdr_vs_src );
 		GLuint fs = hdr_compile( GL_FRAGMENT_SHADER, hdr_fs_src );
@@ -2837,17 +2853,14 @@ static bool hdr_ensure_target( int w, int h ) {
 		hdr_loc_frame   = glGetUniformLocation( hdr_prog, "uFrame" );
 		hdr_loc_expand  = glGetUniformLocation( hdr_prog, "uExpand" );
 	}
+#endif /* HAVE_OPENGLES */
+#ifdef HAVE_OPENGLES
 	if ( hdr_prog_bright == 0 && !hdr_bloom_prog_bad ) {
 		GLuint vs = hdr_compile( GL_VERTEX_SHADER, hdr_vs_src );
 		GLuint fs = hdr_compile( GL_FRAGMENT_SHADER, hdr_bright_fs_src );
 		GLuint fs2 = hdr_compile( GL_FRAGMENT_SHADER, hdr_blur_fs_src );
 		if ( vs && fs && fs2 ) {
 			GLint okB = 0, okL = 0;
-#ifndef HAVE_OPENGLES
-			if ( !hdr_arb_ready() ) {
-				return false;
-			}
-#endif
 			hdr_prog_bright = glCreateProgram();
 			glAttachShader( hdr_prog_bright, vs );
 			glAttachShader( hdr_prog_bright, fs );
@@ -2907,11 +2920,6 @@ static bool hdr_ensure_target( int w, int h ) {
 			glAttachShader( hdr_prog_down, fsd );
 			glBindAttribLocation( hdr_prog_down, 0, "aPos" );
 			glLinkProgram( hdr_prog_down );
-#ifndef HAVE_OPENGLES
-			if ( !hdr_arb_ready() ) {
-				return false;
-			}
-#endif
 			hdr_prog_up = glCreateProgram();
 			glAttachShader( hdr_prog_up, vs );
 			glAttachShader( hdr_prog_up, fsu );
@@ -3111,6 +3119,7 @@ static bool hdr_ensure_target( int w, int h ) {
 		hdr_w = w;
 		hdr_h = h;
 	}
+#endif /* HAVE_OPENGLES */
 	return true;
 }
 
@@ -3227,6 +3236,17 @@ static void hdr_present( GLuint dstFbo ) {
 	   the composite's band weight is derived from it. */
 	int convN = hdr_bloom_convolution ? hdr_conv_levels( hdr_w, hdr_h ) : 0;
 	float bandW0, bandW1;
+#ifndef HAVE_OPENGLES
+	/* Enabled once for the whole post chain and handed back at the end
+	   of it, rather than per pass.  Bloom is optional and the composite
+	   is not, so an enable that lived inside the bloom block would
+	   leave the composite drawing with no program bound whenever bloom
+	   was off - which is not a GL error, just nothing on screen. */
+	qglEnable( GL_VERTEX_PROGRAM_ARB );
+	qglEnable( GL_FRAGMENT_PROGRAM_ARB );
+	qglBindProgramARB( GL_VERTEX_PROGRAM_ARB, hdr_arb_vp );
+#endif
+
 	if ( haveBloom ) {
 		int qw = hdr_w / 4 < 1 ? 1 : hdr_w / 4,  qh = hdr_h / 4 < 1 ? 1 : hdr_h / 4;
 		int sw = hdr_w / 16 < 1 ? 1 : hdr_w / 16, sh = hdr_h / 16 < 1 ? 1 : hdr_h / 16;
@@ -3234,16 +3254,11 @@ static void hdr_present( GLuint dstFbo ) {
 		/* bright pass: scene -> tight A, or pyramid level 0 (both 1/4 res) */
 		glBindFramebuffer( RARCH_GL_FRAMEBUFFER, convN ? hdr_conv_fbo[0] : hdr_bloom_fbo[0] );
 		glViewport( 0, 0, qw, qh );
-#ifndef HAVE_OPENGLES
-		if ( hdr_arb_pyramid ) {
-			glUseProgram( 0 );
-			qglEnable( GL_VERTEX_PROGRAM_ARB );
-			qglEnable( GL_FRAGMENT_PROGRAM_ARB );
-			qglBindProgramARB( GL_VERTEX_PROGRAM_ARB, hdr_arb_vp );
-			qglBindProgramARB( GL_FRAGMENT_PROGRAM_ARB, hdr_arb_bright );
-		} else
-#endif
+#ifdef HAVE_OPENGLES
 		glUseProgram( hdr_prog_bright );
+#else
+		qglBindProgramARB( GL_FRAGMENT_PROGRAM_ARB, hdr_arb_bright );
+#endif
 		glBindTexture( GL_TEXTURE_2D, hdr_tex );
 		/* Threshold and knee are tuned together: the knee lets
 		   sub-threshold content contribute, so holding the knee fixed
@@ -3253,8 +3268,12 @@ static void hdr_present( GLuint dstFbo ) {
 		   cutting frame-to-frame energy swing by 1.4x to 2.4x.
 		   (0.6021 itself came from matching gamma code 0.8095 across
 		   the inverse-sRGB to gamma-2.4 decode change.) */
-#ifndef HAVE_OPENGLES
-		if ( hdr_arb_pyramid ) {
+#ifdef HAVE_OPENGLES
+		glUniform1f( hdr_bright_loc_thresh, 0.70f );
+		glUniform1f( hdr_bright_loc_knee, 0.25f );
+		glUniform1f( hdr_bright_loc_enc, 1.0f / hdr_scene_encode_scale );
+#else
+		{
 			/* 1/(1-thresh) and 1/(4*knee) are pass constants; computing
 			   them here keeps two RCPs out of every fragment. */
 			const float thresh = 0.70f, knee = 0.25f;
@@ -3263,23 +3282,16 @@ static void hdr_present( GLuint dstFbo ) {
 			const float q[4] = { 0.0f, 1.0f / ( 4.0f * knee ), 0.0f, 0.0f };
 			qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 0, p );
 			qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 1, q );
-		} else {
-		glUniform1f( hdr_bright_loc_thresh, 0.70f );
-		glUniform1f( hdr_bright_loc_knee, 0.25f );
-		glUniform1f( hdr_bright_loc_enc, 1.0f / hdr_scene_encode_scale );
 		}
-#else
-		glUniform1f( hdr_bright_loc_thresh, 0.70f );
-		glUniform1f( hdr_bright_loc_knee, 0.25f );
-		glUniform1f( hdr_bright_loc_enc, 1.0f / hdr_scene_encode_scale );
 #endif
-#ifndef HAVE_OPENGLES
-		if ( hdr_arb_pyramid ) {
+#ifdef HAVE_OPENGLES
+		glUniform2f( hdr_bright_loc_texel, 1.0f / (float)hdr_w, 1.0f / (float)hdr_h );
+#else
+		{
 			const float texel[4] = { 1.0f / (float)hdr_w, 1.0f / (float)hdr_h, 0.0f, 0.0f };
 			qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 2, texel );
-		} else
+		}
 #endif
-		glUniform2f( hdr_bright_loc_texel, 1.0f / (float)hdr_w, 1.0f / (float)hdr_h );
 		glDrawArrays( GL_TRIANGLES, 0, 3 );
 
 		if ( convN ) {
@@ -3293,20 +3305,11 @@ static void hdr_present( GLuint dstFbo ) {
 			   far past its source instead of stopping at a visible edge.
 			*/
 			int i;
-#ifndef HAVE_OPENGLES
-			/* ARB programs are enabled around the pyramid only, and the
-			   GLSL program object is unbound while they are: the two
-			   pipelines must not both be active, and the passes after
-			   this one are still GLSL. */
-			if ( hdr_arb_pyramid ) {
-				glUseProgram( 0 );
-				qglEnable( GL_VERTEX_PROGRAM_ARB );
-				qglEnable( GL_FRAGMENT_PROGRAM_ARB );
-				qglBindProgramARB( GL_VERTEX_PROGRAM_ARB, hdr_arb_vp );
-				qglBindProgramARB( GL_FRAGMENT_PROGRAM_ARB, hdr_arb_down );
-			} else
-#endif
+#ifdef HAVE_OPENGLES
 			glUseProgram( hdr_prog_down );
+#else
+			qglBindProgramARB( GL_FRAGMENT_PROGRAM_ARB, hdr_arb_down );
+#endif
 			for ( i = 1; i < convN; i++ ) {
 				int pw = ( hdr_w / 4 ) >> ( i - 1 ), ph = ( hdr_h / 4 ) >> ( i - 1 );
 				if ( pw < 1 ) pw = 1;
@@ -3314,33 +3317,32 @@ static void hdr_present( GLuint dstFbo ) {
 				glBindFramebuffer( RARCH_GL_FRAMEBUFFER, hdr_conv_fbo[i] );
 				glViewport( 0, 0, pw > 1 ? pw / 2 : 1, ph > 1 ? ph / 2 : 1 );
 				glBindTexture( GL_TEXTURE_2D, hdr_conv_tex[i - 1] );
-#ifndef HAVE_OPENGLES
-				if ( hdr_arb_pyramid ) {
+#ifdef HAVE_OPENGLES
+				glUniform2f( hdr_down_loc_texel, 1.0f / (float)pw, 1.0f / (float)ph );
+#else
+				{
 					const float texel[4] = { 1.0f / (float)pw, 1.0f / (float)ph, 0.0f, 0.0f };
 					qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 0, texel );
-				} else
+				}
 #endif
-				glUniform2f( hdr_down_loc_texel, 1.0f / (float)pw, 1.0f / (float)ph );
 				glDrawArrays( GL_TRIANGLES, 0, 3 );
 			}
 			/* additive accumulation upward. Blend rather than ping-pong so
 			   each level needs only one buffer; hdr_present disabled blend
 			   on entry, so turn it off again afterwards. */
-#ifndef HAVE_OPENGLES
-			if ( hdr_arb_pyramid ) {
-				qglBindProgramARB( GL_FRAGMENT_PROGRAM_ARB, hdr_arb_up );
-			} else
-#endif
+#ifdef HAVE_OPENGLES
 			glUseProgram( hdr_prog_up );
+#else
+			qglBindProgramARB( GL_FRAGMENT_PROGRAM_ARB, hdr_arb_up );
+#endif
 			glEnable( GL_BLEND );
 			glBlendFunc( GL_ONE, GL_ONE );
-#ifndef HAVE_OPENGLES
-			/* radius is 1.0 here, so env[0].xy is just the texel size;
+#ifdef HAVE_OPENGLES
+			glUniform1f( hdr_up_loc_radius, 1.0f );
+#endif
+			/* radius is 1.0 here, so env[0].xy is just the texel size:
 			   the ARB pass takes the already-scaled offset rather than
 			   multiplying per tap. */
-			if ( !hdr_arb_pyramid )
-#endif
-			glUniform1f( hdr_up_loc_radius, 1.0f );
 			for ( i = convN - 1; i > 0; i-- ) {
 				int pw = ( hdr_w / 4 ) >> i, ph = ( hdr_h / 4 ) >> i;
 				int dw = ( hdr_w / 4 ) >> ( i - 1 ), dh = ( hdr_h / 4 ) >> ( i - 1 );
@@ -3351,20 +3353,31 @@ static void hdr_present( GLuint dstFbo ) {
 				glBindFramebuffer( RARCH_GL_FRAMEBUFFER, hdr_conv_fbo[i - 1] );
 				glViewport( 0, 0, dw, dh );
 				glBindTexture( GL_TEXTURE_2D, hdr_conv_tex[i] );
-#ifndef HAVE_OPENGLES
-				if ( hdr_arb_pyramid ) {
+#ifdef HAVE_OPENGLES
+				glUniform2f( hdr_up_loc_texel, 1.0f / (float)pw, 1.0f / (float)ph );
+#else
+				{
 					const float texel[4] = { 1.0f / (float)pw, 1.0f / (float)ph, 0.0f, 0.0f };
 					qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 0, texel );
-				} else
+				}
 #endif
-				glUniform2f( hdr_up_loc_texel, 1.0f / (float)pw, 1.0f / (float)ph );
 				glDrawArrays( GL_TRIANGLES, 0, 3 );
 			}
 			glDisable( GL_BLEND );
 		} else {
 		/* tight band blur: A -> B (H), B -> A (V) */
-#ifndef HAVE_OPENGLES
-		if ( hdr_arb_pyramid ) {
+#ifdef HAVE_OPENGLES
+		glUseProgram( hdr_prog_blur );
+		glBindFramebuffer( RARCH_GL_FRAMEBUFFER, hdr_bloom_fbo[1] );
+		glBindTexture( GL_TEXTURE_2D, hdr_bloom_tex[0] );
+		glUniform2f( hdr_blur_loc_dir, 1.0f / qw, 0.0f );
+		glDrawArrays( GL_TRIANGLES, 0, 3 );
+		glBindFramebuffer( RARCH_GL_FRAMEBUFFER, hdr_bloom_fbo[0] );
+		glBindTexture( GL_TEXTURE_2D, hdr_bloom_tex[1] );
+		glUniform2f( hdr_blur_loc_dir, 0.0f, 1.0f / qh );
+		glDrawArrays( GL_TRIANGLES, 0, 3 );
+#else
+		{
 			const float dh[4] = { 1.0f / qw, 0.0f, 0.0f, 0.0f };
 			const float dv[4] = { 0.0f, 1.0f / qh, 0.0f, 0.0f };
 			qglBindProgramARB( GL_FRAGMENT_PROGRAM_ARB, hdr_arb_blur );
@@ -3376,18 +3389,6 @@ static void hdr_present( GLuint dstFbo ) {
 			glBindTexture( GL_TEXTURE_2D, hdr_bloom_tex[1] );
 			qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 0, dv );
 			glDrawArrays( GL_TRIANGLES, 0, 3 );
-		} else {
-#endif
-		glUseProgram( hdr_prog_blur );
-		glBindFramebuffer( RARCH_GL_FRAMEBUFFER, hdr_bloom_fbo[1] );
-		glBindTexture( GL_TEXTURE_2D, hdr_bloom_tex[0] );
-		glUniform2f( hdr_blur_loc_dir, 1.0f / qw, 0.0f );
-		glDrawArrays( GL_TRIANGLES, 0, 3 );
-		glBindFramebuffer( RARCH_GL_FRAMEBUFFER, hdr_bloom_fbo[0] );
-		glBindTexture( GL_TEXTURE_2D, hdr_bloom_tex[1] );
-		glUniform2f( hdr_blur_loc_dir, 0.0f, 1.0f / qh );
-		glDrawArrays( GL_TRIANGLES, 0, 3 );
-#ifndef HAVE_OPENGLES
 		}
 #endif
 		/* wide band: the horizontal pass runs at 1/16 sampling the
@@ -3410,32 +3411,13 @@ static void hdr_present( GLuint dstFbo ) {
 		}
 	}
 
-#ifndef HAVE_OPENGLES
-	/* One exit point for the whole bloom section, covering both the
-	   convolution pyramid and the two-band blur.  While an ARB program
-	   target is enabled it overrides any bound program object, so
-	   leaving it on would take the composite pass below - and the
-	   game's own rendering next frame - with it.  An earlier version
-	   disabled inside the pyramid branch only, which left exactly that
-	   hole on the other path. */
-	if ( hdr_arb_pyramid ) {
-		qglDisable( GL_FRAGMENT_PROGRAM_ARB );
-		qglDisable( GL_VERTEX_PROGRAM_ARB );
-	}
-#endif
 
 	glBindFramebuffer( RARCH_GL_FRAMEBUFFER, dstFbo );
 	glViewport( 0, 0, hdr_w, hdr_h );
 
-#ifndef HAVE_OPENGLES
-	if ( hdr_arb_pyramid ) {
-		glUseProgram( 0 );
-		qglEnable( GL_VERTEX_PROGRAM_ARB );
-		qglEnable( GL_FRAGMENT_PROGRAM_ARB );
-		qglBindProgramARB( GL_VERTEX_PROGRAM_ARB, hdr_arb_vp );
-	} else
-#endif
+#ifdef HAVE_OPENGLES
 	glUseProgram( hdr_prog );
+#endif
 
 	/*
 	   Band weights, and with them the total bloom energy.
@@ -3463,9 +3445,7 @@ static void hdr_present( GLuint dstFbo ) {
 	/* wraps every 64 frames; the pattern only has to keep moving */
 	const float frameN = (float)( hdr_frame_counter++ & 63u );
 
-#ifndef HAVE_OPENGLES
-	if ( !hdr_arb_pyramid ) {
-#endif
+#ifdef HAVE_OPENGLES
 	glUniform1i( hdr_loc_tex, 0 );
 	glUniform1i( hdr_loc_bloomT, 1 );
 	glUniform1i( hdr_loc_bloomW, 2 );
@@ -3479,19 +3459,13 @@ static void hdr_present( GLuint dstFbo ) {
 	/* Same 0.75 knee as the Reinhard roll-off: expansion starts where
 	 * the diffuse range ends, so the two meet at the same place. */
 	glUniform2f( hdr_loc_expand, (float)hdr_expand_mode, 0.75f );
-#ifndef HAVE_OPENGLES
-	}
-	/* The uniform uploads above address hdr_prog; with the ARB path
-	   active no program object is in use, so issuing them would raise
-	   GL_INVALID_OPERATION on every frame and the frame counter would
-	   advance twice. */
 #endif
 
 #ifndef HAVE_OPENGLES
-	if ( hdr_arb_pyramid ) {
-		/* The band-weight branch the GLSL takes on a uniform becomes a
-		   choice of program here, so the second bloom fetch is still
-		   skipped rather than multiplied by zero. */
+	{
+		/* The band-weight branch the GLSL took on a uniform is a choice
+		   of program here, so the second bloom fetch is still skipped
+		   rather than multiplied by zero. */
 		const float eknee = 0.75f;
 		const float p0[4] = { paperWhite / 10000.0f, H,
 				hdr_rolloff_aces ? 1.0f : 0.0f, 0.75f };
@@ -3519,10 +3493,11 @@ static void hdr_present( GLuint dstFbo ) {
 	glDrawArrays( GL_TRIANGLES, 0, 3 );
 
 #ifndef HAVE_OPENGLES
-	if ( hdr_arb_pyramid ) {
-		qglDisable( GL_FRAGMENT_PROGRAM_ARB );
-		qglDisable( GL_VERTEX_PROGRAM_ARB );
-	}
+	/* Hand the pipeline back: while an ARB target is enabled it
+	   overrides any bound program object, so leaving it on would take
+	   the game's own rendering next frame with it. */
+	qglDisable( GL_FRAGMENT_PROGRAM_ARB );
+	qglDisable( GL_VERTEX_PROGRAM_ARB );
 #endif
 	glDisableVertexAttribArray( 0 );
 	glActiveTexture( GL_TEXTURE1 );
