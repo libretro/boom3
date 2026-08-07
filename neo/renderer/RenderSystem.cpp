@@ -268,6 +268,23 @@ static void R_CheckCvars( void ) {
 #endif
 	}
 
+#ifndef HAVE_OPENGLES
+	/*
+	   Same boundary, different switch: whether the epilogue carries the
+	   luminance-aware clamp is decided at program load, and the option
+	   behind it is live.  Reload when the compiled-in variant stops
+	   matching what the option asks for.  Cheap to test - two bools -
+	   and it only fires on the frame the user actually toggles it.
+	*/
+	{
+		extern bool arbProgramsLumaClamp;
+		extern bool hdr_luma_clamp;
+		if ( r_gammaInShader.GetBool() && arbProgramsLumaClamp != hdr_luma_clamp ) {
+			R_ReloadARBPrograms_f( idCmdArgs() );
+		}
+	}
+#endif
+
 	if ( r_gammaInShader.IsModified() ) {
 		r_gammaInShader.ClearModified();
 #ifndef HAVE_OPENGLES

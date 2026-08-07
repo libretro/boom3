@@ -131,6 +131,7 @@ float         hdr_specular_gain = 2.0f;    /* interaction specular scale in HDR 
 float         hdr_scene_encode_scale = 1.0f; /* 0.5 = one gamma-domain stop of scene headroom; read by the render backend */
 bool          hdr_fp16_scene = false;      /* FP16 scene target: per-pass quantization gone */
 bool          hdr_fp32_scene = false;      /* FP32 scene target: full-float accumulation for extreme translucent stacking */
+bool          hdr_luma_clamp = false;      /* luminance-aware highlight blending in the clamped epilogue; live-switchable */
 bool          hdr_unbounded_blend = true;  /* unclamped epilogue on float targets: true multi-pass accumulation past 1.0 */
 static bool   hdr_rolloff_aces  = false;   /* live-switchable */
 
@@ -529,6 +530,17 @@ static void update_variables(bool startup)
 		hdr_scene_encode_scale = (hdr_output_active
 				&& !((hdr_fp16_scene || hdr_fp32_scene) && hdr_unbounded_blend)
 				&& strcmp(var.value, "disabled") != 0) ? 0.5f : 1.0f;
+
+	/* Luminance-aware highlight blending: only does anything where the
+	 * epilogue actually clamps, so it is forced off when the unbounded
+	 * float path is in use - there is no ceiling there to roll off
+	 * against, and the extra instructions would be pure cost. */
+	var.key = "doom_hdr_luma_blend";
+	var.value = NULL;
+	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+		hdr_luma_clamp = hdr_output_active
+				&& !((hdr_fp16_scene || hdr_fp32_scene) && hdr_unbounded_blend)
+				&& strcmp(var.value, "enabled") == 0;
 
 	var.key = "doom_hdr_particle_lights";
 	var.value = NULL;

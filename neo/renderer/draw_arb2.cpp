@@ -645,7 +645,10 @@ static ID_INLINE bool isARBidentifierChar( int c ) {
 
 /* r_gamma unity-ness the currently loaded ARB programs were built for.
    R_CheckCvars reloads them when the live cvar crosses that boundary. */
+extern bool hdr_luma_clamp;
+
 bool arbProgramsUnityGamma = true;
+bool arbProgramsLumaClamp = false;
 
 void R_LoadARBProgram( int progIndex ) {
 	int		ofs;
@@ -774,6 +777,7 @@ void R_LoadARBProgram( int progIndex ) {
 
 		// note that strlen("dhewm3tmpres") == strlen("result.color")
 		const char* tmpres = "TEMP dhewm3tmpres; # injected by dhewm3 for gamma correction\n";
+		const char* lumaTmp = "TEMP dhewm3luma; # injected by dhewm3 for luminance-aware clamping\n";
 
 		// Note: program.env[21].xyz = r_brightness; program.env[21].w = 1.0/r_gamma
 		// outColor.rgb = pow(dhewm3tmpres.rgb*r_brightness, vec3(1.0/r_gamma))
@@ -822,7 +826,81 @@ void R_LoadARBProgram( int progIndex ) {
 		const bool unityGamma = ( r_gamma.GetFloat() == 1.0f );
 		arbProgramsUnityGamma = unityGamma;
 
-		const char* extraLines = unityGamma ? ( unbounded ?
+		/*
+		   Luminance-aware highlight blending.
+
+		   The bounded epilogue ends in MUL_SAT, which clamps each
+		   channel on its own.  That is what puts the ceiling in the
+		   right place, but it also rewrites the colour: (1.8, 0.9, 0.4)
+		   becomes (1.0, 0.9, 0.4), which is a different hue and a
+		   different saturation, not a dimmer version of the same light.
+		   Stack a few translucent passes on a clamped target and every
+		   overbright pixel drifts toward whichever channel saturated
+		   first - the classic magenta-ish fringe on additive fire and
+		   the flat cyan on overbright coolant glows.
+
+		   Instead, when a pixel cannot fit, desaturate it toward its own
+		   luminance by exactly the amount needed to bring the peak
+		   channel to 1:
+
+		     L    = dot(rgb, Rec.709 luma)
+		     peak = max(r, g, b)
+		     t    = saturate( (peak - 1) / (peak - L) )
+		     rgb' = lerp(rgb, L, t)
+
+		   At t = 0 nothing changes, so anything that already fits is
+		   bit-identical to the old path.  As a pixel gets brighter it
+		   walks toward its own luminance instead of toward a channel
+		   corner, which is what a highlight rolling off looks like -
+		   hue holds, saturation gives way, and the pixel ends at
+		   neutral white rather than at a primary.  Luminance is
+		   preserved until L itself reaches the ceiling, which is the
+		   part per-channel clamping cannot do at all: clipping the
+		   peak channel destroys luminance the moment any channel
+		   exceeds 1.
+
+		   Only the bounded variants get this.  The unbounded epilogue
+		   deliberately has no ceiling, so there is nothing to roll off
+		   and the extra instructions would be pure cost.
+
+		   Off by default, and off means the exact previous text.
+		*/
+		const bool lumaClamp = hdr_luma_clamp && !unbounded;
+		arbProgramsLumaClamp = lumaClamp;
+
+		/* The desaturation block, shared by both bounded variants.  It
+		 * leaves the result in dhewm3tmpres.xyz, low-clamped and with
+		 * the peak channel at or below 1. */
+#define DHEWM3_LUMA_CLAMP_BLOCK \
+			"MAX dhewm3tmpres.xyz, dhewm3tmpres, 0.0;\n" \
+			"DP3 dhewm3luma.x, dhewm3tmpres, {0.2126, 0.7152, 0.0722, 0.0};\n" \
+			"MAX dhewm3luma.y, dhewm3tmpres.x, dhewm3tmpres.y;\n" \
+			"MAX dhewm3luma.y, dhewm3luma.y, dhewm3tmpres.z;\n" \
+			"SUB dhewm3luma.z, dhewm3luma.y, 1.0;\n" \
+			"SUB dhewm3luma.w, dhewm3luma.y, dhewm3luma.x;\n" \
+			"MAX dhewm3luma.w, dhewm3luma.w, 0.0001;\n" \
+			"RCP dhewm3luma.w, dhewm3luma.w;\n" \
+			"MUL_SAT dhewm3luma.z, dhewm3luma.z, dhewm3luma.w;\n" \
+			"LRP dhewm3tmpres.xyz, dhewm3luma.z, dhewm3luma.x, dhewm3tmpres;\n"
+
+		const char* extraLines = lumaClamp ? ( unityGamma ?
+			"# gamma correction in shader, injected by dhewm3 (unity gamma, luminance-aware clamp) \n"
+			"MUL dhewm3tmpres.xyz, program.env[21], dhewm3tmpres;\n"
+			DHEWM3_LUMA_CLAMP_BLOCK
+			"MOV_SAT result.color.xyz, dhewm3tmpres;\n"
+			"MOV result.color.w, dhewm3tmpres.w;\n"
+			"\nEND\n\n"
+		:
+			"# gamma correction in shader, injected by dhewm3 (luminance-aware clamp) \n"
+			"MUL dhewm3tmpres.xyz, program.env[21], dhewm3tmpres;\n"
+			DHEWM3_LUMA_CLAMP_BLOCK
+			"MOV_SAT dhewm3tmpres.xyz, dhewm3tmpres;\n"
+			"POW result.color.x, dhewm3tmpres.x, program.env[21].w;\n"
+			"POW result.color.y, dhewm3tmpres.y, program.env[21].w;\n"
+			"POW result.color.z, dhewm3tmpres.z, program.env[21].w;\n"
+			"MOV result.color.w, dhewm3tmpres.w;\n"
+			"\nEND\n\n"
+		) : unityGamma ? ( unbounded ?
 			"# gamma correction in shader, injected by dhewm3 (unity gamma, unclamped high side) \n"
 			"MAX dhewm3tmpres.xyz, dhewm3tmpres, 0.0;\n"
 			"MUL result.color.xyz, program.env[21], dhewm3tmpres;\n"
@@ -855,7 +933,8 @@ void R_LoadARBProgram( int progIndex ) {
 			"MOV result.color.w, dhewm3tmpres.w;\n" // alpha remains unmodified
 			"\nEND\n\n"; // we add this block right at the end, replacing the original "END" string
 
-		int fullLen = strlen( start ) + strlen( tmpres ) + strlen( extraLines );
+		int fullLen = strlen( start ) + strlen( tmpres ) + strlen( extraLines )
+				+ ( lumaClamp ? strlen( lumaTmp ) : 0 );
 		char* outStr = (char*)_alloca( fullLen + 1 );
 
 		// add tmpres right after OPTION line (if any)
@@ -879,6 +958,11 @@ void R_LoadARBProgram( int progIndex ) {
 		// copy tmpres ("TEMP dhewm3tmpres; # ..")
 		memcpy( outStr+curLen, tmpres, strlen( tmpres ) );
 		curLen += strlen( tmpres );
+		// and the scratch register the luminance-aware clamp needs
+		if ( lumaClamp ) {
+			memcpy( outStr+curLen, lumaTmp, strlen( lumaTmp ) );
+			curLen += strlen( lumaTmp );
+		}
 		// copy remaining original shader up to (excluding) "END"
 		int remLen = end - insertPos;
 		memcpy( outStr+curLen, insertPos, remLen );

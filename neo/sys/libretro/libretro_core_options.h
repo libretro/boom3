@@ -183,6 +183,30 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "enabled"
    },
    {
+      "doom_hdr_luma_blend",
+      "HDR Luminance-Aware Highlights",
+      NULL,
+      "When a pixel is too bright for the buffer, roll it off toward "
+      "its own luminance instead of clipping each colour channel "
+      "separately. Per-channel clipping changes the colour of anything "
+      "overbright - stacked fire, muzzle flashes and coolant glows "
+      "drift toward whichever channel saturated first, which is where "
+      "the magenta and cyan fringes on bright effects come from. "
+      "Rolling off toward luminance keeps the hue and lets the pixel "
+      "fade to white the way a real highlight does. Costs about ten "
+      "extra shader instructions per fragment. No effect with True "
+      "Multi-Pass Blending on a float buffer, which has no ceiling to "
+      "roll off against.",
+      NULL,
+      NULL,
+      {
+         { "disabled", "Disabled" },
+         { "enabled",  "Enabled" },
+         { NULL, NULL },
+      },
+      "disabled"
+   },
+   {
       "doom_hdr_headroom",
       "HDR Scene Headroom",
       NULL,
