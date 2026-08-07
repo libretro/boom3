@@ -277,6 +277,7 @@ bool idRenderSystemLocal::RegisterFont( const char *fontName, fontInfoEx_t &font
 	float max;
 #endif
 	void *faceData;
+	const void *borrowedFace = NULL;
 	ID_TIME_T ftime;
 	int i, len, fontCount;
 	char name[1024];
@@ -335,7 +336,16 @@ bool idRenderSystemLocal::RegisterFont( const char *fontName, fontInfoEx_t &font
 			return false;
 		}
 
-		fileSystem->ReadFile( name, &faceData, &ftime );
+		/* The size was already checked against FILESIZE_fontInfo_t
+		 * above, so every read below is inside the file: borrow it from
+		 * the mapped pak rather than allocating a copy of a fixed-size
+		 * record just to walk it once. */
+		borrowedFace = fileSystem->GetFileView( name, &len, &ftime );
+		if ( borrowedFace != NULL ) {
+			faceData = (void *)borrowedFace;
+		} else {
+			fileSystem->ReadFile( name, &faceData, &ftime );
+		}
 		fdOffset = 0;
 		fdFile = reinterpret_cast<unsigned char*>(faceData);
 		for( i = 0; i < GLYPHS_PER_FONT; i++ ) {
@@ -380,7 +390,12 @@ bool idRenderSystemLocal::RegisterFont( const char *fontName, fontInfoEx_t &font
 			font.maxWidthLarge = mw;
 			font.maxHeightLarge = mh;
 		}
-		fileSystem->FreeFile( faceData );
+		if ( borrowedFace != NULL ) {
+			fileSystem->ReleaseFileView( borrowedFace );
+			borrowedFace = NULL;
+		} else {
+			fileSystem->FreeFile( faceData );
+		}
 	}
 
 	//memcpy( &registeredFont[registeredFontCount++], &font, sizeof( fontInfoEx_t ) );
