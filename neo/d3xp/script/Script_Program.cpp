@@ -1763,6 +1763,20 @@ idProgram::CompileText
 ================
 */
 bool idProgram::CompileText( const char *source, const char *text, bool console ) {
+	return CompileText( source, text, (int)strlen( text ), console );
+}
+
+/*
+================
+idProgram::CompileText
+
+Length-taking form.  The console path measures its own string and calls
+the wrapper above; the file path passes the length the filesystem gave
+it, which is what lets the script text be a borrowed view of the pak
+rather than a NUL-terminated private copy.
+================
+*/
+bool idProgram::CompileText( const char *source, const char *text, int textLength, bool console ) {
 	idCompiler	compiler;
 	int			i;
 	idVarDef	*def;
@@ -1773,7 +1787,7 @@ bool idProgram::CompileText( const char *source, const char *text, bool console 
 	filenum = GetFilenum( ospath );
 
 	try {
-		compiler.CompileFile( text, filename, console );
+		compiler.CompileFile( text, textLength, filename, console );
 
 		// check to make sure all functions prototyped have code
 		for( i = 0; i < varDefs.Num(); i++ ) {
@@ -1822,14 +1836,31 @@ idProgram::CompileFile
 void idProgram::CompileFile( const char *filename ) {
 	char *src;
 	bool result;
+	int length = 0;
 
-	if ( fileSystem->ReadFile( filename, ( void ** )&src, NULL ) < 0 ) {
+	/* Borrow the script text from the mapped pak where it can be; the
+	 * files this reaches are the top-level scripts, and everything they
+	 * #include already goes through idParser, which borrows too. */
+	const char *view = (const char *)fileSystem->GetFileView( filename, &length, NULL );
+	if ( view != NULL ) {
+		src = (char *)view;
+	} else {
+		length = fileSystem->ReadFile( filename, ( void ** )&src, NULL );
+	}
+	if ( length < 0 || src == NULL ) {
+		if ( view != NULL ) {
+			fileSystem->ReleaseFileView( view );
+		}
 		gameLocal.Error( "Couldn't load %s\n", filename );
 	}
 
-	result = CompileText( filename, src, false );
+	result = CompileText( filename, src, length, false );
 
-	fileSystem->FreeFile( src );
+	if ( view != NULL ) {
+		fileSystem->ReleaseFileView( view );
+	} else {
+		fileSystem->FreeFile( src );
+	}
 
 	if ( !result ) {
 		gameLocal.Error( "Compile failed in file %s.", filename );

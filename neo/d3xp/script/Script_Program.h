@@ -498,6 +498,7 @@ public:
 	void										Startup( const char *defaultScript );
 	void										Restart( void );
 	bool										CompileText( const char *source, const char *text, bool console );
+	bool										CompileText( const char *source, const char *text, int textLength, bool console );
 	const function_t							*CompileFunction( const char *functionName, const char *text );
 	void										CompileFile( const char *filename );
 	void										BeginCompilation( void );

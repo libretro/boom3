@@ -2607,7 +2607,7 @@ idCompiler::CompileFile
 compiles the 0 terminated text, adding definitions to the program structure
 ============
 */
-void idCompiler::CompileFile( const char *text, const char *filename, bool toConsole ) {
+void idCompiler::CompileFile( const char *text, int textLength, const char *filename, bool toConsole ) {
 	idTimer compile_time;
 	bool error;
 
@@ -2628,7 +2628,7 @@ void idCompiler::CompileFile( const char *text, const char *filename, bool toCon
 	memset( &immediate, 0, sizeof( immediate ) );
 
 	parser.SetFlags( LEXFL_ALLOWMULTICHARLITERALS );
-	parser.LoadMemory( text, strlen( text ), filename );
+	parser.LoadMemory( text, textLength, filename );
 	parserPtr = &parser;
 
 	// unread tokens to include script defines
