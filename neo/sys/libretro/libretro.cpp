@@ -666,7 +666,23 @@ static void context_reset(void)
    hdr_w = hdr_h = 0;
 
    if (!first_boot)
+   {
       R_ReinitOpenGL();
+
+      /* context_destroy freed the world's derived data - the area
+         surfaces and light interactions built for the map - and
+         R_ReinitOpenGL does not rebuild them.  Without this the map
+         geometry never comes back after a context reset: entities,
+         the HUD and the player's own model still draw, because those
+         are regenerated from their models, so it reads as "most of
+         the environment stopped rendering" rather than as a failure.
+
+         The engine's own vid restart ends exactly this way, which is
+         what this path was missing. */
+      tr.viewCount++;
+      tr.viewDef = NULL;
+      R_RegenerateWorld_f( idCmdArgs() );
+   }
 
    glsm_ctl(GLSM_CTL_STATE_CONTEXT_RESET, NULL);
 
