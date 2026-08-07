@@ -2668,6 +2668,23 @@ static bool hdr_arb_available( void ) {
 			&& qglProgramEnvParameter4fvARB != NULL;
 }
 
+/*
+   Loads the whole ARB chain, once, and only reports ready when every
+   program in it is up.
+
+   This is one function rather than a load beside each pass because the
+   first attempt at it was not: the composite loaded in one place and
+   set the "ARB path is live" flag, the pyramid loaded in another and
+   was guarded on that same flag being clear.  Whichever ran first
+   locked the other out, so the flag said the chain was on ARB while
+   three of its five programs were still zero.  Binding program 0 is
+   not an error in GL, it just draws with no program - so nothing
+   failed, nothing logged, and every live HDR option looked inert
+   because the pass consuming their parameters was not the pass
+   drawing.
+*/
+static bool hdr_arb_ready( void );
+
 static bool hdr_arb_load( GLenum target, const char *text, GLuint *out, const char *what ) {
 	GLuint id = 0;
 	GLint  ofs = -1;
@@ -2717,6 +2734,41 @@ static bool hdr_arb_load( GLenum target, const char *text, GLuint *out, const ch
 	*out = id;
 	return true;
 }
+
+static bool hdr_arb_ready( void ) {
+	if ( hdr_arb_pyramid ) {
+		return true;
+	}
+	if ( !hdr_arb_available() ) {
+		/* No ARB programs on this context.  The ARB2 renderer could not
+		   have drawn anything either, so this is not a case worth a
+		   GLSL fallback - but it is not this pass's business to refuse
+		   either, so leave the GLSL chain to it. */
+		return true;
+	}
+	if ( !hdr_arb_load( GL_VERTEX_PROGRAM_ARB, hdr_arb_vp_src,
+				&hdr_arb_vp, "hdr vertex program" )
+			|| !hdr_arb_load( GL_FRAGMENT_PROGRAM_ARB, hdr_arb_comp1_fs_src,
+				&hdr_arb_comp1, "hdr composite program (one band)" )
+			|| !hdr_arb_load( GL_FRAGMENT_PROGRAM_ARB, hdr_arb_comp2_fs_src,
+				&hdr_arb_comp2, "hdr composite program (two bands)" )
+			|| !hdr_arb_load( GL_FRAGMENT_PROGRAM_ARB, hdr_arb_bright_fs_src,
+				&hdr_arb_bright, "bloom bright-pass program" )
+			|| !hdr_arb_load( GL_FRAGMENT_PROGRAM_ARB, hdr_arb_blur_fs_src,
+				&hdr_arb_blur, "bloom blur program" )
+			|| !hdr_arb_load( GL_FRAGMENT_PROGRAM_ARB, hdr_arb_down_fs_src,
+				&hdr_arb_down, "bloom downsample program" )
+			|| !hdr_arb_load( GL_FRAGMENT_PROGRAM_ARB, hdr_arb_up_fs_src,
+				&hdr_arb_up, "bloom upsample program" ) ) {
+		return false;
+	}
+
+	if ( log_cb ) {
+		log_cb( RETRO_LOG_INFO, "[boom3] HDR: post chain on ARB programs\n" );
+	}
+	hdr_arb_pyramid = true;
+	return true;
+}
 #endif /* !HAVE_OPENGLES */
 
 
@@ -2736,16 +2788,8 @@ static int hdr_conv_levels( int w, int h ) {
    per frame, does work only on change. Context loss zeroes the ids. */
 static bool hdr_ensure_target( int w, int h ) {
 #ifndef HAVE_OPENGLES
-	if ( hdr_arb_comp1 == 0 && hdr_arb_available() ) {
-		if ( !hdr_arb_load( GL_VERTEX_PROGRAM_ARB, hdr_arb_vp_src,
-					&hdr_arb_vp, "hdr vertex program" )
-				|| !hdr_arb_load( GL_FRAGMENT_PROGRAM_ARB, hdr_arb_comp1_fs_src,
-					&hdr_arb_comp1, "hdr composite program (one band)" )
-				|| !hdr_arb_load( GL_FRAGMENT_PROGRAM_ARB, hdr_arb_comp2_fs_src,
-					&hdr_arb_comp2, "hdr composite program (two bands)" ) ) {
-			return false;
-		}
-		hdr_arb_pyramid = true;
+	if ( !hdr_arb_ready() ) {
+		return false;
 	}
 #endif
 	if ( hdr_prog == 0 ) {
@@ -2790,13 +2834,8 @@ static bool hdr_ensure_target( int w, int h ) {
 		if ( vs && fs && fs2 ) {
 			GLint okB = 0, okL = 0;
 #ifndef HAVE_OPENGLES
-			if ( hdr_arb_bright == 0 && hdr_arb_available() ) {
-				if ( !hdr_arb_load( GL_FRAGMENT_PROGRAM_ARB, hdr_arb_bright_fs_src,
-							&hdr_arb_bright, "bloom bright-pass program" )
-						|| !hdr_arb_load( GL_FRAGMENT_PROGRAM_ARB, hdr_arb_blur_fs_src,
-							&hdr_arb_blur, "bloom blur program" ) ) {
-					return false;
-				}
+			if ( !hdr_arb_ready() ) {
+				return false;
 			}
 #endif
 			hdr_prog_bright = glCreateProgram();
@@ -2859,21 +2898,8 @@ static bool hdr_ensure_target( int w, int h ) {
 			glBindAttribLocation( hdr_prog_down, 0, "aPos" );
 			glLinkProgram( hdr_prog_down );
 #ifndef HAVE_OPENGLES
-			/* ARB first: on a desktop build the renderer is ARB2 and this
-			   keeps the whole chain in one dialect.  A failure here has
-			   already disabled HDR through hdr_fail, so there is nothing
-			   to fall back to and nothing to fall back for. */
-			if ( !hdr_arb_pyramid && hdr_arb_available() ) {
-				if ( hdr_arb_load( GL_VERTEX_PROGRAM_ARB, hdr_arb_vp_src,
-							&hdr_arb_vp, "bloom vertex program" )
-						&& hdr_arb_load( GL_FRAGMENT_PROGRAM_ARB, hdr_arb_down_fs_src,
-							&hdr_arb_down, "bloom downsample program" )
-						&& hdr_arb_load( GL_FRAGMENT_PROGRAM_ARB, hdr_arb_up_fs_src,
-							&hdr_arb_up, "bloom upsample program" ) ) {
-					hdr_arb_pyramid = true;
-				} else {
-					return false;
-				}
+			if ( !hdr_arb_ready() ) {
+				return false;
 			}
 #endif
 			hdr_prog_up = glCreateProgram();
