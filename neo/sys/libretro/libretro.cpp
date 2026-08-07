@@ -2791,11 +2791,14 @@ static bool hdr_arb_ready( void ) {
 		return true;
 	}
 	if ( !hdr_arb_available() ) {
-		/* No ARB programs on this context.  The ARB2 renderer could not
-		   have drawn anything either, so this is not a case worth a
-		   GLSL fallback - but it is not this pass's business to refuse
-		   either, so leave the GLSL chain to it. */
-		return true;
+		/* Nothing to load onto and, on this build, no other chain to
+		   fall back to - reporting ready would leave hdr_present
+		   bailing on its first line every frame, which looks like the
+		   scene rendering without its conversion pass: HUD and the
+		   brightest highlights survive, everything mid-toned crushes
+		   to black.  Say so instead. */
+		hdr_fail( "no ARB program support on this context" );
+		return false;
 	}
 	if ( !hdr_arb_load( GL_VERTEX_PROGRAM_ARB, hdr_arb_vp_src,
 				&hdr_arb_vp, "hdr vertex program" )

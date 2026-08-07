@@ -855,7 +855,17 @@ void R_LoadARBProgram( int progIndex ) {
 		   Off by default, and off means the exact previous text.
 		*/
 		const bool lumaClamp = hdr_luma_clamp && !unbounded;
-		arbProgramsLumaClamp = lumaClamp;
+
+		/* Record the option as asked for, not as applied.
+		 *
+		 * R_CheckCvars reloads the programs when this disagrees with
+		 * the option, so it has to be the same quantity the option is.
+		 * Storing the applied value made them disagree permanently
+		 * whenever the option was on and the unbounded epilogue was in
+		 * use - the request is true, the application is false - and the
+		 * check then reloaded every ARB program in the renderer on
+		 * every single frame, forever. */
+		arbProgramsLumaClamp = hdr_luma_clamp;
 
 		/* The desaturation block, shared by both bounded variants.  It
 		 * leaves the result in dhewm3tmpres.xyz, low-clamped and with
