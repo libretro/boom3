@@ -2502,7 +2502,10 @@ void idCommonLocal::InitGame( void ) {
 	cmdSystem->BufferCommandText( CMD_EXEC_NOW, "bind \"SHIFT\"      \"_speed\"\n" );
 	cmdSystem->BufferCommandText( CMD_EXEC_NOW, "bind \"e\"          \"_impulse19\"\n" );
 	cmdSystem->BufferCommandText( CMD_EXEC_NOW, "bind \"r\"          \"_impulse13\"\n" );
-	cmdSystem->BufferCommandText( CMD_EXEC_NOW, "bind \"f\"          \"_impulse12\"\n" );
+	/* Flashlight.  _impulse12 selects weapon slot 12, which is the PDA
+	   in base Doom 3 - the input descriptor says flashlight, so bind
+	   the impulse that looks the weapon up by name. */
+	cmdSystem->BufferCommandText( CMD_EXEC_NOW, "bind \"f\"          \"_impulse41\"\n" );
 	cmdSystem->BufferCommandText( CMD_EXEC_NOW, "bind \"q\"          \"_impulse14\"\n" );
 	cmdSystem->BufferCommandText( CMD_EXEC_NOW, "bind \"`\"          \"toggleConsole\"\n" );
 	cmdSystem->BufferCommandText( CMD_EXEC_NOW, "bind \"1\"          \"_impulse1\"\n" );

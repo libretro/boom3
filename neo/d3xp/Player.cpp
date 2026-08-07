@@ -6497,6 +6497,32 @@ void idPlayer::PerformImpulse( int impulse ) {
 			UseVehicle();
 			break;
 		}
+		case IMPULSE_41: {
+			/* Toggle the flashlight.
+			 *
+			 * The flashlight is an ordinary weapon in a slot, so a bind
+			 * to _impulseN would work - except that N is data, not
+			 * engine: it is 11 in base Doom 3 and moves in the
+			 * expansion and in mods.  Binding a number therefore picks
+			 * whatever happens to occupy that slot, which is how "f"
+			 * ended up opening the PDA (slot 12 in base).  Look the
+			 * slot up by weapon name instead, and treat a second press
+			 * as a return to the weapon that was in hand.
+			 */
+			const int flashlight = SlotForWeapon( "weapon_flashlight" );
+			if ( flashlight >= 0 && ( inventory.weapons & ( 1 << flashlight ) ) ) {
+				if ( currentWeapon == flashlight ) {
+					if ( previousWeapon >= 0 ) {
+						SelectWeapon( previousWeapon, false );
+					} else {
+						NextBestWeapon();
+					}
+				} else {
+					SelectWeapon( flashlight, false );
+				}
+			}
+			break;
+		}
 		 //Hack so the chainsaw will work in MP
 		case IMPULSE_27: {
 			SelectWeapon(18, false);

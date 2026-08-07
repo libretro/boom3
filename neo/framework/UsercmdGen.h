@@ -82,6 +82,7 @@ const int IMPULSE_27			= 27;			// <unused>
 const int IMPULSE_28			= 28;			// vote yes
 const int IMPULSE_29			= 29;			// vote no
 const int IMPULSE_40			= 40;			// use vehicle
+const int IMPULSE_41			= 41;			// toggle flashlight
 
 // usercmd_t->flags
 const int UCF_IMPULSE_SEQUENCE	= 0x0001;		// toggled every time an impulse command is sent
