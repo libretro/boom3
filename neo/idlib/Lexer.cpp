@@ -1640,6 +1640,37 @@ int idLexer::LoadFile( const char *filename, bool OSPath ) {
 	} else {
 		pathname = filename;
 	}
+	/* Borrow the text out of the mapped pak where the backing store
+	 * allows it, and only fall back to reading a private copy when it
+	 * does not - a loose file on disk, a compressed entry, or an
+	 * explicit OS path.  Every caller of LoadFile benefits, not just
+	 * the one that prompted this.
+	 *
+	 * Safe only because the scanner reads through end_p: a view ends
+	 * where the next entry's local header begins, with no terminator,
+	 * where the private copy has always had one at buf[length]. */
+	if ( !OSPath ) {
+		int viewLen = 0;
+		ID_TIME_T viewTime = 0;
+		const void *view = idLib::fileSystem->GetFileView( pathname, &viewLen, &viewTime );
+		if ( view != NULL ) {
+			idLexer::buffer = (const char *)view;
+			idLexer::length = viewLen;
+			idLexer::fileTime = viewTime;
+			idLexer::filename = pathname;
+			idLexer::script_p = idLexer::buffer;
+			idLexer::lastScript_p = idLexer::buffer;
+			idLexer::end_p = &( idLexer::buffer[viewLen] );
+			idLexer::tokenavailable = 0;
+			idLexer::line = 1;
+			idLexer::lastline = 1;
+			idLexer::allocated = false;
+			idLexer::borrowed = true;
+			idLexer::loaded = true;
+			return true;
+		}
+	}
+
 	if ( OSPath ) {
 		fp = idLib::fileSystem->OpenExplicitFileRead( pathname );
 	} else {
@@ -1699,6 +1730,7 @@ int idLexer::LoadMemory( const char *ptr, int length, const char *name, int star
 	idLexer::line = startLine;
 	idLexer::lastline = startLine;
 	idLexer::allocated = false;
+	idLexer::borrowed = false;
 	idLexer::loaded = true;
 
 	return true;
@@ -1720,10 +1752,15 @@ void idLexer::FreeSource( void ) {
 		idLexer::nextpunctuation = NULL;
 	}
 #endif //PUNCTABLE
-	if ( idLexer::allocated ) {
+	if ( idLexer::borrowed ) {
+		idLib::fileSystem->ReleaseFileView( idLexer::buffer );
+		idLexer::buffer = NULL;
+		idLexer::borrowed = false;
+	} else if ( idLexer::allocated ) {
 		Mem_Free( (void *) idLexer::buffer );
 		idLexer::buffer = NULL;
 		idLexer::allocated = false;
+	idLexer::borrowed = false;
 	}
 	idLexer::tokenavailable = 0;
 	idLexer::token = "";
@@ -1741,6 +1778,7 @@ idLexer::idLexer( void ) {
 	idLexer::flags = 0;
 	idLexer::SetPunctuations( NULL );
 	idLexer::allocated = false;
+	idLexer::borrowed = false;
 	idLexer::fileTime = 0;
 	idLexer::length = 0;
 	idLexer::line = 0;
@@ -1762,6 +1800,7 @@ idLexer::idLexer( int flags ) {
 	idLexer::flags = flags;
 	idLexer::SetPunctuations( NULL );
 	idLexer::allocated = false;
+	idLexer::borrowed = false;
 	idLexer::fileTime = 0;
 	idLexer::length = 0;
 	idLexer::line = 0;
@@ -1782,6 +1821,7 @@ idLexer::idLexer( const char *filename, int flags, bool OSPath ) {
 	idLexer::flags = flags;
 	idLexer::SetPunctuations( NULL );
 	idLexer::allocated = false;
+	idLexer::borrowed = false;
 	idLexer::token = "";
 	idLexer::next = NULL;
 	idLexer::hadError = false;
@@ -1798,6 +1838,7 @@ idLexer::idLexer( const char *ptr, int length, const char *name, int flags ) {
 	idLexer::flags = flags;
 	idLexer::SetPunctuations( NULL );
 	idLexer::allocated = false;
+	idLexer::borrowed = false;
 	idLexer::token = "";
 	idLexer::next = NULL;
 	idLexer::hadError = false;

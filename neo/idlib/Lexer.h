@@ -247,6 +247,7 @@ private:
 	int				loaded;					// set when a script file is loaded from file or memory
 	idStr			filename;				// file name of the script
 	int				allocated;				// true if buffer memory was allocated
+	bool				borrowed;				// buffer is a filesystem view, release rather than free
 	const char *	buffer;					// buffer containing the script
 	const char *	script_p;				// current pointer in the script
 	const char *	end_p;					// pointer to the end of the script
