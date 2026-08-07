@@ -963,7 +963,7 @@ void MA_ApplyTransformation(maModel_t *model) {
 MA_Parse
 =================
 */
-maModel_t *MA_Parse( const char *buffer, const char* filename, bool verbose ) {
+maModel_t *MA_Parse( const char *buffer, int length, const char* filename, bool verbose ) {
 	memset( &maGlobal, 0, sizeof( maGlobal ) );
 
 	maGlobal.verbose = verbose;
@@ -981,7 +981,10 @@ maModel_t *MA_Parse( const char *buffer, const char* filename, bool verbose ) {
 
 	idParser parser;
 	parser.SetFlags(LEXFL_NOSTRINGCONCAT);
-	parser.LoadMemory(buffer, strlen(buffer), filename);
+	/* Length from the caller, not from strlen: the parser is bounded by
+	 * it, and measuring the buffer is what would force this loader to
+	 * own a NUL-terminated copy instead of borrowing the pak's. */
+	parser.LoadMemory(buffer, length, filename);
 
 	idToken token;
 	while(parser.ReadToken(&token)) {
@@ -1016,13 +1019,22 @@ maModel_t *MA_Load( const char *fileName ) {
 	ID_TIME_T timeStamp;
 	maModel_t *ma;
 
-	fileSystem->ReadFile( fileName, (void **)&buf, &timeStamp );
-	if ( !buf ) {
+	int length = 0;
+	const char *view = (const char *)fileSystem->GetFileView( fileName, &length, &timeStamp );
+	if ( view != NULL ) {
+		buf = (char *)view;
+	} else {
+		length = fileSystem->ReadFile( fileName, (void **)&buf, &timeStamp );
+	}
+	if ( !buf || length <= 0 ) {
+		if ( view != NULL ) {
+			fileSystem->ReleaseFileView( view );
+		}
 		return NULL;
 	}
 
 	try {
-		ma = MA_Parse( buf, fileName, false );
+		ma = MA_Parse( buf, length, fileName, false );
 		ma->timeStamp = timeStamp;
 	} catch( idException &e ) {
 		common->Warning("%s", e.error);
@@ -1032,7 +1044,11 @@ maModel_t *MA_Load( const char *fileName ) {
 		ma = NULL;
 	}
 
-	fileSystem->FreeFile( buf );
+	if ( view != NULL ) {
+		fileSystem->ReleaseFileView( view );
+	} else {
+		fileSystem->FreeFile( buf );
+	}
 
 	return ma;
 }
