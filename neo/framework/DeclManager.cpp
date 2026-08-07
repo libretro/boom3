@@ -620,7 +620,8 @@ int idDeclFile::LoadAndParse() {
 	idLexer		src;
 	idToken		token;
 	int			startMarker;
-	char *		buffer;
+	const char *	buffer;
+	bool		borrowed;
 	int			length, size;
 	int			sourceLine;
 	idStr		name;
@@ -629,7 +630,19 @@ int idDeclFile::LoadAndParse() {
 
 	// load the text
 	common->DPrintf( "...loading '%s'\n", fileName.c_str() );
-	length = fileSystem->ReadFile( fileName, (void **)&buffer, &timestamp );
+	/* Borrow the text straight out of the mapped pak where the backing
+	 * store allows it.  Decl files are numerous and small, so the cost
+	 * of loading one is dominated by ReadFile's allocation and copy
+	 * rather than by parsing it.  The lexer reads through end_p instead
+	 * of relying on a terminator, so a view - which is followed by the
+	 * next entry's local header, not a NUL - is safe to hand it.  NULL
+	 * means the file is not viewable, loose on disk or compressed, and
+	 * ReadFile is still the answer. */
+	buffer = (const char *)fileSystem->GetFileView( fileName, &length, &timestamp );
+	borrowed = ( buffer != NULL );
+	if ( !borrowed ) {
+		length = fileSystem->ReadFile( fileName, (void **)&buffer, &timestamp );
+	}
 	if ( length == -1 ) {
 		common->FatalError( "couldn't load %s", fileName.c_str() );
 		return 0;
@@ -637,7 +650,11 @@ int idDeclFile::LoadAndParse() {
 
 	if ( !src.LoadMemory( buffer, length, fileName ) ) {
 		common->Error( "Couldn't parse %s", fileName.c_str() );
-		Mem_Free( buffer );
+	if ( borrowed ) {
+		fileSystem->ReleaseFileView( buffer );
+	} else {
+		Mem_Free( (void *)buffer );
+	}
 		return 0;
 	}
 
@@ -774,7 +791,11 @@ int idDeclFile::LoadAndParse() {
 
 	numLines = src.GetLineNum();
 
-	Mem_Free( buffer );
+	if ( borrowed ) {
+		fileSystem->ReleaseFileView( buffer );
+	} else {
+		Mem_Free( (void *)buffer );
+	}
 
 	// any defs that weren't redefinedInReload should now be defaulted
 	for ( idDeclLocal *decl = decls ; decl ; decl = decl->nextInFile ) {
