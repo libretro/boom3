@@ -656,6 +656,41 @@ headroom option disabled), and bit-identical to the previous HDR path at
 r_gamma == 1, which is the default.
 ==================
 */
+/*
+===================
+RB_HDRSpecularBoost
+
+Scale for the interaction specular constant under HDR output, shared by
+both renderers - draw_arb2.cpp for ARB programs and draw_gles2.cpp for
+the GLSL path.  Only the value is shared; each backend applies it in its
+own dialect.
+
+The gate is the part worth keeping in one place.  The boost only helps
+where the pipeline has room above 1.0 for the result, which is a float
+scene target WITH unbounded blending, or the encoding fold.  A float
+target on its own is not enough: with true blending off the epilogue
+clamps every pass at 1.0 exactly as an integer target does, and boosting
+into that ceiling turns highlights into flat white.  That distinction
+was once wrong in draw_arb2.cpp precisely because the rule lived next to
+one backend; there is now one copy for both to get wrong together or not
+at all.
+===================
+*/
+float RB_HDRSpecularBoost( void ) {
+	extern bool  hdr_output_active;
+	extern float hdr_specular_gain;
+	extern float hdr_scene_encode_scale;
+	extern bool  hdr_fp16_scene;
+	extern bool  hdr_fp32_scene;
+	extern bool  hdr_unbounded_blend;
+
+	const bool floatHeadroom = ( hdr_fp16_scene || hdr_fp32_scene ) && hdr_unbounded_blend;
+	const bool foldHeadroom  = hdr_scene_encode_scale != 1.0f;
+
+	return ( hdr_output_active && ( floatHeadroom || foldHeadroom ) )
+			? hdr_specular_gain : 1.0f;
+}
+
 float RB_HDRGammaBrightness( bool filterBlend ) {
 	extern float hdr_scene_encode_scale;
 

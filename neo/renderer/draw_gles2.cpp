@@ -254,6 +254,7 @@ static void RB_GLSL_GetUniformLocations(shaderProgram_t* shader) {
   shader->fogColor = qglGetUniformLocation(shader->program, "u_fogColor");
   shader->diffuseColor = qglGetUniformLocation(shader->program, "u_diffuseColor");
   shader->specularColor = qglGetUniformLocation(shader->program, "u_specularColor");
+  shader->hdrParms = qglGetUniformLocation(shader->program, "u_hdrParms");
   shader->glColor = qglGetUniformLocation(shader->program, "u_glColor");
   shader->alphaTest = qglGetUniformLocation(shader->program, "u_alphaTest");
   shader->specularExponent = qglGetUniformLocation(shader->program, "u_specularExponent");
@@ -555,14 +556,46 @@ static void RB_GLSL_DrawInteraction(const drawInteraction_t* din) {
 
   // set the constant colors
   GL_Uniform4fv(offsetof(shaderProgram_t, diffuseColor), din->diffuseColor.ToFloatPtr());
-  /* No HDR specular boost here, unlike the ARB2 path in draw_arb2.cpp: 30-bit
-     HDR self-disables on GLES2 (no 10-bit colour-renderable format, so the
-     scene FBO comes back incomplete), which makes the boost unreachable.
-     If that ever changes, note that u_specularColor is declared lowp in
-     glsl/interactionShaderFP.cpp - GLES lowp guarantees only [-2,2], so a
-     2x or 3x gain saturates for any specularColor above ~0.67 and must be
-     promoted to mediump first. */
-  GL_Uniform4fv(offsetof(shaderProgram_t, specularColor), din->specularColor.ToFloatPtr());
+  /* HDR specular boost, the GLES counterpart of the one in draw_arb2.cpp and
+     gated by the same rule: the boost only makes sense where the pipeline has
+     somewhere above 1.0 to put the result, which means a float scene target
+     with unbounded blending, or the encoding fold.  Folded into the constant
+     rather than applied in the shader, so a fragment pays nothing for it.
+     u_specularColor is mediump for exactly this - lowp guarantees only
+     [-2,2], which a 2x or 3x gain would saturate for any specularColor above
+     ~0.67. */
+  const float specBoost = RB_HDRSpecularBoost();
+  if ( specBoost != 1.0f ) {
+    float sc[4];
+    sc[0] = din->specularColor[0] * specBoost;
+    sc[1] = din->specularColor[1] * specBoost;
+    sc[2] = din->specularColor[2] * specBoost;
+    sc[3] = din->specularColor[3];
+    GL_Uniform4fv(offsetof(shaderProgram_t, specularColor), sc);
+  } else {
+    GL_Uniform4fv(offsetof(shaderProgram_t, specularColor), din->specularColor.ToFloatPtr());
+  }
+
+  /* Gamma, brightness and the luminance-aware clamp, matching what the ARB2
+     epilogue does per fragment.  x..z carry r_brightness (already through
+     RB_HDRGammaBrightness, so the encoding fold is included), w carries
+     1/r_gamma, and the clamp mode rides in the sign of w: negative means
+     luminance-aware, positive means the per-channel clamp GLES has always
+     done.  Packing it there costs no extra uniform and no extra upload. */
+  /* GL_Uniform4fv addresses the location through backEnd.glState.currentProgram,
+   * so the guard has to read the same object rather than a local. */
+  const shaderProgram_t * const curProg =
+      (const shaderProgram_t *)backEnd.glState.currentProgram;
+  if ( curProg != NULL && curProg->hdrParms >= 0 ) {
+    extern bool  hdr_luma_clamp;
+    float hp[4];
+    hp[0] = hp[1] = hp[2] = r_gammaInShader.GetBool() ? RB_HDRGammaBrightness( false ) : 1.0f;
+    hp[3] = r_gammaInShader.GetBool() ? 1.0f / r_gamma.GetFloat() : 1.0f;
+    if ( hdr_luma_clamp ) {
+      hp[3] = -hp[3];
+    }
+    GL_Uniform4fv(offsetof(shaderProgram_t, hdrParms), hp);
+  }
 
   // set the textures
 

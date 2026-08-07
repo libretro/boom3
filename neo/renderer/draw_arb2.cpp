@@ -166,18 +166,7 @@ static ID_INLINE void RB_FragmentEnvParm( int index, const float *v ) {
 static float	rb_specularBoost = 1.0f;
 
 static void RB_UpdateSpecularBoost( void ) {
-	extern bool  hdr_output_active;
-	extern float hdr_specular_gain;
-	extern float hdr_scene_encode_scale;
-	extern bool  hdr_fp16_scene;
-	extern bool  hdr_fp32_scene;
-	extern bool  hdr_unbounded_blend;
-
-	const bool floatHeadroom = ( hdr_fp16_scene || hdr_fp32_scene ) && hdr_unbounded_blend;
-	const bool foldHeadroom  = hdr_scene_encode_scale != 1.0f;
-
-	rb_specularBoost = ( hdr_output_active && ( floatHeadroom || foldHeadroom ) )
-			? hdr_specular_gain : 1.0f;
+	rb_specularBoost = RB_HDRSpecularBoost();
 }
 
 void	RB_ARB2_DrawInteraction( const drawInteraction_t *din ) {
