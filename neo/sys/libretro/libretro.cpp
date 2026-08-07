@@ -2030,50 +2030,52 @@ static const char *hdr_arb_down_fs_src =
 	"!!ARBfp1.0\n"
 	"OPTION ARB_precision_hint_nicest;\n"
 	"PARAM texel = program.env[0];\n"
-	"TEMP uv, a, b, c, d, e, f, g, h, i, j, k, l, m, o, s;\n"
-	/* the four corners of the outer ring */
-	"MAD uv, texel, { -2.0,  2.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
-	"TEX a, uv, texture[0], 2D;\n"
-	"MAD uv, texel, {  0.0,  2.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
-	"TEX b, uv, texture[0], 2D;\n"
-	"MAD uv, texel, {  2.0,  2.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
-	"TEX c, uv, texture[0], 2D;\n"
-	"MAD uv, texel, { -2.0,  0.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
-	"TEX d, uv, texture[0], 2D;\n"
+	/* 16 temporaries is the ARB minimum, and the first version of this
+	   program used exactly that.  Summing each weight group as its taps
+	   are fetched needs six. */
+	"TEMP uv, t, e, ring, mid, o;\n"
+	/* centre tap, weight 0.125 */
 	"TEX e, fragment.texcoord[0], texture[0], 2D;\n"
-	"MAD uv, texel, {  2.0,  0.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
-	"TEX f, uv, texture[0], 2D;\n"
-	"MAD uv, texel, { -2.0, -2.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
-	"TEX g, uv, texture[0], 2D;\n"
-	"MAD uv, texel, {  0.0, -2.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
-	"TEX h, uv, texture[0], 2D;\n"
-	"MAD uv, texel, {  2.0, -2.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
-	"TEX i, uv, texture[0], 2D;\n"
-	/* the inner quad */
-	"MAD uv, texel, { -1.0,  1.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
-	"TEX j, uv, texture[0], 2D;\n"
-	"MAD uv, texel, {  1.0,  1.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
-	"TEX k, uv, texture[0], 2D;\n"
-	"MAD uv, texel, { -1.0, -1.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
-	"TEX l, uv, texture[0], 2D;\n"
-	"MAD uv, texel, {  1.0, -1.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
-	"TEX m, uv, texture[0], 2D;\n"
-	/* o = e*0.125 + (a+c+g+i)*0.03125 + (b+d+f+h)*0.0625 + (j+k+l+m)*0.125,
-	   summed in the same association as the GLSL: each group is added up
-	   first and scaled once. */
 	"MUL o, e, 0.125;\n"
-	"ADD s, a, c;\n"
-	"ADD s, s, g;\n"
-	"ADD s, s, i;\n"
-	"MAD o, s, 0.03125, o;\n"
-	"ADD s, b, d;\n"
-	"ADD s, s, f;\n"
-	"ADD s, s, h;\n"
-	"MAD o, s, 0.0625, o;\n"
-	"ADD s, j, k;\n"
-	"ADD s, s, l;\n"
-	"ADD s, s, m;\n"
-	"MAD o, s, 0.125, o;\n"
+	/* outer ring corners, weight 0.03125 */
+	"MAD uv, texel, { -2.0,  2.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
+	"TEX ring, uv, texture[0], 2D;\n"
+	"MAD uv, texel, {  2.0,  2.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
+	"TEX t, uv, texture[0], 2D;\n"
+	"ADD ring, ring, t;\n"
+	"MAD uv, texel, { -2.0, -2.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
+	"TEX t, uv, texture[0], 2D;\n"
+	"ADD ring, ring, t;\n"
+	"MAD uv, texel, {  2.0, -2.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
+	"TEX t, uv, texture[0], 2D;\n"
+	"ADD ring, ring, t;\n"
+	"MAD o, ring, 0.03125, o;\n"
+	/* outer ring edges, weight 0.0625 */
+	"MAD uv, texel, {  0.0,  2.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
+	"TEX ring, uv, texture[0], 2D;\n"
+	"MAD uv, texel, { -2.0,  0.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
+	"TEX t, uv, texture[0], 2D;\n"
+	"ADD ring, ring, t;\n"
+	"MAD uv, texel, {  2.0,  0.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
+	"TEX t, uv, texture[0], 2D;\n"
+	"ADD ring, ring, t;\n"
+	"MAD uv, texel, {  0.0, -2.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
+	"TEX t, uv, texture[0], 2D;\n"
+	"ADD ring, ring, t;\n"
+	"MAD o, ring, 0.0625, o;\n"
+	/* inner quad, weight 0.125 */
+	"MAD uv, texel, { -1.0,  1.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
+	"TEX mid, uv, texture[0], 2D;\n"
+	"MAD uv, texel, {  1.0,  1.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
+	"TEX t, uv, texture[0], 2D;\n"
+	"ADD mid, mid, t;\n"
+	"MAD uv, texel, { -1.0, -1.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
+	"TEX t, uv, texture[0], 2D;\n"
+	"ADD mid, mid, t;\n"
+	"MAD uv, texel, {  1.0, -1.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
+	"TEX t, uv, texture[0], 2D;\n"
+	"ADD mid, mid, t;\n"
+	"MAD o, mid, 0.125, o;\n"
 	"MOV o.w, 1.0;\n"
 	"MOV result.color, o;\n"
 	"END\n";
@@ -2142,14 +2144,21 @@ static const char *hdr_arb_up_fs_src =
    texture[0] scene, texture[1] bloom band 0, texture[2] bloom band 1
 */
 #define HDR_ARB_COMPOSITE_BODY \
+	/* POW takes scalar operands and a scalar operand needs an explicit
+	   component selector, which a bare literal cannot carry - the
+	   exponents have to arrive as PARAMs and be selected.  Getting this
+	   wrong is a parse error, not a silent one: "expected '.'". */ \
+	"PARAM kSrgb = { 2.4, 2.4, 2.4, 2.4 };\n" \
+	"PARAM kPqA = { 0.1593017578125, 0.1593017578125, 0.1593017578125, 0.1593017578125 };\n" \
+	"PARAM kPqB = { 78.84375, 78.84375, 78.84375, 78.84375 };\n" \
 	"TEMP s, lin, bl, t, u, v, e, a, r, m, y, p, n, d;\n" \
 	/* lin = pow(abs(scene * encScale), 2.4) */ \
 	"TEX s, fragment.texcoord[0], texture[0], 2D;\n" \
 	"MUL s, s, program.env[2].x;\n" \
 	"ABS s, s;\n" \
-	"POW lin.x, s.x, 2.4;\n" \
-	"POW lin.y, s.y, 2.4;\n" \
-	"POW lin.z, s.z, 2.4;\n"
+	"POW lin.x, s.x, kSrgb.x;\n" \
+	"POW lin.y, s.y, kSrgb.x;\n" \
+	"POW lin.z, s.z, kSrgb.x;\n"
 
 #define HDR_ARB_COMPOSITE_TAIL \
 	/* lin += bloomAmt * bl */ \
@@ -2241,18 +2250,18 @@ static const char *hdr_arb_up_fs_src =
 	"DP3 r.y, lin, program.env[5];\n" \
 	"DP3 r.z, lin, program.env[6];\n" \
 	"MUL_SAT y, r, program.env[0].x;\n" \
-	"POW p.x, y.x, 0.1593017578125;\n" \
-	"POW p.y, y.y, 0.1593017578125;\n" \
-	"POW p.z, y.z, 0.1593017578125;\n" \
+	"POW p.x, y.x, kPqA.x;\n" \
+	"POW p.y, y.y, kPqA.x;\n" \
+	"POW p.z, y.z, kPqA.x;\n" \
 	"MAD t, p, 18.8515625, 0.8359375;\n" \
 	"MAD u, p, 18.6875, 1.0;\n" \
 	"RCP a.x, u.x;\n" \
 	"RCP a.y, u.y;\n" \
 	"RCP a.z, u.z;\n" \
 	"MUL t, t, a;\n" \
-	"POW e.x, t.x, 78.84375;\n" \
-	"POW e.y, t.y, 78.84375;\n" \
-	"POW e.z, t.z, 78.84375;\n" \
+	"POW e.x, t.x, kPqB.x;\n" \
+	"POW e.y, t.y, kPqB.x;\n" \
+	"POW e.z, t.z, kPqB.x;\n" \
 	/* ---- interleaved gradient noise, per channel, rotated by frame ---- */ \
 	"MUL n.x, fragment.position.x, 0.06711056;\n" \
 	"MAD n.x, fragment.position.y, 0.00583715, n.x;\n" \
@@ -2305,6 +2314,7 @@ static const char *hdr_arb_bright_fs_src =
 	"PARAM q = program.env[1];\n"
 	"PARAM texel = program.env[2];\n"
 	"PARAM luma = { 0.2126, 0.7152, 0.0722, 0.0 };\n"
+	"PARAM kSrgb = { 2.4, 2.4, 2.4, 2.4 };\n"
 	"TEMP uv, s, lin, lum, sk, t, b, l;\n"
 	/* four-tap box, matching the GLSL's tap positions */
 	"MAD uv, texel, { -1.0, -1.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
@@ -2324,9 +2334,9 @@ static const char *hdr_arb_bright_fs_src =
 	"MUL s, s, 0.25;\n"
 	"MUL s, s, p.z;\n"
 	"ABS s, s;\n"
-	"POW lin.x, s.x, 2.4;\n"
-	"POW lin.y, s.y, 2.4;\n"
-	"POW lin.z, s.z, 2.4;\n"
+	"POW lin.x, s.x, kSrgb.x;\n"
+	"POW lin.y, s.y, kSrgb.x;\n"
+	"POW lin.z, s.z, kSrgb.x;\n"
 	"DP3 lum.x, lin, luma;\n"
 	/* sk = clamp(lum - thresh + knee, 0, 2*knee); sk = sk*sk * (1/(4*knee)) */
 	"SUB sk.x, lum.x, p.x;\n"
