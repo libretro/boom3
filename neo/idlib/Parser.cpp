@@ -2912,36 +2912,44 @@ idParser::GetStringFromMarker
 ================
 */
 void idParser::GetStringFromMarker( idStr& out, bool clean ) {
-	char*	p;
-	char	save;
+	const char *p;
+	int length;
 
 	if ( marker_p == NULL ) {
 		marker_p = scriptstack->buffer;
 	}
 
 	if ( tokens ) {
-		p = (char*)tokens->whiteSpaceStart_p;
+		p = tokens->whiteSpaceStart_p;
 	} else {
-		p = (char*)scriptstack->script_p;
+		p = scriptstack->script_p;
 	}
 
-	// Set the end character to NULL to give us a complete string
-	save = *p;
-	*p = 0;
+	/* Take the span by length rather than by writing a terminator into
+	 * the script and putting the old byte back afterwards.  That trick
+	 * needed the buffer to be writable, and a script's buffer can now be
+	 * a read-only view of the mapped pak - the loaders borrow it instead
+	 * of allocating a private copy.  Writing to it would fault, and only
+	 * on the paths that reach this function, which is the worst kind of
+	 * latent crash: this one has no callers today and would have gone in
+	 * with the next one. */
+	length = (int)( p - marker_p );
+	if ( length < 0 ) {
+		length = 0;
+	}
 
-	// If cleaning then reparse
 	if ( clean ) {
-		idParser temp( marker_p, strlen( marker_p ), "temp", flags );
+		// reparse the span to normalise its whitespace
+		idParser temp( marker_p, length, "temp", flags );
 		idToken token;
-		while ( temp.ReadToken ( &token ) ) {
+		out.Clear();
+		while ( temp.ReadToken( &token ) ) {
 			out += token;
 		}
 	} else {
-		out = marker_p;
+		out.Clear();
+		out.Append( marker_p, length );
 	}
-
-	// restore the character we set to NULL
-	*p = save;
 }
 
 /*
