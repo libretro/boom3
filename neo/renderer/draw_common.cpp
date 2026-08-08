@@ -84,6 +84,129 @@ void RB_BakeTextureMatrixIntoTexgen( idPlane lightProject[3], const float *textu
 	lightProject[1][3] = final[13];
 }
 
+/*
+   The two HDR helpers below are shared by both backends: draw_arb2.cpp
+   folds them into fragment env parameters, draw_gles2.cpp into
+   uniforms.  They sit above the ARB-only region for that reason.
+   Defined inside it, a GLES build compiles the callers and not the
+   callees - a link error on every GLES target and nothing at all on
+   desktop, which is how it reached CI.
+
+   Neither touches GL; both are arithmetic over the HDR globals and two
+   cvars.
+*/
+/*
+==================
+RB_HDRGammaBrightness
+
+The value for env[21].xyz (PP_GAMMA_BRIGHTNESS). The injected gamma
+epilogue consumes it as
+
+    stored = pow( env[21].xyz * c, env[21].w )      // env[21].w == 1/r_gamma
+
+so a fold placed there lands BEFORE the gamma encode, while hdr_present
+undoes it AFTER, in the stored domain:
+
+    lin = srgbToLinear( stored * (1/s) )
+
+Folding with a bare s gives stored = s^(1/g) * (c*b)^(1/g), and the two
+cancel only at r_gamma == 1. Folding with s^g gives
+
+    stored = ( c * b * s^g )^(1/g) = s * (c*b)^(1/g)
+
+which cancels exactly at any gamma. It also pins the encoded headroom at
+a constant 2x of the stored range instead of letting it drift with the
+brightness slider: the MUL_SAT ceiling moves to c*b == 1/s^g, which is
+precisely the input that stores as 1.0.
+
+r_gamma is CVAR_ARCHIVE and reachable from the in-game brightness menu,
+so the non-unity path is not theoretical - at r_gamma 1.5 the old
+expression was 26% bright, at 2.0 it was 41% bright, at 0.7 it was 23%
+dark, all of it clipping into the roll-off.
+
+Filter-blend stages ship unscaled: a filter multiplies against a
+destination that already carries the fold, so scaling the source as well
+would square it.
+
+Bit-identical to the pre-HDR path whenever s == 1 (HDR off, or the
+headroom option disabled), and bit-identical to the previous HDR path at
+r_gamma == 1, which is the default.
+==================
+*/
+/*
+===================
+RB_HDRSpecularBoost
+
+Scale for the interaction specular constant under HDR output, shared by
+both renderers - draw_arb2.cpp for ARB programs and draw_gles2.cpp for
+the GLSL path.  Only the value is shared; each backend applies it in its
+own dialect.
+
+The gate is the part worth keeping in one place.  The boost only helps
+where the pipeline has room above 1.0 for the result, which is a float
+scene target WITH unbounded blending, or the encoding fold.  A float
+target on its own is not enough: with true blending off the epilogue
+clamps every pass at 1.0 exactly as an integer target does, and boosting
+into that ceiling turns highlights into flat white.  That distinction
+was once wrong in draw_arb2.cpp precisely because the rule lived next to
+one backend; there is now one copy for both to get wrong together or not
+at all.
+===================
+*/
+float RB_HDRSpecularBoost( void ) {
+	extern bool  hdr_output_active;
+	extern float hdr_specular_gain;
+	extern float hdr_scene_encode_scale;
+	extern bool  hdr_fp16_scene;
+	extern bool  hdr_fp32_scene;
+	extern bool  hdr_unbounded_blend;
+
+	const bool floatHeadroom = ( hdr_fp16_scene || hdr_fp32_scene ) && hdr_unbounded_blend;
+	const bool foldHeadroom  = hdr_scene_encode_scale != 1.0f;
+
+	return ( hdr_output_active && ( floatHeadroom || foldHeadroom ) )
+			? hdr_specular_gain : 1.0f;
+}
+
+float RB_HDRGammaBrightness( bool filterBlend ) {
+	extern float hdr_scene_encode_scale;
+
+	const float b = r_brightness.GetFloat();
+	const float s = hdr_scene_encode_scale;
+
+	if ( filterBlend || s == 1.0f ) {
+		return b;
+	}
+
+	/* pow(s, gamma) is the only transcendental here, and both of its
+	 * arguments are fixed for the duration of a frame - the encode scale
+	 * is set from a core option and r_gamma from a cvar, neither of
+	 * which moves while the backend is drawing.  The callers are not:
+	 * the material stage paths call this per stage, per surface, so the
+	 * pow was being evaluated thousands of times a frame for one value.
+	 *
+	 * Memoized on the exact bits of both arguments, so a recomputation
+	 * happens whenever either actually changes and the returned value is
+	 * always the one powf() would have produced for the current
+	 * arguments.  Backend-thread only, like every RB_ function. */
+	const float g = r_gamma.GetFloat();
+	static float	memoS = 0.0f;
+	static float	memoG = 0.0f;
+	static float	memoPow = 0.0f;
+	static bool	memoValid = false;
+
+	if ( !memoValid
+			|| memcmp( &memoS, &s, sizeof( float ) ) != 0
+			|| memcmp( &memoG, &g, sizeof( float ) ) != 0 ) {
+		memoPow = idMath::Pow( s, g );
+		memoS = s;
+		memoG = g;
+		memoValid = true;
+	}
+
+	return b * memoPow;
+}
+
 #ifndef HAVE_OPENGLES
 
 /*
@@ -618,118 +741,6 @@ including by light interactions, and its size might in theory differ from _curre
 Parameters 23 and 24 are used by soft particles #3878. Note these can be freely reused by different draw calls.
 ==================
 */
-/*
-==================
-RB_HDRGammaBrightness
-
-The value for env[21].xyz (PP_GAMMA_BRIGHTNESS). The injected gamma
-epilogue consumes it as
-
-    stored = pow( env[21].xyz * c, env[21].w )      // env[21].w == 1/r_gamma
-
-so a fold placed there lands BEFORE the gamma encode, while hdr_present
-undoes it AFTER, in the stored domain:
-
-    lin = srgbToLinear( stored * (1/s) )
-
-Folding with a bare s gives stored = s^(1/g) * (c*b)^(1/g), and the two
-cancel only at r_gamma == 1. Folding with s^g gives
-
-    stored = ( c * b * s^g )^(1/g) = s * (c*b)^(1/g)
-
-which cancels exactly at any gamma. It also pins the encoded headroom at
-a constant 2x of the stored range instead of letting it drift with the
-brightness slider: the MUL_SAT ceiling moves to c*b == 1/s^g, which is
-precisely the input that stores as 1.0.
-
-r_gamma is CVAR_ARCHIVE and reachable from the in-game brightness menu,
-so the non-unity path is not theoretical - at r_gamma 1.5 the old
-expression was 26% bright, at 2.0 it was 41% bright, at 0.7 it was 23%
-dark, all of it clipping into the roll-off.
-
-Filter-blend stages ship unscaled: a filter multiplies against a
-destination that already carries the fold, so scaling the source as well
-would square it.
-
-Bit-identical to the pre-HDR path whenever s == 1 (HDR off, or the
-headroom option disabled), and bit-identical to the previous HDR path at
-r_gamma == 1, which is the default.
-==================
-*/
-/*
-===================
-RB_HDRSpecularBoost
-
-Scale for the interaction specular constant under HDR output, shared by
-both renderers - draw_arb2.cpp for ARB programs and draw_gles2.cpp for
-the GLSL path.  Only the value is shared; each backend applies it in its
-own dialect.
-
-The gate is the part worth keeping in one place.  The boost only helps
-where the pipeline has room above 1.0 for the result, which is a float
-scene target WITH unbounded blending, or the encoding fold.  A float
-target on its own is not enough: with true blending off the epilogue
-clamps every pass at 1.0 exactly as an integer target does, and boosting
-into that ceiling turns highlights into flat white.  That distinction
-was once wrong in draw_arb2.cpp precisely because the rule lived next to
-one backend; there is now one copy for both to get wrong together or not
-at all.
-===================
-*/
-float RB_HDRSpecularBoost( void ) {
-	extern bool  hdr_output_active;
-	extern float hdr_specular_gain;
-	extern float hdr_scene_encode_scale;
-	extern bool  hdr_fp16_scene;
-	extern bool  hdr_fp32_scene;
-	extern bool  hdr_unbounded_blend;
-
-	const bool floatHeadroom = ( hdr_fp16_scene || hdr_fp32_scene ) && hdr_unbounded_blend;
-	const bool foldHeadroom  = hdr_scene_encode_scale != 1.0f;
-
-	return ( hdr_output_active && ( floatHeadroom || foldHeadroom ) )
-			? hdr_specular_gain : 1.0f;
-}
-
-float RB_HDRGammaBrightness( bool filterBlend ) {
-	extern float hdr_scene_encode_scale;
-
-	const float b = r_brightness.GetFloat();
-	const float s = hdr_scene_encode_scale;
-
-	if ( filterBlend || s == 1.0f ) {
-		return b;
-	}
-
-	/* pow(s, gamma) is the only transcendental here, and both of its
-	 * arguments are fixed for the duration of a frame - the encode scale
-	 * is set from a core option and r_gamma from a cvar, neither of
-	 * which moves while the backend is drawing.  The callers are not:
-	 * the material stage paths call this per stage, per surface, so the
-	 * pow was being evaluated thousands of times a frame for one value.
-	 *
-	 * Memoized on the exact bits of both arguments, so a recomputation
-	 * happens whenever either actually changes and the returned value is
-	 * always the one powf() would have produced for the current
-	 * arguments.  Backend-thread only, like every RB_ function. */
-	const float g = r_gamma.GetFloat();
-	static float	memoS = 0.0f;
-	static float	memoG = 0.0f;
-	static float	memoPow = 0.0f;
-	static bool	memoValid = false;
-
-	if ( !memoValid
-			|| memcmp( &memoS, &s, sizeof( float ) ) != 0
-			|| memcmp( &memoG, &g, sizeof( float ) ) != 0 ) {
-		memoPow = idMath::Pow( s, g );
-		memoS = s;
-		memoG = g;
-		memoValid = true;
-	}
-
-	return b * memoPow;
-}
-
 void RB_SetProgramEnvironment( bool isPostProcess ) {
 	float	parm[4];
 	int		pot;
