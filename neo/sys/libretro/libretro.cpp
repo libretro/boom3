@@ -127,6 +127,7 @@ static idCVar m_strafe( "m_strafe", "0.25", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_FL
 /* 30-bit / HDR10 output state; the implementation lives above
    GLimp_SwapBuffers, the full design comment with it. */
 bool          hdr_output_active = false;   /* chosen at load, needs restart; read by draw_arb2 */
+int           r_specularFalloffShape = 0;  /* 0 original hard-knee quadratic, 1 tailed power; read by Image_init */
 float         hdr_specular_gain = 2.0f;    /* interaction specular scale in HDR mode; read by draw_arb2 */
 float         hdr_scene_encode_scale = 1.0f; /* 0.5 = one gamma-domain stop of scene headroom; read by the render backend */
 bool          hdr_fp16_scene = false;      /* FP16 scene target: per-pass quantization gone */
@@ -560,6 +561,21 @@ static void update_variables(bool startup)
 		if (!strcmp(var.value, "inverse"))       hdr_expand_mode = 1;
 		else if (!strcmp(var.value, "hue"))      hdr_expand_mode = 2;
 		else                                     hdr_expand_mode = 0;
+	}
+
+	/* Reshaping the falloff means rebuilding the ramp texture, which only
+	 * happens when the images are regenerated, so this takes effect on
+	 * the next image reload rather than on the next frame. */
+	var.key = "doom_specular_falloff";
+	var.value = NULL;
+	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) {
+		int want = strcmp(var.value, "tailed") == 0 ? 1 : 0;
+		if (want != r_specularFalloffShape) {
+			r_specularFalloffShape = want;
+			if (!first_boot && glConfig.isInitialized) {
+				cmdSystem->BufferCommandText(CMD_EXEC_APPEND, "reloadImages\n");
+			}
+		}
 	}
 
 	var.key = "doom_hdr_particle_lights";

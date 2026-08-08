@@ -163,7 +163,51 @@ R_SpecularTableImage
 Creates a ramp that matches our fudged specular calculation
 ================
 */
+/*
+   The specular falloff.
+
+   The original is a quadratic over the top quarter of the range and
+   exactly zero below it.  The zero region is where specular aliasing
+   comes from on minified surfaces: R_MipMap averages normals without
+   renormalising, so a minified normal is shorter, and a shorter normal
+   gives a smaller N.H.  Below 0.75 that is not a dimmer highlight, it
+   is no highlight at all - a normal shortened to 0.8 produces nothing
+   until N.H exceeds 0.938, so the highlight does not soften with
+   distance, it switches off and back on as the mip level and the view
+   change.  That switching is the crawl.
+
+   The tailed form is x raised to 9.1, which is the exponent whose
+   half-maximum lands on the same N.H = 0.9268 as the original lobe, so
+   the highlight is the same width.  It differs from the original by at
+   most 0.09, all of it in the lower half of the lobe where the
+   original is heading for its hard zero, and it never reaches zero -
+   the same shortened normal that produced nothing now produces 0.05 to
+   0.13 across the same range, falling off smoothly instead of popping.
+
+   This cannot be a per-texel Toksvig factor, and it is worth writing
+   down why so nobody re-derives it: the table is indexed by the
+   product of N.H and the normal's length, so N.H 0.8 with a unit
+   normal and N.H 1.0 with a normal shortened to 0.8 arrive at the same
+   entry.  A one-dimensional lookup of that product cannot tell the two
+   apart, and the variance term would need a channel of its own -
+   which the normal maps do not have, since RxGB puts the X component
+   in alpha.  id started that work: R_MipMapWithAlphaSpecularity is
+   still in Image_process.cpp, accumulating a divergence it never
+   writes, called by nothing.
+
+   Off by default.  It changes the look of every specular highlight in
+   the game, so it is the player's call, not mine.
+*/
 static float R_SpecularRamp( float x ) {
+	extern int r_specularFalloffShape;   /* 0 original, 1 tailed */
+
+	if ( r_specularFalloffShape != 0 ) {
+		if ( x <= 0.0f ) {
+			return 0.0f;
+		}
+		return powf( x, 9.1f );
+	}
+
 	// the behavior of the hacked up fragment programs that can't really
 	// do a power function
 	float f = ( x - 0.75f ) * 4.0f;

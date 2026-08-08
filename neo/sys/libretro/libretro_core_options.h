@@ -254,6 +254,27 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "2"
    },
    {
+      "doom_specular_falloff",
+      "Specular Falloff Shape",
+      NULL,
+      "How a specular highlight fades. 'Original' is the game's own "
+      "curve, which is exactly zero below a threshold - so a surface "
+      "seen at a distance, whose normals have been averaged down by "
+      "mipmapping, loses its highlight entirely rather than softening, "
+      "and it flickers back as the view moves. 'Tailed' keeps the same "
+      "highlight width but fades smoothly to nothing instead of cutting "
+      "off, which stops that flicker at the cost of a slightly softer "
+      "look on rough surfaces. Takes effect when images are reloaded.",
+      NULL,
+      NULL,
+      {
+         { "original", "Original" },
+         { "tailed",   "Tailed (less shimmer)" },
+         { NULL, NULL },
+      },
+      "original"
+   },
+   {
       "doom_hdr_specular",
       "HDR Specular Boost",
       NULL,
