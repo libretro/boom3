@@ -616,6 +616,23 @@ bool idImage::GenerateRampImage16( const unsigned short *pic, int width, int hei
 	depth = TD_HIGH_QUALITY;
 	type = TT_2D;
 
+	/* The same guard GenerateImage has, and leaving it out is what
+	 * crashed at startup: the intrinsic images are created through
+	 * ImageFromFunction long before R_InitOpenGL, and with image_preload
+	 * set the generator runs immediately.  With no rendering context the
+	 * qgl entry points are still NULL, so the first call is a jump to
+	 * address zero - which is why it landed during decl initialisation,
+	 * nowhere near the renderer.
+	 *
+	 * Returning false rather than true matters as much: the caller then
+	 * builds the 8-bit table, which fills in the parms the same way
+	 * GenerateImage does when it returns here, so a shader matching the
+	 * image before OpenGL starts still finds it.  Once there is a
+	 * context, the ramp is 16-bit as intended. */
+	if ( !glConfig.isInitialized ) {
+		return false;
+	}
+
 	uploadHeight = height;
 	uploadWidth = width;
 	internalFormat = GL_INTENSITY16;
