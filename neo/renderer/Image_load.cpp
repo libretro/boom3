@@ -604,7 +604,8 @@ so this can only improve precision, never remove the image.
 ================
 */
 bool idImage::GenerateRampImage16( const unsigned short *pic, int width, int height,
-								   textureFilter_t filterParm, textureRepeat_t repeatParm ) {
+								   textureFilter_t filterParm, textureRepeat_t repeatParm,
+								   bool luminanceAlpha ) {
 #ifdef HAVE_OPENGLES
 	return false;
 #else
@@ -635,7 +636,13 @@ bool idImage::GenerateRampImage16( const unsigned short *pic, int width, int hei
 
 	uploadHeight = height;
 	uploadWidth = width;
-	internalFormat = GL_INTENSITY16;
+
+	/* Two shapes are needed.  A single-channel ramp reads back on every
+	 * channel, which is what the specular falloff wants.  A fog ramp
+	 * carries white in colour and the falloff in alpha, so it needs a
+	 * second channel - luminance-alpha, with the luminance left at full
+	 * scale exactly as the byte version writes 255 into r, g and b. */
+	internalFormat = luminanceAlpha ? GL_LUMINANCE16_ALPHA16 : GL_INTENSITY16;
 
 	qglGenTextures( 1, &texnum );
 	Bind();
@@ -643,8 +650,9 @@ bool idImage::GenerateRampImage16( const unsigned short *pic, int width, int hei
 	while ( qglGetError() != GL_NO_ERROR ) {
 	}
 
-	qglTexImage2D( GL_TEXTURE_2D, 0, GL_INTENSITY16, width, height, 0,
-				   GL_LUMINANCE, GL_UNSIGNED_SHORT, pic );
+	qglTexImage2D( GL_TEXTURE_2D, 0, internalFormat, width, height, 0,
+				   luminanceAlpha ? GL_LUMINANCE_ALPHA : GL_LUMINANCE,
+				   GL_UNSIGNED_SHORT, pic );
 
 	if ( qglGetError() != GL_NO_ERROR ) {
 		// driver would not take it; the caller regenerates at 8 bits

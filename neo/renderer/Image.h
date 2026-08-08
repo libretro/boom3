@@ -189,7 +189,8 @@ public:
 	// These perform an implicit Bind() on the current texture unit
 	// FIXME: should we implement cinematics this way, instead of with explicit calls?
 	bool		GenerateRampImage16( const unsigned short *pic, int width, int height,
-					   textureFilter_t filterParm, textureRepeat_t repeatParm );
+					   textureFilter_t filterParm, textureRepeat_t repeatParm,
+					   bool luminanceAlpha = false );
 	void		GenerateImage( const byte *pic, int width, int height,
 					   textureFilter_t filter, bool allowDownSize,
 					   textureRepeat_t repeat, textureDepth_t depth );

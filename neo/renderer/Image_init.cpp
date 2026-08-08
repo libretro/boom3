@@ -682,10 +682,60 @@ third will still be projection based
 */
 const int	FOG_SIZE = 128;
 
+/*
+   The fog falloff.
+
+   Quantized twice in the byte version: the radius is rounded to one of
+   256 steps, that index reads an exponential table, and the result is
+   rounded to a byte again.  The visible consequence is the first one -
+   adjacent output values jump by up to 5/255 across the ramp, and fog
+   is a smooth gradient over a large part of the screen, which is the
+   worst case for banding.  HDR expansion scales it further.
+
+   The 16-bit form evaluates the same exponential the table
+   approximates, 0.982 raised to the distance, without rounding the
+   distance first, and stores it with 1/65535 resolution.  Same curve,
+   without the staircase: the table itself sits within 0.0198 of it,
+   which is the staircase measured.
+
+   The byte path below is untouched and is what runs when the driver
+   will not take the format, or on GLES, or before there is a
+   rendering context.
+*/
+static float R_FogAlpha( float d ) {
+	return 1.0f - powf( 0.982f, d * 255.0f );
+}
+
 void R_FogImage( idImage *image ) {
 	int		x,y;
 	byte	data[FOG_SIZE][FOG_SIZE][4];
 	int		b;
+
+	{
+		static unsigned short data16[FOG_SIZE][FOG_SIZE][2];
+		for ( x = 0; x < FOG_SIZE; x++ ) {
+			for ( y = 0; y < FOG_SIZE; y++ ) {
+				float d = idMath::Sqrt( (float)( (x - FOG_SIZE/2) * (x - FOG_SIZE/2)
+						+ (y - FOG_SIZE/2) * (y - FOG_SIZE / 2) ) );
+				d /= FOG_SIZE/2-1;
+				if ( d < 0.0f ) {
+					d = 0.0f;
+				} else if ( d > 1.0f ) {
+					d = 1.0f;
+				}
+				float a = R_FogAlpha( d );
+				if ( x == 0 || x == FOG_SIZE-1 || y == 0 || y == FOG_SIZE-1 ) {
+					a = 1.0f;	// avoid clamping issues
+				}
+				data16[y][x][0] = 65535;
+				data16[y][x][1] = (unsigned short)( a * 65535.0f + 0.5f );
+			}
+		}
+		if ( image->GenerateRampImage16( &data16[0][0][0], FOG_SIZE, FOG_SIZE,
+										 TF_LINEAR, TR_CLAMP, true ) ) {
+			return;
+		}
+	}
 
 float	step[256];
 int		i;
@@ -807,6 +857,29 @@ void R_FogEnterImage( idImage *image ) {
 	int		x,y;
 	byte	data[FOG_ENTER_SIZE][FOG_ENTER_SIZE][4];
 	int		b;
+
+	/* Same treatment as the fog falloff: FogFraction already returns a
+	 * float, and the byte version throws all but 8 bits of it away. */
+	{
+		static unsigned short data16[FOG_ENTER_SIZE][FOG_ENTER_SIZE][2];
+		for ( x = 0; x < FOG_ENTER_SIZE; x++ ) {
+			for ( y = 0; y < FOG_ENTER_SIZE; y++ ) {
+				float d = FogFraction( x - (FOG_ENTER_SIZE / 2), y - (FOG_ENTER_SIZE / 2) );
+				if ( d < 0.0f ) {
+					d = 0.0f;
+				} else if ( d > 1.0f ) {
+					d = 1.0f;
+				}
+				data16[y][x][0] = 65535;
+				data16[y][x][1] = (unsigned short)( d * 65535.0f + 0.5f );
+			}
+		}
+		// if mipmapped, acutely viewed surfaces fade wrong
+		if ( image->GenerateRampImage16( &data16[0][0][0], FOG_ENTER_SIZE, FOG_ENTER_SIZE,
+										 TF_LINEAR, TR_CLAMP, true ) ) {
+			return;
+		}
+	}
 
 	for (x=0 ; x<FOG_ENTER_SIZE ; x++) {
 		for (y=0 ; y<FOG_ENTER_SIZE ; y++) {
