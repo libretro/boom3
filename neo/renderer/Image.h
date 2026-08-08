@@ -188,6 +188,8 @@ public:
 	// data goes from the bottom to the top line of the image, as OpenGL expects it
 	// These perform an implicit Bind() on the current texture unit
 	// FIXME: should we implement cinematics this way, instead of with explicit calls?
+	bool		GenerateRampImage16( const unsigned short *pic, int width, int height,
+					   textureFilter_t filterParm, textureRepeat_t repeatParm );
 	void		GenerateImage( const byte *pic, int width, int height,
 					   textureFilter_t filter, bool allowDownSize,
 					   textureRepeat_t repeat, textureDepth_t depth );

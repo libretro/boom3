@@ -163,22 +163,41 @@ R_SpecularTableImage
 Creates a ramp that matches our fudged specular calculation
 ================
 */
+static float R_SpecularRamp( float x ) {
+	// the behavior of the hacked up fragment programs that can't really
+	// do a power function
+	float f = ( x - 0.75f ) * 4.0f;
+	if ( f < 0.0f ) {
+		f = 0.0f;
+	}
+	return f * f;
+}
+
 static void R_SpecularTableImage( idImage *image ) {
 	int		x;
 	byte	data[256][4];
 
+	/* Try the ramp at 16 bits first.  The curve is unchanged - this is
+	 * the same function sampled at the same 256 points - but stored with
+	 * enough precision to survive being multiplied.  The specular boost
+	 * and the HDR expansion both scale this value, and at 8 bits the
+	 * 1/255 step turns into a visible stair across a highlight.
+	 *
+	 * On GLES, or if the driver will not take the format, this returns
+	 * false and the 8-bit table below is built exactly as before. */
+	{
+		unsigned short data16[256];
+		for ( x = 0; x < 256; x++ ) {
+			float f = R_SpecularRamp( x / 255.0f );
+			data16[x] = (unsigned short)( f * 65535.0f + 0.5f );
+		}
+		if ( image->GenerateRampImage16( data16, 256, 1, TF_LINEAR, TR_CLAMP ) ) {
+			return;
+		}
+	}
+
 	for (x=0 ; x<256 ; x++) {
-		float f = x/255.f;
-#if 0
-		f = pow(f, 16);
-#else
-		// this is the behavior of the hacked up fragment programs that
-		// can't really do a power function
-		f = (f-0.75)*4;
-		if ( f < 0 )
-			f = 0;
-		f = f * f;
-#endif
+		float f = R_SpecularRamp( x / 255.f );
 		int		b = (int)(f * 255);
 
 		data[x][0] =
