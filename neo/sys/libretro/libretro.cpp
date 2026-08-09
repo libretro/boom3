@@ -138,7 +138,11 @@ enum {
 	HDR_ROLLOFF_REINHARD = 0,
 	HDR_ROLLOFF_ACES     = 1,
 	HDR_ROLLOFF_HEJL     = 2,
-	HDR_ROLLOFF_GT       = 3
+	HDR_ROLLOFF_GT       = 3,
+	HDR_ROLLOFF_HABLE    = 4,
+	HDR_ROLLOFF_LOTTES   = 5,
+	HDR_ROLLOFF_DRAGO    = 6,
+	HDR_ROLLOFF_UNREAL   = 7
 };
 static int    hdr_rolloff_mode  = HDR_ROLLOFF_REINHARD;   /* live-switchable */
 static int    hdr_expand_mode   = 0;       /* 0 none, 1 per-channel inverse tonemap, 2 hue-preserving; live-switchable */
@@ -167,6 +171,7 @@ static GLuint hdr_prog_down, hdr_prog_up;
 static GLuint hdr_arb_vp, hdr_arb_down, hdr_arb_up;
 static GLuint hdr_arb_bright, hdr_arb_blur;
 static GLuint hdr_arb_comp1, hdr_arb_comp2;
+static int    hdr_arb_comp_mode = -1;   /* roll-off curve baked into the pair above */
 /* Every program in the chain is loaded.  On this build there is no other
    chain to run, so this is a load-state flag rather than a path
    selector - the dispatch below is not conditional. */
@@ -622,6 +627,10 @@ static void update_variables(bool startup)
 		if (!strcmp(var.value, "aces"))      hdr_rolloff_mode = HDR_ROLLOFF_ACES;
 		else if (!strcmp(var.value, "hejl")) hdr_rolloff_mode = HDR_ROLLOFF_HEJL;
 		else if (!strcmp(var.value, "gt"))   hdr_rolloff_mode = HDR_ROLLOFF_GT;
+		else if (!strcmp(var.value, "hable"))  hdr_rolloff_mode = HDR_ROLLOFF_HABLE;
+		else if (!strcmp(var.value, "lottes")) hdr_rolloff_mode = HDR_ROLLOFF_LOTTES;
+		else if (!strcmp(var.value, "drago"))  hdr_rolloff_mode = HDR_ROLLOFF_DRAGO;
+		else if (!strcmp(var.value, "unreal")) hdr_rolloff_mode = HDR_ROLLOFF_UNREAL;
 		else                                 hdr_rolloff_mode = HDR_ROLLOFF_REINHARD;
 	}
 
@@ -684,6 +693,7 @@ static void context_reset(void)
    hdr_arb_vp = hdr_arb_down = hdr_arb_up = 0;
    hdr_arb_bright = hdr_arb_blur = 0;
    hdr_arb_comp1 = hdr_arb_comp2 = 0;
+   hdr_arb_comp_mode = -1;
    hdr_arb_pyramid = false;
 #endif
    memset(hdr_conv_fbo, 0, sizeof hdr_conv_fbo);
@@ -1891,6 +1901,27 @@ static const char *hdr_fs_src =
 	   1.208x paper white and keeps mid grey at 0.216, closer to where
 	   Reinhard leaves it than ACES or Hejl.
 	*/
+	/* Four more, each normalised by its own value at 1.0 so paper white
+	   stays put, and each handed to the same shoulder above it.  Hable
+	   and Lottes are linear in and out; Unreal bakes in a display gamma
+	   and has it undone; Drago is used as published. */
+	"  if (uParms.z > 6.5) {\n"
+	"    float n = v / (v + 0.155) * 1.019;\n"
+	"    return shoulder(v, pow(n, 2.2) * 1.3173380);\n"
+	"  }\n"
+	"  if (uParms.z > 5.5) {\n"
+	"    float n = log(1.0 + max(v, 0.0)) / log(2.0 + 8.0 * pow(max(v, 0.0) / 8.0, 0.2344653));\n"
+	"    return shoulder(v, n * (1.0 / 0.9542425) * 2.6616800);\n"
+	"  }\n"
+	"  if (uParms.z > 4.5) {\n"
+	"    float p = pow(max(v, 0.0), 1.6);\n"
+	"    float q = pow(max(v, 0.0), 1.5632);\n"
+	"    return shoulder(v, (p / (q * 0.1674199 + 1.0730397)) * 1.2404596);\n"
+	"  }\n"
+	"  if (uParms.z > 3.5) {\n"
+	"    float n = ((v * (0.15 * v + 0.05) + 0.004) / (v * (0.15 * v + 0.50) + 0.06)) - 0.0666667;\n"
+	"    return shoulder(v, n * 4.5319149);\n"
+	"  }\n"
 	"  if (uParms.z > 2.5) {\n"
 	"    float t = clamp(v / 0.22, 0.0, 1.0);\n"
 	"    float w0 = 1.0 - (t * t * (3.0 - 2.0 * t));\n"
@@ -2228,6 +2259,12 @@ static const char *hdr_arb_up_fs_src =
 	"PARAM kPqB = { 78.84375, 78.84375, 78.84375, 78.84375 };\n" \
 	"PARAM kHejlG = { 2.2, 2.2, 2.2, 2.2 };\n" \
 	"PARAM kGtC = { 1.33, 1.33, 1.33, 1.33 };\n" \
+	"PARAM kGamma22 = { 2.2, 2.2, 2.2, 2.2 };\n" \
+	"PARAM kInvM = { 4.5454545, 4.5454545, 4.5454545, 4.5454545 };\n" \
+	"PARAM kE = { 2.7182818, 2.7182818, 2.7182818, 2.7182818 };\n" \
+	"PARAM kLotA = { 1.6, 1.6, 1.6, 1.6 };\n" \
+	"PARAM kLotAD = { 1.5632, 1.5632, 1.5632, 1.5632 };\n" \
+	"PARAM kDragoE = { 0.2344653, 0.2344653, 0.2344653, 0.2344653 };\n" \
 	"TEMP s, lin, bl, t, u, v, e, a, r, m, y, p, n, d, g, h;\n" \
 	/* lin = pow(abs(scene * encScale), 2.4) */ \
 	"TEX s, fragment.texcoord[0], texture[0], 2D;\n" \
@@ -2236,6 +2273,147 @@ static const char *hdr_arb_up_fs_src =
 	"POW lin.x, s.x, kSrgb.x;\n" \
 	"POW lin.y, s.y, kSrgb.x;\n" \
 	"POW lin.z, s.z, kSrgb.x;\n"
+
+/* One of these is selected as HDR_ARB_ROLLOFF_CURVE when the composite
+   is built.  Each leaves the curve value in t and reads lin; all are
+   normalised so paper white lands on paper white, exactly as their CPU
+   twins in hdr_curve_* are, and each is followed by the shared shoulder
+   that carries values above 1 out to the display headroom. */
+#define HDR_ARB_CURVE_REINHARD \
+	"SUB u, lin, program.env[0].w;\n" \
+	"SUB v.x, program.env[0].y, program.env[0].w;\n" \
+	"ADD a, u, v.x;\n" \
+	"MAX a, a, 0.00001;\n" \
+	"RCP m.x, a.x;\n" \
+	"RCP m.y, a.y;\n" \
+	"RCP m.z, a.z;\n" \
+	"MUL a, u, v.x;\n" \
+	"MUL a, a, m;\n" \
+	"ADD a, a, program.env[0].w;\n" \
+	"SUB v, lin, program.env[0].w;\n" \
+	"CMP t, v, lin, a;\n"
+
+#define HDR_ARB_CURVE_ACES \
+	"MAD t, lin, 2.51, 0.03;\n" \
+	"MUL t, t, lin;\n" \
+	"MAD u, lin, 2.43, 0.59;\n" \
+	"MAD u, u, lin, 0.14;\n" \
+	"MAX u, u, 0.00001;\n" \
+	"RCP a.x, u.x;\n" \
+	"RCP a.y, u.y;\n" \
+	"RCP a.z, u.z;\n" \
+	"MUL t, t, a;\n" \
+	"MUL t, t, 1.2440945;\n"
+
+#define HDR_ARB_CURVE_HEJL \
+	"SUB u, lin, 0.004;\n" \
+	"MAX u, u, 0.0;\n" \
+	"MAD t, u, 6.2, 0.5;\n" \
+	"MUL t, t, u;\n" \
+	"MAD v, u, 6.2, 1.7;\n" \
+	"MAD v, v, u, 0.06;\n" \
+	"MAX v, v, 0.00001;\n" \
+	"RCP a.x, v.x;\n" \
+	"RCP a.y, v.y;\n" \
+	"RCP a.z, v.z;\n" \
+	"MUL t, t, a;\n" \
+	"MAX t, t, 0.0;\n" \
+	"POW t.x, t.x, kGamma22.x;\n" \
+	"POW t.y, t.y, kGamma22.x;\n" \
+	"POW t.z, t.z, kGamma22.x;\n" \
+	"MUL t, t, 1.4629683;\n"
+
+#define HDR_ARB_CURVE_GT \
+	"MUL u, lin, kInvM.x;\n" \
+	"MIN u, u, 1.0;\n" \
+	"MAX u, u, 0.0;\n" \
+	"MAD v, u, -2.0, 3.0;\n" \
+	"MUL v, v, u;\n" \
+	"MUL v, v, u;\n" \
+	"SUB v, 1.0, v;\n" \
+	"SGE m, lin, 0.532;\n" \
+	"SUB a, 1.0, v;\n" \
+	"SUB a, a, m;\n" \
+	"MAX u, lin, 0.0;\n" \
+	"MUL u, u, kInvM.x;\n" \
+	"POW u.x, u.x, kGtC.x;\n" \
+	"POW u.y, u.y, kGtC.x;\n" \
+	"POW u.z, u.z, kGtC.x;\n" \
+	"MUL u, u, 0.22;\n" \
+	"SUB t, lin, 0.532;\n" \
+	"MUL t, t, -2.136752;\n" \
+	"POW t.x, kE.x, t.x;\n" \
+	"POW t.y, kE.x, t.y;\n" \
+	"POW t.z, kE.x, t.z;\n" \
+	"MAD t, t, -0.468, 1.0;\n" \
+	"MUL u, u, v;\n" \
+	"MAD u, lin, a, u;\n" \
+	"MAD t, t, m, u;\n" \
+	"MUL t, t, 1.2079740;\n"
+
+#define HDR_ARB_CURVE_HABLE \
+	"MAD t, lin, 0.15, 0.05;\n" \
+	"MAD t, t, lin, 0.004;\n" \
+	"MAD u, lin, 0.15, 0.50;\n" \
+	"MAD u, u, lin, 0.06;\n" \
+	"MAX u, u, 0.00001;\n" \
+	"RCP a.x, u.x;\n" \
+	"RCP a.y, u.y;\n" \
+	"RCP a.z, u.z;\n" \
+	"MUL t, t, a;\n" \
+	"SUB t, t, 0.0666667;\n" \
+	"MUL t, t, 4.5319149;\n"
+
+#define HDR_ARB_CURVE_LOTTES \
+	"MAX u, lin, 0.0;\n" \
+	"POW t.x, u.x, kLotA.x;\n" \
+	"POW t.y, u.y, kLotA.x;\n" \
+	"POW t.z, u.z, kLotA.x;\n" \
+	"POW v.x, u.x, kLotAD.x;\n" \
+	"POW v.y, u.y, kLotAD.x;\n" \
+	"POW v.z, u.z, kLotAD.x;\n" \
+	"MAD v, v, 0.1674199, 1.0730397;\n" \
+	"MAX v, v, 0.00001;\n" \
+	"RCP a.x, v.x;\n" \
+	"RCP a.y, v.y;\n" \
+	"RCP a.z, v.z;\n" \
+	"MUL t, t, a;\n" \
+	"MUL t, t, 1.2404596;\n"
+
+#define HDR_ARB_CURVE_DRAGO \
+	"MAX u, lin, 0.0;\n" \
+	"ADD v, u, 1.0;\n" \
+	"LG2 t.x, v.x;\n" \
+	"LG2 t.y, v.y;\n" \
+	"LG2 t.z, v.z;\n" \
+	"MUL u, u, 0.125;\n" \
+	"POW u.x, u.x, kDragoE.x;\n" \
+	"POW u.y, u.y, kDragoE.x;\n" \
+	"POW u.z, u.z, kDragoE.x;\n" \
+	"MAD u, u, 8.0, 2.0;\n" \
+	"LG2 v.x, u.x;\n" \
+	"LG2 v.y, u.y;\n" \
+	"LG2 v.z, u.z;\n" \
+	"MAX v, v, 0.00001;\n" \
+	"RCP a.x, v.x;\n" \
+	"RCP a.y, v.y;\n" \
+	"RCP a.z, v.z;\n" \
+	"MUL t, t, a;\n" \
+	"MUL t, t, 2.7893119;\n"
+
+#define HDR_ARB_CURVE_UNREAL \
+	"ADD u, lin, 0.155;\n" \
+	"MAX u, u, 0.00001;\n" \
+	"RCP a.x, u.x;\n" \
+	"RCP a.y, u.y;\n" \
+	"RCP a.z, u.z;\n" \
+	"MUL t, lin, a;\n" \
+	"MUL t, t, 1.019;\n" \
+	"MAX t, t, 0.0;\n" \
+	"POW t.x, t.x, kGamma22.x;\n" \
+	"POW t.y, t.y, kGamma22.x;\n" \
+	"POW t.z, t.z, kGamma22.x;\n" \
+	"MUL t, t, 1.3173380;\n"
 
 #define HDR_ARB_COMPOSITE_TAIL \
 	/* lin += bloomAmt * bl */ \
@@ -2289,29 +2467,19 @@ static const char *hdr_arb_up_fs_src =
 	"CMP e, a.x, lin, e;\n" \
 	"SUB a.x, program.env[0].y, 1.0001;\n" \
 	"CMP lin, a.x, lin, e;\n" \
-	/* ---- rolloff(), per channel, all three forms then select ---- */ \
-	/* ACES below paper white, unchanged, then a shoulder carrying
-	   everything above it out to the display's headroom.
-	   
-	   The normalised curve's asymptote is 1.285x paper white however
-	   much headroom the display has, so at H = 4 two thirds of the
-	   range was unreachable and a very bright light looked no brighter
-	   than a moderately bright one.  Stretching the curve's input fixes
-	   the asymptote but darkens mid-tones - measured, 0.5 fell from
-	   0.767 to 0.402 - so nothing below 1 moves at all and the shoulder
-	   starts where the old curve stopped being useful.  env[7].x is
-	   A = (H-1)/slope, env[7].y is the curve's own gradient at 1, so
-	   the join is slope-continuous. */ \
-	"MAD t, lin, 2.51, 0.03;\n" \
-	"MUL t, t, lin;\n" \
-	"MAD u, lin, 2.43, 0.59;\n" \
-	"MAD u, u, lin, 0.14;\n" \
-	"MAX u, u, 0.00001;\n" \
-	"RCP a.x, u.x;\n" \
-	"RCP a.y, u.y;\n" \
-	"RCP a.z, u.z;\n" \
-	"MUL t, t, a;\n" \
-	"MUL t, t, 1.2440945;\n" \
+	/* ---- rolloff(), one curve, chosen when the program is built ---- */ \
+	/* The curve is a build-time choice rather than a runtime select.
+	   ARB has no branches, so a CMP chain over eight curves would
+	   evaluate all eight for every pixel - transcendentals included -
+	   and throw seven away.  The composite is rebuilt when the option
+	   changes instead, which costs a program load on a menu toggle and
+	   nothing per pixel.  This also drops the cost below what it was
+	   with four curves chained. */ \
+	/* the curve macro is spliced in here at build time */
+
+#define HDR_ARB_COMPOSITE_TAIL2 \
+	/* shoulder above paper white, carrying the curve out to H:
+	   1 + e*A*slope/(e + A), taken where e > 0 */ \
 	"SUB v, lin, 1.0;\n" \
 	"MAX v, v, 0.0;\n" \
 	"ADD u, v, program.env[7].x;\n" \
@@ -2323,91 +2491,7 @@ static const char *hdr_arb_up_fs_src =
 	"MUL u, u, program.env[7].y;\n" \
 	"MAD u, u, a, 1.0;\n" \
 	"SUB v, lin, 1.0;\n" \
-	"CMP t, v, t, u;\n" \
-	/* Reinhard shoulder above the knee: K + e*A/(e + A), A = H - K */ \
-	"SUB u, lin, program.env[0].w;\n" \
-	"SUB v.x, program.env[0].y, program.env[0].w;\n" \
-	"ADD a, u, v.x;\n" \
-	"MAX a, a, 0.00001;\n" \
-	"RCP m.x, a.x;\n" \
-	"RCP m.y, a.y;\n" \
-	"RCP m.z, a.z;\n" \
-	"MUL a, u, v.x;\n" \
-	"MUL a, a, m;\n" \
-	"ADD a, a, program.env[0].w;\n" \
-	/* below the knee Reinhard is the identity */ \
-	"SUB v, lin, program.env[0].w;\n" \
-	"CMP a, v, lin, a;\n" \
-	/* Hejl, on the same shoulder as ACES.  The published curve bakes in
-	   a display gamma; this pipeline is linear until the PQ encode, so
-	   the 2.2 is undone.  m holds the base value per channel. */ \
-	"SUB m, lin, 0.004;\n" \
-	"MAX m, m, 0.0;\n" \
-	"MAD y, m, 6.2, 0.5;\n" \
-	"MUL y, y, m;\n" \
-	"MAD p, m, 6.2, 1.7;\n" \
-	"MAD p, p, m, 0.06;\n" \
-	"MAX p, p, 0.00001;\n" \
-	"RCP d.x, p.x;\n" \
-	"RCP d.y, p.y;\n" \
-	"RCP d.z, p.z;\n" \
-	"MUL y, y, d;\n" \
-	"POW m.x, y.x, kHejlG.x;\n" \
-	"POW m.y, y.y, kHejlG.x;\n" \
-	"POW m.z, y.z, kHejlG.x;\n" \
-	"MUL m, m, 1.4629683;\n" \
-	/* shoulder, identical to the ACES one: 1 + e*A*slope/(e + A) */ \
-	"SUB v, lin, 1.0;\n" \
-	"MAX v, v, 0.0;\n" \
-	"ADD u, v, program.env[7].x;\n" \
-	"MAX u, u, 0.00001;\n" \
-	"RCP d.x, u.x;\n" \
-	"RCP d.y, u.y;\n" \
-	"RCP d.z, u.z;\n" \
-	"MUL u, v, program.env[7].x;\n" \
-	"MUL u, u, program.env[7].y;\n" \
-	"MAD u, u, d, 1.0;\n" \
-	"SUB v, lin, 1.0;\n" \
-	"CMP m, v, m, u;\n" \
-	/* Uchimura GT, defaults folded: m = 0.22, S0 = 0.532, C2 = 2.136752,
-	   and with a = 1 the linear segment is lin itself.  exp(-k) is done
-	   as EX2 of -k*log2(e), the only form ARB has. */ \
-	"MUL g, lin, 4.5454545;\n" \
-	"MIN g, g, 1.0;\n" \
-	"MAX g, g, 0.0;\n" \
-	"MAD h, g, -2.0, 3.0;\n" \
-	"MUL h, h, g;\n" \
-	"MUL h, h, g;\n" \
-	"SUB h, 1.0, h;\n" \
-	/* h = w0, and w2 = step(0.532, lin) into g */ \
-	"SGE g, lin, 0.532;\n" \
-	"MUL d, lin, 4.5454545;\n" \
-	"MAX d, d, 0.0;\n" \
-	"POW n.x, d.x, kGtC.x;\n" \
-	"POW n.y, d.y, kGtC.x;\n" \
-	"POW n.z, d.z, kGtC.x;\n" \
-	"MUL n, n, 0.22;\n" \
-	/* S = 1 - 0.468 * exp(-2.136752 * (lin - 0.532)) */ \
-	"SUB d, lin, 0.532;\n" \
-	"MUL d, d, -3.0826815;\n" \
-	"EX2 p.x, d.x;\n" \
-	"EX2 p.y, d.y;\n" \
-	"EX2 p.z, d.z;\n" \
-	"MAD p, p, -0.468, 1.0;\n" \
-	/* combine: T*w0 + lin*w1 + S*w2, w1 = 1 - w0 - w2 */ \
-	"SUB d, 1.0, h;\n" \
-	"SUB d, d, g;\n" \
-	"MUL n, n, h;\n" \
-	"MAD n, lin, d, n;\n" \
-	"MAD n, p, g, n;\n" \
-	"MUL n, n, 1.2079740;\n" \
-	/* env[0].z selects: 0 Reinhard, 1 ACES, 2 Hejl, 3 GT */ \
-	"SUB v.x, program.env[0].z, 0.5;\n" \
-	"CMP r, v.x, a, t;\n" \
-	"SUB v.x, program.env[0].z, 1.5;\n" \
-	"CMP r, v.x, r, m;\n" \
-	"SUB v.x, program.env[0].z, 2.5;\n" \
-	"CMP r, v.x, r, n;\n" \
+	"CMP r, v, t, u;\n" \
 	/* no headroom: plain min(v, 1) */ \
 	"MIN t, lin, 1.0;\n" \
 	"SUB v.x, program.env[0].y, 1.0001;\n" \
@@ -2451,23 +2535,40 @@ static const char *hdr_arb_up_fs_src =
    multiplied by a zero weight.  The GLSL does this with a branch on a
    uniform; ARB has no branches, so it is two programs and the choice
    moves to bind time. */
-static const char *hdr_arb_comp1_fs_src =
-	"!!ARBfp1.0\n"
-	"OPTION ARB_precision_hint_nicest;\n"
-	HDR_ARB_COMPOSITE_BODY
-	"TEX bl, fragment.texcoord[0], texture[1], 2D;\n"
-	"MUL bl, bl, program.env[2].z;\n"
-	HDR_ARB_COMPOSITE_TAIL;
+/* The composite is assembled rather than declared, because the roll-off
+   curve is chosen when the program is built.  Everything else is the
+   same text as before; only the curve block varies. */
+static const char *hdr_arb_curve_src( int mode ) {
+	switch ( mode ) {
+	case HDR_ROLLOFF_ACES:   return HDR_ARB_CURVE_ACES;
+	case HDR_ROLLOFF_HEJL:   return HDR_ARB_CURVE_HEJL;
+	case HDR_ROLLOFF_GT:     return HDR_ARB_CURVE_GT;
+	case HDR_ROLLOFF_HABLE:  return HDR_ARB_CURVE_HABLE;
+	case HDR_ROLLOFF_LOTTES: return HDR_ARB_CURVE_LOTTES;
+	case HDR_ROLLOFF_DRAGO:  return HDR_ARB_CURVE_DRAGO;
+	case HDR_ROLLOFF_UNREAL: return HDR_ARB_CURVE_UNREAL;
+	default:                 return HDR_ARB_CURVE_REINHARD;
+	}
+}
 
-static const char *hdr_arb_comp2_fs_src =
-	"!!ARBfp1.0\n"
-	"OPTION ARB_precision_hint_nicest;\n"
-	HDR_ARB_COMPOSITE_BODY
-	"TEX bl, fragment.texcoord[0], texture[1], 2D;\n"
-	"MUL bl, bl, program.env[2].z;\n"
-	"TEX t, fragment.texcoord[0], texture[2], 2D;\n"
-	"MAD bl, t, program.env[2].w, bl;\n"
-	HDR_ARB_COMPOSITE_TAIL;
+static const char *hdr_arb_composite_src( int mode, bool twoBand ) {
+	static char buf[2][16384];
+	char *p = buf[twoBand ? 1 : 0];
+
+	idStr::snPrintf( p, sizeof( buf[0] ), "%s%s%s%s%s%s",
+			"!!ARBfp1.0\n"
+			"OPTION ARB_precision_hint_nicest;\n"
+			HDR_ARB_COMPOSITE_BODY
+			"TEX bl, fragment.texcoord[0], texture[1], 2D;\n"
+			"MUL bl, bl, program.env[2].z;\n",
+			twoBand ? "TEX t, fragment.texcoord[0], texture[2], 2D;\n"
+					  "MAD bl, t, program.env[2].w, bl;\n" : "",
+			HDR_ARB_COMPOSITE_TAIL,
+			hdr_arb_curve_src( mode ),
+			HDR_ARB_COMPOSITE_TAIL2,
+			"" );
+	return p;
+}
 
 static const char *hdr_arb_bright_fs_src =
 	"!!ARBfp1.0\n"
@@ -2921,9 +3022,10 @@ static bool hdr_arb_load( GLenum target, const char *text, GLuint *out, const ch
 }
 
 static bool hdr_arb_ready( void ) {
-	if ( hdr_arb_pyramid ) {
+	if ( hdr_arb_pyramid && hdr_arb_comp_mode == hdr_rolloff_mode ) {
 		return true;
 	}
+
 	if ( !hdr_arb_available() ) {
 		/* Nothing to load onto and, on this build, no other chain to
 		   fall back to - reporting ready would leave hdr_present
@@ -2934,24 +3036,45 @@ static bool hdr_arb_ready( void ) {
 		hdr_fail( "no ARB program support on this context" );
 		return false;
 	}
-	if ( !hdr_arb_load( GL_VERTEX_PROGRAM_ARB, hdr_arb_vp_src,
-				&hdr_arb_vp, "hdr vertex program" )
-			|| !hdr_arb_load( GL_FRAGMENT_PROGRAM_ARB, hdr_arb_comp1_fs_src,
-				&hdr_arb_comp1, "hdr composite program (one band)" )
-			|| !hdr_arb_load( GL_FRAGMENT_PROGRAM_ARB, hdr_arb_comp2_fs_src,
-				&hdr_arb_comp2, "hdr composite program (two bands)" )
-			|| !hdr_arb_load( GL_FRAGMENT_PROGRAM_ARB, hdr_arb_bright_fs_src,
-				&hdr_arb_bright, "bloom bright-pass program" )
-			|| !hdr_arb_load( GL_FRAGMENT_PROGRAM_ARB, hdr_arb_blur_fs_src,
-				&hdr_arb_blur, "bloom blur program" )
-			|| !hdr_arb_load( GL_FRAGMENT_PROGRAM_ARB, hdr_arb_down_fs_src,
-				&hdr_arb_down, "bloom downsample program" )
-			|| !hdr_arb_load( GL_FRAGMENT_PROGRAM_ARB, hdr_arb_up_fs_src,
-				&hdr_arb_up, "bloom upsample program" ) ) {
-		return false;
+
+	/* The curveless programs are loaded once. */
+	if ( !hdr_arb_pyramid ) {
+		if ( !hdr_arb_load( GL_VERTEX_PROGRAM_ARB, hdr_arb_vp_src,
+					&hdr_arb_vp, "hdr vertex program" )
+				|| !hdr_arb_load( GL_FRAGMENT_PROGRAM_ARB, hdr_arb_bright_fs_src,
+					&hdr_arb_bright, "bloom bright-pass program" )
+				|| !hdr_arb_load( GL_FRAGMENT_PROGRAM_ARB, hdr_arb_blur_fs_src,
+					&hdr_arb_blur, "bloom blur program" )
+				|| !hdr_arb_load( GL_FRAGMENT_PROGRAM_ARB, hdr_arb_down_fs_src,
+					&hdr_arb_down, "bloom downsample program" )
+				|| !hdr_arb_load( GL_FRAGMENT_PROGRAM_ARB, hdr_arb_up_fs_src,
+					&hdr_arb_up, "bloom upsample program" ) ) {
+			return false;
+		}
 	}
 
-	if ( log_cb ) {
+	/* The composite pair carries the roll-off curve, so it is rebuilt
+	 * when the option changes.  The old pair is deleted first: without
+	 * that, every toggle would strand two program objects, and the
+	 * option is a menu item somebody will sit and cycle through. */
+	if ( hdr_arb_comp_mode != hdr_rolloff_mode ) {
+		if ( hdr_arb_comp1 ) {
+			GLuint dead[2] = { hdr_arb_comp1, hdr_arb_comp2 };
+			glDeleteProgramsARB( 2, dead );
+			hdr_arb_comp1 = hdr_arb_comp2 = 0;
+		}
+		if ( !hdr_arb_load( GL_FRAGMENT_PROGRAM_ARB,
+					hdr_arb_composite_src( hdr_rolloff_mode, false ),
+					&hdr_arb_comp1, "hdr composite program (one band)" )
+				|| !hdr_arb_load( GL_FRAGMENT_PROGRAM_ARB,
+					hdr_arb_composite_src( hdr_rolloff_mode, true ),
+					&hdr_arb_comp2, "hdr composite program (two bands)" ) ) {
+			return false;
+		}
+		hdr_arb_comp_mode = hdr_rolloff_mode;
+	}
+
+	if ( !hdr_arb_pyramid && log_cb ) {
 		log_cb( RETRO_LOG_INFO, "[boom3] HDR: post chain on ARB programs\n" );
 	}
 	hdr_arb_pyramid = true;
@@ -3381,6 +3504,65 @@ static double hdr_curve_gt( double v ) {
 	return ( T * w0 + L * w1 + S * w2 ) * 1.2079740;
 }
 
+static double hdr_curve_hable( double v ) {
+	/* Hable's Uncharted 2 filmic, published coefficients.  Linear in and
+	 * out - no display gamma folded in, unlike Hejl and Unreal - so it
+	 * needs no correction, only the usual normalisation by its own value
+	 * at 1.0.  Mid grey lands at 0.221, close to GT, and it saturates at
+	 * 4.23x paper white: the longest usable shoulder of the filmic
+	 * curves here. */
+	const double A = 0.15, B = 0.50, C = 0.10, D = 0.20, E = 0.02, F = 0.30;
+	const double n = ( ( v * ( A * v + C * B ) + D * E ) / ( v * ( A * v + B ) + D * F ) ) - E / F;
+	return n * 4.5319149;
+}
+
+static double hdr_curve_lottes( double v ) {
+	/* Lottes' AMD curve with its published parameters: a = 1.6,
+	 * d = 0.977, hdrMax = 8, midIn = 0.18, midOut = 0.267, from which b
+	 * and c fall out as constants.
+	 *
+	 * Normalising it to pin paper white costs its mid-tones: mid grey
+	 * arrives at 0.074 against a reference of 0.18.  That is not a bug
+	 * in the fit, it is what the curve is - a compressor built to carry
+	 * eight stops, rescaled so 1.0 lands on 1.0 - and it buys the
+	 * longest highlight range of the set, 12.3x paper white.  Dark and
+	 * contrasty by construction. */
+	const double a = 1.6, d = 0.977;
+	const double b = 1.0730397, c = 0.1674199;
+	if ( v <= 0.0 ) {
+		return 0.0;
+	}
+	return ( pow( v, a ) / ( pow( v, a * d ) * c + b ) ) * 1.2404596;
+}
+
+static double hdr_curve_drago( double v ) {
+	/* Drago's logarithmic operator, Lwmax = 8, bias 0.85.  Used as
+	 * published, without undoing a gamma: its output is already the
+	 * shape this pipeline wants, and raising it to 2.2 crushes mid grey
+	 * to 0.06.  As it stands mid grey lands at 0.277 - between GT and
+	 * ACES - with a 7.95x shoulder. */
+	const double Lwmax = 8.0, bias = 0.85;
+	double e, den;
+	if ( v <= 0.0 ) {
+		return 0.0;
+	}
+	e = log( bias ) / log( 0.5 );
+	den = log( 2.0 + 8.0 * pow( v / Lwmax, e ) );
+	if ( den <= 0.0 ) {
+		return 0.0;
+	}
+	return ( log( 1.0 + v ) / den ) / log10( 1.0 + Lwmax ) * 2.6616800;
+}
+
+static double hdr_curve_unreal( double v ) {
+	/* Unreal 3's tonemapper, x/(x+0.155)*1.019.  Like Hejl it bakes in
+	 * an approximate display gamma, so the 2.2 is undone before
+	 * normalising, otherwise mid grey lands at 0.62.  Corrected it sits
+	 * at 0.350 with a 1.373x shoulder - the shortest here after GT. */
+	const double n = v / ( v + 0.155 ) * 1.019;
+	return pow( n, 2.2 ) * 1.3173380;
+}
+
 /* Shoulder parameters for the selected curve.
  *
  * Every one of these curves flattens out well below the display's
@@ -3406,6 +3588,22 @@ static void hdr_shoulder_params( int mode, float H, float *A, float *slopeOut ) 
 	case HDR_ROLLOFF_GT:
 		f1 = hdr_curve_gt( 1.0 + d );
 		f0 = hdr_curve_gt( 1.0 - d );
+		break;
+	case HDR_ROLLOFF_HABLE:
+		f1 = hdr_curve_hable( 1.0 + d );
+		f0 = hdr_curve_hable( 1.0 - d );
+		break;
+	case HDR_ROLLOFF_LOTTES:
+		f1 = hdr_curve_lottes( 1.0 + d );
+		f0 = hdr_curve_lottes( 1.0 - d );
+		break;
+	case HDR_ROLLOFF_DRAGO:
+		f1 = hdr_curve_drago( 1.0 + d );
+		f0 = hdr_curve_drago( 1.0 - d );
+		break;
+	case HDR_ROLLOFF_UNREAL:
+		f1 = hdr_curve_unreal( 1.0 + d );
+		f0 = hdr_curve_unreal( 1.0 - d );
 		break;
 	default:
 		f1 = hdr_curve_aces( 1.0 + d );

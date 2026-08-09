@@ -389,7 +389,13 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "own (ACES at 1.29x paper white, Hejl at 1.46x), so both are "
       "carried out to the display peak by a shoulder rather than "
       "stopping there. Pick Reinhard for a faithful comparison against "
-      "24-bit.",
+      "24-bit. Where the filmic curves put mid grey, and how far their "
+      "highlights reach before the shoulder takes over: GT 0.216 at "
+      "1.21x, Hable 0.221 at 4.23x, Drago 0.277 at 7.95x, ACES 0.330 "
+      "at 1.29x, Hejl 0.330 at 1.46x, Unreal 0.350 at 1.37x. Lottes is "
+      "the outlier - mid grey drops to 0.074 in exchange for a 12.3x "
+      "highlight range, so it is far darker and contrastier than the "
+      "rest.",
       NULL,
       NULL,
       {
@@ -397,6 +403,10 @@ struct retro_core_option_v2_definition option_defs_us[] = {
          { "aces",     "ACES (Filmic)" },
          { "hejl",     "Hejl (Filmic)" },
          { "gt",       "GT (Uchimura)" },
+         { "hable",    "Hable (Uncharted 2)" },
+         { "lottes",   "Lottes (AMD)" },
+         { "drago",    "Drago (Logarithmic)" },
+         { "unreal",   "Unreal" },
          { NULL, NULL },
       },
       "reinhard"
