@@ -22,23 +22,22 @@ ACES2_OutputTransformFwd assembles those into the forward transform,
 and both shader backends are transcriptions of it rather than separate
 derivations.
 
-What is NOT here, so that the next person does not go looking:
+Both directions are assembled: ACES2_OutputTransformFwd and
+ACES2_OutputTransformInv.  The inverse is not exact everywhere and
+cannot be - the gamut compression's inverse estimates the source
+lightness rather than knowing it, and the AP0 to AP1 clamp at the front
+folds anything outside AP1 onto its boundary, which no inverse can
+unfold.  Where both are well behaved it round trips to 5.7e-07.
 
-  the assembled inverse.  Every stage has one and they are tested by
-  round trip, but nothing strings them together - the display path only
-  needs the forward direction, and an inverse nobody calls is an
-  inverse nobody notices breaking.
-
-  a wired GLSL path.  The shader exists and is verified; every GLES
-  target in this tree is GLES2, which has no normalised 16-bit texture
-  for the hue tables, so selecting the mode there logs once and falls
-  back to the ACES 2.0 tone scale.
+Both shader backends are wired: ARB for the desktop composite, GLSL for
+everything else, each a transcription of this file rather than a
+separate derivation and each checked against it.
 
 The separate "ACES 2.0 Tone Scale" roll-off is still a roll-off: the
 tone scale alone, applied per channel, with none of the appearance
 model around it.  That is deliberate and its option text says so.
 
-It is CPU-only on purpose.  The two shader backends will need hue tables
+It is CPU-only on purpose.  The two shader backends consume hue tables
 built from this, and the tables are built once at init; getting the maths
 right in one place first, where it can be tested, is cheaper than getting
 it wrong in two shader dialects at once.
@@ -330,7 +329,7 @@ void ACES2_JMhToRGB( const double JMh[3], const aces2JMhParams_t *p, double RGB[
 ================
 ACES2_JToY / ACES2_YToJ
 
-The achromatic axis on its own, which the tone scale stage will need.
+The achromatic axis on its own, which the tone scale stage uses.
 ================
 */
 double ACES2_JToY( double J, const aces2JMhParams_t *p ) {
@@ -497,20 +496,24 @@ Linear interpolation between the two entries bracketing the hue.  The
 table is uniform in hue, so the index is arithmetic rather than a
 search - which is also what makes this a texture fetch in a shader.
 
-Uniform spacing costs accuracy at the cube corners, where the cusp has
-a kink rather than a smooth turn, and interpolating across a kink cuts
-the corner off.  Measured against cusps computed directly at 36000
-hues: worst error 0.31 in J and 0.66 in M, the latter 1.4% of the M
-range, both at corner hues - 106.6 and 140.3 degrees for Rec.709.
+The table entries are not evenly spaced: six of them sit on the cube
+corner hues, where the cusp has a kink that even spacing would
+interpolate straight across.  Measured before that was done, worst
+error was 0.31 in J and 0.66 in M - 1.4% of the M range - and both
+worst cases landed on a corner hue.  With the entries moved it is
+0.0067 and 0.0184, a factor of 36.
 
-The reference avoids this by spacing its table non-uniformly so the six
-corner hues land exactly on entries, and paying for it with a binary
-search at lookup time.  A shader cannot loop, but it does not have to:
-a second uniform table mapping hue to table index turns the search into
-one more arithmetic fetch.  That is the plan for the shader stage, and
-it is deliberately not done here - this file is the reference the
-shaders get checked against, and it should stay the simple version
-until there is something to check.
+The reference pays for its non-uniform table with a binary search at
+lookup.  This does not: entries are within half a degree of their
+index, so floor(hue) plus at most one step either side always brackets
+the hue, which is arithmetic and two comparisons.
+
+The shaders do not read this table directly - ACES2_PackHueTables
+resamples it onto an even grid so their lookup stays a single index and
+a single fetch.  That was the alternative to giving them the entry
+hues, and it costs 16 KB rather than a second texture and a second
+fetch per pixel.
+
 ================
 */
 void ACES2_CuspForHue( const aces2CuspTable_t *table, double hue, double JM[2] ) {
@@ -1255,16 +1258,13 @@ which is 0.0007 in cusp J and 0.0015 in reach M.  Both are two orders
 below the 1.4% the uniform hue spacing already costs at the cube
 corners, so the packing is not the limiting error.
 
-One thing this does NOT settle, and it is the same shape of problem as
-the GLES link error earlier in this work: GL_RGBA16 is a desktop
-format.  GLES2 has no normalised 16-bit texture, and GLES3 spells it
-GL_RGBA16UI with integer sampling, which is a different fetch in the
-shader.  The GLES backend will need either that or a pair of 8-bit
-textures carrying high and low bytes.  Deciding it here would be
-guessing at which GLES version the targets actually give us; flagging
-it means the shader stage starts from a known question rather than
-finding out at link time on six CI targets.
-================
+The GLES question this raised is settled.  GL_RGBA16 is a desktop
+format and GLES2 - which is every GLES target in this tree - has no
+normalised 16-bit texture, so the upload falls back to RGBA8 there.
+Eight bits is enough: the widest channel is the reach, quantising to
+0.38 against a resampling residual of about 0.12 the table already
+carries.  A high and low byte pair would recover the precision for a
+second fetch per pixel, and there is nothing to spend it on.
 */
 void ACES2_PackHueTables( const aces2Params_t *p, unsigned short *rgba16,
 						  double scales[4] ) {

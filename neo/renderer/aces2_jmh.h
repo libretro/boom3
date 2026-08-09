@@ -4,7 +4,7 @@
 ACES 2.0 output transform, stage one: Hellwig2022 JMh.
 
 Ported from the Academy reference CTL.  CPU only - the shader backends
-will consume hue tables built from this, not this code.
+consume hue tables built from this, not this code.
 
 ===========================================================================
 */
@@ -70,11 +70,10 @@ typedef struct {
 	 * corner hues, where the cusp has a kink that a uniform table
 	 * interpolates straight across.
 	 *
-	 * The shaders do not have this yet: the packed texture carries four
-	 * values per hue and all four channels are spoken for, so feeding
-	 * them the entry hues means either a second texture or repacking.
-	 * Until then they interpolate on the uniform assumption and keep the
-	 * old 1.4% error near corners, while the CPU reference is at 0.04%. */
+	 * The shaders never see these: ACES2_PackHueTables resamples the
+	 * table onto an even grid, so their lookup stays one index and one
+	 * fetch and they inherit the corner accuracy without needing the
+	 * entry hues at all. */
 	double	hueOfEntry[ACES2_TABLE_SIZE];
 } aces2CuspTable_t;
 
@@ -155,10 +154,10 @@ something exotic.  It is closed form: two analytic hull intersections
 blended with a smooth minimum.  The only searching is in building the
 tables, which happens once on the CPU.
 
-The upper hull exponent is passed in rather than looked up.  The
-reference keeps a third hue table for it, built by a search per hue,
-and that is the next piece - separating it keeps this geometry testable
-on its own, and it is what the shader will index anyway.
+The upper hull exponent is passed in rather than looked up, and stays
+that way now that the table exists: ACES2_BuildUpperHullGammaTable
+supplies it per hue, and keeping the geometry free of the lookup is
+what let it be tested on its own with a fixed exponent.
 
 ===========================================================================
 */

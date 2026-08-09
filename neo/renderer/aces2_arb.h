@@ -76,16 +76,14 @@ check ran into.
 
 
 /*
-   Everything from the AP0 input to the tone-mapped J, verified.
+   Notes from building this, kept because each cost a debugging session
+   and none of the mistakes looked like mistakes on screen.
 
-   The three fetches this leaves for the rest of the transform - the
-   packed hue table in L, the cusp pair, the reach and the exponent -
-   are already read; what remains to write is the chroma compression and
-   the gamut compression on top.
-
-   Checked the same way as the GLSL: assembled on a driver, run over 300
-   colours, compared against the CPU reference.  Worst difference
-   0.00196, which is half an 8-bit readback step.
+   The stages were written and checked one at a time - tone-mapped J,
+   then chroma-compressed M, then the gamut geometry - each assembled on
+   a driver, run over 300 colours and compared against the CPU
+   reference, each landing at 0.00196, which is half an 8-bit readback
+   step rather than the program.
 
    Two transposes were found doing it, and they point in opposite
    directions, which is why both had to be found separately.  DP3 against
