@@ -104,7 +104,32 @@ check ran into.
    readability.
 */
 
-#define ACES2_ARB_TO_TONEMAPPED_J \
+/*
+   Everything from the AP0 input through the chroma compression.
+   Replaces the tone-mapped-J macro this file carried before; that was a
+   prefix of this and there is no reason to keep both.
+
+   Checked the same way: assembled on a driver, 300 colours, against the
+   CPU reference.  The compressed M matches to 0.00196 - the 8-bit
+   readback floor again - and the tone-mapped J it is built on still
+   matches to the same figure with the chroma stage running after it.
+
+   The bug that cost this stage its afternoon was mine and it was a
+   probe, not the transform.  To read an intermediate out through a byte
+   framebuffer it has to be scaled into 0..1, and the scaling line for an
+   earlier probe was left in the program.  Every value downstream of it
+   was then a hundredth of what it should be, so the chroma stage looked
+   broken and each term I checked inside it looked broken too - which is
+   how a measurement fault imitates a deep bug.  Four terms were
+   verified individually before I thought to re-check the input they all
+   shared.  Cheap lesson: when several independent things fail at once,
+   suspect what they have in common.
+
+   Still 24 temporaries; the gamut stage is what will settle whether
+   that has to come down.
+*/
+
+#define ACES2_ARB_TO_CHROMA_COMPRESSED \
 	"PARAM inA=program.env[0];\n" \
 	"PARAM inB=program.env[1];\n" \
 	"PARAM inC=program.env[2];\n" \
@@ -137,7 +162,7 @@ check ran into.
 	"PARAM kH={11.34072,16.46899,7.88380,77.12896};\n" \
 	"PARAM kH2={14.66441,-6.37224,9.19364,0.0};\n" \
 	"PARAM kE={2.3809523809,57.2957795131,0.5,1.0};\n" \
-	"TEMP a,b,c,d,e,f,g,h,m,n,o,q,r,s,t,u,v,w,z,J,M,L,cu,ab;\n" \
+	"TEMP a,b,c,d,e,f,g,h,mc,n,o,q,r,s,t,u,v,w,z,Jl,Mc,L,cu,ab;\n" \
 	"DP3 a.x,src,p1A;\n" \
 	"DP3 a.y,src,p1B;\n" \
 	"DP3 a.z,src,p1C;\n" \
@@ -165,11 +190,11 @@ check ran into.
 	"DP3 f.z,d,caC;\n" \
 	"MAX g.x,f.x,0.0000001;\n" \
 	"POW g.x,g.x,inS.y;\n" \
-	"MUL J.x,g.x,kC.z;\n" \
+	"MUL Jl.x,g.x,kC.z;\n" \
 	"MUL g.y,f.y,f.y;\n" \
 	"MAD g.y,f.z,f.z,g.y;\n" \
 	"RSQ g.z,g.y;\n" \
-	"RCP M.x,g.z;\n" \
+	"RCP Mc.x,g.z;\n" \
 	"MOV ab.x,f.y;\n" \
 	"MOV ab.y,f.z;\n" \
 	"ABS a,ab;\n" \
@@ -200,7 +225,7 @@ check ran into.
 	"MOV t.y,0.5;\n" \
 	"TEX L,t,texture[3],2D;\n" \
 	"MUL L,L,lsc;\n" \
-	"MUL t.x,J.x,0.01;\n" \
+	"MUL t.x,Jl.x,0.01;\n" \
 	"POW t.x,t.x,inS.z;\n" \
 	"MUL t.x,t.x,inS.w;\n" \
 	"MIN t.y,t.x,0.99;\n" \
@@ -235,6 +260,106 @@ check ran into.
 	"RCP u.z,inS.w;\n" \
 	"MUL u.y,u.y,u.z;\n" \
 	"POW u.y,u.y,inS.y;\n" \
-	"MUL n.x,u.y,kC.z;\n"
+	"MUL n.x,u.y,kC.z;\n" \
+	"RCP q.x,cc.x;\n" \
+	"MUL q.x,n.x,q.x;\n" \
+	"SUB q.y,1.0,q.x;\n" \
+	"MAX q.y,q.y,0.0;\n" \
+	"MUL w.x,r.x,1.0;\n" \
+	"COS w.y,w.x;\n" \
+	"SIN w.z,w.x;\n" \
+	"MUL v.x,w.y,w.y;\n" \
+	"MAD v.x,-w.z,w.z,v.x;\n" \
+	"MUL v.y,w.y,w.z;\n" \
+	"ADD v.y,v.y,v.y;\n" \
+	"MUL v.z,w.y,w.y;\n" \
+	"MUL v.z,v.z,w.y;\n" \
+	"MUL v.z,v.z,4.0;\n" \
+	"MAD v.z,-3.0,w.y,v.z;\n" \
+	"MUL v.w,w.z,w.z;\n" \
+	"MUL v.w,v.w,w.z;\n" \
+	"MUL v.w,v.w,-4.0;\n" \
+	"MAD v.w,3.0,w.z,v.w;\n" \
+	"MUL o.x,w.y,kH.x;\n" \
+	"MAD o.x,v.x,kH.y,o.x;\n" \
+	"MAD o.x,v.z,kH.z,o.x;\n" \
+	"MAD o.x,w.z,kH2.x,o.x;\n" \
+	"MAD o.x,v.y,kH2.y,o.x;\n" \
+	"MAD o.x,v.w,kH2.z,o.x;\n" \
+	"ADD o.x,o.x,kH.w;\n" \
+	"MUL o.x,o.x,cc2.y;\n" \
+	"MAX o.y,q.x,0.0000001;\n" \
+	"POW o.y,o.y,cc.y;\n" \
+	"MUL o.y,o.y,L.z;\n" \
+	"MAX o.z,o.x,0.0000001;\n" \
+	"RCP o.z,o.z;\n" \
+	"MUL o.y,o.y,o.z;\n" \
+	"MAX u.x,Jl.x,0.0000001;\n" \
+	"RCP u.x,u.x;\n" \
+	"MUL u.x,n.x,u.x;\n" \
+	"MAX u.x,u.x,0.0000001;\n" \
+	"POW u.x,u.x,cc.y;\n" \
+	"MUL mc.x,Mc.x,u.x;\n" \
+	"MUL mc.x,mc.x,o.z;\n" \
+	"SUB s.x,o.y,mc.x;\n" \
+	"SUB s.y,o.y,0.001;\n" \
+	"MUL s.z,q.y,cc.z;\n" \
+	"MUL s.w,q.x,q.x;\n" \
+	"ADD s.w,s.w,cc.w;\n" \
+	"RSQ s.w,s.w;\n" \
+	"RCP s.w,s.w;\n" \
+	"MAX u.y,s.w,0.001;\n" \
+	"MUL u.z,s.z,s.z;\n" \
+	"MAD u.z,u.y,u.y,u.z;\n" \
+	"RSQ u.z,u.z;\n" \
+	"RCP u.z,u.z;\n" \
+	"ADD u.w,s.y,u.z;\n" \
+	"ADD e.x,s.y,u.y;\n" \
+	"MAX e.x,e.x,0.0000001;\n" \
+	"RCP e.x,e.x;\n" \
+	"MUL u.w,u.w,e.x;\n" \
+	"MUL e.y,u.w,s.x;\n" \
+	"SUB e.y,e.y,u.z;\n" \
+	"MUL e.z,u.y,u.w;\n" \
+	"MUL e.z,e.z,s.x;\n" \
+	"MUL e.w,e.y,e.y;\n" \
+	"MAD e.w,4.0,e.z,e.w;\n" \
+	"MAX e.w,e.w,0.0;\n" \
+	"RSQ e.w,e.w;\n" \
+	"RCP e.w,e.w;\n" \
+	"ADD e.w,e.y,e.w;\n" \
+	"MUL e.w,e.w,0.5;\n" \
+	"SUB t.x,s.x,s.y;\n" \
+	"CMP e.w,t.x,e.w,s.x;\n" \
+	"SUB mc.x,o.y,e.w;\n" \
+	"MUL s.z,q.x,cc2.x;\n" \
+	"MAX u.y,q.y,0.001;\n" \
+	"MUL u.z,s.z,s.z;\n" \
+	"MAD u.z,u.y,u.y,u.z;\n" \
+	"RSQ u.z,u.z;\n" \
+	"RCP u.z,u.z;\n" \
+	"ADD u.w,o.y,u.z;\n" \
+	"ADD e.x,o.y,u.y;\n" \
+	"MAX e.x,e.x,0.0000001;\n" \
+	"RCP e.x,e.x;\n" \
+	"MUL u.w,u.w,e.x;\n" \
+	"MUL e.y,u.w,mc.x;\n" \
+	"SUB e.y,e.y,u.z;\n" \
+	"MUL e.z,u.y,u.w;\n" \
+	"MUL e.z,e.z,mc.x;\n" \
+	"MUL e.w,e.y,e.y;\n" \
+	"MAD e.w,4.0,e.z,e.w;\n" \
+	"MAX e.w,e.w,0.0;\n" \
+	"RSQ e.w,e.w;\n" \
+	"RCP e.w,e.w;\n" \
+	"ADD e.w,e.y,e.w;\n" \
+	"MUL e.w,e.w,0.5;\n" \
+	"SUB t.x,mc.x,o.y;\n" \
+	"CMP mc.x,t.x,e.w,mc.x;\n" \
+	"MUL mc.x,mc.x,o.x;\n" \
+	"SUB t.x,0.0,Mc.x;\n" \
+	"ABS t.x,Mc.x;\n" \
+	"SUB t.x,0.0000001,t.x;\n" \
+	"CMP mc.x,t.x,mc.x,mc.x;\n"
 
 #endif /* !__ACES2_ARB_H__ */
