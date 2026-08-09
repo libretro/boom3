@@ -137,7 +137,8 @@ bool          hdr_unbounded_blend = true;  /* unclamped epilogue on float target
 enum {
 	HDR_ROLLOFF_REINHARD = 0,
 	HDR_ROLLOFF_ACES     = 1,
-	HDR_ROLLOFF_HEJL     = 2
+	HDR_ROLLOFF_HEJL     = 2,
+	HDR_ROLLOFF_GT       = 3
 };
 static int    hdr_rolloff_mode  = HDR_ROLLOFF_REINHARD;   /* live-switchable */
 static int    hdr_expand_mode   = 0;       /* 0 none, 1 per-channel inverse tonemap, 2 hue-preserving; live-switchable */
@@ -620,6 +621,7 @@ static void update_variables(bool startup)
 	{
 		if (!strcmp(var.value, "aces"))      hdr_rolloff_mode = HDR_ROLLOFF_ACES;
 		else if (!strcmp(var.value, "hejl")) hdr_rolloff_mode = HDR_ROLLOFF_HEJL;
+		else if (!strcmp(var.value, "gt"))   hdr_rolloff_mode = HDR_ROLLOFF_GT;
 		else                                 hdr_rolloff_mode = HDR_ROLLOFF_REINHARD;
 	}
 
@@ -1880,6 +1882,24 @@ static const char *hdr_fs_src =
 	"float rolloff(float v) {\n"
 	"  float H = uParms.y;\n"
 	"  if (H <= 1.0001) return min(v, 1.0);\n"
+	/*
+	   Uchimura's GT curve, published defaults folded to constants:
+	   a = 1, m = 0.22, l = 0.4, c = 1.33, b = 0, P = 1, which give
+	   l0 = 0.312 and S0 = S1 = 0.532.  With a = 1 the linear segment
+	   collapses to v itself.  Normalised by its value at 1.0 (0.827832)
+	   like the other two, so paper white stays put; it saturates at
+	   1.208x paper white and keeps mid grey at 0.216, closer to where
+	   Reinhard leaves it than ACES or Hejl.
+	*/
+	"  if (uParms.z > 2.5) {\n"
+	"    float t = clamp(v / 0.22, 0.0, 1.0);\n"
+	"    float w0 = 1.0 - (t * t * (3.0 - 2.0 * t));\n"
+	"    float w2 = step(0.532, v);\n"
+	"    float w1 = 1.0 - w0 - w2;\n"
+	"    float T = 0.22 * pow(max(v, 0.0) / 0.22, 1.33);\n"
+	"    float S = 1.0 - 0.468 * exp(-2.136752 * (v - 0.532));\n"
+	"    return (T * w0 + v * w1 + S * w2) * 1.2079740;\n"
+	"  }\n"
 	"  if (uParms.z > 1.5) {\n"
 	"    float x = max(v - 0.004, 0.0);\n"
 	"    float n = (x * (6.2 * x + 0.5)) / (x * (6.2 * x + 1.7) + 0.06);\n"
@@ -2207,7 +2227,8 @@ static const char *hdr_arb_up_fs_src =
 	"PARAM kPqA = { 0.1593017578125, 0.1593017578125, 0.1593017578125, 0.1593017578125 };\n" \
 	"PARAM kPqB = { 78.84375, 78.84375, 78.84375, 78.84375 };\n" \
 	"PARAM kHejlG = { 2.2, 2.2, 2.2, 2.2 };\n" \
-	"TEMP s, lin, bl, t, u, v, e, a, r, m, y, p, n, d;\n" \
+	"PARAM kGtC = { 1.33, 1.33, 1.33, 1.33 };\n" \
+	"TEMP s, lin, bl, t, u, v, e, a, r, m, y, p, n, d, g, h;\n" \
 	/* lin = pow(abs(scene * encScale), 2.4) */ \
 	"TEX s, fragment.texcoord[0], texture[0], 2D;\n" \
 	"MUL s, s, program.env[2].x;\n" \
@@ -2348,11 +2369,45 @@ static const char *hdr_arb_up_fs_src =
 	"MAD u, u, d, 1.0;\n" \
 	"SUB v, lin, 1.0;\n" \
 	"CMP m, v, m, u;\n" \
-	/* env[0].z selects: 0 Reinhard, 1 ACES, 2 Hejl */ \
+	/* Uchimura GT, defaults folded: m = 0.22, S0 = 0.532, C2 = 2.136752,
+	   and with a = 1 the linear segment is lin itself.  exp(-k) is done
+	   as EX2 of -k*log2(e), the only form ARB has. */ \
+	"MUL g, lin, 4.5454545;\n" \
+	"MIN g, g, 1.0;\n" \
+	"MAX g, g, 0.0;\n" \
+	"MAD h, g, -2.0, 3.0;\n" \
+	"MUL h, h, g;\n" \
+	"MUL h, h, g;\n" \
+	"SUB h, 1.0, h;\n" \
+	/* h = w0, and w2 = step(0.532, lin) into g */ \
+	"SGE g, lin, 0.532;\n" \
+	"MUL d, lin, 4.5454545;\n" \
+	"MAX d, d, 0.0;\n" \
+	"POW n.x, d.x, kGtC.x;\n" \
+	"POW n.y, d.y, kGtC.x;\n" \
+	"POW n.z, d.z, kGtC.x;\n" \
+	"MUL n, n, 0.22;\n" \
+	/* S = 1 - 0.468 * exp(-2.136752 * (lin - 0.532)) */ \
+	"SUB d, lin, 0.532;\n" \
+	"MUL d, d, -3.0826815;\n" \
+	"EX2 p.x, d.x;\n" \
+	"EX2 p.y, d.y;\n" \
+	"EX2 p.z, d.z;\n" \
+	"MAD p, p, -0.468, 1.0;\n" \
+	/* combine: T*w0 + lin*w1 + S*w2, w1 = 1 - w0 - w2 */ \
+	"SUB d, 1.0, h;\n" \
+	"SUB d, d, g;\n" \
+	"MUL n, n, h;\n" \
+	"MAD n, lin, d, n;\n" \
+	"MAD n, p, g, n;\n" \
+	"MUL n, n, 1.2079740;\n" \
+	/* env[0].z selects: 0 Reinhard, 1 ACES, 2 Hejl, 3 GT */ \
 	"SUB v.x, program.env[0].z, 0.5;\n" \
 	"CMP r, v.x, a, t;\n" \
 	"SUB v.x, program.env[0].z, 1.5;\n" \
 	"CMP r, v.x, r, m;\n" \
+	"SUB v.x, program.env[0].z, 2.5;\n" \
+	"CMP r, v.x, r, n;\n" \
 	/* no headroom: plain min(v, 1) */ \
 	"MIN t, lin, 1.0;\n" \
 	"SUB v.x, program.env[0].y, 1.0001;\n" \
@@ -3295,6 +3350,37 @@ static double hdr_curve_hejl( double v ) {
 	return pow( n, 2.2 ) * 1.4629683;
 }
 
+static double hdr_curve_gt( double v ) {
+	/* Uchimura's GT curve, with its published defaults folded: a = 1,
+	 * m = 0.22, l = 0.4, c = 1.33, b = 0, P = 1.  Those give l0 = 0.312
+	 * and S0 = S1 = 0.532, so the linear segment is just v itself and
+	 * the shoulder constant C2 is 2.136752.
+	 *
+	 * Unlike ACES and Hejl it keeps mid-tones close to where they were -
+	 * mid grey lands at 0.216 against 0.33 for the other two - and
+	 * saturates at 1.208x paper white, the shortest shoulder of the
+	 * three.  Normalised the same way: divided by its own value at 1.0
+	 * so paper white stays put. */
+	const double m = 0.22, S0 = 0.532, C2 = 2.136752;
+	double t = v / m;
+	double w0, w1, w2, T, S, L;
+
+	if ( t > 1.0 ) {
+		t = 1.0;
+	} else if ( t < 0.0 ) {
+		t = 0.0;
+	}
+	w0 = 1.0 - ( t * t * ( 3.0 - 2.0 * t ) );
+	w2 = ( v >= S0 ) ? 1.0 : 0.0;
+	w1 = 1.0 - w0 - w2;
+
+	T = ( v > 0.0 ) ? m * pow( v / m, 1.33 ) : 0.0;
+	S = 1.0 - ( 1.0 - S0 ) * exp( -( C2 * ( v - S0 ) ) );
+	L = v;
+
+	return ( T * w0 + L * w1 + S * w2 ) * 1.2079740;
+}
+
 /* Shoulder parameters for the selected curve.
  *
  * Every one of these curves flattens out well below the display's
@@ -3316,6 +3402,10 @@ static void hdr_shoulder_params( int mode, float H, float *A, float *slopeOut ) 
 	case HDR_ROLLOFF_HEJL:
 		f1 = hdr_curve_hejl( 1.0 + d );
 		f0 = hdr_curve_hejl( 1.0 - d );
+		break;
+	case HDR_ROLLOFF_GT:
+		f1 = hdr_curve_gt( 1.0 + d );
+		f0 = hdr_curve_gt( 1.0 - d );
 		break;
 	default:
 		f1 = hdr_curve_aces( 1.0 + d );

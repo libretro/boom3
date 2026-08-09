@@ -396,6 +396,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
          { "reinhard", "Reinhard (Soft-Knee)" },
          { "aces",     "ACES (Filmic)" },
          { "hejl",     "Hejl (Filmic)" },
+         { "gt",       "GT (Uchimura)" },
          { NULL, NULL },
       },
       "reinhard"
