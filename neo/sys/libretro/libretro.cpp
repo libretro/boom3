@@ -180,6 +180,65 @@ static int    hdr_rolloff_mode  = HDR_ROLLOFF_REINHARD;   /* live-switchable */
  * ACES 2.0 resources, because it is written on the common path and read
  * on the desktop one - put it with the resources and the GLES build
  * compiles the writer without the declaration. */
+/* ACES 2.0's GLSL uniform locations.  With the shared HDR state rather
+ * than with the rest of the ACES 2.0 resources: the GLSL program is
+ * built on both backends' paths, so a GLES build compiles the lookup
+ * and the setter without ever seeing a desktop-only declaration. */
+static GLuint hdr_aces2_lut;
+static int    hdr_aces2_loc[11];
+static int    hdr_aces2_loc_lut = -1;
+static double hdr_aces2_scales[4];
+static aces2Params_t *hdr_aces2_params;
+
+/* The GLSL twin of hdr_aces2_set_env.  Same values, and the same
+ * column/row distinction: glUniformMatrix3fv reads column-major, and
+ * the appearance matrices are applied on the CPU as row-vector times
+ * matrix, so they go in transposed and the shader multiplies M * v. */
+static void hdr_aces2_set_uniforms( void ) {
+	const aces2Params_t *p = hdr_aces2_params;
+	float m[9];
+	int i;
+
+	if ( !p ) {
+		return;
+	}
+	#define A2_MAT( loc, src ) do { \
+			for ( i = 0; i < 9; i++ ) m[i] = (float)(src)[i]; \
+			if ( hdr_aces2_loc[loc] >= 0 ) \
+				glUniformMatrix3fv( hdr_aces2_loc[loc], 1, GL_FALSE, m ); \
+		} while ( 0 )
+	A2_MAT( 0, p->input.RGB_to_CAM16_c );
+	A2_MAT( 1, p->input.cone_to_Aab );
+	A2_MAT( 2, p->limit.Aab_to_cone );
+	A2_MAT( 3, p->limit.CAM16_c_to_RGB );
+	#undef A2_MAT
+	if ( hdr_aces2_loc[4] >= 0 )
+		glUniform4f( hdr_aces2_loc[4], (float)p->input.F_L_n, (float)p->input.cz,
+			(float)p->input.inv_cz, (float)p->input.A_w_J );
+	if ( hdr_aces2_loc[5] >= 0 )
+		glUniform4f( hdr_aces2_loc[5], (float)p->limit.F_L_n, (float)p->limit.cz,
+			(float)p->limit.inv_cz, (float)p->limit.A_w_J );
+	if ( hdr_aces2_loc[6] >= 0 )
+		glUniform4f( hdr_aces2_loc[6], (float)p->ts.m_2, (float)p->ts.s_2,
+			(float)p->ts.g, (float)p->ts.t_1 );
+	if ( hdr_aces2_loc[7] >= 0 )
+		glUniform4f( hdr_aces2_loc[7], (float)p->chroma.limit_J_max,
+			(float)p->chroma.model_gamma_inv, (float)p->chroma.sat, (float)p->chroma.sat_thr );
+	if ( hdr_aces2_loc[8] >= 0 )
+		glUniform4f( hdr_aces2_loc[8], (float)p->chroma.compr,
+			(float)p->chroma.chroma_compress_scale, (float)p->gamut.mid_J,
+			(float)p->gamut.focus_dist );
+	if ( hdr_aces2_loc[9] >= 0 )
+		glUniform4f( hdr_aces2_loc[9], (float)p->gamut.lower_hull_gamma_inv,
+			(float)p->ts.forward_limit, 0.5f / (float)ACES2_LUT_WIDTH, 0.0f );
+	if ( hdr_aces2_loc[10] >= 0 )
+		glUniform4f( hdr_aces2_loc[10], (float)hdr_aces2_scales[0],
+			(float)hdr_aces2_scales[1], (float)hdr_aces2_scales[2],
+			(float)hdr_aces2_scales[3] );
+	glUniform1i( hdr_aces2_loc_lut, 3 );
+}
+
+
 static float  hdr_aces2_wanted_peak = 1000.0f;
 static float  hdr_gt_toe        = 0.22f;
 static float  hdr_gt_shoulder   = 0.40f;
@@ -1962,6 +2021,144 @@ static const char *hdr_fs_src =
 	   of sliding toward whichever primary saturated last.  Normalised
 	   by their own value at white like the scalar curves.
 	*/
+	/* The full ACES 2.0 output transform, transcribed from the CPU
+	   reference in aces2_jmh.cpp and verified against it.  It reads the
+	   hue tables from uLut, which the ACES 2.0 mode uploads to unit 3 -
+	   16-bit where the driver takes it, 8-bit on GLES2. */
+	"uniform mat3 uInRgbToCam, uInCamToRgb, uInConeToAab, uInAabToCone;\n"
+	"uniform mat3 uLimRgbToCam, uLimCamToRgb, uLimConeToAab, uLimAabToCone;\n"
+	"uniform vec4 uInScalars;   /* F_L_n, cz, inv_cz, A_w_J */\n"
+	"uniform vec4 uLimScalars;\n"
+	"uniform vec4 uTs;          /* m_2, s_2, g, t_1 */\n"
+	"uniform vec4 uCc;\n"
+	"uniform vec4 uCc2;         /* compr, ccScale, mid_J, focus_dist */\n"
+	"uniform vec4 uGm;          /* lower_hull_gamma_inv, forward_limit, 0, 0 */\n"
+	"uniform vec4 uLutScale;    /* cuspJ, cuspM, reachM, gammaInv */\n"
+	"\n"
+	"float coneFwd(float v){ float a=abs(v); float f=pow(a,0.42); float r=f/(27.13+f); return v<0.0?-r:r; }\n"
+	"float coneInv(float v){ float a=min(abs(v),0.99); float f=(27.13*a)/(1.0-a); float r=pow(f,1.0/0.42); return v<0.0?-r:r; }\n"
+	"\n"
+	"vec3 rgbToJMh(vec3 rgb, mat3 toCam, mat3 coneToAab, vec4 sc){\n"
+	"  vec3 m = toCam * rgb;\n"
+	"  vec3 a = vec3(coneFwd(m.x), coneFwd(m.y), coneFwd(m.z));\n"
+	"  vec3 Aab = coneToAab * a;\n"
+	"  if (Aab.x <= 0.0) return vec3(0.0);\n"
+	"  float J = 100.0 * pow(Aab.x, sc.y);\n"
+	"  float M = length(Aab.yz);\n"
+	"  float h = degrees(atan(Aab.z, Aab.y));\n"
+	"  if (h < 0.0) h += 360.0;\n"
+	"  return vec3(J, M, h);\n"
+	"}\n"
+	"vec3 jmhToRgb(vec3 JMh, mat3 aabToCone, mat3 toRgb, vec4 sc){\n"
+	"  float hr = radians(JMh.z);\n"
+	"  vec3 Aab = vec3(pow(JMh.x*0.01, sc.z), JMh.y*cos(hr), JMh.y*sin(hr));\n"
+	"  vec3 a = aabToCone * Aab;\n"
+	"  vec3 m = vec3(coneInv(a.x), coneInv(a.y), coneInv(a.z));\n"
+	"  return toRgb * m;\n"
+	"}\n"
+	"float jToY(float J, vec4 sc){ float A=pow(abs(J)*0.01, sc.z); return coneInv(sc.w*A)/sc.x; }\n"
+	"float yToJ(float Y, vec4 sc){ float Ra=coneFwd(abs(Y)*sc.x); float J=100.0*pow(Ra/sc.w, sc.y); return Y<0.0?-J:J; }\n"
+	"\n"
+	"float tsFwd(float x){ float f=uTs.x*pow(max(x,0.0)/(x+uTs.y), uTs.z); return max(f*f/(f+uTs.w),0.0)*100.0; }\n"
+	"\n"
+	"float ccNorm(float h){\n"
+	"  float hr=radians(h); float a=cos(hr), b=sin(hr);\n"
+	"  float c2=a*a-b*b, s2=2.0*a*b, c3=4.0*a*a*a-3.0*a, s3=3.0*b-4.0*b*b*b;\n"
+	"  return (11.34072*a + 16.46899*c2 + 7.88380*c3 + 14.66441*b - 6.37224*s2 + 9.19364*s3 + 77.12896) * uCc2.y;\n"
+	"}\n"
+	"float toeFwd(float x, float limit, float k1in, float k2in){\n"
+	"  if (x > limit) return x;\n"
+	"  float k2=max(k2in,0.001); float k1=sqrt(k1in*k1in+k2*k2);\n"
+	"  float k3=(limit+k1)/(limit+k2);\n"
+	"  float mb=k3*x-k1, mc=k2*k3*x;\n"
+	"  return 0.5*(mb+sqrt(mb*mb+4.0*mc));\n"
+	"}\n"
+	"vec4 lutAt(float h){\n"
+	"  float u = (mod(h,360.0)+0.5)/360.0;\n"
+	"  return texture2D(uLut, vec2(u,0.5)) * uLutScale;\n"
+	"}\n"
+	"vec3 chromaCompress(vec3 JMh, float tmJ, vec4 lut){\n"
+	"  if (JMh.y == 0.0) return vec3(tmJ, 0.0, JMh.z);\n"
+	"  float nJ = tmJ/uCc.x;\n"
+	"  float snJ = max(0.0, 1.0-nJ);\n"
+	"  float Mn = ccNorm(JMh.z);\n"
+	"  float limit = pow(nJ, uCc.y) * lut.z / Mn;\n"
+	"  float M = JMh.y * pow(tmJ/JMh.x, uCc.y);\n"
+	"  M = M/Mn;\n"
+	"  M = limit - toeFwd(limit-M, limit-0.001, snJ*uCc.z, sqrt(nJ*nJ+uCc.w));\n"
+	"  M = toeFwd(M, limit, nJ*uCc2.x, snJ);\n"
+	"  return vec3(tmJ, M*Mn, JMh.z);\n"
+	"}\n"
+	"float focusGain(float J, float athr){\n"
+	"  float gain = uCc.x*uCc2.w;\n"
+	"  if (J > athr){ float adj = log(max(uCc.x-athr,1e-6)/max(uCc.x-J,0.0001))/log(10.0);\n"
+	"    gain *= adj*adj+1.0; }\n"
+	"  return gain;\n"
+	"}\n"
+	"float solveJ(float J, float M, float fJ, float sg){\n"
+	"  float Ms=M/sg, a=Ms/fJ;\n"
+	"  if (J < fJ){ float b=1.0-Ms, c=-J; return -2.0*c/(b+sqrt(b*b-4.0*a*c)); }\n"
+	"  float b=-(1.0+Ms+uCc.x*a), c=uCc.x*Ms+J;\n"
+	"  return -2.0*c/(b-sqrt(b*b-4.0*a*c));\n"
+	"}\n"
+	"float vecSlope(float iJ, float fJ, float sg){\n"
+	"  float d = (iJ<fJ)?iJ:(uCc.x-iJ);\n"
+	"  return d*(iJ-fJ)/(fJ*sg);\n"
+	"}\n"
+	"float smin(float a, float b, float ref){\n"
+	"  float s=0.12*ref; float hh=max(s-abs(a-b),0.0)/s;\n"
+	"  return min(a,b) - hh*hh*hh*s/6.0;\n"
+	"}\n"
+	"float boundM(float iJ, float slope, float ig, float Jm, float Mm, float Jr){\n"
+	"  return Jr*pow(iJ/Jr, ig)*Mm/(Jm-slope*Mm);\n"
+	"}\n"
+	"vec3 gamutCompress(vec3 JMh, vec4 lut){\n"
+	"  if (JMh.x <= 0.0) return vec3(0.0,0.0,JMh.z);\n"
+	"  if (JMh.y < 0.0 || JMh.x > uCc.x) return vec3(JMh.x,0.0,JMh.z);\n"
+	"  vec2 cusp = vec2(lut.x, lut.y);\n"
+	"  float blend = min(1.3 - cusp.x/uCc.x, 1.0);\n"
+	"  float fJ = cusp.x + (uCc2.z-cusp.x)*blend;\n"
+	"  float athr = cusp.x + (uCc.x-cusp.x)*0.3;\n"
+	"  float sg = focusGain(JMh.x, athr);\n"
+	"  float iJ = solveJ(JMh.x, JMh.y, fJ, sg);\n"
+	"  float slope = vecSlope(iJ, fJ, sg);\n"
+	"  float iJc = solveJ(cusp.x, cusp.y, fJ, sg);\n"
+	"  float lower = boundM(iJ, slope, uGm.x, cusp.x, cusp.y, iJc);\n"
+	"  float upper = boundM(uCc.x-iJ, -slope, lut.w, uCc.x-cusp.x, cusp.y, uCc.x-iJc);\n"
+	"  float gb = smin(lower, upper, cusp.y);\n"
+	"  if (gb <= 0.0) return vec3(JMh.x, 0.0, JMh.z);\n"
+	"  float rb = boundM(iJ, slope, uCc.y, uCc.x, lut.z, uCc.x);\n"
+	"  float ratio = gb/rb;\n"
+	"  float prop = max(ratio, 0.75);\n"
+	"  float thr = prop*gb;\n"
+	"  float M = JMh.y;\n"
+	"  if (!(M <= thr || prop >= 1.0)){\n"
+	"    float mo=M-thr, go=gb-thr, ro=rb-thr;\n"
+	"    float scale = ro/((ro/go)-1.0);\n"
+	"    float nd = mo/scale;\n"
+	"    M = thr + scale*nd/(1.0+nd);\n"
+	"  }\n"
+	"  return vec3(iJ + M*slope, M, JMh.z);\n"
+	"}\n"
+	"vec3 clampAP0toAP1(vec3 aces, float upper){\n"
+	"  mat3 toAp1 = mat3( 1.4514393161, -0.0765537733,  0.0083161484,\n"
+	"                    -0.2365107469,  1.1762296998, -0.0060324498,\n"
+	"                    -0.2149285693, -0.0996759265,  0.9977163014);\n"
+	"  mat3 toAp0 = mat3( 0.6954522414,  0.0447945634, -0.0055258826,\n"
+	"                     0.1406786965,  0.8596711185,  0.0040252103,\n"
+	"                     0.1638690622,  0.0955343182,  1.0015006723);\n"
+	"  return toAp0 * clamp(toAp1 * aces, 0.0, upper);\n"
+	"}\n"
+	"vec3 aces2Transform(vec3 sceneRGB) {\n"
+	"  vec3 aces = clampAP0toAP1(sceneRGB, uGm.y);\n"
+	"  vec3 JMh = rgbToJMh(aces, uInRgbToCam, uInConeToAab, uInScalars);\n"
+	"  float lin = jToY(JMh.x, uInScalars)*0.01;\n"
+	"  float tmJ = yToJ(tsFwd(lin), uInScalars);\n"
+	"  vec4 lut = lutAt(JMh.z);\n"
+	"  vec3 tm = chromaCompress(JMh, tmJ, lut);\n"
+	"  vec3 cg = gamutCompress(tm, lutAt(tm.z));\n"
+	"  return jmhToRgb(cg, uLimAabToCone, uLimCamToRgb, uLimScalars);\n"
+	"}\n"
 	"vec3 acesFitRRT(vec3 v) {\n"
 	"  vec3 a = v * (v + 0.0245786) - 0.000090537;\n"
 	"  vec3 b = v * (0.983729 * v + 0.4329510) + 0.238081;\n"
@@ -1970,6 +2167,9 @@ static const char *hdr_fs_src =
 	"vec3 rolloffRGB(vec3 c) {\n"
 	"  float H = uParms.y;\n"
 	"  if (H <= 1.0001) return min(c, vec3(1.0));\n"
+	"  if (uParms.z > 22.5) {\n"                       /* ACES 2.0, complete */
+	"    return aces2Transform(c);\n"
+	"  }\n"
 	"  if (uParms.z > 21.5) {\n"                       /* AgX */
 	"    mat3 mi = mat3(0.842479062253094, 0.0784335999999992, 0.0792237451477643,\n"
 	"                   0.0423282422610123, 0.878468636469772, 0.0791661274605434,\n"
@@ -3466,11 +3666,7 @@ static bool hdr_arb_ready( void );
 		qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, (reg), envv ); \
 	} while ( 0 )
 
-static GLuint hdr_aces2_lut;
 static float  hdr_aces2_peak;
-static double hdr_aces2_scales[4];
-static aces2Params_t *hdr_aces2_params;
-
 static void hdr_aces2_free( void ) {
 	if ( hdr_aces2_lut ) {
 		glDeleteTextures( 1, &hdr_aces2_lut );
@@ -3490,6 +3686,7 @@ static bool hdr_aces2_build( float peakLuminance ) {
 	static const double rec2020[8] = {
 		0.708, 0.292, 0.170, 0.797, 0.131, 0.046, 0.3127, 0.3290 };
 	static unsigned short lut[ACES2_LUT_WIDTH * 4];
+	static unsigned char  lut8[ACES2_LUT_WIDTH * 4];
 
 	if ( hdr_aces2_lut && hdr_aces2_peak == peakLuminance ) {
 		return true;
@@ -3508,15 +3705,34 @@ static bool hdr_aces2_build( float peakLuminance ) {
 	glBindTexture( GL_TEXTURE_2D, hdr_aces2_lut );
 	while ( glGetError() != GL_NO_ERROR ) {
 	}
+#ifndef HAVE_OPENGLES
 	glTexImage2D( GL_TEXTURE_2D, 0, GL_RGBA16, ACES2_LUT_WIDTH, 1, 0,
 				  GL_RGBA, GL_UNSIGNED_SHORT, lut );
-	if ( glGetError() != GL_NO_ERROR ) {
-		/* no normalised 16-bit texture here - GLES in particular.  The
-		 * caller falls back to the tone scale rather than rendering
-		 * through a table that never arrived. */
-		hdr_aces2_free();
-		glActiveTexture( GL_TEXTURE0 );
-		return false;
+	if ( glGetError() != GL_NO_ERROR )
+#endif
+	{
+		/* GLES2 has no normalised 16-bit texture, and neither does a
+		 * desktop driver that refuses the format.  Eight bits is enough
+		 * here: the widest channel is the reach, whose quantisation
+		 * comes to 0.38 against a table whose resampling already costs
+		 * about 0.12 - so this roughly doubles an error that is already
+		 * two orders below anything visible, rather than introducing a
+		 * new kind of one.  A high/low byte pair would recover the
+		 * precision at the cost of a second fetch per pixel, and there
+		 * is nothing to spend it on. */
+		int i;
+		for ( i = 0; i < ACES2_LUT_WIDTH * 4; i++ ) {
+			lut8[i] = (unsigned char)( lut[i] >> 8 );
+		}
+		while ( glGetError() != GL_NO_ERROR ) {
+		}
+		glTexImage2D( GL_TEXTURE_2D, 0, GL_RGBA, ACES2_LUT_WIDTH, 1, 0,
+					  GL_RGBA, GL_UNSIGNED_BYTE, lut8 );
+		if ( glGetError() != GL_NO_ERROR ) {
+			hdr_aces2_free();
+			glActiveTexture( GL_TEXTURE0 );
+			return false;
+		}
 	}
 	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
 	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
@@ -3760,6 +3976,20 @@ static bool hdr_ensure_target( int w, int h ) {
 		hdr_loc_tex   = glGetUniformLocation( hdr_prog, "uScene" );
 		hdr_loc_mat   = glGetUniformLocation( hdr_prog, "uGamut" );
 		hdr_loc_parms = glGetUniformLocation( hdr_prog, "uParms" );
+		{
+			/* ACES 2.0's own uniforms.  Absent from every other mode's
+			 * program, so the locations come back -1 and the setter
+			 * below skips them - which is why it is safe to look them
+			 * up unconditionally. */
+			static const char *names[11] = {
+				"uInRgbToCam", "uInConeToAab", "uLimAabToCone", "uLimCamToRgb",
+				"uInScalars", "uLimScalars", "uTs", "uCc", "uCc2", "uGm", "uLutScale" };
+			int k;
+			for ( k = 0; k < 11; k++ ) {
+				hdr_aces2_loc[k] = glGetUniformLocation( hdr_prog, names[k] );
+			}
+			hdr_aces2_loc_lut = glGetUniformLocation( hdr_prog, "uLut" );
+		}
 		hdr_loc_bloomT  = glGetUniformLocation( hdr_prog, "uBloomT" );
 		hdr_loc_bloomW  = glGetUniformLocation( hdr_prog, "uBloomW" );
 		hdr_loc_bloomAmt= glGetUniformLocation( hdr_prog, "uBloomAmt" );
@@ -4782,6 +5012,13 @@ static void hdr_present( GLuint dstFbo ) {
 #ifdef HAVE_OPENGLES
 	glUniform1i( hdr_loc_tex, 0 );
 	glUniform1i( hdr_loc_bloomT, 1 );
+	if ( hdr_rolloff_mode == HDR_ROLLOFF_ACES2FULL && hdr_aces2_lut != 0
+			&& hdr_aces2_loc_lut >= 0 ) {
+		hdr_aces2_set_uniforms();
+		glActiveTexture( GL_TEXTURE3 );
+		glBindTexture( GL_TEXTURE_2D, hdr_aces2_lut );
+		glActiveTexture( GL_TEXTURE0 );
+	}
 	glUniform1i( hdr_loc_bloomW, 2 );
 	glUniform1f( hdr_loc_bloomAmt, haveBloom ? hdr_bloom_amount : 0.0f );
 	glUniform2f( hdr_loc_bandW, bandW0, bandW1 );

@@ -447,18 +447,23 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       NULL,
       {
          /* Grouped by family rather than by the order they were added:
-            the Reinhards together, then the ACES ones, then the filmic
-            curves, then the two that were designed to leave hue alone,
-            then the two plain mathematical ones. */
+            the Reinhards including Devlin's photoreceptor variant, then
+            all four ACES entries together - the two fits, the 2.0 tone
+            scale and the full 2.0 transform - then the filmic curves,
+            then the two modern hue-preserving ones, then the plain
+            mathematical ones, then the remaining classics. */
          { "reinhard",  "Reinhard (Soft-Knee)" },
          { "rplain",    "Reinhard (Plain)" },
          { "rext",      "Reinhard (Extended, White 4)" },
          { "jodie",     "Reinhard-Jodie (Hue-Preserving)" },
+         { "devlin",    "Reinhard-Devlin (Classic)" },
          { "aces",      "ACES (Narkowicz)" },
          { "acesfit",   "ACES Fitted (Hill)" },
          { "aces2",     "ACES 2.0 Tone Scale" },
+         { "aces2full", "ACES 2.0 (Full Output Transform)" },
          { "hejl",      "Hejl (Filmic)" },
          { "filmicalu", "Filmic ALU (Hejl 2015)" },
+         { "filmiclog", "Filmic Log + Contrast (Blender-style)" },
          { "hable",     "Hable (Uncharted 2)" },
          { "hable2017", "Hable (2017 Piecewise)" },
          { "lottes",    "Lottes (AMD)" },
@@ -466,14 +471,11 @@ struct retro_core_option_v2_definition option_defs_us[] = {
          { "unreal",    "Unreal" },
          { "neutral",   "Khronos PBR Neutral" },
          { "agx",       "AgX" },
-         { "aces2full", "ACES 2.0 (Full Output Transform)" },
          { "drago",     "Drago (Logarithmic)" },
          { "expo",      "Exponential" },
          { "tumblin",   "Tumblin-Rushmeier (Classic)" },
          { "ward",      "Ward (Classic, Linear)" },
          { "schlick",   "Schlick (Classic)" },
-         { "devlin",    "Reinhard-Devlin (Classic)" },
-         { "filmiclog", "Filmic Log + Contrast (Blender-style)" },
          { NULL, NULL },
       },
       "reinhard"

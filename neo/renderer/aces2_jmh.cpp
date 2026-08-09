@@ -1320,3 +1320,31 @@ void ACES2_PackHueTables( const aces2Params_t *p, unsigned short *rgba16,
 		}
 	}
 }
+
+void ACES2_OutputTransformInv( const double RGB[3], const aces2Params_t *p, double aces[3] ) {
+	double JMh[3], tm[3], JMcusp[2], gammaInv, reachM;
+	double Y, linear, J;
+
+	/* display RGB back to the appearance space of the limit primaries */
+	ACES2_RGBToJMh( RGB, &p->limit, JMh );
+	if ( JMh[0] <= 0.0 ) {
+		aces[0] = aces[1] = aces[2] = 0.0;
+		return;
+	}
+
+	/* undo the gamut compression, which needs the same three hue tables */
+	ACES2_CuspForHue( &p->cusp, JMh[2], JMcusp );
+	gammaInv = ACES2_GammaInvForHue( &p->gamma, JMh[2] );
+	reachM = ACES2_ReachMFromTable( &p->chroma, JMh[2] );
+	ACES2_GamutCompressInv( JMh, &p->gamut, JMcusp, gammaInv, reachM, tm );
+
+	/* undo the tone scale on the achromatic axis, then the chroma
+	 * compression - in that order, because the chroma inverse needs the
+	 * scene J and the tone scale is what recovers it */
+	Y = ACES2_JToY( tm[0], &p->input );
+	linear = ACES2_ToneScaleInv( Y / 100.0, &p->ts );
+	J = ACES2_YToJ( linear * 100.0, &p->input );
+	ACES2_ChromaCompressInv( tm, J, &p->chroma, JMh );
+
+	ACES2_JMhToRGB( JMh, &p->input, aces );
+}

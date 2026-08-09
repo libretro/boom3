@@ -274,3 +274,14 @@ past 190, the exponent under 1.  The shader multiplies back.
 
 void	ACES2_PackHueTables( const aces2Params_t *p, unsigned short *rgba16,
 							 double scales[4] );
+
+/* The assembled inverse: display RGB back to AP0 linear.
+ *
+ * Not exact, and cannot be.  The gamut compression's inverse estimates
+ * the source lightness rather than knowing it, and the AP0 to AP1 clamp
+ * at the front is not injective - anything outside AP1 was folded onto
+ * its boundary on the way in and no inverse can unfold it.  Within the
+ * range where both are well behaved it round trips to a few parts in a
+ * million; outside it, it returns the nearest thing that would have
+ * produced the same output. */
+void	ACES2_OutputTransformInv( const double RGB[3], const aces2Params_t *p, double aces[3] );
