@@ -24,8 +24,14 @@ the texture is 1089 by 33.  A 3D texture would be the obvious choice and
 is the wrong one here for two reasons - GLES2 has none, and the offscreen
 harness this work is verified against cannot call glTexImage3D at all, so
 a 3D path would be the one piece of GL in this feature that ships
-unverified.  The flattened upload was checked on a driver: RGB16, 16 bits
-per channel, well inside the 16384 maximum.
+unverified.  The flattened upload was checked on a driver by reading the texture back
+and comparing it against this array, rather than by asking whether the
+upload call errored.  That distinction cost a debugging round: a row of
+this atlas is 6534 bytes at sixteen bits and 3267 at eight, neither a
+multiple of the four GL_UNPACK_ALIGNMENT defaults to, so the first
+version uploaded without error and arrived sheared.  27219 texels wrong,
+and no GL error anywhere.  "The call succeeded" and "the data is right"
+are separate questions.
 
 The cost is doing the blue interpolation by hand - two fetches a slice
 apart, mixed by the fractional part - which is a handful of instructions
