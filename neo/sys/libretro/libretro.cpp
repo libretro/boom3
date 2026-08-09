@@ -54,6 +54,7 @@ extern "C" {
 #include "renderer/tr_local.h"
 #include "renderer/aces2_jmh.h"
 #include "renderer/aces2_arb.h"
+#include "renderer/filmic_curve.h"
 #include "sys/libretro/retro_public.h"
 #include "sys/sys_local.h"
 #include "sound/snd_local.h"
@@ -218,6 +219,59 @@ static aces2Params_t *hdr_aces2_params;
  * mid grey lands, and the normalisation that pins scene 1.0 to 1.0.
  * All three move together when the range option changes, which is why
  * they are solved in one place rather than spelled out per backend. */
+static GLuint hdr_filmic_lut;
+
+/* Filmic's curve as a 256-entry texture on unit 3 - the same unit the
+ * ACES 2.0 tables use, which is safe because the two modes are never
+ * selected at once.  Sixteen bits where the driver takes it, eight
+ * where it does not; the curve's own resampling error is 0.00026, so
+ * eight bits at 0.0039 is what sets the floor there. */
+static bool hdr_filmic_build( void ) {
+	static unsigned short lut16[256];
+	static unsigned char  lut8[256];
+	int i;
+
+	if ( hdr_filmic_lut ) {
+		return true;
+	}
+	for ( i = 0; i < 256; i++ ) {
+		double v = filmic_base_contrast[i];
+		if ( v < 0.0 ) v = 0.0;
+		if ( v > 1.0 ) v = 1.0;
+		lut16[i] = (unsigned short)( v * 65535.0 + 0.5 );
+		lut8[i]  = (unsigned char)( v * 255.0 + 0.5 );
+	}
+
+	glGenTextures( 1, &hdr_filmic_lut );
+	glActiveTexture( GL_TEXTURE3 );
+	glBindTexture( GL_TEXTURE_2D, hdr_filmic_lut );
+	while ( glGetError() != GL_NO_ERROR ) {
+	}
+#ifndef HAVE_OPENGLES
+	glTexImage2D( GL_TEXTURE_2D, 0, GL_LUMINANCE16, 256, 1, 0,
+				  GL_LUMINANCE, GL_UNSIGNED_SHORT, lut16 );
+	if ( glGetError() != GL_NO_ERROR )
+#endif
+	{
+		while ( glGetError() != GL_NO_ERROR ) {
+		}
+		glTexImage2D( GL_TEXTURE_2D, 0, GL_LUMINANCE, 256, 1, 0,
+					  GL_LUMINANCE, GL_UNSIGNED_BYTE, lut8 );
+		if ( glGetError() != GL_NO_ERROR ) {
+			glDeleteTextures( 1, &hdr_filmic_lut );
+			hdr_filmic_lut = 0;
+			glActiveTexture( GL_TEXTURE0 );
+			return false;
+		}
+	}
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
+	glActiveTexture( GL_TEXTURE0 );
+	return true;
+}
+
 static void hdr_filmiclog_terms( float out[3] ) {
 	const double mn = -12.4739312;
 	const double mx = hdr_filmiclog_maxev;
@@ -291,6 +345,7 @@ static GLuint hdr_fbo, hdr_tex, hdr_rbo, hdr_prog;
 static GLint  hdr_loc_tex, hdr_loc_mat, hdr_loc_parms;
 static GLint  hdr_loc_bloomT, hdr_loc_bloomW, hdr_loc_bloomAmt, hdr_loc_encScale;
 static GLint  hdr_loc_film = -1;
+static GLint  hdr_loc_film_lut = -1;
 static GLint  hdr_loc_frame;
 static GLint  hdr_loc_expand;
 static GLint  hdr_loc_aces;
@@ -901,6 +956,7 @@ static void context_reset(void)
       hdr_aces2_params = NULL;
    }
    hdr_aces2_lut  = 0;
+   hdr_filmic_lut = 0;
    hdr_aces2_peak = 0.0f;
    hdr_aces2_loc_lut = -1;
 
@@ -2043,7 +2099,8 @@ static const char *hdr_fs_src =
 	   w = knee (Reinhard) */
 	"uniform vec4 uParms;\n"
 	"uniform vec2 uExpand;\n"
-	"uniform vec3 uFilm;\n"   /* 1/(maxEv-minEv), pivot, normalisation */
+	"uniform vec3 uFilm;\n"
+	"uniform sampler2D uFilmLut;\n"   /* 1/(maxEv-minEv), pivot, normalisation */
 	"uniform vec3 uAces;\n"
 	"uniform vec4 uGt;\n"     /* GT: toe m, S0, 1-S1, C2 - solved on the CPU */
 	/* Decode with a pure 2.4 power, matching RetroArch.
@@ -2327,7 +2384,7 @@ static const char *hdr_fs_src =
 	"  }\n"
 	"  if (uParms.z > 17.5 && uParms.z < 18.5) {\n"      /* Filmic log + contrast */
 	"    float t = clamp((log2(max(v, 1e-10)) + 12.4739312) * uFilm.x, 0.0, 1.0);\n"
-	"    float sg = 1.0 / (1.0 + exp(-8.0 * (t - uFilm.y)));\n"
+	"    float sg = texture2D(uFilmLut, vec2(t, 0.5)).r;\n"
 	"    return shoulder(v, pow(sg, 2.2) * uFilm.z);\n"
 	"  }\n"
 	"  if (uParms.z > 16.5 && uParms.z < 17.5) {\n"      /* Reinhard-Devlin */
@@ -2924,15 +2981,17 @@ static const char *hdr_arb_up_fs_src =
 	"MUL v, v, program.env[9].z;\n" \
 	"MAX v, v, 0.0;\n" \
 	"MIN v, v, 1.0;\n" \
-	"SUB v, v, program.env[9].w;\n" \
-	"MUL v, v, -11.5415603;\n" \
-	"EX2 n.x, v.x;\n" \
-	"EX2 n.y, v.y;\n" \
-	"EX2 n.z, v.z;\n" \
-	"ADD n, n, 1.0;\n" \
-	"RCP a.x, n.x;\n" \
-	"RCP a.y, n.y;\n" \
-	"RCP a.z, n.z;\n" \
+	/* Filmic's Base Contrast curve, from the table on unit 3, one \
+	   dependent fetch per channel.  This replaces a sigmoid that stood \
+	   in for it while the data looked unavailable - close at the pivot \
+	   and out by 0.052 in the highlights. */ \
+	"MOV n.y, 0.5;\n" \
+	"MOV n.x, v.x;\n" \
+	"TEX a.x, n, texture[3], 2D;\n" \
+	"MOV n.x, v.y;\n" \
+	"TEX a.y, n, texture[3], 2D;\n" \
+	"MOV n.x, v.z;\n" \
+	"TEX a.z, n, texture[3], 2D;\n" \
 	"POW t.x, a.x, kGamma22.x;\n" \
 	"POW t.y, a.y, kGamma22.x;\n" \
 	"POW t.z, a.z, kGamma22.x;\n" \
@@ -4113,6 +4172,7 @@ static bool hdr_ensure_target( int w, int h ) {
 		hdr_loc_mat   = glGetUniformLocation( hdr_prog, "uGamut" );
 		hdr_loc_parms = glGetUniformLocation( hdr_prog, "uParms" );
 		hdr_loc_film  = glGetUniformLocation( hdr_prog, "uFilm" );
+		hdr_loc_film_lut = glGetUniformLocation( hdr_prog, "uFilmLut" );
 		{
 			/* ACES 2.0's own uniforms.  Absent from every other mode's
 			 * program, so the locations come back -1 and the setter
@@ -5164,6 +5224,14 @@ static void hdr_present( GLuint dstFbo ) {
 	glUniform1f( hdr_loc_bloomAmt, haveBloom ? hdr_bloom_amount : 0.0f );
 	glUniform2f( hdr_loc_bandW, bandW0, bandW1 );
 	glUniform1f( hdr_loc_encScale, 1.0f / hdr_scene_encode_scale );
+	if ( hdr_rolloff_mode == HDR_ROLLOFF_FILMICLOG && hdr_filmic_build() ) {
+		glActiveTexture( GL_TEXTURE3 );
+		glBindTexture( GL_TEXTURE_2D, hdr_filmic_lut );
+		glActiveTexture( GL_TEXTURE0 );
+		if ( hdr_loc_film_lut >= 0 ) {
+			glUniform1i( hdr_loc_film_lut, 3 );
+		}
+	}
 	if ( hdr_loc_film >= 0 ) {
 		/* Filmic Log's encode scale, pivot and normalisation - solved on
 		 * the CPU because all three move together with the range. */
@@ -5255,6 +5323,11 @@ static void hdr_present( GLuint dstFbo ) {
 		qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 4, r0 );
 		qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 5, r1 );
 		qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 6, r2 );
+		if ( hdr_rolloff_mode == HDR_ROLLOFF_FILMICLOG && hdr_filmic_build() ) {
+			glActiveTexture( GL_TEXTURE3 );
+			glBindTexture( GL_TEXTURE_2D, hdr_filmic_lut );
+			glActiveTexture( GL_TEXTURE0 );
+		}
 		if ( aces2 ) {
 			/* hdr_arb_ready returns early once the programs are loaded
 			 * and the mode is unchanged, so a peak that moves

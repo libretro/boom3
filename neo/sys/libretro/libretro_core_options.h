@@ -520,7 +520,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
          { "aces2full", "ACES 2.0 (Full Output Transform)" },
          { "hejl",      "Hejl (Filmic)" },
          { "filmicalu", "Filmic ALU (Hejl 2015)" },
-         { "filmiclog", "Filmic Log + Contrast (Blender-style)" },
+         { "filmiclog", "Filmic (Sobotka)" },
          { "hable",     "Hable (Uncharted 2)" },
          { "hable2017", "Hable (2017 Piecewise)" },
          { "lottes",    "Lottes (AMD)" },
