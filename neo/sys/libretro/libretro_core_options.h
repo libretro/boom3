@@ -345,6 +345,29 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "disabled"
    },
    {
+      "doom_hdr_aces2_gamut",
+      "ACES 2.0: Limiting Gamut",
+      NULL,
+      "Which gamut the full ACES 2.0 transform compresses colour toward. "
+      "Its gamut compression works by pulling out-of-range colour onto a "
+      "boundary, so the boundary should be the one the display actually "
+      "has. Most HDR displays are close to P3, which covers about 72% of "
+      "Rec.2020 - leaving this at Rec.2020 on such a panel means the "
+      "compression stops short and the panel clips the difference "
+      "itself, which is the harsh clipping the transform exists to "
+      "avoid. Rec.709 is for an SDR-gamut display. Only affects the full "
+      "transform; no other roll-off has a gamut to limit to.",
+      NULL,
+      NULL,
+      {
+         { "rec2020", "Rec.2020 (widest)" },
+         { "p3",      "P3-D65 (most HDR displays)" },
+         { "rec709",  "Rec.709 (SDR gamut)" },
+         { NULL, NULL },
+      },
+      "rec2020"
+   },
+   {
       "doom_hdr_gt_toe",
       "GT Roll-Off: Toe",
       NULL,

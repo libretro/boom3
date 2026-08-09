@@ -188,6 +188,16 @@ static GLuint hdr_aces2_lut;
 static int    hdr_aces2_loc[11];
 static int    hdr_aces2_loc_lut = -1;
 static bool   hdr_aces2_warned_expand = false;
+/* Which gamut ACES 2.0 compresses toward: 0 Rec.709, 1 P3-D65,
+ * 2 Rec.2020.  The compression's whole job is to land colour on a
+ * boundary, so the boundary wants to be the display's - aiming at
+ * Rec.2020 on a P3 panel means it stops pulling colour in while the
+ * panel is still going to clip, and P3 covers only 72% of Rec.2020. */
+static int    hdr_aces2_gamut = 2;
+/* Peak the tables were solved for, and the flag that they need rebuilding.
+ * With the shared state because the option parser writes it and the
+ * desktop resource path reads it. */
+static float  hdr_aces2_peak = 0.0f;
 /* The frontend's paper white, as a multiplier on the scene.  ACES 2.0
  * decides output luminance itself, so a brightness control has to act on
  * what it is looking at rather than on what it produced - scaling the
@@ -753,6 +763,18 @@ static void update_variables(bool startup)
 		else if (!strcmp(var.value, "devlin"))    hdr_rolloff_mode = HDR_ROLLOFF_DEVLIN;
 		else if (!strcmp(var.value, "filmiclog")) hdr_rolloff_mode = HDR_ROLLOFF_FILMICLOG;
 		else                                     hdr_rolloff_mode = HDR_ROLLOFF_REINHARD;
+	}
+
+	var.key = "doom_hdr_aces2_gamut";
+	var.value = NULL;
+	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) {
+		int want = 2;
+		if (!strcmp(var.value, "rec709"))  want = 0;
+		else if (!strcmp(var.value, "p3")) want = 1;
+		if (want != hdr_aces2_gamut) {
+			hdr_aces2_gamut = want;
+			hdr_aces2_peak = 0.0f;   /* the tables are per-gamut; rebuild them */
+		}
 	}
 
 	var.key = "doom_hdr_gt_toe";
@@ -3674,7 +3696,6 @@ static bool hdr_arb_ready( void );
 		qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, (reg), envv ); \
 	} while ( 0 )
 
-static float  hdr_aces2_peak;
 static void hdr_aces2_free( void ) {
 	if ( hdr_aces2_lut ) {
 		glDeleteTextures( 1, &hdr_aces2_lut );
@@ -3691,8 +3712,13 @@ static bool hdr_aces2_build( float peakLuminance ) {
 	/* Rec.2020 - the transform lands directly in the composite's output
 	 * primaries, which is what lets the gamut matrix after it be fed
 	 * identity rows instead of rotating an already-finished colour. */
-	static const double rec2020[8] = {
-		0.708, 0.292, 0.170, 0.797, 0.131, 0.046, 0.3127, 0.3290 };
+	static const double prims[3][8] = {
+		{ 0.640, 0.330, 0.300, 0.600, 0.150, 0.060, 0.3127, 0.3290 },  /* Rec.709 */
+		{ 0.680, 0.320, 0.265, 0.690, 0.150, 0.060, 0.3127, 0.3290 },  /* P3-D65  */
+		{ 0.708, 0.292, 0.170, 0.797, 0.131, 0.046, 0.3127, 0.3290 }   /* Rec.2020 */
+	};
+	const double *rec2020 = prims[( hdr_aces2_gamut < 0 || hdr_aces2_gamut > 2 )
+			? 2 : hdr_aces2_gamut];
 	static unsigned short lut[ACES2_LUT_WIDTH * 4];
 	static unsigned char  lut8[ACES2_LUT_WIDTH * 4];
 
@@ -5128,9 +5154,17 @@ static void hdr_present( GLuint dstFbo ) {
 		 * avoids, and it would look like a colour cast rather than
 		 * anything obviously broken. */
 		const bool aces2 = ( hdr_rolloff_mode == HDR_ROLLOFF_ACES2FULL && hdr_aces2_lut != 0 );
-		const float r0[4] = { aces2 ? 1.0f : mat[0], aces2 ? 0.0f : mat[3], aces2 ? 0.0f : mat[6], 0.0f };
-		const float r1[4] = { aces2 ? 0.0f : mat[1], aces2 ? 1.0f : mat[4], aces2 ? 0.0f : mat[7], 0.0f };
-		const float r2[4] = { aces2 ? 0.0f : mat[2], aces2 ? 0.0f : mat[5], aces2 ? 1.0f : mat[8], 0.0f };
+		/* ACES 2.0 lands in whichever gamut it was told to limit to, so
+		 * the stage after it converts from that to the Rec.2020 the PQ
+		 * encode expects - identity only when the two are the same.
+		 * The matrices already exist for the ordinary gamut modes. */
+		const float *a2m = ( hdr_aces2_gamut == 0 ) ? hdr_m709to2020
+						 : ( hdr_aces2_gamut == 1 ) ? hdr_mP3to2020
+						 : hdr_mIdentity;
+		const float *gm  = aces2 ? a2m : mat;
+		const float r0[4] = { gm[0], gm[3], gm[6], 0.0f };
+		const float r1[4] = { gm[1], gm[4], gm[7], 0.0f };
+		const float r2[4] = { gm[2], gm[5], gm[8], 0.0f };
 		qglBindProgramARB( GL_FRAGMENT_PROGRAM_ARB,
 				bandW1 > 0.0f ? hdr_arb_comp2 : hdr_arb_comp1 );
 		qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 0, p0 );
