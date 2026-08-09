@@ -345,6 +345,31 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "disabled"
    },
    {
+      "doom_hdr_filmiclog_range",
+      "Filmic Log: Highlight Range",
+      NULL,
+      "How many stops above mid grey the Filmic Log roll-off's encode "
+      "covers. Blender's default is about 4, which was chosen for camera "
+      "footage where 1.0 is a nominal white - it saturates at a scene "
+      "value of 19 and everything brighter maps identically. This "
+      "engine's HDR scene routinely goes past that: multi-pass lights "
+      "accumulate unbounded on an FP16 target and the specular boost "
+      "multiplies on top, so bright speculars and bloom land in the flat "
+      "region. Widening the range keeps them separable at the cost of "
+      "lifting mid grey slightly - 0.389 at 4 stops, 0.416 at 6, 0.442 "
+      "at 8. Only affects that one roll-off.",
+      NULL,
+      NULL,
+      {
+         { "4",  "4 stops (Blender default)" },
+         { "6",  "6 stops (saturates at 64)" },
+         { "8",  "8 stops (saturates at 256)" },
+         { "10", "10 stops (saturates at 1024)" },
+         { NULL, NULL },
+      },
+      "4"
+   },
+   {
       "doom_hdr_aces2_gamut",
       "ACES 2.0: Limiting Gamut",
       NULL,

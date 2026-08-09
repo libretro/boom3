@@ -194,6 +194,10 @@ static bool   hdr_aces2_warned_expand = false;
  * Rec.2020 on a P3 panel means it stops pulling colour in while the
  * panel is still going to clip, and P3 covers only 72% of Rec.2020. */
 static int    hdr_aces2_gamut = 2;
+/* Top of the Filmic Log encode, in stops above mid grey.  Blender's 4 is
+ * sized for footage where 1.0 is a nominal white; this engine's scene
+ * runs past it. */
+static float  hdr_filmiclog_maxev = 4.026068811f;
 /* Peak the tables were solved for, and the flag that they need rebuilding.
  * With the shared state because the option parser writes it and the
  * desktop resource path reads it. */
@@ -210,6 +214,28 @@ static aces2Params_t *hdr_aces2_params;
  * column/row distinction: glUniformMatrix3fv reads column-major, and
  * the appearance matrices are applied on the CPU as row-vector times
  * matrix, so they go in transposed and the shader multiplies M * v. */
+/* Filmic Log's three derived terms: the encode scale, the pivot where
+ * mid grey lands, and the normalisation that pins scene 1.0 to 1.0.
+ * All three move together when the range option changes, which is why
+ * they are solved in one place rather than spelled out per backend. */
+static void hdr_filmiclog_terms( float out[3] ) {
+	const double mn = -12.4739312;
+	const double mx = hdr_filmiclog_maxev;
+	const double span = mx - mn;
+	const double pivot = ( log( 0.18 ) / log( 2.0 ) - mn ) / span;
+	const double atOne = ( 0.0 - mn ) / span;
+	const double sg = 1.0 / ( 1.0 + exp( -8.0 * ( atOne - pivot ) ) );
+	out[0] = (float)( 1.0 / span );
+	out[1] = (float)pivot;
+	out[2] = (float)( 1.0 / pow( sg, 2.2 ) );
+}
+
+static float hdr_filmiclog_norm( void ) {
+	float t[3];
+	hdr_filmiclog_terms( t );
+	return t[2];
+}
+
 static void hdr_aces2_set_uniforms( void ) {
 	const aces2Params_t *p = hdr_aces2_params;
 	float m[9];
@@ -264,6 +290,7 @@ static int    hdr_expand_mode   = 0;       /* 0 none, 1 per-channel inverse tone
 static GLuint hdr_fbo, hdr_tex, hdr_rbo, hdr_prog;
 static GLint  hdr_loc_tex, hdr_loc_mat, hdr_loc_parms;
 static GLint  hdr_loc_bloomT, hdr_loc_bloomW, hdr_loc_bloomAmt, hdr_loc_encScale;
+static GLint  hdr_loc_film = -1;
 static GLint  hdr_loc_frame;
 static GLint  hdr_loc_expand;
 static GLint  hdr_loc_aces;
@@ -763,6 +790,13 @@ static void update_variables(bool startup)
 		else if (!strcmp(var.value, "devlin"))    hdr_rolloff_mode = HDR_ROLLOFF_DEVLIN;
 		else if (!strcmp(var.value, "filmiclog")) hdr_rolloff_mode = HDR_ROLLOFF_FILMICLOG;
 		else                                     hdr_rolloff_mode = HDR_ROLLOFF_REINHARD;
+	}
+
+	var.key = "doom_hdr_filmiclog_range";
+	var.value = NULL;
+	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) {
+		const float ev = (float)atof(var.value);
+		hdr_filmiclog_maxev = ( ev > 4.5f ) ? ev : 4.026068811f;
 	}
 
 	var.key = "doom_hdr_aces2_gamut";
@@ -2009,6 +2043,7 @@ static const char *hdr_fs_src =
 	   w = knee (Reinhard) */
 	"uniform vec4 uParms;\n"
 	"uniform vec2 uExpand;\n"
+	"uniform vec3 uFilm;\n"   /* 1/(maxEv-minEv), pivot, normalisation */
 	"uniform vec3 uAces;\n"
 	"uniform vec4 uGt;\n"     /* GT: toe m, S0, 1-S1, C2 - solved on the CPU */
 	/* Decode with a pure 2.4 power, matching RetroArch.
@@ -2291,9 +2326,9 @@ static const char *hdr_fs_src =
 	"    return shoulder(v, n * 4.5319149);\n"
 	"  }\n"
 	"  if (uParms.z > 17.5 && uParms.z < 18.5) {\n"      /* Filmic log + contrast */
-	"    float t = clamp((log2(max(v, 1e-10)) + 12.4739312) / 16.500000, 0.0, 1.0);\n"
-	"    float sg = 1.0 / (1.0 + exp(-8.0 * (t - 0.6060791)));\n"
-	"    return shoulder(v, pow(sg, 2.2) * 1.7852541);\n"
+	"    float t = clamp((log2(max(v, 1e-10)) + 12.4739312) * uFilm.x, 0.0, 1.0);\n"
+	"    float sg = 1.0 / (1.0 + exp(-8.0 * (t - uFilm.y)));\n"
+	"    return shoulder(v, pow(sg, 2.2) * uFilm.z);\n"
 	"  }\n"
 	"  if (uParms.z > 16.5 && uParms.z < 17.5) {\n"      /* Reinhard-Devlin */
 	"    float x = max(v, 0.0);\n"
@@ -2883,10 +2918,13 @@ static const char *hdr_arb_up_fs_src =
 	"LG2 v.y, u.y;\n" \
 	"LG2 v.z, u.z;\n" \
 	"ADD v, v, 12.4739312;\n" \
-	"MUL v, v, 0.06060606;\n" \
+	/* 1/(maxEv - minEv), from env[9].z - the encode's top is a core \
+	   option because this engine's scene runs past Blender's four \
+	   stops */ \
+	"MUL v, v, program.env[9].z;\n" \
 	"MAX v, v, 0.0;\n" \
 	"MIN v, v, 1.0;\n" \
-	"SUB v, v, 0.6060791;\n" \
+	"SUB v, v, program.env[9].w;\n" \
 	"MUL v, v, -11.5415603;\n" \
 	"EX2 n.x, v.x;\n" \
 	"EX2 n.y, v.y;\n" \
@@ -2898,7 +2936,9 @@ static const char *hdr_arb_up_fs_src =
 	"POW t.x, a.x, kGamma22.x;\n" \
 	"POW t.y, a.y, kGamma22.x;\n" \
 	"POW t.z, a.z, kGamma22.x;\n" \
-	"MUL t, t, 1.7852541;\n"
+	/* normalisation, in env[8].x - it moves with the range, and this \
+	   program is built per curve so env[8] is otherwise unused here */ \
+	"MUL t, t, program.env[8].x;\n"
 
 #define HDR_ARB_CURVE_TUMBLIN \
 	"MAX u, lin, 0.0;\n" \
@@ -4072,6 +4112,7 @@ static bool hdr_ensure_target( int w, int h ) {
 		hdr_loc_tex   = glGetUniformLocation( hdr_prog, "uScene" );
 		hdr_loc_mat   = glGetUniformLocation( hdr_prog, "uGamut" );
 		hdr_loc_parms = glGetUniformLocation( hdr_prog, "uParms" );
+		hdr_loc_film  = glGetUniformLocation( hdr_prog, "uFilm" );
 		{
 			/* ACES 2.0's own uniforms.  Absent from every other mode's
 			 * program, so the locations come back -1 and the setter
@@ -5123,6 +5164,13 @@ static void hdr_present( GLuint dstFbo ) {
 	glUniform1f( hdr_loc_bloomAmt, haveBloom ? hdr_bloom_amount : 0.0f );
 	glUniform2f( hdr_loc_bandW, bandW0, bandW1 );
 	glUniform1f( hdr_loc_encScale, 1.0f / hdr_scene_encode_scale );
+	if ( hdr_loc_film >= 0 ) {
+		/* Filmic Log's encode scale, pivot and normalisation - solved on
+		 * the CPU because all three move together with the range. */
+		float ft[3];
+		hdr_filmiclog_terms( ft );
+		glUniform3f( hdr_loc_film, ft[0], ft[1], ft[2] );
+	}
 	glUniform1f( hdr_loc_frame, frameN );
 	glUniformMatrix3fv( hdr_loc_mat, 1, GL_FALSE, mat );
 	glUniform4f( hdr_loc_parms, paperWhite / 10000.0f, H,
@@ -5230,10 +5278,23 @@ static void hdr_present( GLuint dstFbo ) {
 				double l0, S0, S1, C2;
 				float p8[4], p9[4];
 				hdr_gt_params( hdr_gt_toe, hdr_gt_shoulder, &l0, &S0, &S1, &C2 );
-				p8[0] = hdr_gt_toe;      p8[1] = (float)S0;
+				/* env[8].x is GT's toe for the GT program and Filmic
+				 * Log's normalisation for that one; only one curve is
+				 * ever built into a program, so they cannot collide */
+				p8[0] = ( hdr_rolloff_mode == HDR_ROLLOFF_FILMICLOG )
+						? hdr_filmiclog_norm() : hdr_gt_toe;
+				p8[1] = (float)S0;
 				p8[2] = (float)( 1.0 - S1 ); p8[3] = (float)C2;
 				p9[0] = 1.0f / hdr_gt_toe;   p9[1] = (float)hdr_gt_norm();
-				p9[2] = 0.0f;                p9[3] = 0.0f;
+				/* the two spare slots carry Filmic Log's encode scale
+				 * and pivot - both curves cannot be selected at once,
+				 * so they share the register rather than each taking
+				 * one and pushing the count up for every program */
+				{
+					float ft[3];
+					hdr_filmiclog_terms( ft );
+					p9[2] = ft[0];   p9[3] = ft[1];
+				}
 				qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 8, p8 );
 				qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 9, p9 );
 			}
