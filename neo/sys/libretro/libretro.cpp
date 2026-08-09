@@ -171,7 +171,11 @@ enum {
 	HDR_ROLLOFF_ACES2FULL = 23
 };
 
-#define HDR_ROLLOFF_FIRST_RGB HDR_ROLLOFF_JODIE
+/* Filmic Log is an RGB operator too: its desaturation cube couples the
+ * channels, so it cannot be evaluated one at a time.  It already sat
+ * immediately below this boundary, so it joins the block without
+ * renumbering anything else. */
+#define HDR_ROLLOFF_FIRST_RGB HDR_ROLLOFF_FILMICLOG
 static int    hdr_rolloff_mode  = HDR_ROLLOFF_REINHARD;   /* live-switchable */
 /* GT's toe and shoulder, live-switchable.  The published defaults are
  * 0.22 and 0.4; every other constant in the curve is derived from them,
@@ -250,6 +254,13 @@ static bool hdr_filmic_build( void ) {
 	glGenTextures( 1, &hdr_filmic_desat );
 	glActiveTexture( GL_TEXTURE4 );
 	glBindTexture( GL_TEXTURE_2D, hdr_filmic_desat );
+	/* A row of this atlas is 1089 texels of RGB - 6534 bytes at sixteen
+	 * bits, 3267 at eight - and neither is a multiple of four, which is
+	 * what GL_UNPACK_ALIGNMENT defaults to.  Left at four, every row
+	 * after the first is read two or three bytes off, so the cube
+	 * arrives sheared and returns arbitrary colours.  The curve texture
+	 * never hit this: its rows are 512 and 256 bytes. */
+	glPixelStorei( GL_UNPACK_ALIGNMENT, 1 );
 	while ( glGetError() != GL_NO_ERROR ) {
 	}
 #ifndef HAVE_OPENGLES
@@ -272,6 +283,7 @@ static bool hdr_filmic_build( void ) {
 		if ( glGetError() != GL_NO_ERROR ) {
 			glDeleteTextures( 1, &hdr_filmic_desat );
 			hdr_filmic_desat = 0;
+			glPixelStorei( GL_UNPACK_ALIGNMENT, 4 );
 			glActiveTexture( GL_TEXTURE0 );
 			return false;
 		}
@@ -282,6 +294,7 @@ static bool hdr_filmic_build( void ) {
 	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
 	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
 	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
+	glPixelStorei( GL_UNPACK_ALIGNMENT, 4 );
 	glActiveTexture( GL_TEXTURE0 );
 
 	glGenTextures( 1, &hdr_filmic_lut );
@@ -392,6 +405,7 @@ static GLint  hdr_loc_tex, hdr_loc_mat, hdr_loc_parms;
 static GLint  hdr_loc_bloomT, hdr_loc_bloomW, hdr_loc_bloomAmt, hdr_loc_encScale;
 static GLint  hdr_loc_film = -1;
 static GLint  hdr_loc_film_lut = -1;
+static GLint  hdr_loc_film_desat = -1;
 static GLint  hdr_loc_frame;
 static GLint  hdr_loc_expand;
 static GLint  hdr_loc_aces;
@@ -1004,6 +1018,7 @@ static void context_reset(void)
    hdr_aces2_lut  = 0;
    hdr_filmic_lut = 0;
    hdr_filmic_desat = 0;
+   hdr_loc_film_desat = -1;
    hdr_aces2_peak = 0.0f;
    hdr_aces2_loc_lut = -1;
 
@@ -2147,7 +2162,8 @@ static const char *hdr_fs_src =
 	"uniform vec4 uParms;\n"
 	"uniform vec2 uExpand;\n"
 	"uniform vec3 uFilm;\n"
-	"uniform sampler2D uFilmLut;\n"   /* 1/(maxEv-minEv), pivot, normalisation */
+	"uniform sampler2D uFilmLut;\n"
+	"uniform sampler2D uFilmDesat;\n"   /* 1/(maxEv-minEv), pivot, normalisation */
 	"uniform vec3 uAces;\n"
 	"uniform vec4 uGt;\n"     /* GT: toe m, S0, 1-S1, C2 - solved on the CPU */
 	/* Decode with a pure 2.4 power, matching RetroArch.
@@ -2382,6 +2398,24 @@ static const char *hdr_fs_src =
 	"    float g = 1.0 - 1.0 / (des * (peak - np) + 1.0);\n"
 	"    return mix(v, vec3(np), g) * 1.1506276;\n"
 	"  }\n"
+	"  if (uParms.z < 18.5) {\n"                        /* Filmic: log, cube, curve */
+	/* 25 stops first - the space the cube was built in - then the
+	   1/0.66 back to the 16.5 the curve expects.  Blue is sampled by
+	   hand because the cube is stored as slices side by side. */
+	"    vec3 t = clamp((log2(max(c, vec3(1e-10))) + 12.4739312) * 0.04, 0.0, 1.0);\n"
+	"    vec3 d = t * 32.0;\n"
+	"    float bz = floor(d.z), fz = d.z - bz;\n"
+	"    float dx = min(d.x, 31.999);\n"
+	"    vec2 uv = vec2((bz * 33.0 + dx + 0.5) / 1089.0, (d.y + 0.5) / 33.0);\n"
+	"    vec3 s0 = texture2D(uFilmDesat, uv).rgb;\n"
+	"    vec3 s1 = texture2D(uFilmDesat, uv + vec2(33.0 / 1089.0, 0.0)).rgb;\n"
+	"    t = clamp(mix(s0, s1, fz) * 1.5151515, 0.0, 1.0);\n"
+	"    vec3 o;\n"
+	"    o.r = texture2D(uFilmLut, vec2(t.r, 0.5)).r;\n"
+	"    o.g = texture2D(uFilmLut, vec2(t.g, 0.5)).r;\n"
+	"    o.b = texture2D(uFilmLut, vec2(t.b, 0.5)).r;\n"
+	"    return pow(max(o, vec3(0.0)), vec3(2.2)) * uFilm.z;\n"
+	"  }\n"
 	"  if (uParms.z > 19.5) {\n"                        /* ACES Fitted */
 	"    mat3 mi = mat3(0.59719, 0.07600, 0.02840,\n"
 	"                   0.35458, 0.90834, 0.13383,\n"
@@ -2428,11 +2462,6 @@ static const char *hdr_fs_src =
 	"  if (uParms.z > 3.5) {\n"
 	"    float n = ((v * (0.15 * v + 0.05) + 0.004) / (v * (0.15 * v + 0.50) + 0.06)) - 0.0666667;\n"
 	"    return shoulder(v, n * 4.5319149);\n"
-	"  }\n"
-	"  if (uParms.z > 17.5 && uParms.z < 18.5) {\n"      /* Filmic log + contrast */
-	"    float t = clamp((log2(max(v, 1e-10)) + 12.4739312) * uFilm.x, 0.0, 1.0);\n"
-	"    float sg = texture2D(uFilmLut, vec2(t, 0.5)).r;\n"
-	"    return shoulder(v, pow(sg, 2.2) * uFilm.z);\n"
 	"  }\n"
 	"  if (uParms.z > 16.5 && uParms.z < 17.5) {\n"      /* Reinhard-Devlin */
 	"    float x = max(v, 0.0);\n"
@@ -2606,7 +2635,7 @@ static const char *hdr_fs_src =
 	"  lin = expand(lin);\n"
 	/* Modes 9 and up look at the whole colour, so they run once rather
 	   than once per channel. */
-	"  if (uParms.z > 18.5) lin = rolloffRGB(lin);\n"
+	"  if (uParms.z > 17.5) lin = rolloffRGB(lin);\n"
 	"  else lin = vec3(rolloff(lin.r), rolloff(lin.g), rolloff(lin.b));\n"
 	"  lin = uGamut * lin;\n"
 	"  vec3 y = clamp(lin * uParms.x, 0.0, 1.0);\n"
@@ -4246,6 +4275,7 @@ static bool hdr_ensure_target( int w, int h ) {
 		hdr_loc_parms = glGetUniformLocation( hdr_prog, "uParms" );
 		hdr_loc_film  = glGetUniformLocation( hdr_prog, "uFilm" );
 		hdr_loc_film_lut = glGetUniformLocation( hdr_prog, "uFilmLut" );
+		hdr_loc_film_desat = glGetUniformLocation( hdr_prog, "uFilmDesat" );
 		{
 			/* ACES 2.0's own uniforms.  Absent from every other mode's
 			 * program, so the locations come back -1 and the setter
@@ -5303,6 +5333,9 @@ static void hdr_present( GLuint dstFbo ) {
 		glActiveTexture( GL_TEXTURE4 );
 		glBindTexture( GL_TEXTURE_2D, hdr_filmic_desat );
 		glActiveTexture( GL_TEXTURE0 );
+		if ( hdr_loc_film_desat >= 0 ) {
+			glUniform1i( hdr_loc_film_desat, 4 );
+		}
 		if ( hdr_loc_film_lut >= 0 ) {
 			glUniform1i( hdr_loc_film_lut, 3 );
 		}
