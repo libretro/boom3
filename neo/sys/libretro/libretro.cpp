@@ -2608,7 +2608,10 @@ static const char *hdr_fs_src =
 	"  return pow((0.8359375 + 18.8515625 * p) / (1.0 + 18.6875 * p), 78.84375);\n"
 	"}\n"
 	"void main() {\n"
-	"  vec3 lin = srgbToLinear(texture2D(uScene, vUV).rgb * uEncScale);\n"
+	"  vec4 scn = texture2D(uScene, vUV);\n"
+	"  vec3 lin = srgbToLinear(scn.rgb * uEncScale);\n"
+	/* alpha marks display-referred pixels; keep the untouched value */
+	"  vec3 uiLin = lin;\n"
 	/* bloom joins in LINEAR, BEFORE the roll-off: bloomed highlights
 	   ride the same curve into the paper-white..peak headroom, which
 	   is the part SDR output cannot express at all */
@@ -2637,6 +2640,9 @@ static const char *hdr_fs_src =
 	   than once per channel. */
 	"  if (uParms.z > 17.5) lin = rolloffRGB(lin);\n"
 	"  else lin = vec3(rolloff(lin.r), rolloff(lin.g), rolloff(lin.b));\n"
+	/* the HUD and menus bypass the curve, in proportion to how much of
+	   the pixel they cover */
+	"  lin = mix(lin, uiLin, scn.a);\n"
 	"  lin = uGamut * lin;\n"
 	"  vec3 y = clamp(lin * uParms.x, 0.0, 1.0);\n"
 	"  vec3 e = vec3(pq(y.r), pq(y.g), pq(y.b));\n"
@@ -2878,7 +2884,11 @@ static const char *hdr_arb_up_fs_src =
 	"ABS s, s;\n" \
 	"POW lin.x, s.x, kSrgb.x;\n" \
 	"POW lin.y, s.y, kSrgb.x;\n" \
-	"POW lin.z, s.z, kSrgb.x;\n"
+	"POW lin.z, s.z, kSrgb.x;\n" \
+	/* alpha marks display-referred pixels - the HUD and menus - and y \
+	   keeps the untouched value so the tail can mix it back */ \
+	"MOV y.w, s.w;\n" \
+	"MOV y.xyz, lin;\n"
 
 /* One of these is selected as HDR_ARB_ROLLOFF_CURVE when the composite
    is built.  Each leaves the curve value in t and reads lin; all are
@@ -3401,6 +3411,11 @@ static const char *hdr_arb_up_fs_src =
 	"CMP lin, v.x, t, r;\n" \
 	
 #define HDR_ARB_COMPOSITE_TAIL2 \
+	/* Display-referred pixels bypass the curve.  The mix is by alpha, so
+	   a half-transparent HUD element is half bypassed - which is what
+	   blending it over the scene meant in the first place. */ \
+	"SUB e, y, lin;\n" \
+	"MAD lin, e, y.w, lin;\n" \
 	/* ---- gamut, scale, PQ ---- */ \
 	"DP3 r.x, lin, program.env[4];\n" \
 	"DP3 r.y, lin, program.env[5];\n" \

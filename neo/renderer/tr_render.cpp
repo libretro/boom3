@@ -945,6 +945,36 @@ void RB_DrawView( const void *data ) {
 
 	backEnd.viewDef = cmd->viewDef;
 
+	/* Mark where the HUD and menus land, for the tone curve to skip.
+	 *
+	 * A view with no entities is 2D - the HUD, the menus, the loading
+	 * screens.  That content is display-referred: it was authored to
+	 * look right on a screen, not to be light in the world.  The
+	 * composite tone maps the whole target though, so a curve that is
+	 * not the identity at low values lifts every panel in the game - a
+	 * mid grey at 0.5 leaves Filmic Log at 0.743.  Reinhard's soft knee
+	 * is the identity below 0.75, which is why the default never showed
+	 * this and every other curve does.
+	 *
+	 * The scene target's alpha is otherwise unused, so it carries the
+	 * flag.  Alpha is zeroed here before a 2D view draws, with a
+	 * colour-masked clear that leaves RGB alone, so it does not matter
+	 * what the 3D passes left there.  The 2D draws then blend alpha in
+	 * normally, which has a useful property: a half-transparent HUD
+	 * element ends up with half alpha and the composite mixes it in the
+	 * same proportion. */
+	if ( !backEnd.viewDef->viewEntitys ) {
+		extern bool hdr_output_active;
+		if ( hdr_output_active ) {
+			GLboolean m[4];
+			qglGetBooleanv( GL_COLOR_WRITEMASK, m );
+			qglColorMask( GL_FALSE, GL_FALSE, GL_FALSE, GL_TRUE );
+			qglClearColor( 0.0f, 0.0f, 0.0f, 0.0f );
+			qglClear( GL_COLOR_BUFFER_BIT );
+			qglColorMask( m[0], m[1], m[2], m[3] );
+		}
+	}
+
 	// we will need to do a new copyTexSubImage of the screen
 	// when a SS_POST_PROCESS material is used
 	backEnd.currentRenderCopied = false;
