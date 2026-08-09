@@ -5081,7 +5081,22 @@ static void hdr_present( GLuint dstFbo ) {
 		   of program here, so the second bloom fetch is still skipped
 		   rather than multiplied by zero. */
 		const float eknee = 0.75f;
-		const float p0[4] = { paperWhite / 10000.0f, H,
+		/* Every curve here outputs "1.0 means paper white", so the scale
+		 * into PQ is paperWhite/10000.  ACES 2.0 does not: it is an
+		 * absolute transform whose output is in units of 100 nits, the
+		 * reference white its whole derivation is built on - which is
+		 * why 18% scene grey leaves it at 0.10 rather than at some
+		 * fraction of the user's paper white.
+		 *
+		 * Scaling it by paperWhite instead would multiply the entire
+		 * calibration by paperWhite/100: at the common 200 the picture
+		 * comes out a stop bright, with mid grey at 29 nits where the
+		 * transform placed it at 14.5.  So this mode scales by its own
+		 * unit and the paper-white setting stops applying to it, which
+		 * is the point of an absolute transform. */
+		const bool aces2Abs = ( hdr_rolloff_mode == HDR_ROLLOFF_ACES2FULL
+				&& hdr_aces2_lut != 0 );
+		const float p0[4] = { ( aces2Abs ? 100.0f : paperWhite ) / 10000.0f, H,
 				(float)hdr_rolloff_mode, 0.75f };
 		const float p1[4] = { (float)hdr_expand_mode, eknee,
 				1.0f / ( 1.0f - eknee < 1e-4f ? 1e-4f : 1.0f - eknee ), 0.0f };

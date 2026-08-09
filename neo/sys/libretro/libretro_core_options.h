@@ -446,7 +446,10 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "unbounded blending, which let multi-pass lights accumulate past "
       "1.0 for real, and turn HDR Expansion off - expansion invents "
       "that range per channel, which arrives at the transform as extra "
-      "saturation it then has to undo.",
+      "saturation it then has to undo. It is also absolute: it decides "
+      "luminance itself from the display's peak, so the Paper White "
+      "setting does not apply to it - mid grey lands at 14.5 nits on a "
+      "1000 nit display because that is where the transform puts it.",
       NULL,
       NULL,
       {
