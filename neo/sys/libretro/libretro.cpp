@@ -156,13 +156,14 @@ enum {
 	HDR_ROLLOFF_WARD      = 15,
 	HDR_ROLLOFF_SCHLICK   = 16,
 	HDR_ROLLOFF_DEVLIN    = 17,
+	HDR_ROLLOFF_FILMICLOG = 18,
 
 	/* RGB operators: the result of one channel depends on the other
 	   two, so these run once per pixel rather than three times. */
-	HDR_ROLLOFF_JODIE     = 18,
-	HDR_ROLLOFF_ACESFIT   = 19,
-	HDR_ROLLOFF_NEUTRAL   = 20,
-	HDR_ROLLOFF_AGX       = 21
+	HDR_ROLLOFF_JODIE     = 19,
+	HDR_ROLLOFF_ACESFIT   = 20,
+	HDR_ROLLOFF_NEUTRAL   = 21,
+	HDR_ROLLOFF_AGX       = 22
 };
 
 #define HDR_ROLLOFF_FIRST_RGB HDR_ROLLOFF_JODIE
@@ -674,6 +675,7 @@ static void update_variables(bool startup)
 		else if (!strcmp(var.value, "ward"))      hdr_rolloff_mode = HDR_ROLLOFF_WARD;
 		else if (!strcmp(var.value, "schlick"))   hdr_rolloff_mode = HDR_ROLLOFF_SCHLICK;
 		else if (!strcmp(var.value, "devlin"))    hdr_rolloff_mode = HDR_ROLLOFF_DEVLIN;
+		else if (!strcmp(var.value, "filmiclog")) hdr_rolloff_mode = HDR_ROLLOFF_FILMICLOG;
 		else                                     hdr_rolloff_mode = HDR_ROLLOFF_REINHARD;
 	}
 
@@ -1958,7 +1960,7 @@ static const char *hdr_fs_src =
 	"vec3 rolloffRGB(vec3 c) {\n"
 	"  float H = uParms.y;\n"
 	"  if (H <= 1.0001) return min(c, vec3(1.0));\n"
-	"  if (uParms.z > 20.5) {\n"                       /* AgX */
+	"  if (uParms.z > 21.5) {\n"                       /* AgX */
 	"    mat3 mi = mat3(0.842479062253094, 0.0784335999999992, 0.0792237451477643,\n"
 	"                   0.0423282422610123, 0.878468636469772, 0.0791661274605434,\n"
 	"                   0.0423756549057051, 0.0784336, 0.879142973793104);\n"
@@ -1973,7 +1975,7 @@ static const char *hdr_fs_src =
 	"    v = mo * v;\n"
 	"    return pow(max(v, vec3(0.0)), vec3(2.2)) * 1.4491792;\n"
 	"  }\n"
-	"  if (uParms.z > 19.5) {\n"                       /* Khronos PBR Neutral */
+	"  if (uParms.z > 20.5) {\n"                       /* Khronos PBR Neutral */
 	"    float sc = 0.76, des = 0.15;\n"
 	"    float x = min(c.r, min(c.g, c.b));\n"
 	"    float off = x < 0.08 ? x - 6.25 * x * x : 0.04;\n"
@@ -1986,7 +1988,7 @@ static const char *hdr_fs_src =
 	"    float g = 1.0 - 1.0 / (des * (peak - np) + 1.0);\n"
 	"    return mix(v, vec3(np), g) * 1.1506276;\n"
 	"  }\n"
-	"  if (uParms.z > 18.5) {\n"                        /* ACES Fitted */
+	"  if (uParms.z > 19.5) {\n"                        /* ACES Fitted */
 	"    mat3 mi = mat3(0.59719, 0.07600, 0.02840,\n"
 	"                   0.35458, 0.90834, 0.13383,\n"
 	"                   0.04823, 0.01566, 0.83777);\n"
@@ -2032,6 +2034,11 @@ static const char *hdr_fs_src =
 	"  if (uParms.z > 3.5) {\n"
 	"    float n = ((v * (0.15 * v + 0.05) + 0.004) / (v * (0.15 * v + 0.50) + 0.06)) - 0.0666667;\n"
 	"    return shoulder(v, n * 4.5319149);\n"
+	"  }\n"
+	"  if (uParms.z > 17.5 && uParms.z < 18.5) {\n"      /* Filmic log + contrast */
+	"    float t = clamp((log2(max(v, 1e-10)) + 12.4739312) / 16.500000, 0.0, 1.0);\n"
+	"    float sg = 1.0 / (1.0 + exp(-8.0 * (t - 0.6060791)));\n"
+	"    return shoulder(v, pow(sg, 2.2) * 1.7852541);\n"
 	"  }\n"
 	"  if (uParms.z > 16.5 && uParms.z < 17.5) {\n"      /* Reinhard-Devlin */
 	"    float x = max(v, 0.0);\n"
@@ -2204,7 +2211,7 @@ static const char *hdr_fs_src =
 	"  lin = expand(lin);\n"
 	/* Modes 9 and up look at the whole colour, so they run once rather
 	   than once per channel. */
-	"  if (uParms.z > 17.5) lin = rolloffRGB(lin);\n"
+	"  if (uParms.z > 18.5) lin = rolloffRGB(lin);\n"
 	"  else lin = vec3(rolloff(lin.r), rolloff(lin.g), rolloff(lin.b));\n"
 	"  lin = uGamut * lin;\n"
 	"  vec3 y = clamp(lin * uParms.x, 0.0, 1.0);\n"
@@ -2614,6 +2621,29 @@ static const char *hdr_arb_up_fs_src =
    channel or a matrix - so unlike the curves above they cannot be
    applied per channel.  They write t directly and skip the shared
    shoulder, since each already decides its own top end. */
+#define HDR_ARB_CURVE_FILMICLOG \
+	"MAX u, lin, 0.0000000001;\n" \
+	"LG2 v.x, u.x;\n" \
+	"LG2 v.y, u.y;\n" \
+	"LG2 v.z, u.z;\n" \
+	"ADD v, v, 12.4739312;\n" \
+	"MUL v, v, 0.06060606;\n" \
+	"MAX v, v, 0.0;\n" \
+	"MIN v, v, 1.0;\n" \
+	"SUB v, v, 0.6060791;\n" \
+	"MUL v, v, -11.5415603;\n" \
+	"EX2 n.x, v.x;\n" \
+	"EX2 n.y, v.y;\n" \
+	"EX2 n.z, v.z;\n" \
+	"ADD n, n, 1.0;\n" \
+	"RCP a.x, n.x;\n" \
+	"RCP a.y, n.y;\n" \
+	"RCP a.z, n.z;\n" \
+	"POW t.x, a.x, kGamma22.x;\n" \
+	"POW t.y, a.y, kGamma22.x;\n" \
+	"POW t.z, a.z, kGamma22.x;\n" \
+	"MUL t, t, 1.7852541;\n"
+
 #define HDR_ARB_CURVE_TUMBLIN \
 	"MAX u, lin, 0.0;\n" \
 	"POW t.x, u.x, kTumblin.x;\n" \
@@ -2790,7 +2820,7 @@ static const char *hdr_arb_up_fs_src =
 	"LG2 n.y, v.y;\n" \
 	"LG2 n.z, v.z;\n" \
 	"ADD n, n, 12.47393;\n" \
-	"MUL n, n, 0.0606060;\n" \
+	"MUL n, n, 0.06060606;\n" \
 	"MAX n, n, 0.0;\n" \
 	"MIN n, n, 1.0;\n" \
 	"MAD d, n, 15.5, -40.14;\n" \
@@ -2954,6 +2984,7 @@ static const char *hdr_arb_curve_src( int mode ) {
 	case HDR_ROLLOFF_WARD:      return HDR_ARB_CURVE_WARD;
 	case HDR_ROLLOFF_SCHLICK:   return HDR_ARB_CURVE_SCHLICK;
 	case HDR_ROLLOFF_DEVLIN:    return HDR_ARB_CURVE_DEVLIN;
+	case HDR_ROLLOFF_FILMICLOG: return HDR_ARB_CURVE_FILMICLOG;
 	default:                 return HDR_ARB_CURVE_REINHARD;
 	}
 }
@@ -3928,6 +3959,30 @@ static double hdr_gt_norm( void ) {
 	return f > 1e-6 ? 1.0 / f : 1.0;
 }
 
+static double hdr_curve_filmiclog( double v ) {
+	/* Sobotka's Filmic approach: encode to log across the same exposure
+	 * range Blender's Filmic uses - about -12.47 to +4.03 stops - and
+	 * put a contrast sigmoid on the encoded value, pivoted where mid
+	 * grey lands.  The 2.2 comes back out because the sigmoid produces
+	 * a display-referred value and this pipeline is linear.
+	 *
+	 * Named for what it is.  Blender's Filmic look is defined by a
+	 * baked lookup table shipped with its config, not by a closed form;
+	 * without those coefficients this is the same construction with a
+	 * sigmoid in place of the table, which is a different curve.
+	 * Calling it "Filmic Blender" would be borrowing a name for
+	 * something that does not match it. */
+	const double mn = -12.473931188, mx = 4.026068811;
+	const double t0 = 0.6060791;   /* where 0.18 encodes to */
+	const double k  = 8.0;
+	double t, sg;
+
+	t = ( log( v > 1e-10 ? v : 1e-10 ) / log( 2.0 ) - mn ) / ( mx - mn );
+	if ( t < 0.0 ) t = 0.0; else if ( t > 1.0 ) t = 1.0;
+	sg = 1.0 / ( 1.0 + exp( -k * ( t - t0 ) ) );
+	return pow( sg, 2.2 ) * 1.7852541;
+}
+
 static double hdr_curve_tumblin( double v ) {
 	/* Exponent is gamma(Lwa)/gamma(Lda) at Lwa = 1, Lda = 20 cd/m2,
 	 * which is 0.6075.  Everything else in the model is a constant
@@ -4115,6 +4170,10 @@ static void hdr_shoulder_params( int mode, float H, float *A, float *slopeOut ) 
 	case HDR_ROLLOFF_GT:
 		f1 = hdr_curve_gt( 1.0 + d );
 		f0 = hdr_curve_gt( 1.0 - d );
+		break;
+	case HDR_ROLLOFF_FILMICLOG:
+		f1 = hdr_curve_filmiclog( 1.0 + d );
+		f0 = hdr_curve_filmiclog( 1.0 - d );
 		break;
 	case HDR_ROLLOFF_TUMBLIN:
 		f1 = hdr_curve_tumblin( 1.0 + d );
