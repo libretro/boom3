@@ -407,6 +407,11 @@ struct retro_core_option_v2_definition option_defs_us[] = {
          { "lottes",   "Lottes (AMD)" },
          { "drago",    "Drago (Logarithmic)" },
          { "unreal",   "Unreal" },
+         { "filmicalu", "Filmic ALU (Hejl 2015)" },
+         { "jodie",     "Reinhard-Jodie (Hue-Preserving)" },
+         { "acesfit",   "ACES Fitted (Hill)" },
+         { "neutral",   "Khronos PBR Neutral" },
+         { "agx",       "AgX" },
          { NULL, NULL },
       },
       "reinhard"

@@ -142,8 +142,20 @@ enum {
 	HDR_ROLLOFF_HABLE    = 4,
 	HDR_ROLLOFF_LOTTES   = 5,
 	HDR_ROLLOFF_DRAGO    = 6,
-	HDR_ROLLOFF_UNREAL   = 7
+	HDR_ROLLOFF_UNREAL   = 7,
+	HDR_ROLLOFF_FILMICALU = 8,
+	HDR_ROLLOFF_JODIE     = 9,
+	HDR_ROLLOFF_ACESFIT   = 10,
+	HDR_ROLLOFF_NEUTRAL   = 11,
+	HDR_ROLLOFF_AGX       = 12
 };
+
+/* Modes at or above this one work on the colour as a whole rather than
+ * on each channel: they use luminance, the peak channel, or a matrix,
+ * so the same input channel value can map to different outputs
+ * depending on the other two.  Both backends apply those once per pixel
+ * instead of three times. */
+#define HDR_ROLLOFF_FIRST_RGB HDR_ROLLOFF_JODIE
 static int    hdr_rolloff_mode  = HDR_ROLLOFF_REINHARD;   /* live-switchable */
 static int    hdr_expand_mode   = 0;       /* 0 none, 1 per-channel inverse tonemap, 2 hue-preserving; live-switchable */
 
@@ -631,6 +643,11 @@ static void update_variables(bool startup)
 		else if (!strcmp(var.value, "lottes")) hdr_rolloff_mode = HDR_ROLLOFF_LOTTES;
 		else if (!strcmp(var.value, "drago"))  hdr_rolloff_mode = HDR_ROLLOFF_DRAGO;
 		else if (!strcmp(var.value, "unreal")) hdr_rolloff_mode = HDR_ROLLOFF_UNREAL;
+		else if (!strcmp(var.value, "filmicalu")) hdr_rolloff_mode = HDR_ROLLOFF_FILMICALU;
+		else if (!strcmp(var.value, "jodie"))     hdr_rolloff_mode = HDR_ROLLOFF_JODIE;
+		else if (!strcmp(var.value, "acesfit"))   hdr_rolloff_mode = HDR_ROLLOFF_ACESFIT;
+		else if (!strcmp(var.value, "neutral"))   hdr_rolloff_mode = HDR_ROLLOFF_NEUTRAL;
+		else if (!strcmp(var.value, "agx"))       hdr_rolloff_mode = HDR_ROLLOFF_AGX;
 		else                                 hdr_rolloff_mode = HDR_ROLLOFF_REINHARD;
 	}
 
@@ -1889,6 +1906,63 @@ static const char *hdr_fs_src =
 	"  float e = v - 1.0;\n"
 	"  return 1.0 + e * uAces.x * uAces.y / (e + uAces.x);\n"
 	"}\n"
+	/*
+	   The RGB operators.  Each reads luminance, the peak channel or a
+	   matrix, so a channel's result depends on the other two - which is
+	   what lets a highlight desaturate toward white as it clips instead
+	   of sliding toward whichever primary saturated last.  Normalised
+	   by their own value at white like the scalar curves.
+	*/
+	"vec3 acesFitRRT(vec3 v) {\n"
+	"  vec3 a = v * (v + 0.0245786) - 0.000090537;\n"
+	"  vec3 b = v * (0.983729 * v + 0.4329510) + 0.238081;\n"
+	"  return a / b;\n"
+	"}\n"
+	"vec3 rolloffRGB(vec3 c) {\n"
+	"  float H = uParms.y;\n"
+	"  if (H <= 1.0001) return min(c, vec3(1.0));\n"
+	"  if (uParms.z > 11.5) {\n"                       /* AgX */
+	"    mat3 mi = mat3(0.842479062253094, 0.0784335999999992, 0.0792237451477643,\n"
+	"                   0.0423282422610123, 0.878468636469772, 0.0791661274605434,\n"
+	"                   0.0423756549057051, 0.0784336, 0.879142973793104);\n"
+	"    mat3 mo = mat3(1.19687900512017, -0.0980208811401368, -0.0990297440797205,\n"
+	"                   -0.0528968517574562, 1.15190312990417, -0.0989611768448433,\n"
+	"                   -0.0529716355144438, -0.0980434501171241, 1.15107367264116);\n"
+	"    vec3 v = mi * max(c, vec3(0.0));\n"
+	"    v = clamp((log2(max(v, vec3(1e-10))) + 12.47393) / 16.500009, 0.0, 1.0);\n"
+	"    vec3 v2 = v * v, v4 = v2 * v2;\n"
+	"    v = 15.5 * v4 * v2 - 40.14 * v4 * v + 31.96 * v4\n"
+	"      - 6.868 * v2 * v + 0.4298 * v2 + 0.1191 * v - 0.00232;\n"
+	"    v = mo * v;\n"
+	"    return pow(max(v, vec3(0.0)), vec3(2.2)) * 1.4491792;\n"
+	"  }\n"
+	"  if (uParms.z > 10.5) {\n"                       /* Khronos PBR Neutral */
+	"    float sc = 0.76, des = 0.15;\n"
+	"    float x = min(c.r, min(c.g, c.b));\n"
+	"    float off = x < 0.08 ? x - 6.25 * x * x : 0.04;\n"
+	"    vec3 v = c - off;\n"
+	"    float peak = max(v.r, max(v.g, v.b));\n"
+	"    if (peak < sc) return v * 1.1506276;\n"
+	"    float d = 1.0 - sc;\n"
+	"    float np = 1.0 - d * d / (peak + d - sc);\n"
+	"    v *= np / peak;\n"
+	"    float g = 1.0 - 1.0 / (des * (peak - np) + 1.0);\n"
+	"    return mix(v, vec3(np), g) * 1.1506276;\n"
+	"  }\n"
+	"  if (uParms.z > 9.5) {\n"                        /* ACES Fitted */
+	"    mat3 mi = mat3(0.59719, 0.07600, 0.02840,\n"
+	"                   0.35458, 0.90834, 0.13383,\n"
+	"                   0.04823, 0.01566, 0.83777);\n"
+	"    mat3 mo = mat3( 1.60475, -0.10208, -0.00327,\n"
+	"                   -0.53108,  1.10813, -0.07276,\n"
+	"                   -0.07367, -0.00605,  1.07602);\n"
+	"    vec3 v = mo * acesFitRRT(mi * c);\n"
+	"    return max(v, vec3(0.0)) * 1.6152077;\n"
+	"  }\n"
+	"  float l = dot(c, vec3(0.2126, 0.7152, 0.0722));\n"   /* Reinhard-Jodie */
+	"  vec3 tv = c / (1.0 + c);\n"
+	"  return mix(c / (1.0 + l), tv, tv) * 2.0;\n"
+	"}\n"
 	"float rolloff(float v) {\n"
 	"  float H = uParms.y;\n"
 	"  if (H <= 1.0001) return min(v, 1.0);\n"
@@ -1921,6 +1995,12 @@ static const char *hdr_fs_src =
 	"  if (uParms.z > 3.5) {\n"
 	"    float n = ((v * (0.15 * v + 0.05) + 0.004) / (v * (0.15 * v + 0.50) + 0.06)) - 0.0666667;\n"
 	"    return shoulder(v, n * 4.5319149);\n"
+	"  }\n"
+	"  if (uParms.z > 7.5 && uParms.z < 8.5) {\n"
+	"    float x = max(v, 0.0);\n"
+	"    float va = 1.425 * x + 0.05;\n"
+	"    float f = ((x * va + 0.004) / ((x * va + 0.055) + 0.0491)) - 0.0821;\n"
+	"    return shoulder(v, pow(max(f, 0.0), 2.2) * 1.4132626);\n"
 	"  }\n"
 	"  if (uParms.z > 2.5) {\n"
 	"    float t = clamp(v / 0.22, 0.0, 1.0);\n"
@@ -2048,7 +2128,10 @@ static const char *hdr_fs_src =
 	/* SDR-range content expanded into the display's headroom before the
 	   roll-off sees it - see the expand() comment. */
 	"  lin = expand(lin);\n"
-	"  lin = vec3(rolloff(lin.r), rolloff(lin.g), rolloff(lin.b));\n"
+	/* Modes 9 and up look at the whole colour, so they run once rather
+	   than once per channel. */
+	"  if (uParms.z > 8.5) lin = rolloffRGB(lin);\n"
+	"  else lin = vec3(rolloff(lin.r), rolloff(lin.g), rolloff(lin.b));\n"
 	"  lin = uGamut * lin;\n"
 	"  vec3 y = clamp(lin * uParms.x, 0.0, 1.0);\n"
 	"  vec3 e = vec3(pq(y.r), pq(y.g), pq(y.b));\n"
@@ -2260,6 +2343,19 @@ static const char *hdr_arb_up_fs_src =
 	"PARAM kHejlG = { 2.2, 2.2, 2.2, 2.2 };\n" \
 	"PARAM kGtC = { 1.33, 1.33, 1.33, 1.33 };\n" \
 	"PARAM kGamma22 = { 2.2, 2.2, 2.2, 2.2 };\n" \
+	"PARAM kLuma = { 0.2126, 0.7152, 0.0722, 0.0 };\n" \
+	"PARAM kAcesIn0 = { 0.59719, 0.35458, 0.04823, 0.0 };\n" \
+	"PARAM kAcesIn1 = { 0.07600, 0.90834, 0.01566, 0.0 };\n" \
+	"PARAM kAcesIn2 = { 0.02840, 0.13383, 0.83777, 0.0 };\n" \
+	"PARAM kAcesOut0 = { 1.60475, -0.53108, -0.07367, 0.0 };\n" \
+	"PARAM kAcesOut1 = { -0.10208, 1.10813, -0.00605, 0.0 };\n" \
+	"PARAM kAcesOut2 = { -0.00327, -0.07276, 1.07602, 0.0 };\n" \
+	"PARAM kAgxIn0 = { 0.842479062253094, 0.0423282422610123, 0.0423756549057051, 0.0 };\n" \
+	"PARAM kAgxIn1 = { 0.0784335999999992, 0.878468636469772, 0.0784336, 0.0 };\n" \
+	"PARAM kAgxIn2 = { 0.0792237451477643, 0.0791661274605434, 0.879142973793104, 0.0 };\n" \
+	"PARAM kAgxOut0 = { 1.19687900512017, -0.0528968517574562, -0.0529716355144438, 0.0 };\n" \
+	"PARAM kAgxOut1 = { -0.0980208811401368, 1.15190312990417, -0.0980434501171241, 0.0 };\n" \
+	"PARAM kAgxOut2 = { -0.0990297440797205, -0.0989611768448433, 1.15107367264116, 0.0 };\n" \
 	"PARAM kInvM = { 4.5454545, 4.5454545, 4.5454545, 4.5454545 };\n" \
 	"PARAM kE = { 2.7182818, 2.7182818, 2.7182818, 2.7182818 };\n" \
 	"PARAM kLotA = { 1.6, 1.6, 1.6, 1.6 };\n" \
@@ -2415,6 +2511,122 @@ static const char *hdr_arb_up_fs_src =
 	"POW t.z, t.z, kGamma22.x;\n" \
 	"MUL t, t, 1.3173380;\n"
 
+#define HDR_ARB_CURVE_FILMICALU \
+	"MAD u, lin, 1.425, 0.05;\n" \
+	"MUL t, lin, u;\n" \
+	"ADD v, t, 0.004;\n" \
+	"ADD u, t, 0.1041;\n" \
+	"MAX u, u, 0.00001;\n" \
+	"RCP a.x, u.x;\n" \
+	"RCP a.y, u.y;\n" \
+	"RCP a.z, u.z;\n" \
+	"MUL t, v, a;\n" \
+	"SUB t, t, 0.0821;\n" \
+	"MAX t, t, 0.0;\n" \
+	"POW t.x, t.x, kGamma22.x;\n" \
+	"POW t.y, t.y, kGamma22.x;\n" \
+	"POW t.z, t.z, kGamma22.x;\n" \
+	"MUL t, t, 1.4132626;\n"
+
+/* The RGB operators.  These read the whole colour - luminance, the peak
+   channel or a matrix - so unlike the curves above they cannot be
+   applied per channel.  They write t directly and skip the shared
+   shoulder, since each already decides its own top end. */
+#define HDR_ARB_CURVE_JODIE \
+	"DP3 g.x, lin, kLuma;\n" \
+	"ADD u, lin, 1.0;\n" \
+	"RCP a.x, u.x;\n" \
+	"RCP a.y, u.y;\n" \
+	"RCP a.z, u.z;\n" \
+	"MUL v, lin, a;\n" \
+	"ADD h.x, g.x, 1.0;\n" \
+	"RCP h.x, h.x;\n" \
+	"MUL u, lin, h.x;\n" \
+	"MUL n, v, v;\n" \
+	"SUB d, 1.0, v;\n" \
+	"MUL t, u, d;\n" \
+	"ADD t, t, n;\n" \
+	"MUL t, t, 2.0;\n"
+
+#define HDR_ARB_CURVE_ACESFIT \
+	"DP3 u.x, lin, kAcesIn0;\n" \
+	"DP3 u.y, lin, kAcesIn1;\n" \
+	"DP3 u.z, lin, kAcesIn2;\n" \
+	"ADD v, u, 0.0245786;\n" \
+	"MUL v, v, u;\n" \
+	"SUB v, v, 0.000090537;\n" \
+	"MAD n, u, 0.983729, 0.4329510;\n" \
+	"MAD n, n, u, 0.238081;\n" \
+	"MAX n, n, 0.00001;\n" \
+	"RCP a.x, n.x;\n" \
+	"RCP a.y, n.y;\n" \
+	"RCP a.z, n.z;\n" \
+	"MUL u, v, a;\n" \
+	"DP3 t.x, u, kAcesOut0;\n" \
+	"DP3 t.y, u, kAcesOut1;\n" \
+	"DP3 t.z, u, kAcesOut2;\n" \
+	"MAX t, t, 0.0;\n" \
+	"MUL t, t, 1.6152077;\n"
+
+#define HDR_ARB_CURVE_NEUTRAL \
+	"MIN g.x, lin.x, lin.y;\n" \
+	"MIN g.x, g.x, lin.z;\n" \
+	"MAD h.x, g.x, -6.25, 1.0;\n" \
+	"MUL h.x, h.x, g.x;\n" \
+	"SUB d.x, g.x, 0.08;\n" \
+	"CMP h.x, d.x, h.x, 0.04;\n" \
+	"SUB v, lin, h.x;\n" \
+	"MAX g.y, v.x, v.y;\n" \
+	"MAX g.y, g.y, v.z;\n" \
+	"ADD n.x, g.y, 0.24;\n" \
+	"SUB n.x, n.x, 0.76;\n" \
+	"MAX n.x, n.x, 0.00001;\n" \
+	"RCP n.x, n.x;\n" \
+	"MAD n.x, n.x, -0.0576, 1.0;\n" \
+	"MAX d.y, g.y, 0.00001;\n" \
+	"RCP d.y, d.y;\n" \
+	"MUL d.y, d.y, n.x;\n" \
+	"MUL u, v, d.y;\n" \
+	"SUB d.z, g.y, n.x;\n" \
+	"MAD d.z, d.z, 0.15, 1.0;\n" \
+	"MAX d.z, d.z, 0.00001;\n" \
+	"RCP d.z, d.z;\n" \
+	"SUB d.z, 1.0, d.z;\n" \
+	"SUB d.w, 1.0, d.z;\n" \
+	"MUL t, u, d.w;\n" \
+	"MAD t, n.x, d.z, t;\n" \
+	"SUB d.x, g.y, 0.76;\n" \
+	"CMP t, d.x, v, t;\n" \
+	"MUL t, t, 1.1506276;\n"
+
+#define HDR_ARB_CURVE_AGX \
+	"MAX u, lin, 0.0;\n" \
+	"DP3 v.x, u, kAgxIn0;\n" \
+	"DP3 v.y, u, kAgxIn1;\n" \
+	"DP3 v.z, u, kAgxIn2;\n" \
+	"MAX v, v, 0.0000000001;\n" \
+	"LG2 n.x, v.x;\n" \
+	"LG2 n.y, v.y;\n" \
+	"LG2 n.z, v.z;\n" \
+	"ADD n, n, 12.47393;\n" \
+	"MUL n, n, 0.0606060;\n" \
+	"MAX n, n, 0.0;\n" \
+	"MIN n, n, 1.0;\n" \
+	"MAD d, n, 15.5, -40.14;\n" \
+	"MAD d, d, n, 31.96;\n" \
+	"MAD d, d, n, -6.868;\n" \
+	"MAD d, d, n, 0.4298;\n" \
+	"MAD d, d, n, 0.1191;\n" \
+	"MAD d, d, n, -0.00232;\n" \
+	"DP3 u.x, d, kAgxOut0;\n" \
+	"DP3 u.y, d, kAgxOut1;\n" \
+	"DP3 u.z, d, kAgxOut2;\n" \
+	"MAX u, u, 0.0;\n" \
+	"POW t.x, u.x, kGamma22.x;\n" \
+	"POW t.y, u.y, kGamma22.x;\n" \
+	"POW t.z, u.z, kGamma22.x;\n" \
+	"MUL t, t, 1.4491792;\n"
+
 #define HDR_ARB_COMPOSITE_TAIL \
 	/* lin += bloomAmt * bl */ \
 	"MAD lin, bl, program.env[2].y, lin;\n" \
@@ -2547,6 +2759,11 @@ static const char *hdr_arb_curve_src( int mode ) {
 	case HDR_ROLLOFF_LOTTES: return HDR_ARB_CURVE_LOTTES;
 	case HDR_ROLLOFF_DRAGO:  return HDR_ARB_CURVE_DRAGO;
 	case HDR_ROLLOFF_UNREAL: return HDR_ARB_CURVE_UNREAL;
+	case HDR_ROLLOFF_FILMICALU: return HDR_ARB_CURVE_FILMICALU;
+	case HDR_ROLLOFF_JODIE:     return HDR_ARB_CURVE_JODIE;
+	case HDR_ROLLOFF_ACESFIT:   return HDR_ARB_CURVE_ACESFIT;
+	case HDR_ROLLOFF_NEUTRAL:   return HDR_ARB_CURVE_NEUTRAL;
+	case HDR_ROLLOFF_AGX:       return HDR_ARB_CURVE_AGX;
 	default:                 return HDR_ARB_CURVE_REINHARD;
 	}
 }
@@ -3473,6 +3690,19 @@ static double hdr_curve_hejl( double v ) {
 	return pow( n, 2.2 ) * 1.4629683;
 }
 
+static double hdr_curve_filmicalu( double v ) {
+	/* Hejl's 2015 revision of the curve above.  Also display-referred,
+	 * so the 2.2 comes back out.  Darkest mid-tones of the set at
+	 * 0.092, with a short shoulder at 1.17x paper white. */
+	const double x = v > 0.0 ? v : 0.0;
+	const double va = 1.425 * x + 0.05;
+	double f = ( ( x * va + 0.004 ) / ( ( x * va + 0.055 ) + 0.0491 ) ) - 0.0821;
+	if ( f < 0.0 ) {
+		f = 0.0;
+	}
+	return pow( f, 2.2 ) * 1.4132626;
+}
+
 static double hdr_curve_gt( double v ) {
 	/* Uchimura's GT curve, with its published defaults folded: a = 1,
 	 * m = 0.22, l = 0.4, c = 1.33, b = 0, P = 1.  Those give l0 = 0.312
@@ -3588,6 +3818,10 @@ static void hdr_shoulder_params( int mode, float H, float *A, float *slopeOut ) 
 	case HDR_ROLLOFF_GT:
 		f1 = hdr_curve_gt( 1.0 + d );
 		f0 = hdr_curve_gt( 1.0 - d );
+		break;
+	case HDR_ROLLOFF_FILMICALU:
+		f1 = hdr_curve_filmicalu( 1.0 + d );
+		f0 = hdr_curve_filmicalu( 1.0 - d );
 		break;
 	case HDR_ROLLOFF_HABLE:
 		f1 = hdr_curve_hable( 1.0 + d );
