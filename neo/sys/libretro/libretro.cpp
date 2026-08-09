@@ -55,6 +55,7 @@ extern "C" {
 #include "renderer/aces2_jmh.h"
 #include "renderer/aces2_arb.h"
 #include "renderer/filmic_curve.h"
+#include "renderer/filmic_desat.h"
 #include "sys/libretro/retro_public.h"
 #include "sys/sys_local.h"
 #include "sound/snd_local.h"
@@ -220,6 +221,7 @@ static aces2Params_t *hdr_aces2_params;
  * All three move together when the range option changes, which is why
  * they are solved in one place rather than spelled out per backend. */
 static GLuint hdr_filmic_lut;
+static GLuint hdr_filmic_desat;
 
 /* Filmic's curve as a 256-entry texture on unit 3 - the same unit the
  * ACES 2.0 tables use, which is safe because the two modes are never
@@ -242,6 +244,46 @@ static bool hdr_filmic_build( void ) {
 		lut8[i]  = (unsigned char)( v * 255.0 + 0.5 );
 	}
 
+	/* The desaturation atlas: the cube's blue slices side by side, so
+	 * this needs no 3D texture and works on GLES2 as well.  Built with
+	 * the curve because neither is useful without the other. */
+	glGenTextures( 1, &hdr_filmic_desat );
+	glActiveTexture( GL_TEXTURE4 );
+	glBindTexture( GL_TEXTURE_2D, hdr_filmic_desat );
+	while ( glGetError() != GL_NO_ERROR ) {
+	}
+#ifndef HAVE_OPENGLES
+	glTexImage2D( GL_TEXTURE_2D, 0, GL_RGB16, FILMIC_DESAT_W, FILMIC_DESAT_H, 0,
+				  GL_RGB, GL_UNSIGNED_SHORT, filmic_desat );
+	if ( glGetError() != GL_NO_ERROR )
+#endif
+	{
+		/* eight bits where sixteen is unavailable; the cube's own step is
+		 * 1/32, so a byte still resolves it comfortably */
+		static unsigned char desat8[FILMIC_DESAT_W * FILMIC_DESAT_H * 3];
+		int k;
+		for ( k = 0; k < FILMIC_DESAT_W * FILMIC_DESAT_H * 3; k++ ) {
+			desat8[k] = (unsigned char)( filmic_desat[k] >> 8 );
+		}
+		while ( glGetError() != GL_NO_ERROR ) {
+		}
+		glTexImage2D( GL_TEXTURE_2D, 0, GL_RGB, FILMIC_DESAT_W, FILMIC_DESAT_H, 0,
+					  GL_RGB, GL_UNSIGNED_BYTE, desat8 );
+		if ( glGetError() != GL_NO_ERROR ) {
+			glDeleteTextures( 1, &hdr_filmic_desat );
+			hdr_filmic_desat = 0;
+			glActiveTexture( GL_TEXTURE0 );
+			return false;
+		}
+	}
+	/* linear across red and green, and the blue mix is done in the
+	 * shader - clamping stops a slice bleeding into its neighbour */
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
+	glActiveTexture( GL_TEXTURE0 );
+
 	glGenTextures( 1, &hdr_filmic_lut );
 	glActiveTexture( GL_TEXTURE3 );
 	glBindTexture( GL_TEXTURE_2D, hdr_filmic_lut );
@@ -260,6 +302,10 @@ static bool hdr_filmic_build( void ) {
 		if ( glGetError() != GL_NO_ERROR ) {
 			glDeleteTextures( 1, &hdr_filmic_lut );
 			hdr_filmic_lut = 0;
+			if ( hdr_filmic_desat ) {
+				glDeleteTextures( 1, &hdr_filmic_desat );
+				hdr_filmic_desat = 0;
+			}
 			glActiveTexture( GL_TEXTURE0 );
 			return false;
 		}
@@ -957,6 +1003,7 @@ static void context_reset(void)
    }
    hdr_aces2_lut  = 0;
    hdr_filmic_lut = 0;
+   hdr_filmic_desat = 0;
    hdr_aces2_peak = 0.0f;
    hdr_aces2_loc_lut = -1;
 
@@ -2772,6 +2819,8 @@ static const char *hdr_arb_up_fs_src =
 	"PARAM kHejlG = { 2.2, 2.2, 2.2, 2.2 };\n" \
 	"PARAM kGtC = { 1.33, 1.33, 1.33, 1.33 };\n" \
 	"PARAM kGamma22 = { 2.2, 2.2, 2.2, 2.2 };\n" \
+	"PARAM kFilm = { 0.04, 32.0, 31.999, 33.0 };\n" \
+	"PARAM kFilm2 = { 0.000918274, 0.0303030, 0.0303030, 1.5151515 };\n" \
 	"PARAM kLuma = { 0.2126, 0.7152, 0.0722, 0.0 };\n" \
 	"PARAM kHableB = { 1.25, 1.25, 1.25, 1.25 };\n" \
 	"PARAM kAces2G = { 1.15, 1.15, 1.15, 1.15 };\n" \
@@ -2978,7 +3027,31 @@ static const char *hdr_arb_up_fs_src =
 	/* 1/(maxEv - minEv), from env[9].z - the encode's top is a core \
 	   option because this engine's scene runs past Blender's four \
 	   stops */ \
-	"MUL v, v, program.env[9].z;\n" \
+	/* Encode over the full 25 stops first: that is the space the \
+	   desaturation cube was built in.  The 1/0.66 further down brings it \
+	   back to the 16.5 the contrast curve expects, and 16.5/25 is exactly \
+	   where that constant comes from. */ \
+	"MUL v, v, kFilm.x;\n" \
+	"MAX v, v, 0.0;\n" \
+	"MIN v, v, 1.0;\n" \
+	/* Trilinear through the flattened cube.  The blue slices sit side by \
+	   side, so hardware filtering covers red and green, and blue is two \
+	   fetches a slice apart mixed by hand. */ \
+	"MUL d, v, kFilm.y;\n" \
+	"FLR e.z, d.z;\n" \
+	"SUB r.z, d.z, e.z;\n" \
+	"MIN d.x, d.x, kFilm.z;\n" \
+	"MAD n.x, e.z, kFilm.w, d.x;\n" \
+	"ADD n.x, n.x, 0.5;\n" \
+	"MUL n.x, n.x, kFilm2.x;\n" \
+	"ADD n.y, d.y, 0.5;\n" \
+	"MUL n.y, n.y, kFilm2.y;\n" \
+	"TEX g, n, texture[4], 2D;\n" \
+	"ADD n.x, n.x, kFilm2.z;\n" \
+	"TEX h, n, texture[4], 2D;\n" \
+	"SUB h, h, g;\n" \
+	"MAD v, h, r.z, g;\n" \
+	"MUL v, v, kFilm2.w;\n" \
 	"MAX v, v, 0.0;\n" \
 	"MIN v, v, 1.0;\n" \
 	/* Filmic's Base Contrast curve, from the table on unit 3, one \
@@ -5227,6 +5300,8 @@ static void hdr_present( GLuint dstFbo ) {
 	if ( hdr_rolloff_mode == HDR_ROLLOFF_FILMICLOG && hdr_filmic_build() ) {
 		glActiveTexture( GL_TEXTURE3 );
 		glBindTexture( GL_TEXTURE_2D, hdr_filmic_lut );
+		glActiveTexture( GL_TEXTURE4 );
+		glBindTexture( GL_TEXTURE_2D, hdr_filmic_desat );
 		glActiveTexture( GL_TEXTURE0 );
 		if ( hdr_loc_film_lut >= 0 ) {
 			glUniform1i( hdr_loc_film_lut, 3 );
@@ -5326,6 +5401,8 @@ static void hdr_present( GLuint dstFbo ) {
 		if ( hdr_rolloff_mode == HDR_ROLLOFF_FILMICLOG && hdr_filmic_build() ) {
 			glActiveTexture( GL_TEXTURE3 );
 			glBindTexture( GL_TEXTURE_2D, hdr_filmic_lut );
+			glActiveTexture( GL_TEXTURE4 );
+			glBindTexture( GL_TEXTURE_2D, hdr_filmic_desat );
 			glActiveTexture( GL_TEXTURE0 );
 		}
 		if ( aces2 ) {
