@@ -355,6 +355,10 @@ void ACES2_BuildCuspTable( const aces2JMhParams_t *limit, double peakLuminance,
 	int minIndex = 0;
 	int i, c;
 
+	for ( i = 0; i < ACES2_TABLE_SIZE; i++ ) {
+		table->hueOfEntry[i] = (double)i;
+	}
+
 	for ( i = 0; i < 6; i++ ) {
 		double unit[3];
 		ACES2_CubeCorner( i, unit );
@@ -383,8 +387,34 @@ void ACES2_BuildCuspTable( const aces2JMhParams_t *limit, double peakLuminance,
 	cornerJMh[0][2] -= 360.0;
 	cornerJMh[7][2] += 360.0;
 
+	/* The table hues start uniform and then the six corner hues are moved
+	 * onto the nearest entry.  A cusp has a kink at each corner, and a
+	 * uniform table interpolates straight across it, cutting the corner
+	 * off - measured at 1.4% of the M range for Rec.709, with both worst
+	 * cases landing exactly on a corner hue.  Corners here sit at least
+	 * 0.45 degrees from a whole degree, so no entry has to move far
+	 * enough to pass its neighbour and the table stays ordered. */
+	{
+		int c;
+		for ( c = 1; c <= 6; c++ ) {
+			double ch = cornerJMh[c][2];
+			int idx;
+			while ( ch < 0.0 ) {
+				ch += 360.0;
+			}
+			while ( ch >= 360.0 ) {
+				ch -= 360.0;
+			}
+			idx = (int)( ch + 0.5 );
+			if ( idx >= ACES2_TABLE_SIZE ) {
+				idx = 0;
+			}
+			table->hueOfEntry[idx] = ch;
+		}
+	}
+
 	for ( i = ACES2_BASE_INDEX; i < ACES2_TABLE_TOTAL - 1; i++ ) {
-		const double hue = (double)( i - ACES2_BASE_INDEX );
+		const double hue = table->hueOfEntry[i - ACES2_BASE_INDEX];
 		int upper = 1, lower;
 		double lowerT = 0.0, upperT = 1.0, JMh[3], sample[3];
 		int guard;
@@ -468,8 +498,26 @@ void ACES2_CuspForHue( const aces2CuspTable_t *table, double hue, double JM[2] )
 	if ( hue < 0.0 ) {
 		hue += 360.0;
 	}
+	/* Entries are within half a degree of their index, so the bracketing
+	 * pair is the one at floor(hue) or a single step either side.  That
+	 * keeps the lookup arithmetic plus two comparisons - no search - which
+	 * is what makes it expressible in a shader. */
 	lo = (int)hue;
-	t = hue - (double)lo;
+	if ( lo > 0 && hue < table->hueOfEntry[lo] ) {
+		lo--;
+	} else if ( lo < ACES2_TABLE_SIZE - 1 && hue > table->hueOfEntry[lo+1] ) {
+		lo++;
+	}
+
+	{
+		const double h0 = table->hueOfEntry[lo];
+		const double h1 = ( lo + 1 < ACES2_TABLE_SIZE )
+						? table->hueOfEntry[lo+1] : 360.0;
+		const double span = h1 - h0;
+		t = ( span > 1e-9 ) ? ( hue - h0 ) / span : 0.0;
+		if ( t < 0.0 ) t = 0.0;
+		if ( t > 1.0 ) t = 1.0;
+	}
 	lo += ACES2_BASE_INDEX;
 
 	JM[0] = table->J[lo] + ( table->J[lo+1] - table->J[lo] ) * t;

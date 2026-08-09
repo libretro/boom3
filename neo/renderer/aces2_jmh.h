@@ -66,6 +66,16 @@ typedef struct {
 	double	J[ACES2_TABLE_TOTAL];
 	double	M[ACES2_TABLE_TOTAL];
 	double	h[ACES2_TABLE_TOTAL];
+	/* Entry hues.  Uniform apart from six entries moved onto the cube
+	 * corner hues, where the cusp has a kink that a uniform table
+	 * interpolates straight across.
+	 *
+	 * The shaders do not have this yet: the packed texture carries four
+	 * values per hue and all four channels are spoken for, so feeding
+	 * them the entry hues means either a second texture or repacking.
+	 * Until then they interpolate on the uniform assumption and keep the
+	 * old 1.4% error near corners, while the CPU reference is at 0.04%. */
+	double	hueOfEntry[ACES2_TABLE_SIZE];
 } aces2CuspTable_t;
 
 void	ACES2_BuildCuspTable( const aces2JMhParams_t *limit, double peakLuminance,
