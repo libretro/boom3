@@ -441,8 +441,12 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "channel, while 'ACES 2.0 (Full Output Transform)' is the whole "
       "thing - appearance model, chroma compression, gamut compression "
       "- which desaturates highlights toward white instead of letting "
-      "one channel clip on its own. The full transform is desktop only; "
-      "elsewhere it falls back to the tone scale.",
+      "one channel clip on its own. It wants real scene range rather than "
+      "fabricated range: pair it with FP16 Scene Precision and "
+      "unbounded blending, which let multi-pass lights accumulate past "
+      "1.0 for real, and turn HDR Expansion off - expansion invents "
+      "that range per channel, which arrives at the transform as extra "
+      "saturation it then has to undo.",
       NULL,
       NULL,
       {

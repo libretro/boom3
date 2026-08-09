@@ -187,6 +187,7 @@ static int    hdr_rolloff_mode  = HDR_ROLLOFF_REINHARD;   /* live-switchable */
 static GLuint hdr_aces2_lut;
 static int    hdr_aces2_loc[11];
 static int    hdr_aces2_loc_lut = -1;
+static bool   hdr_aces2_warned_expand = false;
 static double hdr_aces2_scales[4];
 static aces2Params_t *hdr_aces2_params;
 
@@ -3935,6 +3936,37 @@ static bool hdr_ensure_target( int w, int h ) {
 		 * the 16-bit texture cannot be built - GLES has no normalised
 		 * 16-bit format - the mode falls back to the ACES 2.0 tone
 		 * scale, which is a curve and needs neither. */
+		/* Expansion and this transform pull against each other, and the
+		 * warning is worth one line at mode-selection because nothing
+		 * about the picture says which is happening.
+		 *
+		 * Expansion exists because the game renders into 0..1 and a
+		 * tone curve with a shoulder has nothing to put in the headroom
+		 * otherwise.  It fabricates that range with a per-channel
+		 * inverse tonemap.  ACES 2.0 wants the range to be real: it is
+		 * built for scene-referred input, and this engine can give it
+		 * some - multi-pass additive lights on an FP16 target with
+		 * unbounded blending accumulate genuinely past 1.0.
+		 *
+		 * Feeding it fabricated range instead measures badly.  A scene
+		 * value of 1.0 comes out at 0.69 rather than 0.46, which is a
+		 * choice one could defend, but a saturated red at (1.0, 0.15,
+		 * 0.10) has only its red channel lifted - to 2.5 - so the
+		 * colour arrives more saturated than the renderer made it, and
+		 * the gamut compression then works to undo a distortion that
+		 * was introduced a pass earlier.  Mid-tones are untouched
+		 * either way: expansion does nothing below its knee. */
+		if ( hdr_expand_mode != 0 && !hdr_aces2_warned_expand ) {
+			hdr_aces2_warned_expand = true;
+			if ( log_cb ) {
+				log_cb( RETRO_LOG_INFO,
+					"[boom3] HDR: ACES 2.0 with HDR Expansion on - expansion fabricates "
+					"scene range per channel, which this transform is built to receive "
+					"for real. FP16 scene plus unbounded blending gives it real range; "
+					"consider turning expansion off.\n" );
+			}
+		}
+
 		if ( !hdr_aces2_build( hdr_aces2_wanted_peak > 0.0f ? hdr_aces2_wanted_peak : 1000.0f ) ) {
 			if ( log_cb ) {
 				log_cb( RETRO_LOG_WARN,
