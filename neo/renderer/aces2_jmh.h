@@ -95,3 +95,41 @@ typedef struct {
 void	ACES2_InitTSParams( double peakLuminance, aces2TSParams_t *p );
 double	ACES2_ToneScaleFwd( double x, const aces2TSParams_t *p );
 double	ACES2_ToneScaleInv( double Yn, const aces2TSParams_t *p );
+
+/*
+===========================================================================
+
+Chroma compression.
+
+Between the tone scale and the gamut compression.  The tone scale moves
+J and leaves M alone, which on its own makes tone-mapped colour look
+more saturated than it was; this pulls M back by an amount that depends
+on how far up the lightness range the pixel landed, and on how much
+reach the rendering space has at that hue.
+
+The reach table is the second of the two hue tables - the outer limit of
+M at maximum lightness in the reach primaries, found per hue by search.
+
+===========================================================================
+*/
+
+typedef struct {
+	double	reachM[ACES2_TABLE_TOTAL];
+	double	limit_J_max;
+	double	model_gamma_inv;
+	double	sat;
+	double	sat_thr;
+	double	compr;
+	double	chroma_compress_scale;
+} aces2ChromaParams_t;
+
+void	ACES2_InitChromaParams( const aces2JMhParams_t *input,
+								const aces2JMhParams_t *reach,
+								const aces2TSParams_t *ts,
+								double peakLuminance,
+								aces2ChromaParams_t *p );
+
+void	ACES2_ChromaCompressFwd( const double JMh[3], double tonemappedJ,
+								 const aces2ChromaParams_t *p, double out[3] );
+void	ACES2_ChromaCompressInv( const double JMh[3], double J,
+								 const aces2ChromaParams_t *p, double out[3] );

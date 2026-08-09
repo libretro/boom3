@@ -545,3 +545,198 @@ double ACES2_ToneScaleInv( double Yn, const aces2TSParams_t *p ) {
 	h = ( Z + sqrt( Z * ( 4.0 * p->t_1 + Z ) ) ) * 0.5;
 	return p->s_2 / ( pow( p->m_2 / h, 1.0 / p->g ) - 1.0 );
 }
+
+/* ---- chroma compression ---- */
+
+/*
+================
+ACES2_Toe
+
+The reference's shared toe, used twice in each direction with different
+constants.  Above the limit it does nothing, which is what keeps the
+compression confined to the range that needs it.
+================
+*/
+static double ACES2_Toe( double x, double limit, double k1_in, double k2_in, bool invert ) {
+	double k1, k2, k3;
+
+	if ( x > limit ) {
+		return x;
+	}
+	k2 = k2_in > 0.001 ? k2_in : 0.001;
+	k1 = sqrt( k1_in * k1_in + k2 * k2 );
+	k3 = ( limit + k1 ) / ( limit + k2 );
+
+	if ( invert ) {
+		return ( x * x + k1 * x ) / ( k3 * ( x + k2 ) );
+	} else {
+		const double minus_b = k3 * x - k1;
+		const double minus_c = k2 * k3 * x;
+		return 0.5 * ( minus_b + sqrt( minus_b * minus_b + 4.0 * minus_c ) );
+	}
+}
+
+/*
+================
+ACES2_ChromaCompressNorm
+
+A fixed three-harmonic fit in hue.  These coefficients are the
+reference's; there is nothing to derive here.
+================
+*/
+static double ACES2_ChromaCompressNorm( double h, double scale ) {
+	const double hr = h * ( M_PI / 180.0 );
+	const double a = cos( hr );
+	const double b = sin( hr );
+	const double cos_hr2 = a * a - b * b;
+	const double sin_hr2 = 2.0 * a * b;
+	const double cos_hr3 = 4.0 * a * a * a - 3.0 * a;
+	const double sin_hr3 = 3.0 * b - 4.0 * b * b * b;
+	const double M = 11.34072 * a
+				   + 16.46899 * cos_hr2
+				   +  7.88380 * cos_hr3
+				   + 14.66441 * b
+				   -  6.37224 * sin_hr2
+				   +  9.19364 * sin_hr3
+				   + 77.12896;
+	return M * scale;
+}
+
+static double ACES2_ReachMFromTable( const aces2ChromaParams_t *p, double h ) {
+	double hue = fmod( h, 360.0 );
+	int base;
+	double t;
+
+	if ( hue < 0.0 ) {
+		hue += 360.0;
+	}
+	base = (int)hue;
+	t = hue - (double)base;
+	return p->reachM[base + ACES2_BASE_INDEX]
+		 + ( p->reachM[base + ACES2_BASE_INDEX + 1] - p->reachM[base + ACES2_BASE_INDEX] ) * t;
+}
+
+/*
+================
+ACES2_InitChromaParams
+
+The reach table asks, for each hue: how much M can the reach primaries
+hold at maximum lightness before a channel goes negative.  The reference
+walks outward in steps of 50 until it finds the outside, then bisects,
+which is what is done here - the stepped search matters because the
+boundary is not monotonic in a way a plain bisection from zero could
+rely on.
+================
+*/
+void ACES2_InitChromaParams( const aces2JMhParams_t *input,
+							 const aces2JMhParams_t *reach,
+							 const aces2TSParams_t *ts,
+							 double peakLuminance,
+							 aces2ChromaParams_t *p ) {
+	const double chroma_compress      = 2.4;
+	const double chroma_compress_fact = 3.3;
+	const double chroma_expand        = 1.3;
+	const double chroma_expand_fact   = 0.69;
+	const double chroma_expand_thr    = 0.5;
+	const double model_gamma = 0.59 * ( 1.48 + sqrt( 20.0 / 100.0 ) );
+	const double log_peak = log10( peakLuminance / 100.0 );
+	int i;
+
+	p->limit_J_max     = ACES2_YToJ( peakLuminance, input );
+	p->model_gamma_inv = 1.0 / model_gamma;
+	p->sat     = 0.2 > ( chroma_expand - ( chroma_expand * chroma_expand_fact ) * log_peak )
+			   ? 0.2 : ( chroma_expand - ( chroma_expand * chroma_expand_fact ) * log_peak );
+	p->sat_thr = chroma_expand_thr / peakLuminance;
+	p->compr   = chroma_compress + ( chroma_compress * chroma_compress_fact ) * log_peak;
+	p->chroma_compress_scale = pow( 0.03379 * peakLuminance, 0.30596 ) - 0.45135;
+
+	for ( i = 0; i < ACES2_TABLE_SIZE; i++ ) {
+		const double hue = (double)i;
+		const double search_range = 50.0, search_maximum = 1300.0;
+		double low = 0.0, high = search_range;
+		bool outside = false;
+
+		while ( !outside && high < search_maximum ) {
+			double JMh[3] = { p->limit_J_max, high, hue };
+			double RGB[3];
+			ACES2_JMhToRGB( JMh, reach, RGB );
+			outside = ( RGB[0] < 0.0 || RGB[1] < 0.0 || RGB[2] < 0.0 );
+			if ( !outside ) {
+				low = high;
+				high += search_range;
+			}
+		}
+
+		while ( high - low > 1e-2 ) {
+			const double sampleM = 0.5 * ( high + low );
+			double JMh[3] = { p->limit_J_max, sampleM, hue };
+			double RGB[3];
+			ACES2_JMhToRGB( JMh, reach, RGB );
+			if ( RGB[0] < 0.0 || RGB[1] < 0.0 || RGB[2] < 0.0 ) {
+				high = sampleM;
+			} else {
+				low = sampleM;
+			}
+		}
+		p->reachM[i + ACES2_BASE_INDEX] = high;
+	}
+
+	p->reachM[0] = p->reachM[ACES2_TABLE_SIZE];
+	p->reachM[ACES2_TABLE_TOTAL-1] = p->reachM[ACES2_BASE_INDEX];
+
+	(void)ts;
+}
+
+void ACES2_ChromaCompressFwd( const double JMh[3], double tonemappedJ,
+							  const aces2ChromaParams_t *p, double out[3] ) {
+	const double J = JMh[0], M = JMh[1], h = JMh[2];
+	double M_compr = M;
+
+	if ( M != 0.0 ) {
+		const double nJ = tonemappedJ / p->limit_J_max;
+		const double snJ = ( 1.0 - nJ ) > 0.0 ? ( 1.0 - nJ ) : 0.0;
+		const double Mnorm = ACES2_ChromaCompressNorm( h, p->chroma_compress_scale );
+		const double limit = pow( nJ, p->model_gamma_inv ) * ACES2_ReachMFromTable( p, h ) / Mnorm;
+		const double toe_limit = limit - 0.001;
+		const double toe_snJ_sat = snJ * p->sat;
+		const double toe_sqrt = sqrt( nJ * nJ + p->sat_thr );
+		const double toe_nJ_compr = nJ * p->compr;
+
+		M_compr = M * pow( tonemappedJ / J, p->model_gamma_inv );
+		M_compr = M_compr / Mnorm;
+		M_compr = limit - ACES2_Toe( limit - M_compr, toe_limit, toe_snJ_sat, toe_sqrt, false );
+		M_compr = ACES2_Toe( M_compr, limit, toe_nJ_compr, snJ, false );
+		M_compr = M_compr * Mnorm;
+	}
+
+	out[0] = tonemappedJ;
+	out[1] = M_compr;
+	out[2] = h;
+}
+
+void ACES2_ChromaCompressInv( const double JMh[3], double J,
+							  const aces2ChromaParams_t *p, double out[3] ) {
+	const double tonemappedJ = JMh[0], M_compr = JMh[1], h = JMh[2];
+	double M = M_compr;
+
+	if ( M_compr != 0.0 ) {
+		const double nJ = tonemappedJ / p->limit_J_max;
+		const double snJ = ( 1.0 - nJ ) > 0.0 ? ( 1.0 - nJ ) : 0.0;
+		const double Mnorm = ACES2_ChromaCompressNorm( h, p->chroma_compress_scale );
+		const double limit = pow( nJ, p->model_gamma_inv ) * ACES2_ReachMFromTable( p, h ) / Mnorm;
+		const double toe_limit = limit - 0.001;
+		const double toe_snJ_sat = snJ * p->sat;
+		const double toe_sqrt = sqrt( nJ * nJ + p->sat_thr );
+		const double toe_nJ_compr = nJ * p->compr;
+
+		M = M_compr / Mnorm;
+		M = ACES2_Toe( M, limit, toe_nJ_compr, snJ, true );
+		M = limit - ACES2_Toe( limit - M, toe_limit, toe_snJ_sat, toe_sqrt, true );
+		M = M * Mnorm;
+		M = M * pow( tonemappedJ / J, -p->model_gamma_inv );
+	}
+
+	out[0] = J;
+	out[1] = M;
+	out[2] = h;
+}
