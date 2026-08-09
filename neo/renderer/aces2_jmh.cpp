@@ -935,3 +935,207 @@ void ACES2_GamutCompressInv( const double JMh[3], const aces2GamutParams_t *p,
 	}
 	ACES2_GamutCompress( JMh, Jx, p, JMcusp, gammaTopInv, reachM, true, out );
 }
+
+/* ---- the upper hull exponent table ---- */
+
+/* the reference samples the hull at these fractions between cusp and max */
+static const double ACES2_testPositions[5] = { 0.01, 0.1, 0.5, 0.8, 0.99 };
+
+/*
+================
+ACES2_EvaluateGammaFit
+
+True when the estimated boundary lies outside the real gamut at every
+sample.  "Outside" is any channel above the luminance limit, which is
+what makes an overshooting estimate acceptable and a short one not.
+================
+*/
+static bool ACES2_EvaluateGammaFit( const double JMcusp[2], double hue,
+									const double J_intersect_source[5],
+									const double slopes[5],
+									const double J_intersect_cusp[5],
+									double top_gamma_inv,
+									double peakLuminance,
+									const aces2GamutParams_t *gp,
+									const aces2JMhParams_t *limit ) {
+	const double luminance_limit = peakLuminance / 100.0;
+	int i;
+
+	for ( i = 0; i < 5; i++ ) {
+		double M = ACES2_GamutBoundary( JMcusp, gp->limit_J_max, top_gamma_inv,
+										gp->lower_hull_gamma_inv,
+										J_intersect_source[i], slopes[i],
+										J_intersect_cusp[i] );
+		double J = J_intersect_source[i] + slopes[i] * M;
+		double JMh[3] = { J, M, hue };
+		double RGB[3];
+
+		ACES2_JMhToRGB( JMh, limit, RGB );
+		if ( !( RGB[0] > luminance_limit || RGB[1] > luminance_limit
+				|| RGB[2] > luminance_limit ) ) {
+			return false;
+		}
+	}
+	return true;
+}
+
+void ACES2_BuildUpperHullGammaTable( const aces2CuspTable_t *cusp,
+									 const aces2GamutParams_t *gp,
+									 const aces2JMhParams_t *limit,
+									 double peakLuminance,
+									 aces2GammaTable_t *table ) {
+	const double gamma_minimum = 0.0, gamma_maximum = 5.0;
+	const double gamma_search_step = 0.4, gamma_accuracy = 1e-5;
+	int i;
+
+	for ( i = ACES2_BASE_INDEX; i < ACES2_BASE_INDEX + ACES2_TABLE_SIZE; i++ ) {
+		const double hue = cusp->h[i];
+		const double JMcusp[2] = { cusp->J[i], cusp->M[i] };
+		double J_intersect_source[5], slopes[5], J_intersect_cusp[5];
+		double focus_J, analytical_threshold;
+		double low = gamma_minimum, high = gamma_minimum + gamma_search_step;
+		double testGamma = -1.0;
+		bool outside = false;
+		int k;
+
+		analytical_threshold = JMcusp[0]
+			+ ( gp->limit_J_max - JMcusp[0] ) * ACES2_focus_gain_blend;
+		{
+			const double t = ACES2_cusp_mid_blend - ( JMcusp[0] / gp->limit_J_max );
+			const double blend = t < 1.0 ? t : 1.0;
+			focus_J = JMcusp[0] + ( gp->mid_J - JMcusp[0] ) * blend;
+		}
+
+		for ( k = 0; k < 5; k++ ) {
+			const double test_J = JMcusp[0]
+				+ ( gp->limit_J_max - JMcusp[0] ) * ACES2_testPositions[k];
+			const double slope_gain = ACES2_FocusGain( test_J, analytical_threshold,
+													   gp->limit_J_max, gp->focus_dist );
+			J_intersect_source[k] = ACES2_SolveJIntersect( test_J, JMcusp[1], focus_J,
+														   gp->limit_J_max, slope_gain );
+			slopes[k] = ACES2_CompressionVectorSlope( J_intersect_source[k], focus_J,
+													   gp->limit_J_max, slope_gain );
+			J_intersect_cusp[k] = ACES2_SolveJIntersect( JMcusp[0], JMcusp[1], focus_J,
+														  gp->limit_J_max, slope_gain );
+		}
+
+		while ( !outside && high < gamma_maximum ) {
+			if ( !ACES2_EvaluateGammaFit( JMcusp, hue, J_intersect_source, slopes,
+										  J_intersect_cusp, 1.0 / high,
+										  peakLuminance, gp, limit ) ) {
+				low = high;
+				high += gamma_search_step;
+			} else {
+				outside = true;
+			}
+		}
+
+		while ( ( high - low ) > gamma_accuracy ) {
+			testGamma = 0.5 * ( high + low );
+			if ( ACES2_EvaluateGammaFit( JMcusp, hue, J_intersect_source, slopes,
+										 J_intersect_cusp, 1.0 / testGamma,
+										 peakLuminance, gp, limit ) ) {
+				high = testGamma;
+			} else {
+				low = testGamma;
+			}
+		}
+
+		table->gammaInv[i] = 1.0 / high;
+	}
+
+	table->gammaInv[0] = table->gammaInv[ACES2_TABLE_SIZE];
+	table->gammaInv[ACES2_TABLE_TOTAL-1] = table->gammaInv[ACES2_BASE_INDEX];
+}
+
+double ACES2_GammaInvForHue( const aces2GammaTable_t *table, double hue ) {
+	double h = fmod( hue, 360.0 );
+	int lo;
+	double t;
+
+	if ( h < 0.0 ) {
+		h += 360.0;
+	}
+	lo = (int)h;
+	t = h - (double)lo;
+	lo += ACES2_BASE_INDEX;
+	return table->gammaInv[lo] + ( table->gammaInv[lo+1] - table->gammaInv[lo] ) * t;
+}
+
+/* ---- the assembled forward transform ---- */
+
+static const double ACES2_AP0[8] = { 0.7347, 0.2653, 0.0, 1.0, 0.0001, -0.077, 0.32168, 0.33767 };
+static const double ACES2_AP1[8] = { 0.713, 0.293, 0.165, 0.830, 0.128, 0.044, 0.32168, 0.33767 };
+
+void ACES2_Init( const double limitPrims[8], double peakLuminance, aces2Params_t *p ) {
+	p->peakLuminance = peakLuminance;
+	ACES2_InitJMhParams( ACES2_AP0, &p->input );
+	ACES2_InitJMhParams( ACES2_AP1, &p->reach );
+	ACES2_InitJMhParams( limitPrims, &p->limit );
+	ACES2_InitTSParams( peakLuminance, &p->ts );
+	ACES2_InitChromaParams( &p->input, &p->reach, &p->ts, peakLuminance, &p->chroma );
+	ACES2_InitGamutParams( &p->input, &p->ts, peakLuminance, &p->gamut );
+	ACES2_BuildCuspTable( &p->limit, peakLuminance, &p->cusp );
+	ACES2_BuildUpperHullGammaTable( &p->cusp, &p->gamut, &p->limit, peakLuminance, &p->gamma );
+}
+
+/*
+================
+ACES2_ClampAP0ToAP1
+
+The reference's first step, and not an optional one.  Colours outside
+AP1 are physically representable in AP0 but the appearance model does
+not behave on them, and without this the transform emits channels well
+past the display limit - 181383 of 900000 in my first end-to-end run,
+by up to 0.17.  Round-tripping through AP1 with a clamp removes them.
+================
+*/
+static void ACES2_ClampAP0ToAP1( const double aces[3], double lower, double upper,
+								 double out[3] ) {
+	/* AP0 to AP1 and back, both from the standard primaries */
+	static const double AP0_TO_AP1[9] = {
+		 1.4514393161, -0.2365107469, -0.2149285693,
+		-0.0765537733,  1.1762296998, -0.0996759265,
+		 0.0083161484, -0.0060324498,  0.9977163014 };
+	static const double AP1_TO_AP0[9] = {
+		 0.6954522414,  0.1406786965,  0.1638690622,
+		 0.0447945634,  0.8596711185,  0.0955343182,
+		-0.0055258826,  0.0040252103,  1.0015006723 };
+	double ap1[3], clamped[3];
+	int i;
+
+	for ( i = 0; i < 3; i++ ) {
+		ap1[i] = AP0_TO_AP1[i*3+0] * aces[0]
+			   + AP0_TO_AP1[i*3+1] * aces[1]
+			   + AP0_TO_AP1[i*3+2] * aces[2];
+		clamped[i] = ap1[i] < lower ? lower : ( ap1[i] > upper ? upper : ap1[i] );
+	}
+	for ( i = 0; i < 3; i++ ) {
+		out[i] = AP1_TO_AP0[i*3+0] * clamped[0]
+			   + AP1_TO_AP0[i*3+1] * clamped[1]
+			   + AP1_TO_AP0[i*3+2] * clamped[2];
+	}
+}
+
+void ACES2_OutputTransformFwd( const double aces[3], const aces2Params_t *p, double RGB[3] ) {
+	double JMh[3], tm[3], compressed[3], clamped[3];
+	double linear, tonemappedY, J_ts;
+	double JMcusp[2], gammaInv, reachM;
+
+	ACES2_ClampAP0ToAP1( aces, 0.0, p->ts.forward_limit, clamped );
+	ACES2_RGBToJMh( clamped, &p->input, JMh );
+
+	/* tone scale on the achromatic axis, then chroma compression */
+	linear = ACES2_JToY( JMh[0], &p->input ) / 100.0;
+	tonemappedY = ACES2_ToneScaleFwd( linear, &p->ts );
+	J_ts = ACES2_YToJ( tonemappedY, &p->input );
+	ACES2_ChromaCompressFwd( JMh, J_ts, &p->chroma, tm );
+
+	/* gamut compression, which needs all three hue tables */
+	ACES2_CuspForHue( &p->cusp, tm[2], JMcusp );
+	gammaInv = ACES2_GammaInvForHue( &p->gamma, tm[2] );
+	reachM = ACES2_ReachMFromTable( &p->chroma, tm[2] );
+	ACES2_GamutCompress( tm, tm[0], &p->gamut, JMcusp, gammaInv, reachM, false, compressed );
+
+	ACES2_JMhToRGB( compressed, &p->limit, RGB );
+}

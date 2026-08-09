@@ -182,3 +182,56 @@ void	ACES2_GamutCompress( const double JMh[3], double Jx,
 void	ACES2_GamutCompressInv( const double JMh[3], const aces2GamutParams_t *p,
 								const double JMcusp[2], double gammaTopInv,
 								double reachM, double out[3] );
+
+/*
+===========================================================================
+
+The upper hull exponent table - the third and last of the hue tables.
+
+The closed-form boundary estimate needs an exponent describing how the
+gamut's upper hull bends between the cusp and maximum lightness.  There
+is no formula for it: the reference searches, per hue, for the smallest
+exponent whose estimated boundary stays outside the real gamut at five
+sample lightnesses.  Outside, not on - the estimate is allowed to
+overshoot and then be pulled in, but never to cut the gamut short.
+
+===========================================================================
+*/
+
+typedef struct {
+	double	gammaInv[ACES2_TABLE_TOTAL];
+} aces2GammaTable_t;
+
+void	ACES2_BuildUpperHullGammaTable( const aces2CuspTable_t *cusp,
+										const aces2GamutParams_t *gp,
+										const aces2JMhParams_t *limit,
+										double peakLuminance,
+										aces2GammaTable_t *table );
+double	ACES2_GammaInvForHue( const aces2GammaTable_t *table, double hue );
+
+/*
+===========================================================================
+
+The whole forward transform, assembled.
+
+AP0 linear in, display RGB out.  This is the thing the shader stages
+have to reproduce, and having it in one call is what makes them
+checkable rather than merely plausible.
+
+===========================================================================
+*/
+
+typedef struct {
+	aces2JMhParams_t	input;
+	aces2JMhParams_t	reach;
+	aces2JMhParams_t	limit;
+	aces2TSParams_t		ts;
+	aces2ChromaParams_t	chroma;
+	aces2GamutParams_t	gamut;
+	aces2CuspTable_t	cusp;
+	aces2GammaTable_t	gamma;
+	double				peakLuminance;
+} aces2Params_t;
+
+void	ACES2_Init( const double limitPrims[8], double peakLuminance, aces2Params_t *p );
+void	ACES2_OutputTransformFwd( const double aces[3], const aces2Params_t *p, double RGB[3] );
