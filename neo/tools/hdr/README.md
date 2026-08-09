@@ -11,12 +11,20 @@ every other object the build already produced.
 
 ## Status: incomplete
 
-It does not yet get through a frame.  `hdr_ensure_target` now returns
-true - which took resolving the core's GL symbols through
-`rglgen_resolve_symbols` and setting the four ARB entry points
-`hdr_arb_available()` tests, both of which the frontend normally does
-before any core code runs - but the run faults further in, and the
-remaining engine state it needs has not been identified.
+It does not yet get through a frame.  Progress so far, each step found
+by instrumenting until the fault moved:
+
+  - the core's GL symbols have to be resolved through
+    `rglgen_resolve_symbols`, which the frontend normally does.
+  - the four ARB entry points `hdr_arb_available()` tests have to be
+    set; `R_CheckPortableExtensions` normally does that during engine
+    GL init.  Verified resolved and non-null at the call site.
+  - `idLib::Init()` has to run, because the composite assembles its
+    program text with `idStr::snPrintf`.
+
+With all three the run still faults inside `hdr_arb_ready`, past the
+availability check.  What that function needs beyond the above has not
+been identified yet.
 
 That is recorded here rather than left as a passing test, because the
 first version of this file *did* report PASS, and it was wrong.  It

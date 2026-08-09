@@ -15,6 +15,7 @@
 #include <GL/glext.h>
 #include "renderer/tr_local.h"
 #include "glsym/rglgen.h"
+#include "idlib/Lib.h"
 
 #define W 128
 #define H 128
@@ -108,6 +109,9 @@ int main(void)
 		return 1;
 	}
 
+	/* the composite assembles its program text with idStr::snPrintf, so
+	 * the engine's own systems have to be up before any of it is called */
+	idLib::Init();
 	hw_render.get_proc_address = (void *(*)(const char *))OSMesaGetProcAddress;
 	rglgen_resolve_symbols((rglgen_proc_address_t)OSMesaGetProcAddress);
 	/* R_CheckPortableExtensions sets these during engine GL init, which
