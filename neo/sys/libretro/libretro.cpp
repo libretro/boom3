@@ -854,6 +854,21 @@ static void context_reset(void)
    memset(hdr_bloom_fbo, 0, sizeof hdr_bloom_fbo);
    memset(hdr_bloom_tex, 0, sizeof hdr_bloom_tex);
    hdr_w = hdr_h = 0;
+   /* The ACES 2.0 hue table is a GL object like the rest of these, and
+    * was the one name this list did not clear.  A context reset
+    * invalidates it while the variable stays non-zero, so the next
+    * frame binds a dead texture and the transform reads whatever that
+    * unit happens to hold - a wrong picture rather than a crash, which
+    * is the kind that gets blamed on the transform.  Zeroing the peak
+    * as well is what makes the tables rebuild for the new context; the
+    * CPU-side copy is freed rather than leaked. */
+   if ( hdr_aces2_params ) {
+      free( hdr_aces2_params );
+      hdr_aces2_params = NULL;
+   }
+   hdr_aces2_lut  = 0;
+   hdr_aces2_peak = 0.0f;
+   hdr_aces2_loc_lut = -1;
 
    if (!first_boot)
    {
