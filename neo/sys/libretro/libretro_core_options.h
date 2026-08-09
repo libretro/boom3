@@ -381,16 +381,21 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "ACES (Filmic) applies the ACES curve normalized to paper white, "
       "which visibly LIFTS mid-tone brightness (mid grey rises from "
       "0.18 to 0.33) as well as reshaping highlights - a deliberate, "
-      "brighter filmic look, not a calibration error. In exchange its "
-      "highlights reach only 1.29x paper white rather than the display "
-      "peak, so it trades headroom for mid-tone brightness. Pick "
-      "Reinhard for a faithful comparison against 24-bit, or for the "
-      "most highlight range on a high-peak display.",
+      "brighter filmic look, not a calibration error. Hejl (Filmic) is "
+      "the Hejl and Burgess-Dawson curve, lifting mid-tones by about "
+      "the same amount as ACES but with a harder shoulder, so "
+      "highlights compress later and more abruptly - more contrast in "
+      "the upper mid-tones. Both filmic curves flatten out on their "
+      "own (ACES at 1.29x paper white, Hejl at 1.46x), so both are "
+      "carried out to the display peak by a shoulder rather than "
+      "stopping there. Pick Reinhard for a faithful comparison against "
+      "24-bit.",
       NULL,
       NULL,
       {
          { "reinhard", "Reinhard (Soft-Knee)" },
          { "aces",     "ACES (Filmic)" },
+         { "hejl",     "Hejl (Filmic)" },
          { NULL, NULL },
       },
       "reinhard"

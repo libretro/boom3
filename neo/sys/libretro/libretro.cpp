@@ -134,7 +134,12 @@ bool          hdr_fp16_scene = false;      /* FP16 scene target: per-pass quanti
 bool          hdr_fp32_scene = false;      /* FP32 scene target: full-float accumulation for extreme translucent stacking */
 bool          hdr_luma_clamp = false;      /* luminance-aware highlight blending in the clamped epilogue; live-switchable */
 bool          hdr_unbounded_blend = true;  /* unclamped epilogue on float targets: true multi-pass accumulation past 1.0 */
-static bool   hdr_rolloff_aces  = false;   /* live-switchable */
+enum {
+	HDR_ROLLOFF_REINHARD = 0,
+	HDR_ROLLOFF_ACES     = 1,
+	HDR_ROLLOFF_HEJL     = 2
+};
+static int    hdr_rolloff_mode  = HDR_ROLLOFF_REINHARD;   /* live-switchable */
 static int    hdr_expand_mode   = 0;       /* 0 none, 1 per-channel inverse tonemap, 2 hue-preserving; live-switchable */
 
 static GLuint hdr_fbo, hdr_tex, hdr_rbo, hdr_prog;
@@ -612,7 +617,11 @@ static void update_variables(bool startup)
 	var.key = "doom_hdr_rolloff";
 	var.value = NULL;
 	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
-		hdr_rolloff_aces = strcmp(var.value, "aces") == 0;
+	{
+		if (!strcmp(var.value, "aces"))      hdr_rolloff_mode = HDR_ROLLOFF_ACES;
+		else if (!strcmp(var.value, "hejl")) hdr_rolloff_mode = HDR_ROLLOFF_HEJL;
+		else                                 hdr_rolloff_mode = HDR_ROLLOFF_REINHARD;
+	}
 
 	var.key = "doom_hrtf";
 	var.value = NULL;
@@ -1845,36 +1854,40 @@ static const char *hdr_fs_src =
 	"vec3 srgbToLinear(vec3 c) {\n"
 	"  return pow(abs(c), vec3(2.4));\n"
 	"}\n"
+	/*
+	   Highlight roll-off, three curves behind one shape.
+
+	   Each curve is normalised so paper white lands on paper white,
+	   which also pins its asymptote: ACES flattens at 1.285x paper
+	   white and Hejl at 1.463x, whatever the display can do.  So the
+	   curve runs up to paper white and a shoulder carries everything
+	   above it out to H, joined at the curve's own gradient there.
+	   uAces.x is A = (H-1)/slope and uAces.y is that gradient, both
+	   measured on the CPU from whichever curve is selected.
+
+	   Reinhard needs none of this - its shoulder is built from H
+	   already - so it keeps its own form below.
+
+	   Hejl's published curve bakes in a display gamma.  This pipeline
+	   works in linear light and encodes PQ at the end, so the 2.2 is
+	   undone rather than inherited.
+	*/
+	"float shoulder(float v, float base) {\n"
+	"  if (v <= 1.0) return base;\n"
+	"  float e = v - 1.0;\n"
+	"  return 1.0 + e * uAces.x * uAces.y / (e + uAces.x);\n"
+	"}\n"
 	"float rolloff(float v) {\n"
 	"  float H = uParms.y;\n"
 	"  if (H <= 1.0001) return min(v, 1.0);\n"
+	"  if (uParms.z > 1.5) {\n"
+	"    float x = max(v - 0.004, 0.0);\n"
+	"    float n = (x * (6.2 * x + 0.5)) / (x * (6.2 * x + 1.7) + 0.06);\n"
+	"    return shoulder(v, pow(n, 2.2) * 1.4629683);\n"
+	"  }\n"
 	"  if (uParms.z > 0.5) {\n"
-	/*   Narkowicz ACES fit, normalized so paper white lands on paper white.
-	     aces(1.0) == 0.8037, so dividing by it pins rolloff(1.0) == 1.0
-	     exactly, on every display, independent of H. The H factor that
-	     used to be here mapped paper white to the display PEAK instead -
-	     1000 nits for a 200-nit target - and mid grey to 1.66 against a
-	     reference of 0.18.
-
-	     The curve tops out at (2.51/2.43)/0.8037 = 1.285, so ACES reaches
-	     1.285x paper white and no further, whatever the panel can do.
-	     That is the trade a single Narkowicz shoulder forces. The three
-	     reachable behaviours are: exact paper white, lifted mids, short
-	     shoulder (this); exact paper white, full headroom, mids crushed
-	     from 0.18 to 0.077 (rescale the input so the asymptote lands on
-	     H); or exact mids, full headroom, paper white overshooting to
-	     2.5x (run it as a shoulder above a knee). The fit saturates
-	     within a few units of input, so it cannot span knee-to-H and
-	     stay well behaved at both ends - forcing unit slope at a knee
-	     makes it overshoot, forcing the asymptote onto H makes it crush.
-
-	     Lifted mids with a short shoulder is the variant that matches
-	     what this option is for, and what its description already
-	     claims. Reinhard stays the option for exact mids and full
-	     headroom. */
-	"    float s = v * uAces.x;\n"
-	"    float n = s * (2.51 * s + 0.03) / (s * (2.43 * s + 0.59) + 0.14);\n"
-	"    return n * uAces.y;\n"
+	"    float n = v * (2.51 * v + 0.03) / (v * (2.43 * v + 0.59) + 0.14);\n"
+	"    return shoulder(v, n * 1.2440945);\n"
 	"  }\n"
 	"  float K = uParms.w;\n"
 	"  if (v <= K) return v;\n"
@@ -2193,6 +2206,7 @@ static const char *hdr_arb_up_fs_src =
 	"PARAM kSrgb = { 2.4, 2.4, 2.4, 2.4 };\n" \
 	"PARAM kPqA = { 0.1593017578125, 0.1593017578125, 0.1593017578125, 0.1593017578125 };\n" \
 	"PARAM kPqB = { 78.84375, 78.84375, 78.84375, 78.84375 };\n" \
+	"PARAM kHejlG = { 2.2, 2.2, 2.2, 2.2 };\n" \
 	"TEMP s, lin, bl, t, u, v, e, a, r, m, y, p, n, d;\n" \
 	/* lin = pow(abs(scene * encScale), 2.4) */ \
 	"TEX s, fragment.texcoord[0], texture[0], 2D;\n" \
@@ -2276,7 +2290,7 @@ static const char *hdr_arb_up_fs_src =
 	"RCP a.y, u.y;\n" \
 	"RCP a.z, u.z;\n" \
 	"MUL t, t, a;\n" \
-	"MUL t, t, 1.2442454;\n" \
+	"MUL t, t, 1.2440945;\n" \
 	"SUB v, lin, 1.0;\n" \
 	"MAX v, v, 0.0;\n" \
 	"ADD u, v, program.env[7].x;\n" \
@@ -2303,9 +2317,42 @@ static const char *hdr_arb_up_fs_src =
 	/* below the knee Reinhard is the identity */ \
 	"SUB v, lin, program.env[0].w;\n" \
 	"CMP a, v, lin, a;\n" \
-	/* aces flag > 0.5 selects the ACES form */ \
+	/* Hejl, on the same shoulder as ACES.  The published curve bakes in
+	   a display gamma; this pipeline is linear until the PQ encode, so
+	   the 2.2 is undone.  m holds the base value per channel. */ \
+	"SUB m, lin, 0.004;\n" \
+	"MAX m, m, 0.0;\n" \
+	"MAD y, m, 6.2, 0.5;\n" \
+	"MUL y, y, m;\n" \
+	"MAD p, m, 6.2, 1.7;\n" \
+	"MAD p, p, m, 0.06;\n" \
+	"MAX p, p, 0.00001;\n" \
+	"RCP d.x, p.x;\n" \
+	"RCP d.y, p.y;\n" \
+	"RCP d.z, p.z;\n" \
+	"MUL y, y, d;\n" \
+	"POW m.x, y.x, kHejlG.x;\n" \
+	"POW m.y, y.y, kHejlG.x;\n" \
+	"POW m.z, y.z, kHejlG.x;\n" \
+	"MUL m, m, 1.4629683;\n" \
+	/* shoulder, identical to the ACES one: 1 + e*A*slope/(e + A) */ \
+	"SUB v, lin, 1.0;\n" \
+	"MAX v, v, 0.0;\n" \
+	"ADD u, v, program.env[7].x;\n" \
+	"MAX u, u, 0.00001;\n" \
+	"RCP d.x, u.x;\n" \
+	"RCP d.y, u.y;\n" \
+	"RCP d.z, u.z;\n" \
+	"MUL u, v, program.env[7].x;\n" \
+	"MUL u, u, program.env[7].y;\n" \
+	"MAD u, u, d, 1.0;\n" \
+	"SUB v, lin, 1.0;\n" \
+	"CMP m, v, m, u;\n" \
+	/* env[0].z selects: 0 Reinhard, 1 ACES, 2 Hejl */ \
 	"SUB v.x, program.env[0].z, 0.5;\n" \
 	"CMP r, v.x, a, t;\n" \
+	"SUB v.x, program.env[0].z, 1.5;\n" \
+	"CMP r, v.x, r, m;\n" \
 	/* no headroom: plain min(v, 1) */ \
 	"MIN t, lin, 1.0;\n" \
 	"SUB v.x, program.env[0].y, 1.0001;\n" \
@@ -3233,32 +3280,57 @@ static const float hdr_mIdentity[9] = {
  * in x, so a bisection converges in a few dozen steps and this runs
  * once per present, not per pixel.
  */
-static void hdr_aces_stretch( float H, float *scale, float *norm ) {
-	const double inf = 2.51 / 2.43;
-	double lo = 1e-5, hi = 1.0, target, x, a;
-	int i;
+/* Base curves, each normalised so paper white lands on paper white. */
+static double hdr_curve_aces( double v ) {
+	const double n = v * ( 2.51 * v + 0.03 ) / ( v * ( 2.43 * v + 0.59 ) + 0.14 );
+	return n * 1.2440945;
+}
+
+static double hdr_curve_hejl( double v ) {
+	/* Hejl and Burgess-Dawson.  The published form bakes in a display
+	 * gamma, which this pipeline must not have - it works in linear
+	 * light and encodes PQ at the end - so the 2.2 is undone here. */
+	const double x = v > 0.004 ? v - 0.004 : 0.0;
+	const double n = ( x * ( 6.2 * x + 0.5 ) ) / ( x * ( 6.2 * x + 1.7 ) + 0.06 );
+	return pow( n, 2.2 ) * 1.4629683;
+}
+
+/* Shoulder parameters for the selected curve.
+ *
+ * Every one of these curves flattens out well below the display's
+ * headroom - ACES at 1.285x paper white, Hejl at 1.463x - and does so
+ * whatever the panel can do, because the normalisation that pins paper
+ * white also pins the asymptote.  So the curve is used up to paper
+ * white and a shoulder carries everything above it out to H, joined at
+ * the curve's own gradient there so there is no crease.
+ *
+ * A = (H-1)/slope and slope are what the shaders need; both are
+ * measured from the curve rather than assumed, so adding a curve means
+ * adding it to the switch and nothing else.
+ */
+static void hdr_shoulder_params( int mode, float H, float *A, float *slopeOut ) {
+	const double d = 1e-4;
+	double f1, f0, slope;
+
+	switch ( mode ) {
+	case HDR_ROLLOFF_HEJL:
+		f1 = hdr_curve_hejl( 1.0 + d );
+		f0 = hdr_curve_hejl( 1.0 - d );
+		break;
+	default:
+		f1 = hdr_curve_aces( 1.0 + d );
+		f0 = hdr_curve_aces( 1.0 - d );
+		break;
+	}
+	slope = ( f1 - f0 ) / ( 2.0 * d );
 
 	if ( H <= 1.0001f ) {
-		x = 1.0;
-		a = 1.0 * ( 2.51 * 1.0 + 0.03 ) / ( 1.0 * ( 2.43 * 1.0 + 0.59 ) + 0.14 );
-		*scale = 1.0f;
-		*norm = (float)( 1.0 / a );
+		*A = 0.0f;	/* flat shoulder: nothing lives above paper white */
+		*slopeOut = 0.0f;
 		return;
 	}
-
-	target = inf / (double)H;
-	for ( i = 0; i < 60; i++ ) {
-		double mid = 0.5 * ( lo + hi );
-		double v = mid * ( 2.51 * mid + 0.03 ) / ( mid * ( 2.43 * mid + 0.59 ) + 0.14 );
-		if ( v < target )
-			lo = mid;
-		else
-			hi = mid;
-	}
-	x = 0.5 * ( lo + hi );
-	a = x * ( 2.51 * x + 0.03 ) / ( x * ( 2.43 * x + 0.59 ) + 0.14 );
-	*scale = (float)x;
-	*norm = (float)( 1.0 / a );
+	*A = (float)( ( (double)H - 1.0 ) / slope );
+	*slopeOut = (float)slope;
 }
 
 /* Is the chain this build actually uses loaded?
@@ -3607,13 +3679,13 @@ static void hdr_present( GLuint dstFbo ) {
 	glUniform1f( hdr_loc_frame, frameN );
 	glUniformMatrix3fv( hdr_loc_mat, 1, GL_FALSE, mat );
 	glUniform4f( hdr_loc_parms, paperWhite / 10000.0f, H,
-			hdr_rolloff_aces ? 1.0f : 0.0f, 0.75f /* Reinhard knee */ );
+			(float)hdr_rolloff_mode, 0.75f /* Reinhard knee */ );
 	/* Same 0.75 knee as the Reinhard roll-off: expansion starts where
 	 * the diffuse range ends, so the two meet at the same place. */
 	glUniform2f( hdr_loc_expand, (float)hdr_expand_mode, 0.75f );
 	{
 		float as, an;
-		hdr_aces_stretch( H, &as, &an );
+		hdr_shoulder_params( hdr_rolloff_mode, H, &as, &an );
 		glUniform2f( hdr_loc_aces, as, an );
 	}
 #endif
@@ -3625,7 +3697,7 @@ static void hdr_present( GLuint dstFbo ) {
 		   rather than multiplied by zero. */
 		const float eknee = 0.75f;
 		const float p0[4] = { paperWhite / 10000.0f, H,
-				hdr_rolloff_aces ? 1.0f : 0.0f, 0.75f };
+				(float)hdr_rolloff_mode, 0.75f };
 		const float p1[4] = { (float)hdr_expand_mode, eknee,
 				1.0f / ( 1.0f - eknee < 1e-4f ? 1e-4f : 1.0f - eknee ), 0.0f };
 		const float p2[4] = { 1.0f / hdr_scene_encode_scale,
@@ -3646,7 +3718,7 @@ static void hdr_present( GLuint dstFbo ) {
 		qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 6, r2 );
 		{
 			float as, an, p7[4];
-			hdr_aces_stretch( H, &as, &an );
+			hdr_shoulder_params( hdr_rolloff_mode, H, &as, &an );
 			p7[0] = as; p7[1] = an; p7[2] = 0.0f; p7[3] = 0.0f;
 			qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 7, p7 );
 		}
