@@ -167,6 +167,12 @@ check ran into.
    finished display RGB in "v".  Declarations are in ACES2_ARB_DECLS
    above; this is instructions only. */
 #define ACES2_ARB_TRANSFORM_BODY \
+	/* Scene exposure.  The frontend's paper-white setting arrives in \
+	   gm.w as a multiplier on the scene rather than on the output: an \
+	   absolute transform decides luminance itself, so the way to honour \
+	   a brightness control is to change what it is looking at, not to \
+	   scale what it produced. */ \
+	"MUL lin,lin,gm.w;\n" \
 	"DP3 a.x,lin,p1A;\n" \
 	"DP3 a.y,lin,p1B;\n" \
 	"DP3 a.z,lin,p1C;\n" \

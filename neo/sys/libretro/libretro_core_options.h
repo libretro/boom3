@@ -448,8 +448,10 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "that range per channel, which arrives at the transform as extra "
       "saturation it then has to undo. It is also absolute: it decides "
       "luminance itself from the display's peak, so the Paper White "
-      "setting does not apply to it - mid grey lands at 14.5 nits on a "
-      "1000 nit display because that is where the transform puts it.",
+      "setting acts on it as exposure rather than as a straight output "
+      "multiply: the scene is exposed by it and the transform then "
+      "decides luminance, so the setting still moves the picture where "
+      "it says while the highlight roll-off stays the transform's.",
       NULL,
       NULL,
       {

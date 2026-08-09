@@ -159,7 +159,7 @@ static const char *aces2_fs =
 "  return toAp0 * clamp(toAp1 * aces, 0.0, upper);\n"
 "}\n"
 "void main(){\n"
-"  vec3 aces = clampAP0toAP1(uInput, uGm.y);\n"
+"  vec3 aces = clampAP0toAP1(uInput * uGm.w, uGm.y);\n"
 "  vec3 JMh = rgbToJMh(aces, uInRgbToCam, uInConeToAab, uInScalars);\n"
 "  float lin = jToY(JMh.x, uInScalars)*0.01;\n"
 "  float tmJ = yToJ(tsFwd(lin), uInScalars);\n"

@@ -188,6 +188,11 @@ static GLuint hdr_aces2_lut;
 static int    hdr_aces2_loc[11];
 static int    hdr_aces2_loc_lut = -1;
 static bool   hdr_aces2_warned_expand = false;
+/* The frontend's paper white, as a multiplier on the scene.  ACES 2.0
+ * decides output luminance itself, so a brightness control has to act on
+ * what it is looking at rather than on what it produced - scaling the
+ * output would just undo its calibration. */
+static float  hdr_aces2_exposure = 1.0f;
 static double hdr_aces2_scales[4];
 static aces2Params_t *hdr_aces2_params;
 
@@ -231,7 +236,8 @@ static void hdr_aces2_set_uniforms( void ) {
 			(float)p->gamut.focus_dist );
 	if ( hdr_aces2_loc[9] >= 0 )
 		glUniform4f( hdr_aces2_loc[9], (float)p->gamut.lower_hull_gamma_inv,
-			(float)p->ts.forward_limit, 0.5f / (float)ACES2_LUT_WIDTH, 0.0f );
+			(float)p->ts.forward_limit, 0.5f / (float)ACES2_LUT_WIDTH,
+			hdr_aces2_exposure );
 	if ( hdr_aces2_loc[10] >= 0 )
 		glUniform4f( hdr_aces2_loc[10], (float)hdr_aces2_scales[0],
 			(float)hdr_aces2_scales[1], (float)hdr_aces2_scales[2],
@@ -2151,7 +2157,8 @@ static const char *hdr_fs_src =
 	"  return toAp0 * clamp(toAp1 * aces, 0.0, upper);\n"
 	"}\n"
 	"vec3 aces2Transform(vec3 sceneRGB) {\n"
-	"  vec3 aces = clampAP0toAP1(sceneRGB, uGm.y);\n"
+	/* paper white as scene exposure - see the note in aces2_arb.h */
+	"  vec3 aces = clampAP0toAP1(sceneRGB * uGm.w, uGm.y);\n"
 	"  vec3 JMh = rgbToJMh(aces, uInRgbToCam, uInConeToAab, uInScalars);\n"
 	"  float lin = jToY(JMh.x, uInScalars)*0.01;\n"
 	"  float tmJ = yToJ(tsFwd(lin), uInScalars);\n"
@@ -3797,7 +3804,9 @@ static void hdr_aces2_set_env( void ) {
 	ACES2_ENV( 27,
 		(float)p->gamut.lower_hull_gamma_inv, (float)p->ts.forward_limit,
 		/* half a texel, so the fetch lands on a texel centre */
-		0.5f / (float)ACES2_LUT_WIDTH, 0.0f );
+		0.5f / (float)ACES2_LUT_WIDTH,
+		/* scene exposure from the frontend's paper white */
+		hdr_aces2_exposure );
 	ACES2_ENV( 28,
 		(float)hdr_aces2_scales[0], (float)hdr_aces2_scales[1],
 		(float)hdr_aces2_scales[2], (float)hdr_aces2_scales[3] );
@@ -5096,6 +5105,15 @@ static void hdr_present( GLuint dstFbo ) {
 		 * is the point of an absolute transform. */
 		const bool aces2Abs = ( hdr_rolloff_mode == HDR_ROLLOFF_ACES2FULL
 				&& hdr_aces2_lut != 0 );
+		/* The paper-white setting still does what a brightness control
+		 * should, it just acts a stage earlier: the scene is exposed by
+		 * paperWhite/100 and the transform then decides luminance from
+		 * that.  Measured at a 1000 nit peak, scene white leaves at 107
+		 * nits for a setting of 100 and 206 for 200 - so the setting
+		 * still moves the picture roughly where it says, while the
+		 * highlight roll-off stays the transform's rather than becoming
+		 * a straight multiply. */
+		hdr_aces2_exposure = aces2Abs ? ( paperWhite / 100.0f ) : 1.0f;
 		const float p0[4] = { ( aces2Abs ? 100.0f : paperWhite ) / 10000.0f, H,
 				(float)hdr_rolloff_mode, 0.75f };
 		const float p1[4] = { (float)hdr_expand_mode, eknee,
