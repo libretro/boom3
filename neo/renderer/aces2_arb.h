@@ -48,8 +48,8 @@ check ran into.
 /* Takes the Aab pair in src.xy - x is a, y is b - and leaves the hue
  * angle in radians in r.x.  Clobbers a, b, z, z2, t. */
 #define ACES2_ARB_ATAN2 \
-	"PARAM kAtanP = { 0.99997726, -0.33262347, 0.19354346, -0.11643287 };\n" \
-	"PARAM kAtanQ = { 0.05265332, -0.01172120, 1.5707963268, 3.1415926536 };\n" \
+	"PARAM a2AtanP = { 0.99997726, -0.33262347, 0.19354346, -0.11643287 };\n" \
+	"PARAM a2AtanQ = { 0.05265332, -0.01172120, 1.5707963268, 3.1415926536 };\n" \
 	"ABS a, src;\n" \
 	"MAX b.x, a.x, a.y;\n" \
 	"MIN b.y, a.x, a.y;\n" \
@@ -57,18 +57,18 @@ check ran into.
 	"RCP b.x, b.x;\n" \
 	"MUL z.x, b.y, b.x;\n" \
 	"MUL z2.x, z.x, z.x;\n" \
-	"MAD r.x, z2.x, kAtanQ.y, kAtanQ.x;\n" \
-	"MAD r.x, r.x, z2.x, kAtanP.w;\n" \
-	"MAD r.x, r.x, z2.x, kAtanP.z;\n" \
-	"MAD r.x, r.x, z2.x, kAtanP.y;\n" \
-	"MAD r.x, r.x, z2.x, kAtanP.x;\n" \
+	"MAD r.x, z2.x, a2AtanQ.y, a2AtanQ.x;\n" \
+	"MAD r.x, r.x, z2.x, a2AtanP.w;\n" \
+	"MAD r.x, r.x, z2.x, a2AtanP.z;\n" \
+	"MAD r.x, r.x, z2.x, a2AtanP.y;\n" \
+	"MAD r.x, r.x, z2.x, a2AtanP.x;\n" \
 	"MUL r.x, r.x, z.x;\n" \
 	/* |y| > |x| folds the octant */ \
 	"SUB t.x, a.x, a.y;\n" \
-	"SUB t.y, kAtanQ.z, r.x;\n" \
+	"SUB t.y, a2AtanQ.z, r.x;\n" \
 	"CMP r.x, t.x, t.y, r.x;\n" \
 	/* x < 0 folds the half plane */ \
-	"SUB t.y, kAtanQ.w, r.x;\n" \
+	"SUB t.y, a2AtanQ.w, r.x;\n" \
 	"CMP r.x, src.x, t.y, r.x;\n" \
 	/* y < 0 mirrors it */ \
 	"SUB t.y, 0.0, r.x;\n" \
@@ -126,7 +126,12 @@ check ran into.
    the native-limits query at load and a fallback when it fails.
 */
 
-#define ACES2_ARB_TRANSFORM_BODY \
+/* The transform's own registers, kept apart from its body.  The
+   composite declares its own, and a program that declares a name twice
+   is rejected outright - so these are spliced in only for the mode that
+   needs them, rather than charged to every other curve's temporary
+   budget. */
+#define ACES2_ARB_DECLS \
 	"PARAM inA=program.env[10];\n" \
 	"PARAM inB=program.env[11];\n" \
 	"PARAM inC=program.env[12];\n" \
@@ -152,13 +157,18 @@ check ran into.
 	"PARAM p0A=program.env[32];\n" \
 	"PARAM p0B=program.env[33];\n" \
 	"PARAM p0C=program.env[34];\n" \
-		"PARAM kA={0.99997726,-0.33262347,0.19354346,-0.11643287};\n" \
-	"PARAM kB={0.05265332,-0.01172120,1.5707963268,3.1415926536};\n" \
-	"PARAM kC={0.42,27.13,100.0,0.0027777778};\n" \
-	"PARAM kH={11.34072,16.46899,7.88380,77.12896};\n" \
-	"PARAM kH2={14.66441,-6.37224,9.19364,0.0};\n" \
-	"PARAM kE={2.3809523809,57.2957795131,0.5,1.0};\n" \
-	"TEMP a,b,c,d,e,f,g,h,mc,n,o,q,r,s,t,u,v,w,z,Jl,Mc,L,cu,ab;\n" \
+	"PARAM a2A={0.99997726,-0.33262347,0.19354346,-0.11643287};\n" \
+	"PARAM a2B={0.05265332,-0.01172120,1.5707963268,3.1415926536};\n" \
+	"PARAM a2C={0.42,27.13,100.0,0.0027777778};\n" \
+	"PARAM a2H={11.34072,16.46899,7.88380,77.12896};\n" \
+	"PARAM a2H2={14.66441,-6.37224,9.19364,0.0};\n" \
+	"PARAM a2E={2.3809523809,57.2957795131,0.5,1.0};\n" \
+	"TEMP b,c,f,mc,o,q,w,z,Jl,Mc,L,cu,ab;\n"
+
+/* The transform itself.  Consumes the composite's "lin" and leaves
+   finished display RGB in "v".  Declarations are in ACES2_ARB_DECLS
+   above; this is instructions only. */
+#define ACES2_ARB_TRANSFORM_BODY \
 	"DP3 a.x,lin,p1A;\n" \
 	"DP3 a.y,lin,p1B;\n" \
 	"DP3 a.z,lin,p1C;\n" \
@@ -171,10 +181,10 @@ check ran into.
 	"DP3 c.y,b,inB;\n" \
 	"DP3 c.z,b,inC;\n" \
 	"ABS d,c;\n" \
-	"POW d.x,d.x,kC.x;\n" \
-	"POW d.y,d.y,kC.x;\n" \
-	"POW d.z,d.z,kC.x;\n" \
-	"ADD e,d,kC.y;\n" \
+	"POW d.x,d.x,a2C.x;\n" \
+	"POW d.y,d.y,a2C.x;\n" \
+	"POW d.z,d.z,a2C.x;\n" \
+	"ADD e,d,a2C.y;\n" \
 	"RCP e.x,e.x;\n" \
 	"RCP e.y,e.y;\n" \
 	"RCP e.z,e.z;\n" \
@@ -186,7 +196,7 @@ check ran into.
 	"DP3 f.z,d,caC;\n" \
 	"MAX g.x,f.x,0.0000001;\n" \
 	"POW g.x,g.x,inS.y;\n" \
-	"MUL Jl.x,g.x,kC.z;\n" \
+	"MUL Jl.x,g.x,a2C.z;\n" \
 	"MUL g.y,f.y,f.y;\n" \
 	"MAD g.y,f.z,f.z,g.y;\n" \
 	"RSQ g.z,g.y;\n" \
@@ -200,24 +210,24 @@ check ran into.
 	"RCP b.x,b.x;\n" \
 	"MUL z.x,b.y,b.x;\n" \
 	"MUL z.y,z.x,z.x;\n" \
-	"MAD r.x,z.y,kB.y,kB.x;\n" \
-	"MAD r.x,r.x,z.y,kA.w;\n" \
-	"MAD r.x,r.x,z.y,kA.z;\n" \
-	"MAD r.x,r.x,z.y,kA.y;\n" \
-	"MAD r.x,r.x,z.y,kA.x;\n" \
+	"MAD r.x,z.y,a2B.y,a2B.x;\n" \
+	"MAD r.x,r.x,z.y,a2A.w;\n" \
+	"MAD r.x,r.x,z.y,a2A.z;\n" \
+	"MAD r.x,r.x,z.y,a2A.y;\n" \
+	"MAD r.x,r.x,z.y,a2A.x;\n" \
 	"MUL r.x,r.x,z.x;\n" \
 	"SUB t.x,a.x,a.y;\n" \
-	"SUB t.y,kB.z,r.x;\n" \
+	"SUB t.y,a2B.z,r.x;\n" \
 	"CMP r.x,t.x,t.y,r.x;\n" \
-	"SUB t.y,kB.w,r.x;\n" \
+	"SUB t.y,a2B.w,r.x;\n" \
 	"CMP r.x,ab.x,t.y,r.x;\n" \
 	"SUB t.y,0.0,r.x;\n" \
 	"CMP r.x,ab.y,t.y,r.x;\n" \
-	"MUL h.x,r.x,kE.y;\n" \
+	"MUL h.x,r.x,a2E.y;\n" \
 	"ADD t.x,h.x,360.0;\n" \
 	"CMP h.x,h.x,t.x,h.x;\n" \
 	"ADD t.x,h.x,0.5;\n" \
-	"MUL t.x,t.x,kC.w;\n" \
+	"MUL t.x,t.x,a2C.w;\n" \
 	"MOV t.y,0.5;\n" \
 	"TEX L,t,texture[3],2D;\n" \
 	"MUL L,L,lsc;\n" \
@@ -228,9 +238,9 @@ check ran into.
 	"SUB t.z,1.0,t.y;\n" \
 	"MAX t.z,t.z,0.000001;\n" \
 	"RCP t.z,t.z;\n" \
-	"MUL t.y,t.y,kC.y;\n" \
+	"MUL t.y,t.y,a2C.y;\n" \
 	"MUL t.y,t.y,t.z;\n" \
-	"POW t.y,t.y,kE.x;\n" \
+	"POW t.y,t.y,a2E.x;\n" \
 	"RCP t.z,inS.x;\n" \
 	"MUL t.y,t.y,t.z;\n" \
 	"MUL t.y,t.y,0.01;\n" \
@@ -247,16 +257,16 @@ check ran into.
 	"RCP u.x,u.x;\n" \
 	"MUL t.w,t.w,u.x;\n" \
 	"MAX t.w,t.w,0.0;\n" \
-	"MUL t.w,t.w,kC.z;\n" \
+	"MUL t.w,t.w,a2C.z;\n" \
 	"MUL u.y,t.w,inS.x;\n" \
-	"POW u.y,u.y,kC.x;\n" \
-	"ADD u.z,u.y,kC.y;\n" \
+	"POW u.y,u.y,a2C.x;\n" \
+	"ADD u.z,u.y,a2C.y;\n" \
 	"RCP u.z,u.z;\n" \
 	"MUL u.y,u.y,u.z;\n" \
 	"RCP u.z,inS.w;\n" \
 	"MUL u.y,u.y,u.z;\n" \
 	"POW u.y,u.y,inS.y;\n" \
-	"MUL n.x,u.y,kC.z;\n" \
+	"MUL n.x,u.y,a2C.z;\n" \
 	"RCP q.x,cc.x;\n" \
 	"MUL q.x,n.x,q.x;\n" \
 	"SUB q.y,1.0,q.x;\n" \
@@ -276,13 +286,13 @@ check ran into.
 	"MUL v.w,v.w,w.z;\n" \
 	"MUL v.w,v.w,-4.0;\n" \
 	"MAD v.w,3.0,w.z,v.w;\n" \
-	"MUL o.x,w.y,kH.x;\n" \
-	"MAD o.x,v.x,kH.y,o.x;\n" \
-	"MAD o.x,v.z,kH.z,o.x;\n" \
-	"MAD o.x,w.z,kH2.x,o.x;\n" \
-	"MAD o.x,v.y,kH2.y,o.x;\n" \
-	"MAD o.x,v.w,kH2.z,o.x;\n" \
-	"ADD o.x,o.x,kH.w;\n" \
+	"MUL o.x,w.y,a2H.x;\n" \
+	"MAD o.x,v.x,a2H.y,o.x;\n" \
+	"MAD o.x,v.z,a2H.z,o.x;\n" \
+	"MAD o.x,w.z,a2H2.x,o.x;\n" \
+	"MAD o.x,v.y,a2H2.y,o.x;\n" \
+	"MAD o.x,v.w,a2H2.z,o.x;\n" \
+	"ADD o.x,o.x,a2H.w;\n" \
 	"MUL o.x,o.x,cc2.y;\n" \
 	"MAX o.y,q.x,0.0000001;\n" \
 	"POW o.y,o.y,cc.y;\n" \
@@ -572,15 +582,15 @@ check ran into.
 	"RCP n.y,n.y;\n" \
 	"RCP n.z,n.z;\n" \
 	"RCP n.w,n.w;\n" \
-	"MUL mc.x,mc.x,kC.y;\n" \
+	"MUL mc.x,mc.x,a2C.y;\n" \
 	"MUL mc.x,mc.x,n.y;\n" \
-	"MUL mc.y,mc.y,kC.y;\n" \
+	"MUL mc.y,mc.y,a2C.y;\n" \
 	"MUL mc.y,mc.y,n.z;\n" \
-	"MUL mc.z,mc.z,kC.y;\n" \
+	"MUL mc.z,mc.z,a2C.y;\n" \
 	"MUL mc.z,mc.z,n.w;\n" \
-	"POW mc.x,mc.x,kE.x;\n" \
-	"POW mc.y,mc.y,kE.x;\n" \
-	"POW mc.z,mc.z,kE.x;\n" \
+	"POW mc.x,mc.x,a2E.x;\n" \
+	"POW mc.y,mc.y,a2E.x;\n" \
+	"POW mc.z,mc.z,a2E.x;\n" \
 	"SUB o.x,0.0,mc.x;\n" \
 	"CMP mc.x,g.x,o.x,mc.x;\n" \
 	"SUB o.x,0.0,mc.y;\n" \
@@ -591,4 +601,23 @@ check ran into.
 	"DP3 v.y,mc,lrB;\n" \
 	"DP3 v.z,mc,lrC;\n"
 
-#endif /* !__ACES2_ARB_H__ */
+#endif /* !__ACES2_ARB_H__ *//*
+   Assembled inside the real composite rather than alone: 511 ALU and 29
+   temporaries, under this driver's native limits.  Two collisions had to
+   be resolved to get there and neither is subtle once seen.
+
+   The composite already defines a PARAM called kE - Euler's number, for
+   the GT curve - and this file had its own kE holding something else
+   entirely.  ARB rejects a duplicate name outright, which is the good
+   case; the bad case would have been silent reuse.  Everything here now
+   carries an a2 prefix.
+
+   The temporaries overlapped too.  The composite declares sixteen and
+   this declared twenty-four with most of the single letters in common,
+   so only the thirteen it does not already have are declared now.  That
+   is also why the declarations sit in their own macro: they are spliced
+   in for this mode only, rather than charging every other curve for
+   registers it will never touch.
+*/
+
+

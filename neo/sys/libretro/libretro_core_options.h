@@ -460,6 +460,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
          { "unreal",    "Unreal" },
          { "neutral",   "Khronos PBR Neutral" },
          { "agx",       "AgX" },
+         { "aces2full", "ACES 2.0 (Full Output Transform)" },
          { "drago",     "Drago (Logarithmic)" },
          { "expo",      "Exponential" },
          { "tumblin",   "Tumblin-Rushmeier (Classic)" },

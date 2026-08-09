@@ -52,6 +52,8 @@ extern "C" {
 #include "framework/Session_local.h"
 #include "renderer/ModelManager.h"
 #include "renderer/tr_local.h"
+#include "renderer/aces2_jmh.h"
+#include "renderer/aces2_arb.h"
 #include "sys/libretro/retro_public.h"
 #include "sys/sys_local.h"
 #include "sound/snd_local.h"
@@ -163,7 +165,8 @@ enum {
 	HDR_ROLLOFF_JODIE     = 19,
 	HDR_ROLLOFF_ACESFIT   = 20,
 	HDR_ROLLOFF_NEUTRAL   = 21,
-	HDR_ROLLOFF_AGX       = 22
+	HDR_ROLLOFF_AGX       = 22,
+	HDR_ROLLOFF_ACES2FULL = 23
 };
 
 #define HDR_ROLLOFF_FIRST_RGB HDR_ROLLOFF_JODIE
@@ -172,6 +175,12 @@ static int    hdr_rolloff_mode  = HDR_ROLLOFF_REINHARD;   /* live-switchable */
  * 0.22 and 0.4; every other constant in the curve is derived from them,
  * so they are solved once per present rather than baked into the
  * shaders the way they used to be. */
+/* Peak nits the frontend reports; the ACES 2.0 tables are solved for it.
+ * Declared with the shared HDR state rather than beside the rest of the
+ * ACES 2.0 resources, because it is written on the common path and read
+ * on the desktop one - put it with the resources and the GLES build
+ * compiles the writer without the declaration. */
+static float  hdr_aces2_wanted_peak = 1000.0f;
 static float  hdr_gt_toe        = 0.22f;
 static float  hdr_gt_shoulder   = 0.40f;
 static int    hdr_expand_mode   = 0;       /* 0 none, 1 per-channel inverse tonemap, 2 hue-preserving; live-switchable */
@@ -666,6 +675,7 @@ static void update_variables(bool startup)
 		else if (!strcmp(var.value, "acesfit"))   hdr_rolloff_mode = HDR_ROLLOFF_ACESFIT;
 		else if (!strcmp(var.value, "neutral"))   hdr_rolloff_mode = HDR_ROLLOFF_NEUTRAL;
 		else if (!strcmp(var.value, "agx"))       hdr_rolloff_mode = HDR_ROLLOFF_AGX;
+		else if (!strcmp(var.value, "aces2full")) hdr_rolloff_mode = HDR_ROLLOFF_ACES2FULL;
 		else if (!strcmp(var.value, "rplain"))    hdr_rolloff_mode = HDR_ROLLOFF_RPLAIN;
 		else if (!strcmp(var.value, "rext"))      hdr_rolloff_mode = HDR_ROLLOFF_REXT;
 		else if (!strcmp(var.value, "expo"))      hdr_rolloff_mode = HDR_ROLLOFF_EXPO;
@@ -2847,6 +2857,16 @@ static const char *hdr_arb_up_fs_src =
 	"POW t.z, u.z, kGamma22.x;\n" \
 	"MUL t, t, 1.4491792;\n"
 
+/* ACES 2.0, complete.  Unlike every other entry here this is not a tone
+   curve but the whole output transform: it consumes the scene colour in
+   lin and leaves finished display RGB there.  It therefore runs without
+   the shoulder, and the gamut matrix that follows is fed identity rows
+   for this mode because the transform has already landed in the display
+   primaries. */
+#define HDR_ARB_CURVE_ACES2FULL \
+	ACES2_ARB_TRANSFORM_BODY \
+	"MOV lin, v;\n"
+
 #define HDR_ARB_COMPOSITE_TAIL \
 	/* lin += bloomAmt * bl */ \
 	"MAD lin, bl, program.env[2].y, lin;\n" \
@@ -2909,7 +2929,12 @@ static const char *hdr_arb_up_fs_src =
 	   with four curves chained. */ \
 	/* the curve macro is spliced in here at build time */
 
-#define HDR_ARB_COMPOSITE_TAIL2 \
+/* The shoulder that carries a tone curve's output up into the display
+   headroom.  Separate from the encode below because a complete output
+   transform - ACES 2.0 - already decides its own top end, and putting
+   this on top of one would compress a range that has already been
+   compressed. */
+#define HDR_ARB_COMPOSITE_SHOULDER \
 	/* shoulder above paper white, carrying the curve out to H:
 	   1 + e*A*slope/(e + A), taken where e > 0 */ \
 	"SUB v, lin, 1.0;\n" \
@@ -2928,6 +2953,8 @@ static const char *hdr_arb_up_fs_src =
 	"MIN t, lin, 1.0;\n" \
 	"SUB v.x, program.env[0].y, 1.0001;\n" \
 	"CMP lin, v.x, t, r;\n" \
+	
+#define HDR_ARB_COMPOSITE_TAIL2 \
 	/* ---- gamut, scale, PQ ---- */ \
 	"DP3 r.x, lin, program.env[4];\n" \
 	"DP3 r.y, lin, program.env[5];\n" \
@@ -2984,6 +3011,7 @@ static const char *hdr_arb_curve_src( int mode ) {
 	case HDR_ROLLOFF_ACESFIT:   return HDR_ARB_CURVE_ACESFIT;
 	case HDR_ROLLOFF_NEUTRAL:   return HDR_ARB_CURVE_NEUTRAL;
 	case HDR_ROLLOFF_AGX:       return HDR_ARB_CURVE_AGX;
+	case HDR_ROLLOFF_ACES2FULL: return HDR_ARB_CURVE_ACES2FULL;
 	case HDR_ROLLOFF_RPLAIN:    return HDR_ARB_CURVE_RPLAIN;
 	case HDR_ROLLOFF_REXT:      return HDR_ARB_CURVE_REXT;
 	case HDR_ROLLOFF_EXPO:      return HDR_ARB_CURVE_EXPO;
@@ -3002,9 +3030,14 @@ static const char *hdr_arb_composite_src( int mode, bool twoBand ) {
 	static char buf[2][16384];
 	char *p = buf[twoBand ? 1 : 0];
 
-	idStr::snPrintf( p, sizeof( buf[0] ), "%s%s%s%s%s%s",
+	idStr::snPrintf( p, sizeof( buf[0] ), "%s%s%s%s%s%s%s%s",
 			"!!ARBfp1.0\n"
-			"OPTION ARB_precision_hint_nicest;\n"
+			"OPTION ARB_precision_hint_nicest;\n",
+			/* ACES 2.0 brings its own registers; every other curve uses
+			 * the composite's, and charging them all for registers only
+			 * one mode needs would push the rest toward the limits for
+			 * nothing. */
+			mode == HDR_ROLLOFF_ACES2FULL ? ACES2_ARB_DECLS : "",
 			HDR_ARB_COMPOSITE_BODY
 			"TEX bl, fragment.texcoord[0], texture[1], 2D;\n"
 			"MUL bl, bl, program.env[2].z;\n",
@@ -3012,6 +3045,7 @@ static const char *hdr_arb_composite_src( int mode, bool twoBand ) {
 					  "MAD bl, t, program.env[2].w, bl;\n" : "",
 			HDR_ARB_COMPOSITE_TAIL,
 			hdr_arb_curve_src( mode ),
+			mode == HDR_ROLLOFF_ACES2FULL ? "" : HDR_ARB_COMPOSITE_SHOULDER,
 			HDR_ARB_COMPOSITE_TAIL2,
 			"" );
 	return p;
@@ -3418,6 +3452,138 @@ static bool hdr_arb_available( void ) {
 */
 static bool hdr_arb_ready( void );
 
+/* ---- ACES 2.0 resources ----
+ *
+ * The three hue tables live in one RGBA16 texture on unit 3, and the
+ * transform's constants in env registers 10 upward.  Both are rebuilt
+ * only when the peak luminance changes, which is a core option rather
+ * than a per-frame quantity.
+ */
+/* Only the vector form of the env setter is resolved in this build, so
+ * the four scalars go through a local. */
+#define ACES2_ENV( reg, x, y, z, w ) do { \
+		const float envv[4] = { (x), (y), (z), (w) }; \
+		qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, (reg), envv ); \
+	} while ( 0 )
+
+static GLuint hdr_aces2_lut;
+static float  hdr_aces2_peak;
+static double hdr_aces2_scales[4];
+static aces2Params_t *hdr_aces2_params;
+
+static void hdr_aces2_free( void ) {
+	if ( hdr_aces2_lut ) {
+		glDeleteTextures( 1, &hdr_aces2_lut );
+		hdr_aces2_lut = 0;
+	}
+	if ( hdr_aces2_params ) {
+		free( hdr_aces2_params );
+		hdr_aces2_params = NULL;
+	}
+	hdr_aces2_peak = 0.0f;
+}
+
+static bool hdr_aces2_build( float peakLuminance ) {
+	/* Rec.2020 - the transform lands directly in the composite's output
+	 * primaries, which is what lets the gamut matrix after it be fed
+	 * identity rows instead of rotating an already-finished colour. */
+	static const double rec2020[8] = {
+		0.708, 0.292, 0.170, 0.797, 0.131, 0.046, 0.3127, 0.3290 };
+	static unsigned short lut[ACES2_LUT_WIDTH * 4];
+
+	if ( hdr_aces2_lut && hdr_aces2_peak == peakLuminance ) {
+		return true;
+	}
+	hdr_aces2_free();
+
+	hdr_aces2_params = (aces2Params_t *)calloc( 1, sizeof( aces2Params_t ) );
+	if ( !hdr_aces2_params ) {
+		return false;
+	}
+	ACES2_Init( rec2020, peakLuminance, hdr_aces2_params );
+	ACES2_PackHueTables( hdr_aces2_params, lut, hdr_aces2_scales );
+
+	glGenTextures( 1, &hdr_aces2_lut );
+	glActiveTexture( GL_TEXTURE3 );
+	glBindTexture( GL_TEXTURE_2D, hdr_aces2_lut );
+	while ( glGetError() != GL_NO_ERROR ) {
+	}
+	glTexImage2D( GL_TEXTURE_2D, 0, GL_RGBA16, ACES2_LUT_WIDTH, 1, 0,
+				  GL_RGBA, GL_UNSIGNED_SHORT, lut );
+	if ( glGetError() != GL_NO_ERROR ) {
+		/* no normalised 16-bit texture here - GLES in particular.  The
+		 * caller falls back to the tone scale rather than rendering
+		 * through a table that never arrived. */
+		hdr_aces2_free();
+		glActiveTexture( GL_TEXTURE0 );
+		return false;
+	}
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
+	glActiveTexture( GL_TEXTURE0 );
+
+	hdr_aces2_peak = peakLuminance;
+	return true;
+}
+
+/* The appearance matrices are applied on the CPU as row-vector times
+ * matrix, so DP3 wants their COLUMNS; the AP0 to AP1 pair are applied
+ * the other way, so those want their rows.  Getting this backwards
+ * costs a picture that looks merely wrong rather than broken. */
+static void hdr_aces2_env_col( int reg, const double m[9], int col ) {
+	ACES2_ENV( reg,
+		(float)m[0*3+col], (float)m[1*3+col], (float)m[2*3+col], 0.0f );
+}
+
+static void hdr_aces2_env_row( int reg, const double m[9], int row ) {
+	ACES2_ENV( reg,
+		(float)m[row*3+0], (float)m[row*3+1], (float)m[row*3+2], 0.0f );
+}
+
+static void hdr_aces2_set_env( void ) {
+	static const double AP0_TO_AP1[9] = {
+		 1.4514393161, -0.2365107469, -0.2149285693,
+		-0.0765537733,  1.1762296998, -0.0996759265,
+		 0.0083161484, -0.0060324498,  0.9977163014 };
+	static const double AP1_TO_AP0[9] = {
+		 0.6954522414,  0.1406786965,  0.1638690622,
+		 0.0447945634,  0.8596711185,  0.0955343182,
+		-0.0055258826,  0.0040252103,  1.0015006723 };
+	const aces2Params_t *p = hdr_aces2_params;
+	int r;
+
+	if ( !p ) {
+		return;
+	}
+	for ( r = 0; r < 3; r++ ) {
+		hdr_aces2_env_col( 10 + r, p->input.RGB_to_CAM16_c, r );
+		hdr_aces2_env_col( 13 + r, p->input.cone_to_Aab, r );
+		hdr_aces2_env_col( 16 + r, p->limit.Aab_to_cone, r );
+		hdr_aces2_env_col( 19 + r, p->limit.CAM16_c_to_RGB, r );
+		hdr_aces2_env_row( 29 + r, AP0_TO_AP1, r );
+		hdr_aces2_env_row( 32 + r, AP1_TO_AP0, r );
+	}
+	ACES2_ENV( 22,
+		(float)p->input.F_L_n, (float)p->input.cz, (float)p->input.inv_cz, (float)p->input.A_w_J );
+	ACES2_ENV( 23,
+		(float)p->limit.F_L_n, (float)p->limit.cz, (float)p->limit.inv_cz, (float)p->limit.A_w_J );
+	ACES2_ENV( 24,
+		(float)p->ts.m_2, (float)p->ts.s_2, (float)p->ts.g, (float)p->ts.t_1 );
+	ACES2_ENV( 25,
+		(float)p->chroma.limit_J_max, (float)p->chroma.model_gamma_inv,
+		(float)p->chroma.sat, (float)p->chroma.sat_thr );
+	ACES2_ENV( 26,
+		(float)p->chroma.compr, (float)p->chroma.chroma_compress_scale,
+		(float)p->gamut.mid_J, (float)p->gamut.focus_dist );
+	ACES2_ENV( 27,
+		(float)p->gamut.lower_hull_gamma_inv, (float)p->ts.forward_limit, 0.0f, 0.0f );
+	ACES2_ENV( 28,
+		(float)hdr_aces2_scales[0], (float)hdr_aces2_scales[1],
+		(float)hdr_aces2_scales[2], (float)hdr_aces2_scales[3] );
+}
+
 static bool hdr_arb_load( GLenum target, const char *text, GLuint *out, const char *what ) {
 	GLuint id = 0;
 	GLint  ofs = -1;
@@ -3546,6 +3712,20 @@ static int hdr_conv_levels( int w, int h ) {
    per frame, does work only on change. Context loss zeroes the ids. */
 static bool hdr_ensure_target( int w, int h ) {
 #ifndef HAVE_OPENGLES
+	if ( hdr_rolloff_mode == HDR_ROLLOFF_ACES2FULL ) {
+		/* Peak luminance the transform is solved for.  If the tables or
+		 * the 16-bit texture cannot be built - GLES has no normalised
+		 * 16-bit format - the mode falls back to the ACES 2.0 tone
+		 * scale, which is a curve and needs neither. */
+		if ( !hdr_aces2_build( hdr_aces2_wanted_peak > 0.0f ? hdr_aces2_wanted_peak : 1000.0f ) ) {
+			if ( log_cb ) {
+				log_cb( RETRO_LOG_WARN,
+					"[boom3] HDR: ACES 2.0 tables unavailable, using the tone scale\n" );
+			}
+			hdr_rolloff_mode = HDR_ROLLOFF_ACES2;
+		}
+	}
+
 	if ( !hdr_arb_ready() ) {
 		return false;
 	}
@@ -4286,6 +4466,8 @@ static void hdr_present( GLuint dstFbo ) {
 	unsigned gamutMode = 0, outMode = 1;
 	environ_cb( RETRO_ENVIRONMENT_GET_HDR_PAPER_WHITE_NITS, &paperWhite );
 	environ_cb( RETRO_ENVIRONMENT_GET_HDR_MAX_NITS, &maxNits );
+	/* the ACES 2.0 tables are solved for this, and rebuilt when it moves */
+	hdr_aces2_wanted_peak = maxNits;
 	environ_cb( RETRO_ENVIRONMENT_GET_HDR_EXPAND_GAMUT, &gamutMode );
 	if ( environ_cb( RETRO_ENVIRONMENT_GET_HDR_OUTPUT_MODE, &outMode ) ) {
 		if ( outMode == 0 && !hdr_warned_sdr && log_cb ) {
@@ -4636,9 +4818,15 @@ static void hdr_present( GLuint dstFbo ) {
 				haveBloom ? hdr_bloom_amount : 0.0f, bandW0, bandW1 };
 		const float p3[4] = { frameN * 3.0f, 0.6180339887f, 1.0f / 1023.0f, 0.0f };
 		/* rows, from the column-major matrix the GLSL upload uses */
-		const float r0[4] = { mat[0], mat[3], mat[6], 0.0f };
-		const float r1[4] = { mat[1], mat[4], mat[7], 0.0f };
-		const float r2[4] = { mat[2], mat[5], mat[8], 0.0f };
+		/* ACES 2.0 lands in the output primaries itself, so the gamut
+		 * stage that follows it is fed identity rows.  Rotating an
+		 * already-finished colour a second time is the failure this
+		 * avoids, and it would look like a colour cast rather than
+		 * anything obviously broken. */
+		const bool aces2 = ( hdr_rolloff_mode == HDR_ROLLOFF_ACES2FULL && hdr_aces2_lut != 0 );
+		const float r0[4] = { aces2 ? 1.0f : mat[0], aces2 ? 0.0f : mat[3], aces2 ? 0.0f : mat[6], 0.0f };
+		const float r1[4] = { aces2 ? 0.0f : mat[1], aces2 ? 1.0f : mat[4], aces2 ? 0.0f : mat[7], 0.0f };
+		const float r2[4] = { aces2 ? 0.0f : mat[2], aces2 ? 0.0f : mat[5], aces2 ? 1.0f : mat[8], 0.0f };
 		qglBindProgramARB( GL_FRAGMENT_PROGRAM_ARB,
 				bandW1 > 0.0f ? hdr_arb_comp2 : hdr_arb_comp1 );
 		qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 0, p0 );
@@ -4648,6 +4836,12 @@ static void hdr_present( GLuint dstFbo ) {
 		qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 4, r0 );
 		qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 5, r1 );
 		qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 6, r2 );
+		if ( aces2 ) {
+			hdr_aces2_set_env();
+			glActiveTexture( GL_TEXTURE3 );
+			glBindTexture( GL_TEXTURE_2D, hdr_aces2_lut );
+			glActiveTexture( GL_TEXTURE0 );
+		}
 		{
 			float as, an, p7[4];
 			hdr_shoulder_params( hdr_rolloff_mode, H, &as, &an );
