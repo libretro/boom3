@@ -3578,7 +3578,9 @@ static void hdr_aces2_set_env( void ) {
 		(float)p->chroma.compr, (float)p->chroma.chroma_compress_scale,
 		(float)p->gamut.mid_J, (float)p->gamut.focus_dist );
 	ACES2_ENV( 27,
-		(float)p->gamut.lower_hull_gamma_inv, (float)p->ts.forward_limit, 0.0f, 0.0f );
+		(float)p->gamut.lower_hull_gamma_inv, (float)p->ts.forward_limit,
+		/* half a texel, so the fetch lands on a texel centre */
+		0.5f / (float)ACES2_LUT_WIDTH, 0.0f );
 	ACES2_ENV( 28,
 		(float)hdr_aces2_scales[0], (float)hdr_aces2_scales[1],
 		(float)hdr_aces2_scales[2], (float)hdr_aces2_scales[3] );

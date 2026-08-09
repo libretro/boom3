@@ -1260,13 +1260,33 @@ void ACES2_PackHueTables( const aces2Params_t *p, unsigned short *rgba16,
 	scales[2] = maxR * 1.01;
 	scales[3] = maxG * 1.01;
 
-	for ( i = 0; i < ACES2_TABLE_SIZE; i++ ) {
-		const int s = i + ACES2_BASE_INDEX;
+	for ( i = 0; i < ACES2_LUT_WIDTH; i++ ) {
+		/* sample the tables at this texel's hue rather than copying
+		 * entries across - the cusp table is not evenly spaced */
+		const double hue = ( (double)i + 0.5 ) * ( 360.0 / (double)ACES2_LUT_WIDTH );
+		double JM[2];
+		double reach, gam;
+		int lo = (int)hue;
+		double t;
+
+		ACES2_CuspForHue( &p->cusp, hue, JM );
+		t = hue - (double)lo;
+		if ( lo >= ACES2_TABLE_SIZE ) {
+			lo = ACES2_TABLE_SIZE - 1;
+			t = 0.0;
+		}
+		reach = p->chroma.reachM[lo + ACES2_BASE_INDEX]
+			  + ( p->chroma.reachM[lo + ACES2_BASE_INDEX + 1]
+				- p->chroma.reachM[lo + ACES2_BASE_INDEX] ) * t;
+		gam   = p->gamma.gammaInv[lo + ACES2_BASE_INDEX]
+			  + ( p->gamma.gammaInv[lo + ACES2_BASE_INDEX + 1]
+				- p->gamma.gammaInv[lo + ACES2_BASE_INDEX] ) * t;
+
 		const double v[4] = {
-			p->cusp.J[s] / scales[0],
-			p->cusp.M[s] / scales[1],
-			p->chroma.reachM[s] / scales[2],
-			p->gamma.gammaInv[s] / scales[3]
+			JM[0] / scales[0],
+			JM[1] / scales[1],
+			reach / scales[2],
+			gam / scales[3]
 		};
 		int c;
 		for ( c = 0; c < 4; c++ ) {

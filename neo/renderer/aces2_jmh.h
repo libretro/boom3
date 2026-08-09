@@ -262,7 +262,15 @@ past 190, the exponent under 1.  The shader multiplies back.
 ===========================================================================
 */
 
-#define ACES2_LUT_WIDTH		ACES2_TABLE_SIZE
+/* The texture is resampled finer than the table it comes from.  The
+ * table's entries sit on the cube corners so its own interpolation is
+ * accurate, but a shader reading it would have to find the bracketing
+ * pair, and the entries are not evenly spaced.  Resampling onto an even
+ * grid keeps the shader lookup to one arithmetic index and one fetch
+ * with hardware interpolation, and 2048 entries put the residual kink
+ * error at 0.25% of the M range - against 1.4% at one entry per degree,
+ * and 0.04% for the table itself. */
+#define ACES2_LUT_WIDTH		2048
 
 void	ACES2_PackHueTables( const aces2Params_t *p, unsigned short *rgba16,
 							 double scales[4] );

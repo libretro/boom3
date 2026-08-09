@@ -226,8 +226,11 @@ check ran into.
 	"MUL h.x,r.x,a2E.y;\n" \
 	"ADD t.x,h.x,360.0;\n" \
 	"CMP h.x,h.x,t.x,h.x;\n" \
-	"ADD t.x,h.x,0.5;\n" \
-	"MUL t.x,t.x,a2C.w;\n" \
+	/* texel centre: hue/360 plus the half-texel in gm.z.  The width is \
+	   passed in because the packing picks it - a shader that assumed \
+	   360 would sample between entries. */ \
+	"MUL t.x,h.x,a2C.w;\n" \
+	"ADD t.x,t.x,gm.z;\n" \
 	"MOV t.y,0.5;\n" \
 	"TEX L,t,texture[3],2D;\n" \
 	"MUL L,L,lsc;\n" \
