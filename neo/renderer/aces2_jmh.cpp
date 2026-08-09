@@ -7,13 +7,36 @@ This is a port of the corresponding part of the Academy's reference CTL
 (Lib.Academy.OutputTransform.ctl), transcribed rather than reinvented.
 Every constant here comes from that file; none of it is tuned by eye.
 
-What this stage does and does not do.  It converts linear RGB in some set
-of primaries to and from J (lightness), M (colourfulness) and h (hue
-angle), which is the space the rest of ACES 2.0 works in.  The tone
-scale, the chroma compression and the gamut compression are separate
-stages and are not here yet - what ships today under "ACES 2.0 Tone
-Scale" is the tone scale alone, applied per channel, and it stays that
-way until those land.
+This file began as the JMh stage alone and now carries the whole
+transform.  What is here, in the order the reference applies it:
+
+  the AP0 to AP1 clamp
+  linear RGB to and from Hellwig2022 JMh
+  the tone scale, forward and inverse
+  chroma compression, forward and inverse
+  gamut compression, and its two-pass inverse
+  the three hue tables - cusp, reach, upper hull exponent - and the
+  packing that hands them to a shader as one texture
+
+ACES2_OutputTransformFwd assembles those into the forward transform,
+and both shader backends are transcriptions of it rather than separate
+derivations.
+
+What is NOT here, so that the next person does not go looking:
+
+  the assembled inverse.  Every stage has one and they are tested by
+  round trip, but nothing strings them together - the display path only
+  needs the forward direction, and an inverse nobody calls is an
+  inverse nobody notices breaking.
+
+  a wired GLSL path.  The shader exists and is verified; every GLES
+  target in this tree is GLES2, which has no normalised 16-bit texture
+  for the hue tables, so selecting the mode there logs once and falls
+  back to the ACES 2.0 tone scale.
+
+The separate "ACES 2.0 Tone Scale" roll-off is still a roll-off: the
+tone scale alone, applied per channel, with none of the appearance
+model around it.  That is deliberate and its option text says so.
 
 It is CPU-only on purpose.  The two shader backends will need hue tables
 built from this, and the tables are built once at init; getting the maths

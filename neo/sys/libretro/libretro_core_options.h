@@ -436,7 +436,13 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "at 1.29x, Hejl 0.330 at 1.46x, Unreal 0.350 at 1.37x. Lottes is "
       "the outlier - mid grey drops to 0.074 in exchange for a 12.3x "
       "highlight range, so it is far darker and contrastier than the "
-      "rest.",
+      "rest. Two entries mention ACES 2.0 and they are not the same "
+      "thing: 'ACES 2.0 Tone Scale' is that curve alone applied per "
+      "channel, while 'ACES 2.0 (Full Output Transform)' is the whole "
+      "thing - appearance model, chroma compression, gamut compression "
+      "- which desaturates highlights toward white instead of letting "
+      "one channel clip on its own. The full transform is desktop only; "
+      "elsewhere it falls back to the tone scale.",
       NULL,
       NULL,
       {
