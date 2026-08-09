@@ -12,18 +12,39 @@
 #include <string.h>
 #include <GL/osmesa.h>
 #include <GL/gl.h>
+#include <GL/glext.h>
+#include "renderer/tr_local.h"
+#include "glsym/rglgen.h"
 
 #define W 128
 #define H 128
 
 /* the core's own symbols */
+/* The frontend normally does two things before any of this code runs:
+ * it hands the core a proc-address hook, and the core resolves its GL
+ * symbols and ARB entry points through it.  Skip either and every HDR
+ * path declines silently - hdr_arb_available() reports no ARB support,
+ * hdr_ensure_target returns false, and a harness sails through reading
+ * whatever was drawn straight to the framebuffer.  That is exactly how
+ * an earlier version of this file reported PASS while testing nothing:
+ * the values it read back were the input quads, untouched. */
+
+struct hw_render_stub {
+	unsigned context_type;
+	void (*context_reset)(void);
+	unsigned long (*get_current_framebuffer)(void);
+	void *(*get_proc_address)(const char *sym);
+	char pad[256];
+};
+
 extern "C" {
+	extern struct hw_render_stub hw_render;
 	extern bool hdr_output_active;
 	extern void *environ_cb;
 	extern int scr_width, scr_height;
 }
 /* mangled: static functions in libretro.cpp, globalised by objcopy */
-extern "C" void _ZL17hdr_ensure_targetii(int w, int h);
+extern "C" bool _ZL17hdr_ensure_targetii(int w, int h);
 extern "C" void _ZL14hdr_bind_scenev(void);
 extern "C" void _ZL11hdr_presentj(unsigned int dstFbo);
 #define hdr_ensure_target _ZL17hdr_ensure_targetii
@@ -87,13 +108,30 @@ int main(void)
 		return 1;
 	}
 
+	hw_render.get_proc_address = (void *(*)(const char *))OSMesaGetProcAddress;
+	rglgen_resolve_symbols((rglgen_proc_address_t)OSMesaGetProcAddress);
+	/* R_CheckPortableExtensions sets these during engine GL init, which
+	 * the harness does not run; hdr_arb_available() tests all four. */
+	qglProgramStringARB = (PFNGLPROGRAMSTRINGARBPROC)
+		OSMesaGetProcAddress("glProgramStringARB");
+	qglGenProgramsARB = (PFNGLGENPROGRAMSARBPROC)
+		OSMesaGetProcAddress("glGenProgramsARB");
+	qglBindProgramARB = (PFNGLBINDPROGRAMARBPROC)
+		OSMesaGetProcAddress("glBindProgramARB");
+	qglProgramEnvParameter4fvARB = (PFNGLPROGRAMENVPARAMETER4FVARBPROC)
+		OSMesaGetProcAddress("glProgramEnvParameter4fvARB");
+	glConfig.ARBFragmentProgramAvailable = true;
+	glConfig.ARBVertexProgramAvailable = true;
 	hdr_output_active = true;
 	environ_cb = (void *)env_cb;
 	scr_width = W;
 	scr_height = H;
 
 	/* the frame, in the order retro_run runs it */
-	hdr_ensure_target(W, H);
+	if (!hdr_ensure_target(W, H)) {
+		printf("  FAIL: hdr_ensure_target declined - the composite never ran\n");
+		return 1;
+	}
 	hdr_bind_scene();
 	glViewport(0, 0, W, H);
 	glClearColor(0.f, 0.f, 0.f, 0.f);
