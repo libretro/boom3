@@ -105,71 +105,63 @@ check ran into.
 */
 
 /*
-   The whole transform: AP0 in, display JMh converted back to the limit
-   primaries, unclamped, ready for the composite's existing encode.
+   The whole transform: the scene colour in "lin", display RGB in "v",
+   unclamped, ready for the composite's existing encode.
 
-   Verified end to end the way every stage was - assembled on a driver,
-   run over 300 colours, compared against the CPU reference with the
-   reference clamped the way a display encode clamps.  Worst channel
-   difference 0.00196, the 8-bit readback floor.  Each stage was also
-   checked on its own on the way: tone-mapped J, chroma-compressed M,
-   the compression vector slope, and gamut-compressed M, all at the same
-   figure.
+   The env registers start at 10 rather than 0.  The composite already
+   uses 0 through 9 for its own parameters, and a program that quietly
+   overwrote them would misbehave in the bloom and expansion rather than
+   in the transform, which is the worst place for it to show.  The input
+   colour is not an env register at all here - it is the composite's own
+   "lin" temporary, which is what makes this splice in as a curve rather
+   than sit beside one.
 
-   431 ALU and 24 temporaries.  The temporaries did not have to come
-   down after all - the count never moved past 24 through three stages,
-   because ARB's four-component registers hold four intermediates each
-   and the stages reuse them.  It is still above the 16 that ARB
-   guarantees, so this needs the native-limits query at load time that
-   the composite already does for its other programs, and a fallback
-   when it fails.
+   Verified end to end: assembled on a driver, 300 colours, against the
+   CPU reference with the reference clamped the way a display encode
+   clamps.  Worst channel difference 0.00196, the 8-bit readback floor.
+   Re-verified unchanged after the renumbering, which is the point of
+   checking a mechanical edit rather than trusting it.
 
-   One sign error is worth recording.  The second branch of the
-   intersection solve divides by (b - root), which is negative in
-   practice; guarding the divisor with MAX and ABS the way the other
-   divisions here are guarded silently flipped the result's sign.  The
-   slope came out exactly negated - a mirror image rather than noise -
-   which is what made it findable.  Not every divisor wants the same
-   guard.
+   432 ALU, 25 temporaries.  Above ARB's guaranteed 16, so this needs
+   the native-limits query at load and a fallback when it fails.
 */
 
-#define ACES2_ARB_TRANSFORM \
-	"PARAM inA=program.env[0];\n" \
-	"PARAM inB=program.env[1];\n" \
-	"PARAM inC=program.env[2];\n" \
-	"PARAM caA=program.env[3];\n" \
-	"PARAM caB=program.env[4];\n" \
-	"PARAM caC=program.env[5];\n" \
-	"PARAM acA=program.env[6];\n" \
-	"PARAM acB=program.env[7];\n" \
-	"PARAM acC=program.env[8];\n" \
-	"PARAM lrA=program.env[9];\n" \
-	"PARAM lrB=program.env[10];\n" \
-	"PARAM lrC=program.env[11];\n" \
-	"PARAM inS=program.env[12];\n" \
-	"PARAM limS=program.env[13];\n" \
-	"PARAM ts=program.env[14];\n" \
-	"PARAM cc=program.env[15];\n" \
-	"PARAM cc2=program.env[16];\n" \
-	"PARAM gm=program.env[17];\n" \
-	"PARAM lsc=program.env[18];\n" \
-	"PARAM p1A=program.env[19];\n" \
-	"PARAM p1B=program.env[20];\n" \
-	"PARAM p1C=program.env[21];\n" \
-	"PARAM p0A=program.env[22];\n" \
-	"PARAM p0B=program.env[23];\n" \
-	"PARAM p0C=program.env[24];\n" \
-	"PARAM src=program.env[25];\n" \
-	"PARAM kA={0.99997726,-0.33262347,0.19354346,-0.11643287};\n" \
+#define ACES2_ARB_TRANSFORM_BODY \
+	"PARAM inA=program.env[10];\n" \
+	"PARAM inB=program.env[11];\n" \
+	"PARAM inC=program.env[12];\n" \
+	"PARAM caA=program.env[13];\n" \
+	"PARAM caB=program.env[14];\n" \
+	"PARAM caC=program.env[15];\n" \
+	"PARAM acA=program.env[16];\n" \
+	"PARAM acB=program.env[17];\n" \
+	"PARAM acC=program.env[18];\n" \
+	"PARAM lrA=program.env[19];\n" \
+	"PARAM lrB=program.env[20];\n" \
+	"PARAM lrC=program.env[21];\n" \
+	"PARAM inS=program.env[22];\n" \
+	"PARAM limS=program.env[23];\n" \
+	"PARAM ts=program.env[24];\n" \
+	"PARAM cc=program.env[25];\n" \
+	"PARAM cc2=program.env[26];\n" \
+	"PARAM gm=program.env[27];\n" \
+	"PARAM lsc=program.env[28];\n" \
+	"PARAM p1A=program.env[29];\n" \
+	"PARAM p1B=program.env[30];\n" \
+	"PARAM p1C=program.env[31];\n" \
+	"PARAM p0A=program.env[32];\n" \
+	"PARAM p0B=program.env[33];\n" \
+	"PARAM p0C=program.env[34];\n" \
+		"PARAM kA={0.99997726,-0.33262347,0.19354346,-0.11643287};\n" \
 	"PARAM kB={0.05265332,-0.01172120,1.5707963268,3.1415926536};\n" \
 	"PARAM kC={0.42,27.13,100.0,0.0027777778};\n" \
 	"PARAM kH={11.34072,16.46899,7.88380,77.12896};\n" \
 	"PARAM kH2={14.66441,-6.37224,9.19364,0.0};\n" \
 	"PARAM kE={2.3809523809,57.2957795131,0.5,1.0};\n" \
 	"TEMP a,b,c,d,e,f,g,h,mc,n,o,q,r,s,t,u,v,w,z,Jl,Mc,L,cu,ab;\n" \
-	"DP3 a.x,src,p1A;\n" \
-	"DP3 a.y,src,p1B;\n" \
-	"DP3 a.z,src,p1C;\n" \
+	"DP3 a.x,lin,p1A;\n" \
+	"DP3 a.y,lin,p1B;\n" \
+	"DP3 a.z,lin,p1C;\n" \
 	"MAX a,a,0.0;\n" \
 	"MIN a,a,gm.y;\n" \
 	"DP3 b.x,a,p0A;\n" \
