@@ -152,13 +152,17 @@ enum {
 	HDR_ROLLOFF_EXPO      = 11,
 	HDR_ROLLOFF_HABLE2017 = 12,
 	HDR_ROLLOFF_ACES2     = 13,
+	HDR_ROLLOFF_TUMBLIN   = 14,
+	HDR_ROLLOFF_WARD      = 15,
+	HDR_ROLLOFF_SCHLICK   = 16,
+	HDR_ROLLOFF_DEVLIN    = 17,
 
 	/* RGB operators: the result of one channel depends on the other
 	   two, so these run once per pixel rather than three times. */
-	HDR_ROLLOFF_JODIE     = 14,
-	HDR_ROLLOFF_ACESFIT   = 15,
-	HDR_ROLLOFF_NEUTRAL   = 16,
-	HDR_ROLLOFF_AGX       = 17
+	HDR_ROLLOFF_JODIE     = 18,
+	HDR_ROLLOFF_ACESFIT   = 19,
+	HDR_ROLLOFF_NEUTRAL   = 20,
+	HDR_ROLLOFF_AGX       = 21
 };
 
 #define HDR_ROLLOFF_FIRST_RGB HDR_ROLLOFF_JODIE
@@ -659,6 +663,10 @@ static void update_variables(bool startup)
 		else if (!strcmp(var.value, "expo"))      hdr_rolloff_mode = HDR_ROLLOFF_EXPO;
 		else if (!strcmp(var.value, "hable2017")) hdr_rolloff_mode = HDR_ROLLOFF_HABLE2017;
 		else if (!strcmp(var.value, "aces2"))     hdr_rolloff_mode = HDR_ROLLOFF_ACES2;
+		else if (!strcmp(var.value, "tumblin"))   hdr_rolloff_mode = HDR_ROLLOFF_TUMBLIN;
+		else if (!strcmp(var.value, "ward"))      hdr_rolloff_mode = HDR_ROLLOFF_WARD;
+		else if (!strcmp(var.value, "schlick"))   hdr_rolloff_mode = HDR_ROLLOFF_SCHLICK;
+		else if (!strcmp(var.value, "devlin"))    hdr_rolloff_mode = HDR_ROLLOFF_DEVLIN;
 		else                                 hdr_rolloff_mode = HDR_ROLLOFF_REINHARD;
 	}
 
@@ -1932,7 +1940,7 @@ static const char *hdr_fs_src =
 	"vec3 rolloffRGB(vec3 c) {\n"
 	"  float H = uParms.y;\n"
 	"  if (H <= 1.0001) return min(c, vec3(1.0));\n"
-	"  if (uParms.z > 16.5) {\n"                       /* AgX */
+	"  if (uParms.z > 20.5) {\n"                       /* AgX */
 	"    mat3 mi = mat3(0.842479062253094, 0.0784335999999992, 0.0792237451477643,\n"
 	"                   0.0423282422610123, 0.878468636469772, 0.0791661274605434,\n"
 	"                   0.0423756549057051, 0.0784336, 0.879142973793104);\n"
@@ -1947,7 +1955,7 @@ static const char *hdr_fs_src =
 	"    v = mo * v;\n"
 	"    return pow(max(v, vec3(0.0)), vec3(2.2)) * 1.4491792;\n"
 	"  }\n"
-	"  if (uParms.z > 15.5) {\n"                       /* Khronos PBR Neutral */
+	"  if (uParms.z > 19.5) {\n"                       /* Khronos PBR Neutral */
 	"    float sc = 0.76, des = 0.15;\n"
 	"    float x = min(c.r, min(c.g, c.b));\n"
 	"    float off = x < 0.08 ? x - 6.25 * x * x : 0.04;\n"
@@ -1960,7 +1968,7 @@ static const char *hdr_fs_src =
 	"    float g = 1.0 - 1.0 / (des * (peak - np) + 1.0);\n"
 	"    return mix(v, vec3(np), g) * 1.1506276;\n"
 	"  }\n"
-	"  if (uParms.z > 14.5) {\n"                        /* ACES Fitted */
+	"  if (uParms.z > 18.5) {\n"                        /* ACES Fitted */
 	"    mat3 mi = mat3(0.59719, 0.07600, 0.02840,\n"
 	"                   0.35458, 0.90834, 0.13383,\n"
 	"                   0.04823, 0.01566, 0.83777);\n"
@@ -2006,6 +2014,20 @@ static const char *hdr_fs_src =
 	"  if (uParms.z > 3.5) {\n"
 	"    float n = ((v * (0.15 * v + 0.05) + 0.004) / (v * (0.15 * v + 0.50) + 0.06)) - 0.0666667;\n"
 	"    return shoulder(v, n * 4.5319149);\n"
+	"  }\n"
+	"  if (uParms.z > 16.5 && uParms.z < 17.5) {\n"      /* Reinhard-Devlin */
+	"    float x = max(v, 0.0);\n"
+	"    return shoulder(v, (x / (x + 0.3010864)) * 1.3010864);\n"
+	"  }\n"
+	"  if (uParms.z > 15.5 && uParms.z < 16.5) {\n"      /* Schlick */
+	"    float x = max(v, 0.0);\n"
+	"    return shoulder(v, 2.3 * x / (2.3 * x - x + 1.0));\n"
+	"  }\n"
+	"  if (uParms.z > 14.5 && uParms.z < 15.5) {\n"      /* Ward: linear */
+	"    return shoulder(v, max(v, 0.0));\n"
+	"  }\n"
+	"  if (uParms.z > 13.5 && uParms.z < 14.5) {\n"      /* Tumblin-Rushmeier */
+	"    return shoulder(v, pow(max(v, 0.0), 0.6075));\n"
 	"  }\n"
 	"  if (uParms.z > 12.5 && uParms.z < 13.5) {\n"      /* ACES 2.0 tone scale */
 	"    float x = max(v, 0.0);\n"
@@ -2164,7 +2186,7 @@ static const char *hdr_fs_src =
 	"  lin = expand(lin);\n"
 	/* Modes 9 and up look at the whole colour, so they run once rather
 	   than once per channel. */
-	"  if (uParms.z > 13.5) lin = rolloffRGB(lin);\n"
+	"  if (uParms.z > 17.5) lin = rolloffRGB(lin);\n"
 	"  else lin = vec3(rolloff(lin.r), rolloff(lin.g), rolloff(lin.b));\n"
 	"  lin = uGamut * lin;\n"
 	"  vec3 y = clamp(lin * uParms.x, 0.0, 1.0);\n"
@@ -2380,6 +2402,7 @@ static const char *hdr_arb_up_fs_src =
 	"PARAM kLuma = { 0.2126, 0.7152, 0.0722, 0.0 };\n" \
 	"PARAM kHableB = { 1.25, 1.25, 1.25, 1.25 };\n" \
 	"PARAM kAces2G = { 1.15, 1.15, 1.15, 1.15 };\n" \
+	"PARAM kTumblin = { 0.6075, 0.6075, 0.6075, 0.6075 };\n" \
 	"PARAM kAcesIn0 = { 0.59719, 0.35458, 0.04823, 0.0 };\n" \
 	"PARAM kAcesIn1 = { 0.07600, 0.90834, 0.01566, 0.0 };\n" \
 	"PARAM kAcesIn2 = { 0.02840, 0.13383, 0.83777, 0.0 };\n" \
@@ -2568,6 +2591,36 @@ static const char *hdr_arb_up_fs_src =
    channel or a matrix - so unlike the curves above they cannot be
    applied per channel.  They write t directly and skip the shared
    shoulder, since each already decides its own top end. */
+#define HDR_ARB_CURVE_TUMBLIN \
+	"MAX u, lin, 0.0;\n" \
+	"POW t.x, u.x, kTumblin.x;\n" \
+	"POW t.y, u.y, kTumblin.x;\n" \
+	"POW t.z, u.z, kTumblin.x;\n"
+
+#define HDR_ARB_CURVE_WARD \
+	"MAX t, lin, 0.0;\n"
+
+#define HDR_ARB_CURVE_SCHLICK \
+	"MAX u, lin, 0.0;\n" \
+	"MUL v, u, 2.3;\n" \
+	"SUB n, v, u;\n" \
+	"ADD n, n, 1.0;\n" \
+	"MAX n, n, 0.00001;\n" \
+	"RCP a.x, n.x;\n" \
+	"RCP a.y, n.y;\n" \
+	"RCP a.z, n.z;\n" \
+	"MUL t, v, a;\n"
+
+#define HDR_ARB_CURVE_DEVLIN \
+	"MAX u, lin, 0.0;\n" \
+	"ADD n, u, 0.3010864;\n" \
+	"MAX n, n, 0.00001;\n" \
+	"RCP a.x, n.x;\n" \
+	"RCP a.y, n.y;\n" \
+	"RCP a.z, n.z;\n" \
+	"MUL t, u, a;\n" \
+	"MUL t, t, 1.3010864;\n"
+
 #define HDR_ARB_CURVE_RPLAIN \
 	"MAX u, lin, 0.0;\n" \
 	"ADD v, u, 1.0;\n" \
@@ -2874,6 +2927,10 @@ static const char *hdr_arb_curve_src( int mode ) {
 	case HDR_ROLLOFF_EXPO:      return HDR_ARB_CURVE_EXPO;
 	case HDR_ROLLOFF_HABLE2017: return HDR_ARB_CURVE_HABLE2017;
 	case HDR_ROLLOFF_ACES2:     return HDR_ARB_CURVE_ACES2;
+	case HDR_ROLLOFF_TUMBLIN:   return HDR_ARB_CURVE_TUMBLIN;
+	case HDR_ROLLOFF_WARD:      return HDR_ARB_CURVE_WARD;
+	case HDR_ROLLOFF_SCHLICK:   return HDR_ARB_CURVE_SCHLICK;
+	case HDR_ROLLOFF_DEVLIN:    return HDR_ARB_CURVE_DEVLIN;
 	default:                 return HDR_ARB_CURVE_REINHARD;
 	}
 }
@@ -3800,6 +3857,50 @@ static double hdr_curve_hejl( double v ) {
 	return pow( n, 2.2 ) * 1.4629683;
 }
 
+/* The 1990s perceptual operators.
+ *
+ * These were written to map scene luminance onto a CRT of known peak
+ * brightness, with a viewer adaptation term.  This pipeline fixes paper
+ * white instead, so the adaptation constants divide out and what is
+ * left is the shape each model actually imposes.  That is worth stating
+ * plainly rather than hiding: Tumblin-Rushmeier becomes a power law,
+ * and Ward becomes the identity - its whole contribution was choosing a
+ * linear scale factor, and normalisation chooses one for us.  Ward is
+ * still worth having as the honest "no curve at all" entry.
+ *
+ * Ferwerda is deliberately absent.  Under a fixed adaptation its
+ * threshold-versus-intensity model reduces to the same linear scaling
+ * as Ward, so it would be a second name for an entry already here.
+ */
+static double hdr_curve_tumblin( double v ) {
+	/* Exponent is gamma(Lwa)/gamma(Lda) at Lwa = 1, Lda = 20 cd/m2,
+	 * which is 0.6075.  Everything else in the model is a constant
+	 * scale and drops out. */
+	const double x = v > 0.0 ? v : 0.0;
+	return pow( x, 0.6075 );
+}
+
+static double hdr_curve_ward( double v ) {
+	/* Linear, by construction. */
+	return v > 0.0 ? v : 0.0;
+}
+
+static double hdr_curve_schlick( double v ) {
+	/* Schlick's rational model with p = 2.3.  Self-normalising: f(1) is
+	 * exactly 1 for any p, so no correction factor is needed. */
+	const double x = v > 0.0 ? v : 0.0;
+	return 2.3 * x / ( 2.3 * x - x + 1.0 );
+}
+
+static double hdr_curve_devlin( double v ) {
+	/* Reinhard-Devlin's photoreceptor model, global and achromatic,
+	 * with adaptation pinned at mid grey rather than at a measured
+	 * frame average - this pipeline has no exposure stage to measure
+	 * one.  sigma = 0.18^0.7. */
+	const double x = v > 0.0 ? v : 0.0;
+	return ( x / ( x + 0.3010864 ) ) * 1.3010864;
+}
+
 static double hdr_curve_rplain( double v ) {
 	/* The textbook Reinhard, kept as the honest baseline: no knee, no
 	 * white point, x/(1+x) with white pinned by the usual factor. */
@@ -3985,6 +4086,22 @@ static void hdr_shoulder_params( int mode, float H, float *A, float *slopeOut ) 
 	case HDR_ROLLOFF_GT:
 		f1 = hdr_curve_gt( 1.0 + d );
 		f0 = hdr_curve_gt( 1.0 - d );
+		break;
+	case HDR_ROLLOFF_TUMBLIN:
+		f1 = hdr_curve_tumblin( 1.0 + d );
+		f0 = hdr_curve_tumblin( 1.0 - d );
+		break;
+	case HDR_ROLLOFF_WARD:
+		f1 = hdr_curve_ward( 1.0 + d );
+		f0 = hdr_curve_ward( 1.0 - d );
+		break;
+	case HDR_ROLLOFF_SCHLICK:
+		f1 = hdr_curve_schlick( 1.0 + d );
+		f0 = hdr_curve_schlick( 1.0 - d );
+		break;
+	case HDR_ROLLOFF_DEVLIN:
+		f1 = hdr_curve_devlin( 1.0 + d );
+		f0 = hdr_curve_devlin( 1.0 - d );
 		break;
 	case HDR_ROLLOFF_RPLAIN:
 		f1 = hdr_curve_rplain( 1.0 + d );

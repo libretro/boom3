@@ -421,6 +421,10 @@ struct retro_core_option_v2_definition option_defs_us[] = {
          { "agx",       "AgX" },
          { "drago",     "Drago (Logarithmic)" },
          { "expo",      "Exponential" },
+         { "tumblin",   "Tumblin-Rushmeier (Classic)" },
+         { "ward",      "Ward (Classic, Linear)" },
+         { "schlick",   "Schlick (Classic)" },
+         { "devlin",    "Reinhard-Devlin (Classic)" },
          { NULL, NULL },
       },
       "reinhard"
