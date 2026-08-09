@@ -105,31 +105,35 @@ check ran into.
 */
 
 /*
-   Everything from the AP0 input through the chroma compression.
-   Replaces the tone-mapped-J macro this file carried before; that was a
-   prefix of this and there is no reason to keep both.
+   The whole transform: AP0 in, display JMh converted back to the limit
+   primaries, unclamped, ready for the composite's existing encode.
 
-   Checked the same way: assembled on a driver, 300 colours, against the
-   CPU reference.  The compressed M matches to 0.00196 - the 8-bit
-   readback floor again - and the tone-mapped J it is built on still
-   matches to the same figure with the chroma stage running after it.
+   Verified end to end the way every stage was - assembled on a driver,
+   run over 300 colours, compared against the CPU reference with the
+   reference clamped the way a display encode clamps.  Worst channel
+   difference 0.00196, the 8-bit readback floor.  Each stage was also
+   checked on its own on the way: tone-mapped J, chroma-compressed M,
+   the compression vector slope, and gamut-compressed M, all at the same
+   figure.
 
-   The bug that cost this stage its afternoon was mine and it was a
-   probe, not the transform.  To read an intermediate out through a byte
-   framebuffer it has to be scaled into 0..1, and the scaling line for an
-   earlier probe was left in the program.  Every value downstream of it
-   was then a hundredth of what it should be, so the chroma stage looked
-   broken and each term I checked inside it looked broken too - which is
-   how a measurement fault imitates a deep bug.  Four terms were
-   verified individually before I thought to re-check the input they all
-   shared.  Cheap lesson: when several independent things fail at once,
-   suspect what they have in common.
+   431 ALU and 24 temporaries.  The temporaries did not have to come
+   down after all - the count never moved past 24 through three stages,
+   because ARB's four-component registers hold four intermediates each
+   and the stages reuse them.  It is still above the 16 that ARB
+   guarantees, so this needs the native-limits query at load time that
+   the composite already does for its other programs, and a fallback
+   when it fails.
 
-   Still 24 temporaries; the gamut stage is what will settle whether
-   that has to come down.
+   One sign error is worth recording.  The second branch of the
+   intersection solve divides by (b - root), which is negative in
+   practice; guarding the divisor with MAX and ABS the way the other
+   divisions here are guarded silently flipped the result's sign.  The
+   slope came out exactly negated - a mirror image rather than noise -
+   which is what made it findable.  Not every divisor wants the same
+   guard.
 */
 
-#define ACES2_ARB_TO_CHROMA_COMPRESSED \
+#define ACES2_ARB_TRANSFORM \
 	"PARAM inA=program.env[0];\n" \
 	"PARAM inB=program.env[1];\n" \
 	"PARAM inC=program.env[2];\n" \
@@ -360,6 +364,239 @@ check ran into.
 	"SUB t.x,0.0,Mc.x;\n" \
 	"ABS t.x,Mc.x;\n" \
 	"SUB t.x,0.0000001,t.x;\n" \
-	"CMP mc.x,t.x,mc.x,mc.x;\n"
+	"CMP mc.x,t.x,mc.x,mc.x;\n" \
+	"MOV cu.x,L.x;\n" \
+	"MOV cu.y,L.y;\n" \
+	"RCP v.x,cc.x;\n" \
+	"MUL v.x,cu.x,v.x;\n" \
+	"SUB v.x,1.3,v.x;\n" \
+	"MIN v.x,v.x,1.0;\n" \
+	"SUB v.y,cc2.z,cu.x;\n" \
+	"MAD v.y,v.y,v.x,cu.x;\n" \
+	"SUB v.z,cc.x,cu.x;\n" \
+	"MAD v.z,v.z,0.3,cu.x;\n" \
+	"SUB s.x,cc.x,v.z;\n" \
+	"SUB s.y,cc.x,n.x;\n" \
+	"MAX s.y,s.y,0.0001;\n" \
+	"RCP s.y,s.y;\n" \
+	"MUL s.x,s.x,s.y;\n" \
+	"MAX s.x,s.x,0.0000001;\n" \
+	"LG2 s.x,s.x;\n" \
+	"MUL s.x,s.x,0.3010299957;\n" \
+	"MUL s.x,s.x,s.x;\n" \
+	"ADD s.x,s.x,1.0;\n" \
+	"MUL s.z,cc.x,cc2.w;\n" \
+	"MUL s.w,s.z,s.x;\n" \
+	"SUB t.x,n.x,v.z;\n" \
+	"CMP s.w,t.x,s.z,s.w;\n" \
+	"RCP u.x,s.w;\n" \
+	"MUL u.y,mc.x,u.x;\n" \
+	"RCP u.z,v.y;\n" \
+	"MUL u.z,u.y,u.z;\n" \
+	"SUB e.x,1.0,u.y;\n" \
+	"SUB e.y,0.0,n.x;\n" \
+	"MUL e.z,e.x,e.x;\n" \
+	"MUL e.w,u.z,e.y;\n" \
+	"MAD e.z,-4.0,e.w,e.z;\n" \
+	"MAX e.z,e.z,0.0;\n" \
+	"RSQ e.z,e.z;\n" \
+	"RCP e.z,e.z;\n" \
+	"ADD e.w,e.x,e.z;\n" \
+	"MAX e.w,e.w,0.0000001;\n" \
+	"RCP e.w,e.w;\n" \
+	"MUL e.w,e.w,e.y;\n" \
+	"MUL q.z,e.w,-2.0;\n" \
+	"MUL w.x,cc.x,u.z;\n" \
+	"ADD w.x,w.x,u.y;\n" \
+	"ADD w.x,w.x,1.0;\n" \
+	"SUB w.x,0.0,w.x;\n" \
+	"MUL w.y,cc.x,u.y;\n" \
+	"ADD w.y,w.y,n.x;\n" \
+	"MUL w.z,w.x,w.x;\n" \
+	"MUL w.w,u.z,w.y;\n" \
+	"MAD w.z,-4.0,w.w,w.z;\n" \
+	"MAX w.z,w.z,0.0;\n" \
+	"RSQ w.z,w.z;\n" \
+	"RCP w.z,w.z;\n" \
+	"SUB w.w,w.x,w.z;\n" \
+	"RCP w.w,w.w;\n" \
+	"MUL w.w,w.w,w.y;\n" \
+	"MUL w.w,w.w,-2.0;\n" \
+	"SUB t.x,n.x,v.y;\n" \
+	"CMP q.z,t.x,q.z,w.w;\n" \
+	"SUB t.y,cc.x,q.z;\n" \
+	"SUB t.z,q.z,v.y;\n" \
+	"CMP t.w,t.z,q.z,t.y;\n" \
+	"MUL t.w,t.w,t.z;\n" \
+	"RCP t.x,v.y;\n" \
+	"MUL t.w,t.w,t.x;\n" \
+	"RCP t.x,s.w;\n" \
+	"MUL t.w,t.w,t.x;\n" \
+	"MUL u.y,cu.y,u.x;\n" \
+	"MUL u.z,u.y,e.x;\n" \
+	"RCP z.x,v.y;\n" \
+	"MUL u.z,u.y,z.x;\n" \
+	"SUB e.x,1.0,u.y;\n" \
+	"SUB e.y,0.0,cu.x;\n" \
+	"MUL e.z,e.x,e.x;\n" \
+	"MUL e.w,u.z,e.y;\n" \
+	"MAD e.z,-4.0,e.w,e.z;\n" \
+	"MAX e.z,e.z,0.0;\n" \
+	"RSQ e.z,e.z;\n" \
+	"RCP e.z,e.z;\n" \
+	"ADD e.w,e.x,e.z;\n" \
+	"MAX e.w,e.w,0.0000001;\n" \
+	"RCP e.w,e.w;\n" \
+	"MUL e.w,e.w,e.y;\n" \
+	"MUL z.y,e.w,-2.0;\n" \
+	"MUL w.x,cc.x,u.z;\n" \
+	"ADD w.x,w.x,u.y;\n" \
+	"ADD w.x,w.x,1.0;\n" \
+	"SUB w.x,0.0,w.x;\n" \
+	"MUL w.y,cc.x,u.y;\n" \
+	"ADD w.y,w.y,cu.x;\n" \
+	"MUL w.z,w.x,w.x;\n" \
+	"MUL w.w,u.z,w.y;\n" \
+	"MAD w.z,-4.0,w.w,w.z;\n" \
+	"MAX w.z,w.z,0.0;\n" \
+	"RSQ w.z,w.z;\n" \
+	"RCP w.z,w.z;\n" \
+	"SUB w.w,w.x,w.z;\n" \
+	"RCP w.w,w.w;\n" \
+	"MUL w.w,w.w,w.y;\n" \
+	"MUL w.w,w.w,-2.0;\n" \
+	"SUB t.x,cu.x,v.y;\n" \
+	"CMP z.y,t.x,z.y,w.w;\n" \
+	"MAX z.z,z.y,0.0000001;\n" \
+	"RCP z.z,z.z;\n" \
+	"MUL z.z,q.z,z.z;\n" \
+	"MAX z.z,z.z,0.0000001;\n" \
+	"POW z.z,z.z,gm.x;\n" \
+	"MUL z.z,z.z,z.y;\n" \
+	"MUL s.x,t.w,cu.y;\n" \
+	"SUB s.x,cu.x,s.x;\n" \
+	"MAX s.x,s.x,0.0000001;\n" \
+	"RCP s.x,s.x;\n" \
+	"MUL z.z,z.z,cu.y;\n" \
+	"MUL z.z,z.z,s.x;\n" \
+	"SUB s.y,cc.x,z.y;\n" \
+	"SUB s.z,cc.x,q.z;\n" \
+	"SUB s.w,cc.x,cu.x;\n" \
+	"MAX z.w,s.y,0.0000001;\n" \
+	"RCP z.w,z.w;\n" \
+	"MUL z.w,s.z,z.w;\n" \
+	"MAX z.w,z.w,0.0000001;\n" \
+	"POW z.w,z.w,L.w;\n" \
+	"MUL z.w,z.w,s.y;\n" \
+	"MUL v.w,t.w,cu.y;\n" \
+	"ADD v.w,s.w,v.w;\n" \
+	"MAX v.w,v.w,0.0000001;\n" \
+	"RCP v.w,v.w;\n" \
+	"MUL z.w,z.w,cu.y;\n" \
+	"MUL z.w,z.w,v.w;\n" \
+	"MUL q.w,cu.y,0.12;\n" \
+	"SUB c.x,z.z,z.w;\n" \
+	"ABS c.x,c.x;\n" \
+	"SUB c.x,q.w,c.x;\n" \
+	"MAX c.x,c.x,0.0;\n" \
+	"MAX c.y,q.w,0.0000001;\n" \
+	"RCP c.y,c.y;\n" \
+	"MUL c.x,c.x,c.y;\n" \
+	"MUL c.z,c.x,c.x;\n" \
+	"MUL c.z,c.z,c.x;\n" \
+	"MUL c.z,c.z,q.w;\n" \
+	"MUL c.z,c.z,0.1666666667;\n" \
+	"MIN c.w,z.z,z.w;\n" \
+	"SUB c.w,c.w,c.z;\n" \
+	"MAX d.x,q.z,0.0000001;\n" \
+	"RCP d.y,cc.x;\n" \
+	"MUL d.x,d.x,d.y;\n" \
+	"MAX d.x,d.x,0.0000001;\n" \
+	"POW d.x,d.x,cc.y;\n" \
+	"MUL d.x,d.x,cc.x;\n" \
+	"MUL d.z,t.w,L.z;\n" \
+	"SUB d.z,cc.x,d.z;\n" \
+	"MAX d.z,d.z,0.0000001;\n" \
+	"RCP d.z,d.z;\n" \
+	"MUL d.x,d.x,L.z;\n" \
+	"MUL d.x,d.x,d.z;\n" \
+	"MAX d.w,d.x,0.0000001;\n" \
+	"RCP d.w,d.w;\n" \
+	"MUL d.w,c.w,d.w;\n" \
+	"MAX d.w,d.w,0.75;\n" \
+	"MUL f.x,d.w,c.w;\n" \
+	"SUB f.y,mc.x,f.x;\n" \
+	"SUB f.z,c.w,f.x;\n" \
+	"SUB f.w,d.x,f.x;\n" \
+	"MAX g.x,f.z,0.0000001;\n" \
+	"RCP g.x,g.x;\n" \
+	"MUL g.x,f.w,g.x;\n" \
+	"SUB g.x,g.x,1.0;\n" \
+	"MAX g.y,g.x,0.0000001;\n" \
+	"RCP g.y,g.y;\n" \
+	"MUL g.y,f.w,g.y;\n" \
+	"MAX g.z,g.y,0.0000001;\n" \
+	"RCP g.z,g.z;\n" \
+	"MUL g.z,f.y,g.z;\n" \
+	"ADD g.w,g.z,1.0;\n" \
+	"MAX g.w,g.w,0.0000001;\n" \
+	"RCP g.w,g.w;\n" \
+	"MUL g.w,g.z,g.w;\n" \
+	"MUL g.w,g.w,g.y;\n" \
+	"ADD g.w,g.w,f.x;\n" \
+	"SUB t.x,mc.x,f.x;\n" \
+	"CMP g.w,t.x,mc.x,g.w;\n" \
+	"SUB t.x,d.w,1.0;\n" \
+	"CMP g.w,t.x,g.w,mc.x;\n" \
+	"MAD h.y,g.w,t.w,q.z;\n" \
+	"CMP h.y,n.x,0.0,h.y;\n" \
+	"CMP g.w,n.x,0.0,g.w;\n" \
+	"SUB t.x,cc.x,n.x;\n" \
+	"CMP g.w,t.x,0.0,g.w;\n" \
+	"MUL c.x,h.y,0.01;\n" \
+	"MAX c.x,c.x,0.0000001;\n" \
+	"POW c.x,c.x,limS.z;\n" \
+	"MUL c.y,r.x,1.0;\n" \
+	"COS c.z,c.y;\n" \
+	"SIN c.w,c.y;\n" \
+	"MUL d.x,g.w,c.z;\n" \
+	"MUL d.y,g.w,c.w;\n" \
+	"MOV f.x,c.x;\n" \
+	"MOV f.y,d.x;\n" \
+	"MOV f.z,d.y;\n" \
+	"DP3 g.x,f,acA;\n" \
+	"DP3 g.y,f,acB;\n" \
+	"DP3 g.z,f,acC;\n" \
+	"ABS mc.x,g.x;\n" \
+	"ABS mc.y,g.y;\n" \
+	"ABS mc.z,g.z;\n" \
+	"MIN mc,mc,0.99;\n" \
+	"SUB n.y,1.0,mc.x;\n" \
+	"SUB n.z,1.0,mc.y;\n" \
+	"SUB n.w,1.0,mc.z;\n" \
+	"MAX n.y,n.y,0.000001;\n" \
+	"MAX n.z,n.z,0.000001;\n" \
+	"MAX n.w,n.w,0.000001;\n" \
+	"RCP n.y,n.y;\n" \
+	"RCP n.z,n.z;\n" \
+	"RCP n.w,n.w;\n" \
+	"MUL mc.x,mc.x,kC.y;\n" \
+	"MUL mc.x,mc.x,n.y;\n" \
+	"MUL mc.y,mc.y,kC.y;\n" \
+	"MUL mc.y,mc.y,n.z;\n" \
+	"MUL mc.z,mc.z,kC.y;\n" \
+	"MUL mc.z,mc.z,n.w;\n" \
+	"POW mc.x,mc.x,kE.x;\n" \
+	"POW mc.y,mc.y,kE.x;\n" \
+	"POW mc.z,mc.z,kE.x;\n" \
+	"SUB o.x,0.0,mc.x;\n" \
+	"CMP mc.x,g.x,o.x,mc.x;\n" \
+	"SUB o.x,0.0,mc.y;\n" \
+	"CMP mc.y,g.y,o.x,mc.y;\n" \
+	"SUB o.x,0.0,mc.z;\n" \
+	"CMP mc.z,g.z,o.x,mc.z;\n" \
+	"DP3 v.x,mc,lrA;\n" \
+	"DP3 v.y,mc,lrB;\n" \
+	"DP3 v.z,mc,lrC;\n"
 
 #endif /* !__ACES2_ARB_H__ */
