@@ -2056,7 +2056,8 @@ static const char *hdr_fs_src =
 	"  }\n"
 	"  if (uParms.z > 12.5 && uParms.z < 13.5) {\n"      /* ACES 2.0 tone scale */
 	"    float x = max(v, 0.0);\n"
-	"    return shoulder(v, 1.0459797 * pow(x / (x + 0.9198581), 1.15) * 2.0241202);\n"
+	"    float f = 1.0471038 * pow(x / (x + 0.9198583), 1.15);\n"
+	"    return shoulder(v, (f * f / (f + 0.04)) * 2.1854781);\n"
 	"  }\n"
 	"  if (uParms.z > 11.5 && uParms.z < 12.5) {\n"      /* Hable 2017 piecewise */
 	"    float x = max(v, 0.0);\n"
@@ -2731,7 +2732,7 @@ static const char *hdr_arb_up_fs_src =
 
 #define HDR_ARB_CURVE_ACES2 \
 	"MAX u, lin, 0.0;\n" \
-	"ADD v, u, 0.9198581;\n" \
+	"ADD v, u, 0.9198583;\n" \
 	"MAX v, v, 0.00001;\n" \
 	"RCP a.x, v.x;\n" \
 	"RCP a.y, v.y;\n" \
@@ -2740,8 +2741,16 @@ static const char *hdr_arb_up_fs_src =
 	"POW t.x, t.x, kAces2G.x;\n" \
 	"POW t.y, t.y, kAces2G.x;\n" \
 	"POW t.z, t.z, kAces2G.x;\n" \
-	"MUL t, t, 1.0459797;\n" \
-	"MUL t, t, 2.0241202;\n"
+	"MUL t, t, 1.0471038;\n" \
+	/* flare: f*f / (f + t_1) */ \
+	"MUL n, t, t;\n" \
+	"ADD d, t, 0.04;\n" \
+	"MAX d, d, 0.00001;\n" \
+	"RCP a.x, d.x;\n" \
+	"RCP a.y, d.y;\n" \
+	"RCP a.z, d.z;\n" \
+	"MUL t, n, a;\n" \
+	"MUL t, t, 2.1854781;\n"
 
 #define HDR_ARB_CURVE_JODIE \
 	"DP3 g.x, lin, kLuma;\n" \
@@ -4064,9 +4073,12 @@ static double hdr_curve_aces2( double v ) {
 	 * The tone scale only.  ACES 2.0's chroma compression and gamut
 	 * mapping work in JMh and are a different kind of change than a
 	 * curve - not something to imply by the name, hence the label. */
-	const double m2 = 1.0459797, s2 = 0.9198581, g = 1.15;
+	const double m2 = 1.0471038, s2 = 0.9198583, g = 1.15, t1 = 0.04;
 	const double x = v > 0.0 ? v : 0.0;
-	return m2 * pow( x / ( x + s2 ), g ) * 2.0241202;
+	{
+		const double f = m2 * pow( x / ( x + s2 ), g );
+		return ( f * f / ( f + t1 ) ) * 2.1854781;
+	}
 }
 
 static double hdr_curve_filmicalu( double v ) {

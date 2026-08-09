@@ -71,3 +71,27 @@ typedef struct {
 void	ACES2_BuildCuspTable( const aces2JMhParams_t *limit, double peakLuminance,
 							  aces2CuspTable_t *table );
 void	ACES2_CuspForHue( const aces2CuspTable_t *table, double hue, double JM[2] );
+
+/*
+===========================================================================
+
+The ACES 2.0 tone scale.
+
+Forward takes scene-referred linear and returns luminance in cd/m2.
+Inverse takes that luminance DIVIDED by the 100 reference, not the
+luminance itself - the reference's own comment says cd/m2 but every
+caller divides first, and taking it at its word makes the round trip
+fail by four orders of magnitude.
+
+===========================================================================
+*/
+
+typedef struct {
+	double	n, n_r, g, t_1, c_t, s_2, u_2, m_2;
+	double	forward_limit;
+	double	inverse_limit;
+} aces2TSParams_t;
+
+void	ACES2_InitTSParams( double peakLuminance, aces2TSParams_t *p );
+double	ACES2_ToneScaleFwd( double x, const aces2TSParams_t *p );
+double	ACES2_ToneScaleInv( double Yn, const aces2TSParams_t *p );

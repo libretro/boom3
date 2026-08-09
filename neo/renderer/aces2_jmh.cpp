@@ -475,3 +475,73 @@ void ACES2_CuspForHue( const aces2CuspTable_t *table, double hue, double JM[2] )
 	JM[0] = table->J[lo] + ( table->J[lo+1] - table->J[lo] ) * t;
 	JM[1] = table->M[lo] + ( table->M[lo+1] - table->M[lo] ) * t;
 }
+
+/* ---- the tone scale ---- */
+
+/*
+================
+ACES2_InitTSParams
+
+Solved once from the peak luminance, exactly as the reference does.
+The chain from r_hit down to m_2 has no shortcuts worth taking: each
+term feeds the next, and the whole point of it is that 18% scene grey
+lands on c_d nits, which is the check worth keeping.
+================
+*/
+void ACES2_InitTSParams( double peakLuminance, aces2TSParams_t *p ) {
+	const double n_r = 100.0;
+	const double g   = 1.15;
+	const double c   = 0.18;
+	const double c_d = 10.013;
+	const double w_g = 0.14;
+	const double t_1 = 0.04;
+	const double r_hit_min = 128.0, r_hit_max = 896.0;
+	const double n = peakLuminance;
+
+	const double r_hit = r_hit_min + ( r_hit_max - r_hit_min )
+					   * ( log( n / n_r ) / log( 10000.0 / 100.0 ) );
+	const double m_0 = n / n_r;
+	const double m_1 = 0.5 * ( m_0 + sqrt( m_0 * ( m_0 + 4.0 * t_1 ) ) );
+	const double u   = pow( ( r_hit / m_1 ) / ( ( r_hit / m_1 ) + 1.0 ), g );
+	const double m   = m_1 / u;
+	const double w_i = log( n / 100.0 ) / log( 2.0 );
+	const double c_t = c_d / n_r * ( 1.0 + w_i * w_g );
+	const double g_ip = 0.5 * ( c_t + sqrt( c_t * ( c_t + 4.0 * t_1 ) ) );
+	const double g_ipp2 = -( m_1 * pow( g_ip / m, 1.0 / g ) )
+						/ ( pow( g_ip / m, 1.0 / g ) - 1.0 );
+	const double w_2 = c / g_ipp2;
+	const double s_2 = w_2 * m_1;
+	const double u_2 = pow( ( r_hit / m_1 ) / ( ( r_hit / m_1 ) + w_2 ), g );
+	const double m_2 = m_1 / u_2;
+
+	p->n   = n;
+	p->n_r = n_r;
+	p->g   = g;
+	p->t_1 = t_1;
+	p->c_t = c_t;
+	p->s_2 = s_2;
+	p->u_2 = u_2;
+	p->m_2 = m_2;
+	p->forward_limit = 8.0 * r_hit;
+	p->inverse_limit = n / ( u_2 * n_r );
+}
+
+double ACES2_ToneScaleFwd( double x, const aces2TSParams_t *p ) {
+	const double f = p->m_2 * pow( ( x > 0.0 ? x : 0.0 ) / ( x + p->s_2 ), p->g );
+	const double h = f * f / ( f + p->t_1 );	/* flare */
+	return ( h > 0.0 ? h : 0.0 ) * p->n_r;
+}
+
+double ACES2_ToneScaleInv( double Yn, const aces2TSParams_t *p ) {
+	double Z = Yn;
+	double h;
+
+	if ( Z > p->inverse_limit ) {
+		Z = p->inverse_limit;
+	}
+	if ( Z < 0.0 ) {
+		Z = 0.0;
+	}
+	h = ( Z + sqrt( Z * ( 4.0 * p->t_1 + Z ) ) ) * 0.5;
+	return p->s_2 / ( pow( p->m_2 / h, 1.0 / p->g ) - 1.0 );
+}
