@@ -945,6 +945,15 @@ void RB_DrawView( const void *data ) {
 
 	backEnd.viewDef = cmd->viewDef;
 
+	/* A view with no entities is 2D - the HUD, the menus, the loading
+	 * screens.  That content is display-referred and must not go through
+	 * the scene's tone curve, so the scene is mapped here, before it
+	 * draws, and the HUD lands on the already-mapped image. */
+	if ( !backEnd.viewDef->viewEntitys ) {
+		extern void HDR_MapSceneBeforeHUD( void );
+		HDR_MapSceneBeforeHUD();
+	}
+
 	// we will need to do a new copyTexSubImage of the screen
 	// when a SS_POST_PROCESS material is used
 	backEnd.currentRenderCopied = false;

@@ -1,4 +1,5 @@
 /*
+
 ===========================================================================
 
 Doom 3 GPL Source Code
@@ -401,6 +402,9 @@ static float  hdr_gt_shoulder   = 0.40f;
 static int    hdr_expand_mode   = 0;       /* 0 none, 1 per-channel inverse tonemap, 2 hue-preserving; live-switchable */
 
 static GLuint hdr_fbo, hdr_tex, hdr_rbo, hdr_prog;
+static GLuint hdr_fbo2, hdr_tex2;
+static bool   hdr_mapping;   /* this run of the composite is the pre-HUD pass */
+static bool   hdr_scene_mapped;   /* the tone map has already run this frame */
 static GLint  hdr_loc_tex, hdr_loc_mat, hdr_loc_parms;
 static GLint  hdr_loc_bloomT, hdr_loc_bloomW, hdr_loc_bloomAmt, hdr_loc_encScale;
 static GLint  hdr_loc_film = -1;
@@ -427,7 +431,7 @@ static GLuint hdr_prog_down, hdr_prog_up;
 #ifndef HAVE_OPENGLES
 static GLuint hdr_arb_vp, hdr_arb_down, hdr_arb_up;
 static GLuint hdr_arb_bright, hdr_arb_blur;
-static GLuint hdr_arb_comp1, hdr_arb_comp2;
+static GLuint hdr_arb_comp1, hdr_arb_comp2, hdr_arb_encode;
 static int    hdr_arb_comp_mode = -1;   /* roll-off curve baked into the pair above */
 /* Every program in the chain is loaded.  On this build there is no other
    chain to run, so this is a load-state flag rather than a path
@@ -988,13 +992,15 @@ static void context_reset(void)
 {
    /* previous context's HDR objects are gone with it */
    hdr_fbo = hdr_tex = hdr_rbo = hdr_prog = 0;
+   hdr_fbo2 = hdr_tex2 = 0;
+   hdr_scene_mapped = false;
    hdr_prog_bright = hdr_prog_blur = 0;
    hdr_bloom_prog_bad = hdr_bloom_tex_bad = false;
    hdr_prog_down = hdr_prog_up = 0;
 #ifndef HAVE_OPENGLES
    hdr_arb_vp = hdr_arb_down = hdr_arb_up = 0;
    hdr_arb_bright = hdr_arb_blur = 0;
-   hdr_arb_comp1 = hdr_arb_comp2 = 0;
+   hdr_arb_comp1 = hdr_arb_comp2 = hdr_arb_encode = 0;
    hdr_arb_comp_mode = -1;
    hdr_arb_pyramid = false;
 #endif
@@ -2014,6 +2020,8 @@ void retro_set_controller_port_device(unsigned port, unsigned device)
 
 
 
+
+
 void retro_run(void)
 {
    /* Advance the deterministic clock by exactly one frame. All engine
@@ -2039,6 +2047,9 @@ void retro_run(void)
 	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, &updated) && updated)
 		update_variables(false);
 
+	/* a new frame starts on the scene target again, and the mapping has
+	 * not run yet */
+	hdr_scene_mapped = false;
 	hdr_bind_scene();
 
 	common->Frame();
@@ -2843,6 +2854,7 @@ static const char *hdr_arb_up_fs_src =
 	   exponents have to arrive as PARAMs and be selected.  Getting this
 	   wrong is a parse error, not a silent one: "expected '.'". */ \
 	"PARAM kSrgb = { 2.4, 2.4, 2.4, 2.4 };\n" \
+	"PARAM kSrgbInv = { 0.4166667, 0.4166667, 0.4166667, 0.4166667 };\n" \
 	"PARAM kPqA = { 0.1593017578125, 0.1593017578125, 0.1593017578125, 0.1593017578125 };\n" \
 	"PARAM kPqB = { 78.84375, 78.84375, 78.84375, 78.84375 };\n" \
 	"PARAM kHejlG = { 2.2, 2.2, 2.2, 2.2 };\n" \
@@ -3405,7 +3417,17 @@ static const char *hdr_arb_up_fs_src =
 	"DP3 r.x, lin, program.env[4];\n" \
 	"DP3 r.y, lin, program.env[5];\n" \
 	"DP3 r.z, lin, program.env[6];\n" \
+	/* Two exits.  When env[3].w is set this is the pass that runs before \
+	   the HUD is drawn, so the result stays display-referred: the curve \
+	   has already mapped it, and encoding it the way the scene target \
+	   was encoded means the HUD blends onto it in the same space it \
+	   always did.  The present pass then decodes both together.  \
+	   Otherwise this is the old single-pass path and goes to PQ. */ \
 	"MUL_SAT y, r, program.env[0].x;\n" \
+	"MAX r, r, 0.0;\n" \
+	"POW m.x, r.x, kSrgbInv.x;\n" \
+	"POW m.y, r.y, kSrgbInv.x;\n" \
+	"POW m.z, r.z, kSrgbInv.x;\n" \
 	"POW p.x, y.x, kPqA.x;\n" \
 	"POW p.y, y.y, kPqA.x;\n" \
 	"POW p.z, y.z, kPqA.x;\n" \
@@ -3433,7 +3455,9 @@ static const char *hdr_arb_up_fs_src =
 	"SUB d, d, 0.5;\n" \
 	"MAD_SAT e, d, program.env[3].z, e;\n" \
 	"MOV e.w, 1.0;\n" \
-	"MOV result.color, e;\n" \
+	"MOV m.w, 1.0;\n" \
+	"SUB a.x, program.env[3].w, 0.5;\n" \
+	"CMP result.color, a.x, e, m;\n" \
 	"END\n"
 
 /* One band: the second bloom fetch is skipped entirely rather than
@@ -3496,6 +3520,54 @@ static const char *hdr_arb_composite_src( int mode, bool twoBand ) {
 			"" );
 	return p;
 }
+
+/* The present pass, when the scene was already tone mapped before the
+   HUD was drawn.  Everything is display-referred by then - the mapped
+   scene and the HUD blended onto it in the same encoding - so this
+   decodes both together, scales to the display and encodes PQ.  It is
+   the tail of the composite with the whole colour pipeline removed,
+   which is the point: no curve runs here, so nothing the HUD sits on
+   can be tone mapped twice. */
+static const char *hdr_arb_encode_fs_src =
+	"!!ARBfp1.0\n"
+	"OPTION ARB_precision_hint_nicest;\n"
+	"PARAM kSrgb = { 2.4, 2.4, 2.4, 2.4 };\n"
+	"PARAM kPqA = { 0.1593017578, 0.1593017578, 0.1593017578, 0.1593017578 };\n"
+	"PARAM kPqB = { 78.84375, 78.84375, 78.84375, 78.84375 };\n"
+	"TEMP s, lin, t, u, a, p, e, n, d;\n"
+	"TEX s, fragment.texcoord[0], texture[0], 2D;\n"
+	"MAX s, s, 0.0;\n"
+	"POW lin.x, s.x, kSrgb.x;\n"
+	"POW lin.y, s.y, kSrgb.x;\n"
+	"POW lin.z, s.z, kSrgb.x;\n"
+	"MUL_SAT t, lin, program.env[0].x;\n"
+	"POW p.x, t.x, kPqA.x;\n"
+	"POW p.y, t.y, kPqA.x;\n"
+	"POW p.z, t.z, kPqA.x;\n"
+	"MAD u, p, 18.8515625, 0.8359375;\n"
+	"MAD t, p, 18.6875, 1.0;\n"
+	"RCP a.x, t.x;\n"
+	"RCP a.y, t.y;\n"
+	"RCP a.z, t.z;\n"
+	"MUL u, u, a;\n"
+	"POW e.x, u.x, kPqB.x;\n"
+	"POW e.y, u.y, kPqB.x;\n"
+	"POW e.z, u.z, kPqB.x;\n"
+	/* the same ordered dither the single-pass path applies */
+	"MUL n.x, fragment.position.x, 0.7548776662;\n"
+	"MAD n.x, fragment.position.y, 0.00583715, n.x;\n"
+	"FRC n.x, n.x;\n"
+	"MAD d.x, program.env[3].x, program.env[3].y, n.x;\n"
+	"ADD t.x, program.env[3].x, 1.0;\n"
+	"MAD d.y, t.x, program.env[3].y, n.x;\n"
+	"ADD t.x, program.env[3].x, 2.0;\n"
+	"MAD d.z, t.x, program.env[3].y, n.x;\n"
+	"FRC d, d;\n"
+	"SUB d, d, 0.5;\n"
+	"MAD_SAT e, d, program.env[3].z, e;\n"
+	"MOV e.w, 1.0;\n"
+	"MOV result.color, e;\n"
+	"END\n";
 
 static const char *hdr_arb_bright_fs_src =
 	"!!ARBfp1.0\n"
@@ -4155,6 +4227,11 @@ static bool hdr_arb_ready( void ) {
 	 * that, every toggle would strand two program objects, and the
 	 * option is a menu item somebody will sit and cycle through. */
 	if ( hdr_arb_comp_mode != hdr_rolloff_mode ) {
+		if ( hdr_arb_encode == 0
+				&& !hdr_arb_load( GL_FRAGMENT_PROGRAM_ARB, hdr_arb_encode_fs_src,
+						&hdr_arb_encode, "hdr encode program" ) ) {
+			return false;
+		}
 		if ( hdr_arb_comp1 ) {
 			GLuint dead[2] = { hdr_arb_comp1, hdr_arb_comp2 };
 			glDeleteProgramsARB( 2, dead );
@@ -4403,6 +4480,8 @@ static bool hdr_ensure_target( int w, int h ) {
 	   to log. */
 	if ( hdr_fbo == 0 || w != hdr_w || h != hdr_h ) {
 		if ( hdr_tex ) glDeleteTextures( 1, &hdr_tex );
+		if ( hdr_tex2 ) glDeleteTextures( 1, &hdr_tex2 );
+		if ( hdr_fbo2 ) glDeleteFramebuffers( 1, &hdr_fbo2 );
 		if ( hdr_rbo ) glDeleteRenderbuffers( 1, &hdr_rbo );
 		if ( hdr_fbo ) glDeleteFramebuffers( 1, &hdr_fbo );
 		glGenTextures( 1, &hdr_tex );
@@ -4434,6 +4513,36 @@ static bool hdr_ensure_target( int w, int h ) {
 		glBindRenderbuffer( GL_RENDERBUFFER, hdr_rbo );
 		/* the engine needs depth AND stencil (stencil shadow volumes) */
 		glRenderbufferStorage( GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, w, h );
+		/* The mapped target.  The scene is tone mapped into this before
+		 * the HUD is drawn, so the HUD lands on an already-mapped image
+		 * and never goes through the curve - the same format and the
+		 * same depth/stencil, so 2D drawing behaves exactly as it did
+		 * when it drew into the scene target. */
+		glGenTextures( 1, &hdr_tex2 );
+		glBindTexture( GL_TEXTURE_2D, hdr_tex2 );
+		/* the same format the scene target just chose - the mapped image
+		 * holds display-referred values, but the HUD blends onto it and
+		 * a narrower format would band those blends */
+		if ( hdr_fp32_scene )
+			glTexImage2D( GL_TEXTURE_2D, 0, 0x8814 /* GL_RGBA32F */, w, h, 0, GL_RGBA,
+					GL_FLOAT, NULL );
+		else if ( hdr_fp16_scene )
+			glTexImage2D( GL_TEXTURE_2D, 0, 0x881A /* GL_RGBA16F */, w, h, 0, GL_RGBA,
+					0x140B /* GL_HALF_FLOAT */, NULL );
+		else
+			glTexImage2D( GL_TEXTURE_2D, 0, GL_RGB10_A2, w, h, 0, GL_RGBA,
+					GL_UNSIGNED_INT_2_10_10_10_REV, NULL );
+		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
+		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
+		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
+		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
+		glGenFramebuffers( 1, &hdr_fbo2 );
+		glBindFramebuffer( RARCH_GL_FRAMEBUFFER, hdr_fbo2 );
+		glFramebufferTexture2D( RARCH_GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+				GL_TEXTURE_2D, hdr_tex2, 0 );
+		glFramebufferRenderbuffer( RARCH_GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
+				GL_RENDERBUFFER, hdr_rbo );
+
 		glGenFramebuffers( 1, &hdr_fbo );
 		glBindFramebuffer( RARCH_GL_FRAMEBUFFER, hdr_fbo );
 		glFramebufferTexture2D( RARCH_GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
@@ -4989,6 +5098,25 @@ static void hdr_shoulder_params( int mode, float H, float *A, float *slopeOut ) 
 #endif
 
 /* run the conversion pass from the scene target into dstFbo */
+/* Tone map the scene into the mapped target, before the HUD is drawn.
+ *
+ * The HUD, the menus and the loading screens are display-referred: they
+ * were authored to look right on a screen, not to be light in a room.
+ * Running them through a scene-referred curve lifts them - a mid grey at
+ * 0.5 leaves Filmic Log at 0.743 - and only Reinhard's soft knee, which
+ * is the identity below 0.75, ever hid that.
+ *
+ * The fix is ordering rather than marking: map the scene first, draw the
+ * HUD onto the mapped image, and let the present pass do nothing but
+ * encode.  An earlier attempt flagged HUD pixels in the scene target's
+ * alpha and mixed by it, which failed because Doom 3's 2D drawing uses
+ * whatever blend mode each material asks for, so the flag meant
+ * something different per surface.  Ordering has no per-pixel state to
+ * get wrong.
+ */
+static void hdr_map_scene( void );
+static void hdr_encode_present( GLuint dstFbo );
+
 static void hdr_present( GLuint dstFbo ) {
 	if ( !hdr_output_active || !HDR_COMPOSITE_READY || hdr_fbo == 0 )
 		return;
@@ -5276,7 +5404,7 @@ static void hdr_present( GLuint dstFbo ) {
 	}
 
 
-	glBindFramebuffer( RARCH_GL_FRAMEBUFFER, dstFbo );
+	glBindFramebuffer( RARCH_GL_FRAMEBUFFER, hdr_mapping ? hdr_fbo2 : dstFbo );
 	glViewport( 0, 0, hdr_w, hdr_h );
 
 #ifdef HAVE_OPENGLES
@@ -5403,7 +5531,8 @@ static void hdr_present( GLuint dstFbo ) {
 				1.0f / ( 1.0f - eknee < 1e-4f ? 1e-4f : 1.0f - eknee ), 0.0f };
 		const float p2[4] = { 1.0f / hdr_scene_encode_scale,
 				haveBloom ? hdr_bloom_amount : 0.0f, bandW0, bandW1 };
-		const float p3[4] = { frameN * 3.0f, 0.6180339887f, 1.0f / 1023.0f, 0.0f };
+		const float p3[4] = { frameN * 3.0f, 0.6180339887f, 1.0f / 1023.0f,
+				hdr_mapping ? 1.0f : 0.0f };
 		/* rows, from the column-major matrix the GLSL upload uses */
 		/* ACES 2.0 lands in the output primaries itself, so the gamut
 		 * stage that follows it is fed identity rows.  Rotating an
@@ -5506,6 +5635,92 @@ static void hdr_present( GLuint dstFbo ) {
 	glDepthMask( GL_TRUE );
 }
 
+/*
+================
+hdr_map_scene
+
+Runs the composite as the pre-HUD pass: the scene is tone mapped and
+left display-referred in hdr_tex2, and the target is switched so the
+HUD draws onto it.  Called once per frame, when the first 2D view is
+about to be drawn.
+================
+*/
+static void hdr_map_scene( void ) {
+#ifdef HAVE_OPENGLES
+	/* the GLSL composite is one pass; the ordering split is ARB-only */
+	return;
+#else
+	if ( !hdr_output_active || !HDR_COMPOSITE_READY || hdr_fbo == 0
+			|| hdr_fbo2 == 0 || hdr_scene_mapped ) {
+		return;
+	}
+	hdr_scene_mapped = true;
+	hdr_mapping = true;
+	hdr_present( 0 );
+	hdr_mapping = false;
+	/* the HUD now draws onto the mapped image */
+	glBindFramebuffer( RARCH_GL_FRAMEBUFFER, hdr_fbo2 );
+#endif
+}
+
+/* The renderer's hook.  Named for what it does at the call site rather
+ * than for the file it lives in, because that is where it has to be
+ * understood. */
+void HDR_MapSceneBeforeHUD( void ) {
+	hdr_map_scene();
+}
+
+/*
+================
+hdr_encode_present
+
+The end-of-frame pass when the scene was already mapped.  Everything in
+hdr_tex2 is display-referred by then - the mapped scene, and the HUD
+blended onto it in the same encoding - so this only decodes, scales and
+encodes PQ.  No curve runs here, which is the entire point: nothing the
+HUD sits on can be tone mapped a second time.
+================
+*/
+#ifndef HAVE_OPENGLES
+static void hdr_encode_present( GLuint dstFbo ) {
+	float paperWhite = 200.0f, maxNits = 1000.0f;
+	float p0[4], p3[4];
+	const float frameN = (float)( hdr_frame_counter++ & 63u );
+
+	environ_cb( RETRO_ENVIRONMENT_GET_HDR_PAPER_WHITE_NITS, &paperWhite );
+	environ_cb( RETRO_ENVIRONMENT_GET_HDR_MAX_NITS, &maxNits );
+
+	glBindFramebuffer( RARCH_GL_FRAMEBUFFER, dstFbo );
+	glViewport( 0, 0, hdr_w, hdr_h );
+	glActiveTexture( GL_TEXTURE0 );
+	glBindTexture( GL_TEXTURE_2D, hdr_tex2 );
+
+	glUseProgram( 0 );
+	qglEnable( GL_VERTEX_PROGRAM_ARB );
+	qglEnable( GL_FRAGMENT_PROGRAM_ARB );
+	qglBindProgramARB( GL_VERTEX_PROGRAM_ARB, hdr_arb_vp );
+	qglBindProgramARB( GL_FRAGMENT_PROGRAM_ARB, hdr_arb_encode );
+
+	p0[0] = paperWhite / 10000.0f; p0[1] = 1.0f; p0[2] = 0.0f; p0[3] = 0.0f;
+	p3[0] = frameN * 3.0f; p3[1] = 0.6180339887f; p3[2] = 1.0f / 1023.0f; p3[3] = 0.0f;
+	qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 0, p0 );
+	qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 3, p3 );
+
+	/* the same full-screen triangle the composite draws; the vertex
+	 * program generates its own positions, so no buffer setup */
+	glDrawArrays( GL_TRIANGLES, 0, 3 );
+
+	qglDisable( GL_FRAGMENT_PROGRAM_ARB );
+	qglDisable( GL_VERTEX_PROGRAM_ARB );
+}
+#else
+/* GLES has no ARB program path, and the GLSL composite is a single pass
+ * there, so the split does not apply - hdr_map_scene never runs and this
+ * is never called. */
+static void hdr_encode_present( GLuint dstFbo ) { (void)dstFbo; }
+#endif
+
+
 void GLimp_SwapBuffers() {
    /*
       Frame-time fix: flush only when the frontend reads our FBO from a
@@ -5517,7 +5732,13 @@ void GLimp_SwapBuffers() {
    */
    /* 30-bit HDR: convert the scene target into the frontend framebuffer
       before presentation; 24-bit mode skips straight past. */
-   hdr_present((GLuint)hw_render.get_current_framebuffer());
+   if ( hdr_scene_mapped ) {
+      hdr_encode_present((GLuint)hw_render.get_current_framebuffer());
+      hdr_scene_mapped = false;
+   } else {
+      /* no 2D view drew this frame, so the single-pass path still applies */
+      hdr_present((GLuint)hw_render.get_current_framebuffer());
+   }
 
    if (libretro_shared_context)
       glFlush();
