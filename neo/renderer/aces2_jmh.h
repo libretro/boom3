@@ -41,3 +41,33 @@ double	ACES2_JToY( double J, const aces2JMhParams_t *p );
 double	ACES2_YToJ( double Y, const aces2JMhParams_t *p );
 
 #endif /* !__ACES2_JMH_H__ */
+
+/*
+===========================================================================
+
+The display gamut cusp table.
+
+For each hue, the cusp is the most colourful point the display's own
+primaries can reach - the edge of the RGB cube, seen in JMh.  The gamut
+compression stage needs it per pixel, and finding it involves a search,
+so it is found once per hue here and read back by interpolation later.
+
+TotalTableSize is the reference's 360 entries plus two that wrap the
+ends, so interpolation across 0 and 360 degrees needs no special case.
+
+===========================================================================
+*/
+
+#define ACES2_TABLE_SIZE		360
+#define ACES2_TABLE_TOTAL		( ACES2_TABLE_SIZE + 2 )
+#define ACES2_BASE_INDEX		1
+
+typedef struct {
+	double	J[ACES2_TABLE_TOTAL];
+	double	M[ACES2_TABLE_TOTAL];
+	double	h[ACES2_TABLE_TOTAL];
+} aces2CuspTable_t;
+
+void	ACES2_BuildCuspTable( const aces2JMhParams_t *limit, double peakLuminance,
+							  aces2CuspTable_t *table );
+void	ACES2_CuspForHue( const aces2CuspTable_t *table, double hue, double JM[2] );

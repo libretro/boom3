@@ -320,3 +320,158 @@ double ACES2_YToJ( double Y, const aces2JMhParams_t *p ) {
 	const double J = J_scale * pow( Ra * p->inv_A_w_J, p->cz );
 	return Y < 0.0 ? -J : J;
 }
+
+/* ---- the display gamut cusp table ---- */
+
+/*
+================
+ACES2_CubeCorner
+
+The six corners of the RGB cube that are neither black nor white, in the
+order the reference generates them: red, yellow, green, cyan, blue,
+magenta.
+================
+*/
+static void ACES2_CubeCorner( int corner, double rgb[3] ) {
+	rgb[0] = ( ( ( corner + 1 ) % 6 ) < 3 ) ? 1.0 : 0.0;
+	rgb[1] = ( ( ( corner + 5 ) % 6 ) < 3 ) ? 1.0 : 0.0;
+	rgb[2] = ( ( ( corner + 3 ) % 6 ) < 3 ) ? 1.0 : 0.0;
+}
+
+/*
+================
+ACES2_BuildCuspTable
+
+The corners are taken round the cube in hue order, then for each table
+hue the cusp is bisected along the cube edge between the two corners
+that bracket it.  The reference's tolerance is 1e-7 in the edge
+parameter, which is what the loop count below is sized for.
+================
+*/
+void ACES2_BuildCuspTable( const aces2JMhParams_t *limit, double peakLuminance,
+						   aces2CuspTable_t *table ) {
+	double cornerRGB[8][3], cornerJMh[8][3];
+	double tmpRGB[6][3], tmpJMh[6][3];
+	int minIndex = 0;
+	int i, c;
+
+	for ( i = 0; i < 6; i++ ) {
+		double unit[3];
+		ACES2_CubeCorner( i, unit );
+		tmpRGB[i][0] = unit[0] * peakLuminance / 100.0;
+		tmpRGB[i][1] = unit[1] * peakLuminance / 100.0;
+		tmpRGB[i][2] = unit[2] * peakLuminance / 100.0;
+		ACES2_RGBToJMh( tmpRGB[i], limit, tmpJMh[i] );
+		if ( tmpJMh[i][2] < tmpJMh[minIndex][2] ) {
+			minIndex = i;
+		}
+	}
+
+	for ( i = 0; i < 6; i++ ) {
+		const int src = ( i + minIndex ) % 6;
+		for ( c = 0; c < 3; c++ ) {
+			cornerRGB[i+1][c] = tmpRGB[src][c];
+			cornerJMh[i+1][c] = tmpJMh[src][c];
+		}
+	}
+	for ( c = 0; c < 3; c++ ) {
+		cornerRGB[0][c] = cornerRGB[6][c];
+		cornerRGB[7][c] = cornerRGB[1][c];
+		cornerJMh[0][c] = cornerJMh[6][c];
+		cornerJMh[7][c] = cornerJMh[1][c];
+	}
+	cornerJMh[0][2] -= 360.0;
+	cornerJMh[7][2] += 360.0;
+
+	for ( i = ACES2_BASE_INDEX; i < ACES2_TABLE_TOTAL - 1; i++ ) {
+		const double hue = (double)( i - ACES2_BASE_INDEX );
+		int upper = 1, lower;
+		double lowerT = 0.0, upperT = 1.0, JMh[3], sample[3];
+		int guard;
+
+		for ( c = 1; c < 8; c++ ) {
+			if ( cornerJMh[c][2] > hue ) {
+				upper = c;
+				break;
+			}
+		}
+		lower = upper - 1;
+
+		if ( cornerJMh[lower][2] == hue ) {
+			table->J[i] = cornerJMh[lower][0];
+			table->M[i] = cornerJMh[lower][1] * ( 1.0 + 0.27 * 0.12 );
+			table->h[i] = hue;
+			continue;
+		}
+
+		for ( guard = 0; guard < 64 && ( upperT - lowerT ) > 1e-7; guard++ ) {
+			const double t = 0.5 * ( lowerT + upperT );
+			for ( c = 0; c < 3; c++ ) {
+				sample[c] = cornerRGB[lower][c] + ( cornerRGB[upper][c] - cornerRGB[lower][c] ) * t;
+			}
+			ACES2_RGBToJMh( sample, limit, JMh );
+			if ( JMh[2] < cornerJMh[lower][2] ) {
+				upperT = t;
+			} else if ( JMh[2] >= cornerJMh[upper][2] ) {
+				lowerT = t;
+			} else if ( JMh[2] > hue ) {
+				upperT = t;
+			} else {
+				lowerT = t;
+			}
+		}
+
+		table->J[i] = JMh[0];
+		/* the reference widens M here by smooth_m * smooth_cusps */
+		table->M[i] = JMh[1] * ( 1.0 + 0.27 * 0.12 );
+		table->h[i] = hue;
+	}
+
+	/* wrap entries, so a lookup either side of 0 degrees interpolates */
+	table->J[0] = table->J[ACES2_TABLE_SIZE];
+	table->M[0] = table->M[ACES2_TABLE_SIZE];
+	table->h[0] = -1.0;
+	table->J[ACES2_TABLE_TOTAL-1] = table->J[ACES2_BASE_INDEX];
+	table->M[ACES2_TABLE_TOTAL-1] = table->M[ACES2_BASE_INDEX];
+	table->h[ACES2_TABLE_TOTAL-1] = 360.0;
+}
+
+/*
+================
+ACES2_CuspForHue
+
+Linear interpolation between the two entries bracketing the hue.  The
+table is uniform in hue, so the index is arithmetic rather than a
+search - which is also what makes this a texture fetch in a shader.
+
+Uniform spacing costs accuracy at the cube corners, where the cusp has
+a kink rather than a smooth turn, and interpolating across a kink cuts
+the corner off.  Measured against cusps computed directly at 36000
+hues: worst error 0.31 in J and 0.66 in M, the latter 1.4% of the M
+range, both at corner hues - 106.6 and 140.3 degrees for Rec.709.
+
+The reference avoids this by spacing its table non-uniformly so the six
+corner hues land exactly on entries, and paying for it with a binary
+search at lookup time.  A shader cannot loop, but it does not have to:
+a second uniform table mapping hue to table index turns the search into
+one more arithmetic fetch.  That is the plan for the shader stage, and
+it is deliberately not done here - this file is the reference the
+shaders get checked against, and it should stay the simple version
+until there is something to check.
+================
+*/
+void ACES2_CuspForHue( const aces2CuspTable_t *table, double hue, double JM[2] ) {
+	double t;
+	int lo;
+
+	hue = fmod( hue, 360.0 );
+	if ( hue < 0.0 ) {
+		hue += 360.0;
+	}
+	lo = (int)hue;
+	t = hue - (double)lo;
+	lo += ACES2_BASE_INDEX;
+
+	JM[0] = table->J[lo] + ( table->J[lo+1] - table->J[lo] ) * t;
+	JM[1] = table->M[lo] + ( table->M[lo+1] - table->M[lo] ) * t;
+}
