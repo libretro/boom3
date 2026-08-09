@@ -345,6 +345,47 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "disabled"
    },
    {
+      "doom_hdr_gt_toe",
+      "GT Roll-Off: Toe",
+      NULL,
+      "Where GT's linear section starts. Everything below this is the "
+      "toe, so a larger value gives a longer, softer approach out of "
+      "black and slightly darker mid-tones; a smaller one puts more of "
+      "the image on the straight section. Only affects the GT "
+      "(Uchimura) roll-off.",
+      NULL,
+      NULL,
+      {
+         { "0.10", "0.10 (short toe)" },
+         { "0.16", "0.16" },
+         { "0.22", "0.22 (default)" },
+         { "0.30", "0.30" },
+         { "0.40", "0.40 (long toe)" },
+         { NULL, NULL },
+      },
+      "0.22"
+   },
+   {
+      "doom_hdr_gt_shoulder",
+      "GT Roll-Off: Linear Length",
+      NULL,
+      "How much of the range stays perfectly linear before the "
+      "shoulder takes over. Longer keeps mid-tones truer and bends "
+      "later but more sharply; shorter starts easing into the "
+      "highlights sooner. Only affects the GT (Uchimura) roll-off.",
+      NULL,
+      NULL,
+      {
+         { "0.20", "0.20 (early shoulder)" },
+         { "0.30", "0.30" },
+         { "0.40", "0.40 (default)" },
+         { "0.50", "0.50" },
+         { "0.70", "0.70 (late shoulder)" },
+         { NULL, NULL },
+      },
+      "0.40"
+   },
+   {
       "doom_hdr_expansion",
       "HDR Expansion",
       NULL,

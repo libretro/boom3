@@ -167,6 +167,12 @@ enum {
 
 #define HDR_ROLLOFF_FIRST_RGB HDR_ROLLOFF_JODIE
 static int    hdr_rolloff_mode  = HDR_ROLLOFF_REINHARD;   /* live-switchable */
+/* GT's toe and shoulder, live-switchable.  The published defaults are
+ * 0.22 and 0.4; every other constant in the curve is derived from them,
+ * so they are solved once per present rather than baked into the
+ * shaders the way they used to be. */
+static float  hdr_gt_toe        = 0.22f;
+static float  hdr_gt_shoulder   = 0.40f;
 static int    hdr_expand_mode   = 0;       /* 0 none, 1 per-channel inverse tonemap, 2 hue-preserving; live-switchable */
 
 static GLuint hdr_fbo, hdr_tex, hdr_rbo, hdr_prog;
@@ -175,6 +181,7 @@ static GLint  hdr_loc_bloomT, hdr_loc_bloomW, hdr_loc_bloomAmt, hdr_loc_encScale
 static GLint  hdr_loc_frame;
 static GLint  hdr_loc_expand;
 static GLint  hdr_loc_aces;
+static GLint  hdr_loc_gt;
 static unsigned hdr_frame_counter;
 static GLint  hdr_bright_loc_enc;
 static int    hdr_w, hdr_h;
@@ -667,8 +674,18 @@ static void update_variables(bool startup)
 		else if (!strcmp(var.value, "ward"))      hdr_rolloff_mode = HDR_ROLLOFF_WARD;
 		else if (!strcmp(var.value, "schlick"))   hdr_rolloff_mode = HDR_ROLLOFF_SCHLICK;
 		else if (!strcmp(var.value, "devlin"))    hdr_rolloff_mode = HDR_ROLLOFF_DEVLIN;
-		else                                 hdr_rolloff_mode = HDR_ROLLOFF_REINHARD;
+		else                                     hdr_rolloff_mode = HDR_ROLLOFF_REINHARD;
 	}
+
+	var.key = "doom_hdr_gt_toe";
+	var.value = NULL;
+	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+		hdr_gt_toe = (float)atof(var.value);
+
+	var.key = "doom_hdr_gt_shoulder";
+	var.value = NULL;
+	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+		hdr_gt_shoulder = (float)atof(var.value);
 
 	var.key = "doom_hrtf";
 	var.value = NULL;
@@ -1877,7 +1894,8 @@ static const char *hdr_fs_src =
 	   w = knee (Reinhard) */
 	"uniform vec4 uParms;\n"
 	"uniform vec2 uExpand;\n"
-	"uniform vec2 uAces;\n"    /* x: input stretch, y: renormalisation */   /* x: mode (0 none, 1 per-channel, 2 hue-preserving), y: knee */
+	"uniform vec3 uAces;\n"
+	"uniform vec4 uGt;\n"     /* GT: toe m, S0, 1-S1, C2 - solved on the CPU */
 	/* Decode with a pure 2.4 power, matching RetroArch.
 
 	   The frontend converts SDR core output for an HDR swapchain with
@@ -2059,13 +2077,13 @@ static const char *hdr_fs_src =
 	"    return shoulder(v, pow(max(f, 0.0), 2.2) * 1.4132626);\n"
 	"  }\n"
 	"  if (uParms.z > 2.5) {\n"
-	"    float t = clamp(v / 0.22, 0.0, 1.0);\n"
+	"    float t = clamp(v / uGt.x, 0.0, 1.0);\n"
 	"    float w0 = 1.0 - (t * t * (3.0 - 2.0 * t));\n"
-	"    float w2 = step(0.532, v);\n"
+	"    float w2 = step(uGt.y, v);\n"
 	"    float w1 = 1.0 - w0 - w2;\n"
-	"    float T = 0.22 * pow(max(v, 0.0) / 0.22, 1.33);\n"
-	"    float S = 1.0 - 0.468 * exp(-2.136752 * (v - 0.532));\n"
-	"    return (T * w0 + v * w1 + S * w2) * 1.2079740;\n"
+	"    float T = uGt.x * pow(max(v, 0.0) / uGt.x, 1.33);\n"
+	"    float S = 1.0 - uGt.z * exp(-uGt.w * (v - uGt.y));\n"
+	"    return (T * w0 + v * w1 + S * w2) * uAces.z;\n"
 	"  }\n"
 	"  if (uParms.z > 1.5) {\n"
 	"    float x = max(v - 0.004, 0.0);\n"
@@ -2479,32 +2497,37 @@ static const char *hdr_arb_up_fs_src =
 	"MUL t, t, 1.4629683;\n"
 
 #define HDR_ARB_CURVE_GT \
-	"MUL u, lin, kInvM.x;\n" \
+	/* env[8] = (toe m, S0, 1-S1, C2), env[9].x = 1/m, env[9].y = norm.
+	   All four are solved on the CPU from the toe and shoulder options,
+	   so moving either slider is a uniform upload, not a rebuild. */ \
+	"MUL u, lin, program.env[9].x;\n" \
 	"MIN u, u, 1.0;\n" \
 	"MAX u, u, 0.0;\n" \
 	"MAD v, u, -2.0, 3.0;\n" \
 	"MUL v, v, u;\n" \
 	"MUL v, v, u;\n" \
 	"SUB v, 1.0, v;\n" \
-	"SGE m, lin, 0.532;\n" \
+	"SGE m, lin, program.env[8].y;\n" \
 	"SUB a, 1.0, v;\n" \
 	"SUB a, a, m;\n" \
 	"MAX u, lin, 0.0;\n" \
-	"MUL u, u, kInvM.x;\n" \
+	"MUL u, u, program.env[9].x;\n" \
 	"POW u.x, u.x, kGtC.x;\n" \
 	"POW u.y, u.y, kGtC.x;\n" \
 	"POW u.z, u.z, kGtC.x;\n" \
-	"MUL u, u, 0.22;\n" \
-	"SUB t, lin, 0.532;\n" \
-	"MUL t, t, -2.136752;\n" \
-	"POW t.x, kE.x, t.x;\n" \
-	"POW t.y, kE.x, t.y;\n" \
-	"POW t.z, kE.x, t.z;\n" \
-	"MAD t, t, -0.468, 1.0;\n" \
+	"MUL u, u, program.env[8].x;\n" \
+	"SUB t, lin, program.env[8].y;\n" \
+	"MUL t, t, program.env[8].w;\n" \
+	"MUL t, t, -1.4426950;\n" \
+	"EX2 t.x, t.x;\n" \
+	"EX2 t.y, t.y;\n" \
+	"EX2 t.z, t.z;\n" \
+	"MUL t, t, program.env[8].z;\n" \
+	"SUB t, 1.0, t;\n" \
 	"MUL u, u, v;\n" \
 	"MAD u, lin, a, u;\n" \
 	"MAD t, t, m, u;\n" \
-	"MUL t, t, 1.2079740;\n"
+	"MUL t, t, program.env[9].y;\n"
 
 #define HDR_ARB_CURVE_HABLE \
 	"MAD t, lin, 0.15, 0.05;\n" \
@@ -3872,6 +3895,39 @@ static double hdr_curve_hejl( double v ) {
  * threshold-versus-intensity model reduces to the same linear scaling
  * as Ward, so it would be a second name for an entry already here.
  */
+/* GT's derived constants, and the factor that pins paper white.
+ *
+ * l0, S0, S1 and C2 all follow from the toe and the linear length, so
+ * changing either moves the whole curve; the normalisation has to be
+ * re-solved with them or paper white drifts as the sliders move. */
+static void hdr_gt_params( double m, double l, double *l0, double *S0,
+						   double *S1, double *C2 ) {
+	*l0 = ( ( 1.0 - m ) * l );
+	*S0 = m + *l0;
+	*S1 = m + *l0;
+	*C2 = 1.0 / ( 1.0 - *S1 );
+}
+
+static double hdr_curve_gt_at( double v, double m, double l ) {
+	double l0, S0, S1, C2, t, w0, w1, w2, T, S, L;
+
+	hdr_gt_params( m, l, &l0, &S0, &S1, &C2 );
+	t = v / m;
+	if ( t > 1.0 ) t = 1.0; else if ( t < 0.0 ) t = 0.0;
+	w0 = 1.0 - ( t * t * ( 3.0 - 2.0 * t ) );
+	w2 = ( v >= S0 ) ? 1.0 : 0.0;
+	w1 = 1.0 - w0 - w2;
+	T  = m * pow( ( v > 0.0 ? v : 0.0 ) / m, 1.33 );
+	S  = 1.0 - ( 1.0 - S1 ) * exp( -C2 * ( v - S0 ) );
+	L  = v;
+	return T * w0 + L * w1 + S * w2;
+}
+
+static double hdr_gt_norm( void ) {
+	const double f = hdr_curve_gt_at( 1.0, hdr_gt_toe, hdr_gt_shoulder );
+	return f > 1e-6 ? 1.0 / f : 1.0;
+}
+
 static double hdr_curve_tumblin( double v ) {
 	/* Exponent is gamma(Lwa)/gamma(Lda) at Lwa = 1, Lda = 20 cd/m2,
 	 * which is 0.6075.  Everything else in the model is a constant
@@ -3972,34 +4028,7 @@ static double hdr_curve_filmicalu( double v ) {
 }
 
 static double hdr_curve_gt( double v ) {
-	/* Uchimura's GT curve, with its published defaults folded: a = 1,
-	 * m = 0.22, l = 0.4, c = 1.33, b = 0, P = 1.  Those give l0 = 0.312
-	 * and S0 = S1 = 0.532, so the linear segment is just v itself and
-	 * the shoulder constant C2 is 2.136752.
-	 *
-	 * Unlike ACES and Hejl it keeps mid-tones close to where they were -
-	 * mid grey lands at 0.216 against 0.33 for the other two - and
-	 * saturates at 1.208x paper white, the shortest shoulder of the
-	 * three.  Normalised the same way: divided by its own value at 1.0
-	 * so paper white stays put. */
-	const double m = 0.22, S0 = 0.532, C2 = 2.136752;
-	double t = v / m;
-	double w0, w1, w2, T, S, L;
-
-	if ( t > 1.0 ) {
-		t = 1.0;
-	} else if ( t < 0.0 ) {
-		t = 0.0;
-	}
-	w0 = 1.0 - ( t * t * ( 3.0 - 2.0 * t ) );
-	w2 = ( v >= S0 ) ? 1.0 : 0.0;
-	w1 = 1.0 - w0 - w2;
-
-	T = ( v > 0.0 ) ? m * pow( v / m, 1.33 ) : 0.0;
-	S = 1.0 - ( 1.0 - S0 ) * exp( -( C2 * ( v - S0 ) ) );
-	L = v;
-
-	return ( T * w0 + L * w1 + S * w2 ) * 1.2079740;
+	return hdr_curve_gt_at( v, hdr_gt_toe, hdr_gt_shoulder ) * hdr_gt_norm();
 }
 
 static double hdr_curve_hable( double v ) {
@@ -4512,7 +4541,13 @@ static void hdr_present( GLuint dstFbo ) {
 	{
 		float as, an;
 		hdr_shoulder_params( hdr_rolloff_mode, H, &as, &an );
-		glUniform2f( hdr_loc_aces, as, an );
+		{
+			double l0, S0, S1, C2;
+			hdr_gt_params( hdr_gt_toe, hdr_gt_shoulder, &l0, &S0, &S1, &C2 );
+			glUniform3f( hdr_loc_aces, as, an, (float)hdr_gt_norm() );
+			glUniform4f( hdr_loc_gt, hdr_gt_toe, (float)S0,
+					(float)( 1.0 - S1 ), (float)C2 );
+		}
 	}
 #endif
 
@@ -4547,6 +4582,17 @@ static void hdr_present( GLuint dstFbo ) {
 			hdr_shoulder_params( hdr_rolloff_mode, H, &as, &an );
 			p7[0] = as; p7[1] = an; p7[2] = 0.0f; p7[3] = 0.0f;
 			qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 7, p7 );
+			{
+				double l0, S0, S1, C2;
+				float p8[4], p9[4];
+				hdr_gt_params( hdr_gt_toe, hdr_gt_shoulder, &l0, &S0, &S1, &C2 );
+				p8[0] = hdr_gt_toe;      p8[1] = (float)S0;
+				p8[2] = (float)( 1.0 - S1 ); p8[3] = (float)C2;
+				p9[0] = 1.0f / hdr_gt_toe;   p9[1] = (float)hdr_gt_norm();
+				p9[2] = 0.0f;                p9[3] = 0.0f;
+				qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 8, p8 );
+				qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 9, p9 );
+			}
 		}
 	}
 #endif
