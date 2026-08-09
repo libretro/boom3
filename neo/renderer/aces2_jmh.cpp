@@ -740,3 +740,198 @@ void ACES2_ChromaCompressInv( const double JMh[3], double J,
 	out[1] = M;
 	out[2] = h;
 }
+
+/* ---- gamut compression ---- */
+
+static const double ACES2_smooth_cusps = 0.12;
+static const double ACES2_cusp_mid_blend = 1.3;
+static const double ACES2_focus_gain_blend = 0.3;
+static const double ACES2_compression_threshold = 0.75;
+
+void ACES2_InitGamutParams( const aces2JMhParams_t *input, const aces2TSParams_t *ts,
+							double peakLuminance, aces2GamutParams_t *p ) {
+	const double focus_distance = 1.35;
+	const double focus_distance_scaling = 1.75;
+	const double model_gamma = 0.59 * ( 1.48 + sqrt( 20.0 / 100.0 ) );
+	const double log_peak = log10( peakLuminance / 100.0 );
+	const double lower_hull_gamma = 1.14 + 0.07 * log_peak;
+
+	p->limit_J_max = ACES2_YToJ( peakLuminance, input );
+	p->mid_J = ACES2_YToJ( ts->c_t * 100.0, input );
+	p->focus_dist = focus_distance + focus_distance * focus_distance_scaling * log_peak;
+	p->lower_hull_gamma_inv = 1.0 / lower_hull_gamma;
+	p->model_gamma_inv = 1.0 / model_gamma;
+}
+
+static double ACES2_FocusGain( double J, double analytical_threshold,
+							   double limit_J_max, double focus_dist ) {
+	double gain = limit_J_max * focus_dist;
+
+	if ( J > analytical_threshold ) {
+		const double denom = ( limit_J_max - J ) > 0.0001 ? ( limit_J_max - J ) : 0.0001;
+		double adj = log10( ( limit_J_max - analytical_threshold ) / denom );
+		adj = adj * adj + 1.0;
+		gain = gain * adj;
+	}
+	return gain;
+}
+
+static double ACES2_SolveJIntersect( double J, double M, double focusJ,
+									 double maxJ, double slope_gain ) {
+	const double M_scaled = M / slope_gain;
+	const double a = M_scaled / focusJ;
+
+	if ( J < focusJ ) {
+		const double b = 1.0 - M_scaled;
+		const double c = -J;
+		const double root = sqrt( b * b - 4.0 * a * c );
+		return -2.0 * c / ( b + root );
+	} else {
+		const double b = -( 1.0 + M_scaled + maxJ * a );
+		const double c = maxJ * M_scaled + J;
+		const double root = sqrt( b * b - 4.0 * a * c );
+		return -2.0 * c / ( b - root );
+	}
+}
+
+static double ACES2_CompressionVectorSlope( double intersect_J, double focus_J,
+											double limit_J_max, double slope_gain ) {
+	const double direction = ( intersect_J < focus_J )
+						   ? intersect_J : ( limit_J_max - intersect_J );
+	return direction * ( intersect_J - focus_J ) / ( focus_J * slope_gain );
+}
+
+static double ACES2_SminScaled( double a, double b, double scale_reference ) {
+	const double s = ACES2_smooth_cusps * scale_reference;
+	const double d = fabs( a - b );
+	const double h = ( ( s - d ) > 0.0 ? ( s - d ) : 0.0 ) / s;
+	const double m = a < b ? a : b;
+	return m - h * h * h * s * ( 1.0 / 6.0 );
+}
+
+static double ACES2_BoundaryM( double J_axis_intersect, double slope, double inv_gamma,
+							   double J_max, double M_max, double J_ref ) {
+	const double normalised_J = J_axis_intersect / J_ref;
+	const double shifted = J_ref * pow( normalised_J, inv_gamma );
+	return shifted * M_max / ( J_max - slope * M_max );
+}
+
+/*
+================
+ACES2_GamutBoundary
+
+The lower hull straight, the upper hull flipped about J_max with the
+slope negated, and a smooth minimum between them so the join at the
+cusp has no corner.
+================
+*/
+static double ACES2_GamutBoundary( const double JMcusp[2], double J_max,
+								   double gamma_top_inv, double gamma_bottom_inv,
+								   double J_intersect_source, double slope,
+								   double J_intersect_cusp ) {
+	const double lower = ACES2_BoundaryM( J_intersect_source, slope, gamma_bottom_inv,
+										  JMcusp[0], JMcusp[1], J_intersect_cusp );
+	const double f_cusp   = J_max - J_intersect_cusp;
+	const double f_source = J_max - J_intersect_source;
+	const double f_cusp_J = J_max - JMcusp[0];
+	const double upper = ACES2_BoundaryM( f_source, -slope, gamma_top_inv,
+										  f_cusp_J, JMcusp[1], f_cusp );
+	return ACES2_SminScaled( lower, upper, JMcusp[1] );
+}
+
+static double ACES2_ReinhardRemap( double scale, double nd, bool invert ) {
+	if ( invert ) {
+		if ( nd >= 1.0 ) {
+			return scale;
+		}
+		return scale * -( nd / ( nd - 1.0 ) );
+	}
+	return scale * nd / ( 1.0 + nd );
+}
+
+static double ACES2_RemapM( double M, double gamut_boundary_M,
+							double reach_boundary_M, bool invert ) {
+	const double boundary_ratio = gamut_boundary_M / reach_boundary_M;
+	const double proportion = boundary_ratio > ACES2_compression_threshold
+							? boundary_ratio : ACES2_compression_threshold;
+	const double threshold = proportion * gamut_boundary_M;
+	double m_offset, gamut_offset, reach_offset, scale, nd;
+
+	if ( M <= threshold || proportion >= 1.0 ) {
+		return M;
+	}
+	m_offset     = M - threshold;
+	gamut_offset = gamut_boundary_M - threshold;
+	reach_offset = reach_boundary_M - threshold;
+	scale = reach_offset / ( ( reach_offset / gamut_offset ) - 1.0 );
+	nd = m_offset / scale;
+	return threshold + ACES2_ReinhardRemap( scale, nd, invert );
+}
+
+void ACES2_GamutCompress( const double JMh[3], double Jx,
+						  const aces2GamutParams_t *p,
+						  const double JMcusp[2], double gammaTopInv,
+						  double reachM, bool invert, double out[3] ) {
+	const double J = JMh[0], M = JMh[1], h = JMh[2];
+	double focus_J, analytical_threshold, slope_gain;
+	double J_intersect_source, gamut_slope, J_intersect_cusp;
+	double gamut_boundary_M, reach_boundary_M, remapped_M;
+
+	if ( J <= 0.0 ) {
+		out[0] = 0.0; out[1] = 0.0; out[2] = h;
+		return;
+	}
+	if ( M < 0.0 || J > p->limit_J_max ) {
+		out[0] = J; out[1] = 0.0; out[2] = h;
+		return;
+	}
+
+	{
+		const double t = ACES2_cusp_mid_blend - ( JMcusp[0] / p->limit_J_max );
+		const double blend = t < 1.0 ? t : 1.0;
+		focus_J = JMcusp[0] + ( p->mid_J - JMcusp[0] ) * blend;
+	}
+	analytical_threshold = JMcusp[0]
+						 + ( p->limit_J_max - JMcusp[0] ) * ACES2_focus_gain_blend;
+
+	slope_gain = ACES2_FocusGain( Jx, analytical_threshold, p->limit_J_max, p->focus_dist );
+	J_intersect_source = ACES2_SolveJIntersect( J, M, focus_J, p->limit_J_max, slope_gain );
+	gamut_slope = ACES2_CompressionVectorSlope( J_intersect_source, focus_J,
+												p->limit_J_max, slope_gain );
+	J_intersect_cusp = ACES2_SolveJIntersect( JMcusp[0], JMcusp[1], focus_J,
+											  p->limit_J_max, slope_gain );
+
+	gamut_boundary_M = ACES2_GamutBoundary( JMcusp, p->limit_J_max, gammaTopInv,
+											p->lower_hull_gamma_inv,
+											J_intersect_source, gamut_slope,
+											J_intersect_cusp );
+	if ( gamut_boundary_M <= 0.0 ) {
+		out[0] = J; out[1] = 0.0; out[2] = h;
+		return;
+	}
+
+	reach_boundary_M = ACES2_BoundaryM( J_intersect_source, gamut_slope,
+										p->model_gamma_inv, p->limit_J_max,
+										reachM, p->limit_J_max );
+
+	remapped_M = ACES2_RemapM( M, gamut_boundary_M, reach_boundary_M, invert );
+
+	out[0] = J_intersect_source + remapped_M * gamut_slope;
+	out[1] = remapped_M;
+	out[2] = h;
+}
+
+void ACES2_GamutCompressInv( const double JMh[3], const aces2GamutParams_t *p,
+							 const double JMcusp[2], double gammaTopInv,
+							 double reachM, double out[3] ) {
+	const double analytical_threshold = JMcusp[0]
+		+ ( p->limit_J_max - JMcusp[0] ) * ACES2_focus_gain_blend;
+	double Jx = JMh[0];
+
+	if ( Jx > analytical_threshold ) {
+		double tmp[3];
+		ACES2_GamutCompress( JMh, Jx, p, JMcusp, gammaTopInv, reachM, true, tmp );
+		Jx = tmp[0];
+	}
+	ACES2_GamutCompress( JMh, Jx, p, JMcusp, gammaTopInv, reachM, true, out );
+}

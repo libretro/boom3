@@ -133,3 +133,52 @@ void	ACES2_ChromaCompressFwd( const double JMh[3], double tonemappedJ,
 								 const aces2ChromaParams_t *p, double out[3] );
 void	ACES2_ChromaCompressInv( const double JMh[3], double J,
 								 const aces2ChromaParams_t *p, double out[3] );
+
+/*
+===========================================================================
+
+Gamut compression - the geometry.
+
+This is the part my original scoping got wrong.  I said the gamut
+boundary is found iteratively and that ARB, having no loops, would need
+something exotic.  It is closed form: two analytic hull intersections
+blended with a smooth minimum.  The only searching is in building the
+tables, which happens once on the CPU.
+
+The upper hull exponent is passed in rather than looked up.  The
+reference keeps a third hue table for it, built by a search per hue,
+and that is the next piece - separating it keeps this geometry testable
+on its own, and it is what the shader will index anyway.
+
+===========================================================================
+*/
+
+typedef struct {
+	double	limit_J_max;
+	double	mid_J;
+	double	focus_dist;
+	double	lower_hull_gamma_inv;
+	double	model_gamma_inv;
+} aces2GamutParams_t;
+
+void	ACES2_InitGamutParams( const aces2JMhParams_t *input, const aces2TSParams_t *ts,
+							   double peakLuminance, aces2GamutParams_t *p );
+
+/* JMcusp is the {J, M} from the cusp table; gammaTopInv is the upper
+ * hull exponent for this hue; reachM is the reach table value.
+ *
+ * Jx is separate from JMh[0] on purpose, and it is not a detail to fold
+ * away: the focus gain is a function of it, and the inverse does not
+ * know the source J.  So the inverse runs this twice - once with Jx set
+ * to the compressed J to estimate the source, then again with that
+ * estimate - which is only expressible if Jx is an argument.  Collapsing
+ * the two is what made my first round-trip test fail by half. */
+void	ACES2_GamutCompress( const double JMh[3], double Jx,
+							 const aces2GamutParams_t *p,
+							 const double JMcusp[2], double gammaTopInv,
+							 double reachM, bool invert, double out[3] );
+
+/* The reference's two-pass inverse, wrapped. */
+void	ACES2_GamutCompressInv( const double JMh[3], const aces2GamutParams_t *p,
+								const double JMcusp[2], double gammaTopInv,
+								double reachM, double out[3] );
