@@ -1117,6 +1117,37 @@ static void ACES2_ClampAP0ToAP1( const double aces[3], double lower, double uppe
 	}
 }
 
+/*
+================
+ACES2_OutputTransformFwd
+
+AP0 linear in, display RGB out, unclamped.
+
+Unclamped is deliberate and the output does overshoot: feeding 200000
+random ACES colours, 122249 produce a channel above 1, by up to 0.167.
+That is the transform working, not a defect, and the reason is in the
+gamma search that built the exponent table - it accepts an exponent
+only when the estimated boundary lies OUTSIDE the real gamut at every
+sample.  An estimate that never cuts the gamut short is necessarily an
+estimate that sometimes sits beyond it, so a compressed colour can land
+just outside and the display encode clamps it.
+
+Checked rather than assumed, because "by design" is an easy thing to
+say about one's own bug.  The cusp table is widened by the reference
+before use, which was my first suspect; removing that widening makes
+the overshoot six times worse - worst case 1.067 against 0.167 - so the
+widening is what holds it in rather than what causes it.
+
+The stage this rests on has independent corroboration.  Compared
+against colour-science's Hellwig2022, which is a separate
+implementation by different people: hue agrees to 0.01 degrees on
+saturated colours and J to within a few percent, with the residual
+sitting exactly where ACES 2.0 changes the model's nonlinearity from
+stock Hellwig.  Neutral handling differs by construction - this code
+forces M to zero on the grey axis through the adaptation term, and the
+stock model does not.
+================
+*/
 void ACES2_OutputTransformFwd( const double aces[3], const aces2Params_t *p, double RGB[3] ) {
 	double JMh[3], tm[3], compressed[3], clamped[3];
 	double linear, tonemappedY, J_ts;
