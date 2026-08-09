@@ -235,3 +235,24 @@ typedef struct {
 
 void	ACES2_Init( const double limitPrims[8], double peakLuminance, aces2Params_t *p );
 void	ACES2_OutputTransformFwd( const double aces[3], const aces2Params_t *p, double RGB[3] );
+
+/*
+===========================================================================
+
+Packing the hue tables for the shaders.
+
+All three tables are functions of hue on the same 360 entry grid, so
+they travel as one RGBA16 texture: cusp J, cusp M, reach M, and the
+upper hull exponent, one texel per degree.  One fetch gives a shader
+everything it needs for a hue.
+
+Each channel is scaled into 0..1 by its own factor, returned in scales,
+because the four have quite different ranges - J to about 100, reach M
+past 190, the exponent under 1.  The shader multiplies back.
+===========================================================================
+*/
+
+#define ACES2_LUT_WIDTH		ACES2_TABLE_SIZE
+
+void	ACES2_PackHueTables( const aces2Params_t *p, unsigned short *rgba16,
+							 double scales[4] );

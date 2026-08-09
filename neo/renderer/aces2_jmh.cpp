@@ -1170,3 +1170,62 @@ void ACES2_OutputTransformFwd( const double aces[3], const aces2Params_t *p, dou
 
 	ACES2_JMhToRGB( compressed, &p->limit, RGB );
 }
+
+/* ---- packing for the shader ---- */
+
+/*
+================
+ACES2_PackHueTables
+
+Verified on a driver rather than assumed: uploaded as GL_RGBA16 the
+texture reports back sixteen bits per channel and the values return
+within half a quantisation step - 7.6e-06 of each channel's range,
+which is 0.0007 in cusp J and 0.0015 in reach M.  Both are two orders
+below the 1.4% the uniform hue spacing already costs at the cube
+corners, so the packing is not the limiting error.
+
+One thing this does NOT settle, and it is the same shape of problem as
+the GLES link error earlier in this work: GL_RGBA16 is a desktop
+format.  GLES2 has no normalised 16-bit texture, and GLES3 spells it
+GL_RGBA16UI with integer sampling, which is a different fetch in the
+shader.  The GLES backend will need either that or a pair of 8-bit
+textures carrying high and low bytes.  Deciding it here would be
+guessing at which GLES version the targets actually give us; flagging
+it means the shader stage starts from a known question rather than
+finding out at link time on six CI targets.
+================
+*/
+void ACES2_PackHueTables( const aces2Params_t *p, unsigned short *rgba16,
+						  double scales[4] ) {
+	double maxJ = 0.0, maxM = 0.0, maxR = 0.0, maxG = 0.0;
+	int i;
+
+	for ( i = ACES2_BASE_INDEX; i < ACES2_BASE_INDEX + ACES2_TABLE_SIZE; i++ ) {
+		if ( p->cusp.J[i] > maxJ ) maxJ = p->cusp.J[i];
+		if ( p->cusp.M[i] > maxM ) maxM = p->cusp.M[i];
+		if ( p->chroma.reachM[i] > maxR ) maxR = p->chroma.reachM[i];
+		if ( p->gamma.gammaInv[i] > maxG ) maxG = p->gamma.gammaInv[i];
+	}
+	/* a little headroom so the largest entry is not sitting on 65535 */
+	scales[0] = maxJ * 1.01;
+	scales[1] = maxM * 1.01;
+	scales[2] = maxR * 1.01;
+	scales[3] = maxG * 1.01;
+
+	for ( i = 0; i < ACES2_TABLE_SIZE; i++ ) {
+		const int s = i + ACES2_BASE_INDEX;
+		const double v[4] = {
+			p->cusp.J[s] / scales[0],
+			p->cusp.M[s] / scales[1],
+			p->chroma.reachM[s] / scales[2],
+			p->gamma.gammaInv[s] / scales[3]
+		};
+		int c;
+		for ( c = 0; c < 4; c++ ) {
+			double q = v[c] * 65535.0 + 0.5;
+			if ( q < 0.0 ) q = 0.0;
+			if ( q > 65535.0 ) q = 65535.0;
+			rgba16[i*4+c] = (unsigned short)q;
+		}
+	}
+}
