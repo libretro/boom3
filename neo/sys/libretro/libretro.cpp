@@ -3696,6 +3696,14 @@ static bool hdr_arb_ready( void );
 		qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, (reg), envv ); \
 	} while ( 0 )
 
+#endif /* !HAVE_OPENGLES */
+
+/* The table and its texture are shared.  Both backends bind the same
+ * texture unit, and the GLSL path calls the builder every frame to
+ * notice a peak change - so these sit outside the ARB-only region.
+ * Left inside it, the GLES build compiles the caller without the
+ * callee, which is a link failure on six targets at once and the same
+ * mistake this work has already made once. */
 static void hdr_aces2_free( void ) {
 	if ( hdr_aces2_lut ) {
 		glDeleteTextures( 1, &hdr_aces2_lut );
@@ -3722,7 +3730,12 @@ static bool hdr_aces2_build( float peakLuminance ) {
 	static unsigned short lut[ACES2_LUT_WIDTH * 4];
 	static unsigned char  lut8[ACES2_LUT_WIDTH * 4];
 
-	if ( hdr_aces2_lut && hdr_aces2_peak == peakLuminance ) {
+	/* A tolerance rather than an exact compare.  The peak arrives from
+	 * the frontend every frame, and a value that jitters in its last bit
+	 * against an == guard would rebuild three searched tables per frame -
+	 * 8.5 ms of them, half a frame at 60 - for a difference far below
+	 * anything the tone scale resolves. */
+	if ( hdr_aces2_lut && fabsf( hdr_aces2_peak - peakLuminance ) < 0.5f ) {
 		return true;
 	}
 	hdr_aces2_free();
@@ -3777,6 +3790,7 @@ static bool hdr_aces2_build( float peakLuminance ) {
 	hdr_aces2_peak = peakLuminance;
 	return true;
 }
+#ifndef HAVE_OPENGLES
 
 /* The appearance matrices are applied on the CPU as row-vector times
  * matrix, so DP3 wants their COLUMNS; the AP0 to AP1 pair are applied
@@ -5081,6 +5095,10 @@ static void hdr_present( GLuint dstFbo ) {
 	glUniform1i( hdr_loc_bloomT, 1 );
 	if ( hdr_rolloff_mode == HDR_ROLLOFF_ACES2FULL && hdr_aces2_lut != 0
 			&& hdr_aces2_loc_lut >= 0 ) {
+		/* same reason as the ARB path: the peak can move after the
+		 * program is built, and only this runs every frame */
+		hdr_aces2_build( hdr_aces2_wanted_peak > 0.0f
+				? hdr_aces2_wanted_peak : 1000.0f );
 		hdr_aces2_set_uniforms();
 		glActiveTexture( GL_TEXTURE3 );
 		glBindTexture( GL_TEXTURE_2D, hdr_aces2_lut );
@@ -5175,6 +5193,14 @@ static void hdr_present( GLuint dstFbo ) {
 		qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 5, r1 );
 		qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 6, r2 );
 		if ( aces2 ) {
+			/* hdr_arb_ready returns early once the programs are loaded
+			 * and the mode is unchanged, so a peak that moves
+			 * afterwards would never reach the table build and the
+			 * transform would stay solved for the old display.  This
+			 * costs a float compare per frame and rebuilds only when
+			 * the peak really moves. */
+			hdr_aces2_build( hdr_aces2_wanted_peak > 0.0f
+					? hdr_aces2_wanted_peak : 1000.0f );
 			hdr_aces2_set_env();
 			glActiveTexture( GL_TEXTURE3 );
 			glBindTexture( GL_TEXTURE_2D, hdr_aces2_lut );
