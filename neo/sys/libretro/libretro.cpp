@@ -425,6 +425,11 @@ static void hdr_aces2_set_uniforms( void ) {
 }
 
 
+/* 0 means take the frontend's reported peak; anything else overrides it.
+ * ACES 2.0's tone scale is parameterised by this and rebuilds when it
+ * moves, so it is the one runtime variable that retargets the whole
+ * transform from an SDR display to a 10000 nit one. */
+static float  hdr_peak_override = 0.0f;
 static float  hdr_aces2_wanted_peak = 1000.0f;
 static float  hdr_gt_toe        = 0.22f;
 static float  hdr_gt_shoulder   = 0.40f;
@@ -1021,6 +1026,13 @@ static void update_variables(bool startup)
 		else if (!strcmp(var.value, "subtle")) hdr_emissive_gain = 2.0f;
 		else if (!strcmp(var.value, "strong")) hdr_emissive_gain = 4.0f;
 	}
+
+	var.key = "doom_hdr_peak";
+	var.value = NULL;
+	hdr_peak_override = 0.0f;
+	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value
+			&& strcmp(var.value, "auto") != 0)
+		hdr_peak_override = (float)atof(var.value);
 
 	var.key = "doom_hdr_aces2_gamut";
 	var.value = NULL;
@@ -5141,6 +5153,9 @@ static void hdr_present( GLuint dstFbo ) {
 	environ_cb( RETRO_ENVIRONMENT_GET_HDR_PAPER_WHITE_NITS, &paperWhite );
 	environ_cb( RETRO_ENVIRONMENT_GET_HDR_MAX_NITS, &maxNits );
 	/* the ACES 2.0 tables are solved for this, and rebuilt when it moves */
+	if ( hdr_peak_override > 0.0f ) {
+		maxNits = hdr_peak_override;
+	}
 	hdr_aces2_wanted_peak = maxNits;
 	environ_cb( RETRO_ENVIRONMENT_GET_HDR_EXPAND_GAMUT, &gamutMode );
 	if ( environ_cb( RETRO_ENVIRONMENT_GET_HDR_OUTPUT_MODE, &outMode ) ) {

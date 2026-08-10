@@ -517,6 +517,34 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "disabled"
    },
    {
+      "doom_hdr_peak",
+      "HDR: Display Peak Luminance",
+      NULL,
+      "Overrides the peak brightness the frontend reports. ACES 2.0's "
+      "tone scale is parameterised by this single number and rebuilds "
+      "when it moves, so it retargets the whole transform rather than "
+      "just scaling the output - mid grey lands on 10.0 nits at a 100 "
+      "nit peak, 14.5 at 1000 and 17.8 at 10000, with the roll-off "
+      "adjusting to match. Leave on Auto unless the frontend reports "
+      "nothing, in which case it falls back to 1000, or unless your "
+      "display's real peak differs from what it claims. Only the full "
+      "ACES 2.0 transform uses it; the other roll-offs have no notion "
+      "of an absolute peak.",
+      NULL,
+      NULL,
+      {
+         { "auto",  "Auto (ask the frontend)" },
+         { "400",   "400 nits" },
+         { "600",   "600 nits" },
+         { "1000",  "1000 nits" },
+         { "1500",  "1500 nits" },
+         { "2000",  "2000 nits" },
+         { "4000",  "4000 nits" },
+         { NULL, NULL },
+      },
+      "auto"
+   },
+   {
       "doom_hdr_aces2_gamut",
       "ACES 2.0: Limiting Gamut",
       NULL,
