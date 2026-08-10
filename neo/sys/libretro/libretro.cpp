@@ -4143,11 +4143,35 @@ static bool hdr_aces2_build( float peakLuminance ) {
 		glBindTexture( GL_TEXTURE_2D, hdr_aces2_gui_tex );
 		while ( glGetError() != GL_NO_ERROR ) {
 		}
+#ifndef HAVE_OPENGLES
 		glTexImage2D( GL_TEXTURE_2D, 0, GL_LUMINANCE16, ACES2_GUI_LUT_SIZE, 1, 0,
 					  GL_LUMINANCE, GL_UNSIGNED_SHORT, g16 );
-		if ( glGetError() != GL_NO_ERROR ) {
+		if ( glGetError() != GL_NO_ERROR )
+#endif
+		{
+			/* GLES2 again: no sized luminance format, and unsigned
+			 * short is not a legal type for the unsized one either -
+			 * the fallback has to drop to bytes, not just to the
+			 * unsized name.  The same argument as the hue tables
+			 * below: eight bits quantises to 0.0039 against a curve
+			 * the shader linearly filters anyway, still under half an
+			 * 8-bit output step end to end. */
+			unsigned char g8[ACES2_GUI_LUT_SIZE];
+			for ( k = 0; k < ACES2_GUI_LUT_SIZE; k++ ) {
+				g8[k] = (unsigned char)( g16[k] >> 8 );
+			}
+			while ( glGetError() != GL_NO_ERROR ) {
+			}
 			glTexImage2D( GL_TEXTURE_2D, 0, GL_LUMINANCE, ACES2_GUI_LUT_SIZE, 1, 0,
-						  GL_LUMINANCE, GL_UNSIGNED_SHORT, g16 );
+						  GL_LUMINANCE, GL_UNSIGNED_BYTE, g8 );
+			if ( glGetError() != GL_NO_ERROR ) {
+				/* The GUI correction is a refinement on top of a
+				 * working transform - losing it should not take the
+				 * whole HDR path down with it. */
+				glDeleteTextures( 1, &hdr_aces2_gui_tex );
+				hdr_aces2_gui_tex = 0;
+				hdr_aces2_gui_ready = false;
+			}
 		}
 		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
 		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
