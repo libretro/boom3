@@ -379,6 +379,7 @@ static float hdr_filmiclog_norm( void ) {
 	return t[1];
 }
 
+#ifdef HAVE_OPENGLES
 static void hdr_aces2_set_uniforms( void ) {
 	const aces2Params_t *p = hdr_aces2_params;
 	float m[9];
@@ -423,6 +424,7 @@ static void hdr_aces2_set_uniforms( void ) {
 			(float)hdr_aces2_scales[3] );
 	glUniform1i( hdr_aces2_loc_lut, 3 );
 }
+#endif /* HAVE_OPENGLES */
 
 
 /* 0 means take the frontend's reported peak; anything else overrides it.
@@ -1135,11 +1137,31 @@ static void context_reset(void)
    hdr_arb_vp = hdr_arb_down = hdr_arb_up = 0;
    hdr_arb_bright = hdr_arb_blur = 0;
    hdr_arb_comp1 = hdr_arb_comp2 = 0;
-   hdr_loc_hal = -1;
-   hdr_loc_ca = -1;
    hdr_arb_comp_mode = -1;
    hdr_arb_pyramid = false;
 #endif
+   /* The GLSL composite's uniform locations belong to a program that
+    * died with the context, so they have to be dropped here - and they
+    * are the GLES path's, not the ARB path's.  They were inside the
+    * block above, which is the one configuration that never reads them:
+    * on desktop they were reset and unused, and on GLES they survived a
+    * context reset and would have been applied to a new program. */
+   {
+      int li;
+      for ( li = 0; li < 11; li++ ) {
+         hdr_aces2_loc[li] = -1;
+      }
+   }
+   hdr_aces2_loc_lut = -1;
+   hdr_loc_hal = hdr_loc_ca = -1;
+   hdr_loc_tex = hdr_loc_mat = hdr_loc_parms = -1;
+   hdr_loc_bloomT = hdr_loc_bloomW = hdr_loc_bloomAmt = hdr_loc_encScale = -1;
+   hdr_loc_film = hdr_loc_film_lut = hdr_loc_film_desat = -1;
+   hdr_loc_frame = hdr_loc_expand = hdr_loc_aces = hdr_loc_gt = -1;
+   hdr_loc_bandW = -1;
+   hdr_bright_loc_enc = hdr_bright_loc_thresh = hdr_bright_loc_texel = -1;
+   hdr_bright_loc_knee = hdr_blur_loc_dir = -1;
+   hdr_down_loc_texel = hdr_up_loc_texel = hdr_up_loc_radius = -1;
    memset(hdr_conv_fbo, 0, sizeof hdr_conv_fbo);
    memset(hdr_conv_tex, 0, sizeof hdr_conv_tex);
    memset(hdr_bloom_fbo, 0, sizeof hdr_bloom_fbo);
@@ -4008,6 +4030,7 @@ static const char *hdr_blur_fs_src =
 	"}\n";
 #endif /* HAVE_OPENGLES */
 
+#ifdef HAVE_OPENGLES
 static GLuint hdr_compile( GLenum type, const char *src ) {
 	GLuint sh = glCreateShader( type );
 	glShaderSource( sh, 1, &src, NULL );
@@ -4023,6 +4046,7 @@ static GLuint hdr_compile( GLenum type, const char *src ) {
 	}
 	return sh;
 }
+#endif /* HAVE_OPENGLES */
 
 /*
    Give up on the HDR pass for this session.

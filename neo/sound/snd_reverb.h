@@ -670,9 +670,17 @@ ID_INLINE void idSoundReverb::StepBlockParams( void ) {
 	   zero-pan capture stays byte-exact.
 	*/
 	float eb = cur.reflectionsPan[0];
-	if ( eb < -1.0f ) eb = -1.0f; if ( eb > 1.0f ) eb = 1.0f;
+	if ( eb < -1.0f ) {
+		eb = -1.0f;
+	} else if ( eb > 1.0f ) {
+		eb = 1.0f;
+	}
 	float lb = cur.lateReverbPan[0];
-	if ( lb < -1.0f ) lb = -1.0f; if ( lb > 1.0f ) lb = 1.0f;
+	if ( lb < -1.0f ) {
+		lb = -1.0f;
+	} else if ( lb > 1.0f ) {
+		lb = 1.0f;
+	}
 	earlyGainL = earlyGain * sqrtf( 1.0f - eb );
 	earlyGainR = earlyGain * sqrtf( 1.0f + eb );
 	lateGainL  = lg * sqrtf( 1.0f - lb );
