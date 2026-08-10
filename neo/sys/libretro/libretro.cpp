@@ -3526,7 +3526,8 @@ static const char *hdr_arb_bright_fs_src =
 	"!!ARBfp1.0\n"
 	"OPTION ARB_precision_hint_nicest;\n"
 	/* env[0] = (threshold, knee, encodeScale, 1/(1 - threshold))
-	   env[1] = (texelX, texelY, firefly knee, 0)
+	   env[1] = (0, 1/(4*knee), firefly knee, 0)
+	   env[2] = (texelX, texelY, ...)
 	   The reciprocals are computed on the CPU: 1/(1-uThresh) and
 	   1/(4*uKnee) are constant for the whole pass, and RCP here would
 	   pay for them per fragment. */
