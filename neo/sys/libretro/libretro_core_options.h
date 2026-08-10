@@ -394,6 +394,31 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "standard"
    },
    {
+      "doom_hdr_particle_energy",
+      "HDR: Particle Energy",
+      NULL,
+      "Scales additive particle stages - muzzle flashes, plasma bolts, "
+      "fireballs, sparks - separately from static emissive surfaces. They "
+      "are the same kind of stage to the renderer but want very different "
+      "amounts: a monitor reads as a light at 4x, while Filmic Log's "
+      "desaturation crosstalk does not begin until about 78 in scene "
+      "terms and is obvious around 400. At those levels a projectile core "
+      "washes out to white and keeps its hue at the edges, the way a real "
+      "camera renders a bright source, instead of clipping to a flat "
+      "block of colour. Wants Filmic Log or ACES 2.0; Reinhard has no "
+      "range up there to show it.",
+      NULL,
+      NULL,
+      {
+         { "disabled", NULL },
+         { "bright",   "Bright (8x)" },
+         { "intense",  "Intense (32x)" },
+         { "blinding", "Blinding (96x)" },
+         { NULL, NULL },
+      },
+      "disabled"
+   },
+   {
       "doom_hdr_emissive",
       "HDR: Emissive Headroom",
       NULL,

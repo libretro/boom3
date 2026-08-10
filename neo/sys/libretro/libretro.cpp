@@ -132,6 +132,7 @@ static idCVar m_strafe( "m_strafe", "0.25", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_FL
    GLimp_SwapBuffers, the full design comment with it. */
 bool          hdr_output_active = false;   /* chosen at load, needs restart; read by draw_arb2 */
 int           r_specularFalloffShape = 0;  /* 0 original hard-knee quadratic, 1 tailed power; read by Image_init */
+float         hdr_particle_gain = 1.0f;  /* particle-stage scale in HDR mode; read by draw_common and draw_gles2 */
 float         hdr_emissive_gain = 1.0f;  /* additive-stage scale in HDR mode; read by draw_common and draw_gles2 */
 float         hdr_specular_gain = 2.0f;    /* interaction specular scale in HDR mode; read by draw_arb2 */
 float         hdr_scene_encode_scale = 1.0f; /* 0.5 = one gamma-domain stop of scene headroom; read by the render backend */
@@ -946,6 +947,15 @@ static void update_variables(bool startup)
 	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) {
 		if (!strcmp(var.value, "wide"))          hdr_bloom_firefly_knee = 0.25f;
 		else if (!strcmp(var.value, "widest"))   hdr_bloom_firefly_knee = 0.0625f;
+	}
+
+	var.key = "doom_hdr_particle_energy";
+	var.value = NULL;
+	hdr_particle_gain = 1.0f;
+	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) {
+		if (!strcmp(var.value, "bright"))      hdr_particle_gain = 8.0f;
+		else if (!strcmp(var.value, "intense")) hdr_particle_gain = 32.0f;
+		else if (!strcmp(var.value, "blinding")) hdr_particle_gain = 96.0f;
 	}
 
 	var.key = "doom_hdr_emissive";

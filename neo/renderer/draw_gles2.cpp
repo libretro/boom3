@@ -2013,16 +2013,22 @@ void RB_GLSL_T_RenderShaderPasses(const drawSurf_t* surf, const float mvp[16]) {
       {
         extern bool  hdr_output_active;
         extern float hdr_emissive_gain;
+        extern float hdr_particle_gain;
         const int blend = pStage->drawStateBits
             & ( GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS );
-        if ( hdr_output_active && hdr_emissive_gain != 1.0f
+        /* particles take their own gain, as in draw_common.cpp */
+        const deform_t dfm = surf->material->Deform();
+        const float hdr_emissive_gain_sel =
+            ( dfm == DFRM_PARTICLE || dfm == DFRM_PARTICLE2 )
+            ? hdr_particle_gain : hdr_emissive_gain;
+        if ( hdr_output_active && hdr_emissive_gain_sel != 1.0f
             && ( blend & GLS_DSTBLEND_BITS ) == GLS_DSTBLEND_ONE ) {
           /* color is const here, so scale a copy rather than casting it
              away - the original is used further down for the vertex
              colour modulation and must not move. */
-          emissive[0] = color[0] * hdr_emissive_gain;
-          emissive[1] = color[1] * hdr_emissive_gain;
-          emissive[2] = color[2] * hdr_emissive_gain;
+          emissive[0] = color[0] * hdr_emissive_gain_sel;
+          emissive[1] = color[1] * hdr_emissive_gain_sel;
+          emissive[2] = color[2] * hdr_emissive_gain_sel;
           emissive[3] = color[3];
           stageColor = emissive;
         }

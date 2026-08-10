@@ -1087,13 +1087,24 @@ void RB_STD_T_RenderShaderPasses( const drawSurf_t *surf ) {
 				{
 					extern bool  hdr_output_active;
 					extern float hdr_emissive_gain;
+					extern float hdr_particle_gain;
 					const int blend = pStage->drawStateBits
 							& ( GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS );
-					if ( hdr_output_active && hdr_emissive_gain != 1.0f
+					/* A muzzle flash and a monitor are both additive
+					 * stages, but they want gains an order apart: a
+					 * screen reads as a light at 4x, while Filmic's
+					 * crosstalk does not engage until about 78 in scene
+					 * terms, which would make that screen a lamp.  The
+					 * material's deform separates them - particles are
+					 * transient energy, surfaces are not. */
+					const deform_t dfm = surf->material->Deform();
+					const float gain = ( dfm == DFRM_PARTICLE || dfm == DFRM_PARTICLE2 )
+							? hdr_particle_gain : hdr_emissive_gain;
+					if ( hdr_output_active && gain != 1.0f
 							&& ( blend & GLS_DSTBLEND_BITS ) == GLS_DSTBLEND_ONE ) {
-						color[0] *= hdr_emissive_gain;
-						color[1] *= hdr_emissive_gain;
-						color[2] *= hdr_emissive_gain;
+						color[0] *= gain;
+						color[1] *= gain;
+						color[2] *= gain;
 					}
 				}
 				qglColor4fv( color );
@@ -1268,13 +1279,19 @@ void RB_STD_T_RenderShaderPasses( const drawSurf_t *surf ) {
 		{
 			extern bool  hdr_output_active;
 			extern float hdr_emissive_gain;
+			extern float hdr_particle_gain;
 			const int blend = pStage->drawStateBits
 					& ( GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS );
-			if ( hdr_output_active && hdr_emissive_gain != 1.0f
+			/* particles take their own gain - see the note at the
+			 * soft-particle site above */
+			const deform_t dfm = surf->material->Deform();
+			const float gain = ( dfm == DFRM_PARTICLE || dfm == DFRM_PARTICLE2 )
+					? hdr_particle_gain : hdr_emissive_gain;
+			if ( hdr_output_active && gain != 1.0f
 					&& ( blend & GLS_DSTBLEND_BITS ) == GLS_DSTBLEND_ONE ) {
-				color[0] *= hdr_emissive_gain;
-				color[1] *= hdr_emissive_gain;
-				color[2] *= hdr_emissive_gain;
+				color[0] *= gain;
+				color[1] *= gain;
+				color[2] *= gain;
 			}
 		}
 
