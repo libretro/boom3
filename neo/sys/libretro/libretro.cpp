@@ -438,6 +438,9 @@ static bool   hdr_arb_pyramid;
 static GLint  hdr_down_loc_texel, hdr_up_loc_texel, hdr_up_loc_radius;
 static GLint  hdr_loc_bandW;
 static bool   hdr_bloom_convolution;   /* live-switchable */
+/* Firefly limiter knee for the bright pass: 1 caps every extraction below
+ * 1, smaller lets brightness through.  See doom_hdr_bloom_range. */
+static float  hdr_bloom_firefly_knee = 1.0f;
 static GLuint hdr_prog_bright, hdr_prog_blur;
 /* bloom is optional: either of these disables it without disabling the
    HDR pass itself. Kept apart so a resize that rebuilds the targets
@@ -445,6 +448,7 @@ static GLuint hdr_prog_bright, hdr_prog_blur;
 static bool   hdr_bloom_prog_bad, hdr_bloom_tex_bad;
 static GLint  hdr_bright_loc_thresh, hdr_blur_loc_dir, hdr_bright_loc_texel;
 static GLint  hdr_bright_loc_knee;
+static GLint  hdr_bright_loc_ffknee = -1;
 static void hdr_bind_scene( void );
 static void hdr_present( GLuint dstFbo );
 
@@ -915,6 +919,14 @@ static void update_variables(bool startup)
 		hdr_filmiclog_maxev = ( ev > 4.5f ) ? ev : 4.026068811f;
 	}
 
+	var.key = "doom_hdr_bloom_range";
+	var.value = NULL;
+	hdr_bloom_firefly_knee = 1.0f;
+	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) {
+		if (!strcmp(var.value, "wide"))          hdr_bloom_firefly_knee = 0.25f;
+		else if (!strcmp(var.value, "widest"))   hdr_bloom_firefly_knee = 0.0625f;
+	}
+
 	var.key = "doom_hdr_emissive";
 	var.value = NULL;
 	hdr_emissive_gain = 1.0f;
@@ -998,6 +1010,7 @@ static void context_reset(void)
    /* previous context's HDR objects are gone with it */
    hdr_fbo = hdr_tex = hdr_rbo = hdr_prog = 0;
    hdr_prog_bright = hdr_prog_blur = 0;
+   hdr_bright_loc_ffknee = -1;
    hdr_bloom_prog_bad = hdr_bloom_tex_bad = false;
    hdr_prog_down = hdr_prog_up = 0;
 #ifndef HAVE_OPENGLES
@@ -3509,7 +3522,7 @@ static const char *hdr_arb_bright_fs_src =
 	"!!ARBfp1.0\n"
 	"OPTION ARB_precision_hint_nicest;\n"
 	/* env[0] = (threshold, knee, encodeScale, 1/(1 - threshold))
-	   env[1] = (texelX, texelY, 0, 0)
+	   env[1] = (texelX, texelY, firefly knee, 0)
 	   The reciprocals are computed on the CPU: 1/(1-uThresh) and
 	   1/(4*uKnee) are constant for the whole pass, and RCP here would
 	   pay for them per fragment. */
@@ -3559,6 +3572,7 @@ static const char *hdr_arb_bright_fs_src =
 	"MUL b, lin, t.x;\n"
 	/* out = b / (1 + luminance(b)) */
 	"DP3 l.x, b, luma;\n"
+	"MUL l.x, l.x, q.z;\n"
 	"ADD l.x, l.x, 1.0;\n"
 	"RCP l.x, l.x;\n"
 	"MUL b, b, l.x;\n"
@@ -3603,6 +3617,7 @@ static const char *hdr_bright_fs_src =
 	"varying vec2 vUV;\n"
 	"uniform sampler2D uScene;\n"
 	"uniform float uThresh;\n"
+	"uniform float uBrightKnee;\n"
 	"uniform float uKnee;\n"
 	/* Decode with a pure 2.4 power, matching RetroArch.
 
@@ -3677,7 +3692,7 @@ static const char *hdr_bright_fs_src =
 	   highlights goes from 6.9%% to 20-50%%, because the limiter is
 	   damping the same near-threshold swing the knee above targets. */
 	"  float l = dot(b, vec3(0.2126, 0.7152, 0.0722));\n"
-	"  gl_FragColor = vec4(b / (1.0 + l), 1.0);\n"
+	"  gl_FragColor = vec4(b / (1.0 + l * uBrightKnee), 1.0);\n"
 	"}\n";
 #endif /* HAVE_OPENGLES */
 
@@ -4347,6 +4362,7 @@ static bool hdr_ensure_target( int w, int h ) {
 				hdr_bright_loc_enc    = glGetUniformLocation( hdr_prog_bright, "uEncScale" );
 				hdr_bright_loc_texel  = glGetUniformLocation( hdr_prog_bright, "uTexel" );
 				hdr_bright_loc_knee   = glGetUniformLocation( hdr_prog_bright, "uKnee" );
+				hdr_bright_loc_ffknee = glGetUniformLocation( hdr_prog_bright, "uBrightKnee" );
 				hdr_blur_loc_dir      = glGetUniformLocation( hdr_prog_blur, "uDir" );
 			}
 		} else {
@@ -5129,6 +5145,9 @@ static void hdr_present( GLuint dstFbo ) {
 #ifdef HAVE_OPENGLES
 		glUniform1f( hdr_bright_loc_thresh, 0.70f );
 		glUniform1f( hdr_bright_loc_knee, 0.25f );
+		if ( hdr_bright_loc_ffknee >= 0 ) {
+			glUniform1f( hdr_bright_loc_ffknee, hdr_bloom_firefly_knee );
+		}
 		glUniform1f( hdr_bright_loc_enc, 1.0f / hdr_scene_encode_scale );
 #else
 		{
@@ -5137,7 +5156,13 @@ static void hdr_present( GLuint dstFbo ) {
 			const float thresh = 0.70f, knee = 0.25f;
 			const float p[4] = { thresh, knee, 1.0f / hdr_scene_encode_scale,
 					1.0f / ( 1.0f - thresh ) };
-			const float q[4] = { 0.0f, 1.0f / ( 4.0f * knee ), 0.0f, 0.0f };
+			/* The firefly limiter's knee.  1 is the original b/(1+luma),
+			 * which caps every extraction below 1 whatever the source
+			 * was doing; a smaller value lets a brighter source bloom
+			 * brighter while still limiting a single-texel spike
+			 * before it is blurred across its neighbours. */
+			const float q[4] = { 0.0f, 1.0f / ( 4.0f * knee ),
+					hdr_bloom_firefly_knee, 0.0f };
 			qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 0, p );
 			qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 1, q );
 		}

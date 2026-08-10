@@ -370,6 +370,30 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "4"
    },
    {
+      "doom_hdr_bloom_range",
+      "HDR: Bloom Range",
+      NULL,
+      "How much brightness the bloom extraction is allowed to carry. The "
+      "bright pass limits what it extracts before blurring it, so a "
+      "single-texel specular spike cannot flicker the whole halo frame to "
+      "frame. That limit was set when the scene was clamped at 1.0, and "
+      "it caps every extraction below 1: a lamp at 4 and a lamp at 64 "
+      "both bloom at roughly 0.8, so brightness stops mattering. Widening "
+      "it keeps the anti-flicker property but lets a brighter source "
+      "bloom brighter - at Wide a source at 4 extracts 2.0 instead of "
+      "0.8. Needs a curve with headroom to show it, so ACES 2.0 and "
+      "Filmic Log benefit most and Reinhard least.",
+      NULL,
+      NULL,
+      {
+         { "standard", "Standard (clamped)" },
+         { "wide",     "Wide (4x)" },
+         { "widest",   "Widest (16x)" },
+         { NULL, NULL },
+      },
+      "standard"
+   },
+   {
       "doom_hdr_emissive",
       "HDR: Emissive Headroom",
       NULL,
