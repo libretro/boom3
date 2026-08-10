@@ -946,6 +946,7 @@ static void update_variables(bool startup)
 			if (!strcmp(var.value, "subtle")) want = 1;
 			else if (!strcmp(var.value, "strong")) want = 2;
 			else if (!strcmp(var.value, "heavy")) want = 3;
+			else if (!strcmp(var.value, "debug")) want = 4;
 		}
 		hdr_chroma_ab = want;
 	}
@@ -3081,6 +3082,17 @@ static const char *hdr_arb_up_fs_src =
 	"MAD v.xy, v, v.z, fragment.texcoord[0];\n" \
 	"TEX u, v, texture[0], 2D;\n" \
 	"MOV s.b, u.b;\n" \
+	/* kCa.w is 1 only in the debug setting: replace the picture with \
+	   the displacement itself, scaled so a one pixel shift at 4K is \
+	   visible.  If this shows a black screen the offset is not being \
+	   computed; if it shows a gradient bright at the corners and dark \
+	   in the middle, the offset is right and the fault is downstream. */ \
+	"SUB t.xy, fragment.texcoord[0], 0.5;\n" \
+	"MUL t.x, t.x, v.z;\n" \
+	"MUL t.y, t.y, v.z;\n" \
+	"ABS t, t;\n" \
+	"MUL t, t, 2000.0;\n" \
+	"LRP s, kCa.w, t, s;\n" \
 	"MUL s, s, program.env[2].x;\n" \
 	"ABS s, s;\n" \
 	"POW lin.x, s.x, kSrgb.x;\n" \
@@ -3714,7 +3726,8 @@ static const char *hdr_arb_composite_src( int mode, bool twoBand ) {
 			: "PARAM kHal = { 1.0, 1.0, 1.0, 0 };\n",
 			/* baked with the halation tint, for the same reason: it
 			 * changes only when the option does */
-			hdr_chroma_ab == 3 ? "PARAM kCa = { 0.0044200, 0, 0, 0 };\n"
+			hdr_chroma_ab == 4 ? "PARAM kCa = { 0.0044200, 0, 0, 1 };\n"
+			: hdr_chroma_ab == 3 ? "PARAM kCa = { 0.0044200, 0, 0, 0 };\n"
 			: hdr_chroma_ab == 2 ? "PARAM kCa = { 0.0022100, 0, 0, 0 };\n"
 			: hdr_chroma_ab == 1 ? "PARAM kCa = { 0.0011050, 0, 0, 0 };\n"
 			: "PARAM kCa = { 0.0, 0, 0, 0 };\n",

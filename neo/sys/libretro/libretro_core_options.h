@@ -344,6 +344,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
          { "subtle",   "Subtle (1.5px corner at 4K)" },
          { "strong",   "Strong (3px)" },
          { "heavy",    "Heavy (6px)" },
+         { "debug",    "Debug (show the displacement)" },
          { NULL, NULL },
       },
       "disabled"
