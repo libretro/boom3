@@ -321,6 +321,28 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "standard"
    },
    {
+      "doom_hdr_halation",
+      "HDR: Halation",
+      NULL,
+      "Warms the bloom around bright areas toward red, the way film does. "
+      "In a real print the glow around a bright window is orange rather "
+      "than white, because light passes through the emulsion, scatters "
+      "off the backing and comes back reddened. This tints the existing "
+      "bloom rather than adding a pass, so it costs one instruction. It "
+      "is a film response, not a shadow effect - it appears around "
+      "anything bright, which is what film does. Pairs naturally with "
+      "Filmic Log but is not tied to it.",
+      NULL,
+      NULL,
+      {
+         { "disabled", NULL },
+         { "subtle",   "Subtle" },
+         { "strong",   "Strong" },
+         { NULL, NULL },
+      },
+      "disabled"
+   },
+   {
       "doom_hdr_bloom_convolution",
       "HDR Convolution Bloom",
       NULL,

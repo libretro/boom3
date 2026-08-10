@@ -433,6 +433,7 @@ static int    hdr_expand_mode   = 0;       /* 0 none, 1 per-channel inverse tone
 static GLuint hdr_fbo, hdr_tex, hdr_rbo, hdr_prog;
 static GLint  hdr_loc_tex, hdr_loc_mat, hdr_loc_parms;
 static GLint  hdr_loc_bloomT, hdr_loc_bloomW, hdr_loc_bloomAmt, hdr_loc_encScale;
+static GLint  hdr_loc_hal = -1;
 static GLint  hdr_loc_film = -1;
 static GLint  hdr_loc_film_lut = -1;
 static GLint  hdr_loc_film_desat = -1;
@@ -444,6 +445,12 @@ static unsigned hdr_frame_counter;
 static GLint  hdr_bright_loc_enc;
 static int    hdr_w, hdr_h;
 static bool   hdr_warned_sdr, hdr_warned_narrow;
+/* Halation: the red-orange bleed film gets around a bright area, from
+ * light scattering off the backing behind the emulsion.  0 off.
+ * With the shared HDR state rather than beside the ARB program cache,
+ * because the option parser and the GLSL path both read it and neither
+ * is compiled on the ARB-only side. */
+static int    hdr_halation = 0;
 static float  hdr_bloom_amount = 1.0f;      /* 0 = off; live-switchable */
 
 /* bloom chain: two bands (1/4-res tight core, 1/16-res wide haze),
@@ -459,6 +466,8 @@ static GLuint hdr_arb_vp, hdr_arb_down, hdr_arb_up;
 static GLuint hdr_arb_bright, hdr_arb_blur;
 static GLuint hdr_arb_comp1, hdr_arb_comp2;
 static int    hdr_arb_comp_mode = -1;   /* roll-off curve baked into the pair above */
+static int    hdr_arb_comp_halation = -1;  /* halation tint baked in with it */
+
 /* Every program in the chain is loaded.  On this build there is no other
    chain to run, so this is a load-state flag rather than a path
    selector - the dispatch below is not conditional. */
@@ -914,6 +923,17 @@ static void update_variables(bool startup)
 		else                                     hdr_bloom_amount = 1.0f;
 	}
 
+	var.key = "doom_hdr_halation";
+	var.value = NULL;
+	{
+		int want = 0;
+		if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) {
+			if (!strcmp(var.value, "subtle")) want = 1;
+			else if (!strcmp(var.value, "strong")) want = 2;
+		}
+		hdr_halation = want;
+	}
+
 	var.key = "doom_hdr_bloom_convolution";
 	var.value = NULL;
 	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
@@ -1084,6 +1104,7 @@ static void context_reset(void)
    hdr_arb_vp = hdr_arb_down = hdr_arb_up = 0;
    hdr_arb_bright = hdr_arb_blur = 0;
    hdr_arb_comp1 = hdr_arb_comp2 = 0;
+   hdr_loc_hal = -1;
    hdr_arb_comp_mode = -1;
    hdr_arb_pyramid = false;
 #endif
@@ -2242,6 +2263,7 @@ static const char *hdr_fs_src =
 	"uniform sampler2D uBloomT;\n"
 	"uniform sampler2D uBloomW;\n"
 	"uniform float uBloomAmt;\n"
+	"uniform vec3 uHal;\n"
 	"uniform vec2 uBandW;\n"
 	"uniform float uEncScale;\n"
 	"uniform float uFrame;\n"
@@ -2720,7 +2742,8 @@ static const char *hdr_fs_src =
 	"  vec3 bl = uBandW.x * texture2D(uBloomT, vUV).rgb;\n"
 	"  if (uBandW.y > 0.0)\n"
 	"    bl += uBandW.y * texture2D(uBloomW, vUV).rgb;\n"
-	"  lin += uBloomAmt * bl;\n"
+	/* tinted, for halation - uHal is 1,1,1 unless the option is on */
+	"  lin += (uBloomAmt * uHal) * bl;\n"
 	/* SDR-range content expanded into the display's headroom before the
 	   roll-off sees it - see the expand() comment. */
 	"  lin = expand(lin);\n"
@@ -3411,7 +3434,13 @@ static const char *hdr_arb_up_fs_src =
 
 #define HDR_ARB_COMPOSITE_TAIL \
 	/* lin += bloomAmt * bl */ \
-	"MAD lin, bl, program.env[2].y, lin;\n" \
+	/* Bloom in, tinted.  kHal is 1,1,1 unless halation is on, in which \
+	   case the green and blue weights drop and the bleed around a bright \
+	   area warms toward red - which is what scattering off the film \
+	   backing does, and is why a bright window in a film print has an \
+	   orange edge rather than a white one. */ \
+	"MUL bl, bl, program.env[2].y;\n" \
+	"MAD lin, bl, kHal, lin;\n" \
 	/* ---- expand(): t = clamp((v-K)*invK, 0, 1)
 	   hi = K + (1-K)t + (E-1)t^2 + max(v-1,0), taken where v >= K */ \
 	"SUB t, lin, program.env[1].y;\n" \
@@ -3576,7 +3605,7 @@ static const char *hdr_arb_composite_src( int mode, bool twoBand ) {
 	 * silently loses its tail - the gamut matrix, the scale to the
 	 * display and the PQ encode - which does not fail to assemble and
 	 * does not warn; it just renders a picture with no output stage. */
-	idStr::snPrintf( p, sizeof( buf[0] ), "%s%s%s%s%s%s%s%s",
+	idStr::snPrintf( p, sizeof( buf[0] ), "%s%s%s%s%s%s%s%s%s",
 			"!!ARBfp1.0\n"
 			"OPTION ARB_precision_hint_nicest;\n",
 			/* ACES 2.0 brings its own registers; every other curve uses
@@ -3584,6 +3613,12 @@ static const char *hdr_arb_composite_src( int mode, bool twoBand ) {
 			 * one mode needs would push the rest toward the limits for
 			 * nothing. */
 			mode == HDR_ROLLOFF_ACES2FULL ? ACES2_ARB_DECLS : "",
+			/* the halation tint, baked in rather than uploaded: it
+			 * changes only when the option does, and the option
+			 * rebuilds the program */
+			hdr_halation == 2 ? "PARAM kHal = { 1.0, 0.72, 0.45, 0 };\n"
+			: hdr_halation == 1 ? "PARAM kHal = { 1.0, 0.86, 0.70, 0 };\n"
+			: "PARAM kHal = { 1.0, 1.0, 1.0, 0 };\n",
 			HDR_ARB_COMPOSITE_BODY
 			"TEX bl, fragment.texcoord[0], texture[1], 2D;\n"
 			"MUL bl, bl, program.env[2].z;\n",
@@ -4221,7 +4256,8 @@ static bool hdr_arb_load( GLenum target, const char *text, GLuint *out, const ch
 }
 
 static bool hdr_arb_ready( void ) {
-	if ( hdr_arb_pyramid && hdr_arb_comp_mode == hdr_rolloff_mode ) {
+	if ( hdr_arb_pyramid && hdr_arb_comp_mode == hdr_rolloff_mode
+			&& hdr_arb_comp_halation == hdr_halation ) {
 		return true;
 	}
 
@@ -4256,7 +4292,8 @@ static bool hdr_arb_ready( void ) {
 	 * when the option changes.  The old pair is deleted first: without
 	 * that, every toggle would strand two program objects, and the
 	 * option is a menu item somebody will sit and cycle through. */
-	if ( hdr_arb_comp_mode != hdr_rolloff_mode ) {
+	if ( hdr_arb_comp_mode != hdr_rolloff_mode
+			|| hdr_arb_comp_halation != hdr_halation ) {
 		if ( hdr_arb_comp1 ) {
 			GLuint dead[2] = { hdr_arb_comp1, hdr_arb_comp2 };
 			glDeleteProgramsARB( 2, dead );
@@ -4271,6 +4308,7 @@ static bool hdr_arb_ready( void ) {
 			return false;
 		}
 		hdr_arb_comp_mode = hdr_rolloff_mode;
+		hdr_arb_comp_halation = hdr_halation;
 	}
 
 	if ( !hdr_arb_pyramid && log_cb ) {
@@ -4395,6 +4433,7 @@ static bool hdr_ensure_target( int w, int h ) {
 		hdr_loc_bloomT  = glGetUniformLocation( hdr_prog, "uBloomT" );
 		hdr_loc_bloomW  = glGetUniformLocation( hdr_prog, "uBloomW" );
 		hdr_loc_bloomAmt= glGetUniformLocation( hdr_prog, "uBloomAmt" );
+		hdr_loc_hal    = glGetUniformLocation( hdr_prog, "uHal" );
 		hdr_loc_bandW   = glGetUniformLocation( hdr_prog, "uBandW" );
 		hdr_loc_encScale= glGetUniformLocation( hdr_prog, "uEncScale" );
 		hdr_loc_frame   = glGetUniformLocation( hdr_prog, "uFrame" );
@@ -5437,6 +5476,13 @@ static void hdr_present( GLuint dstFbo ) {
 	}
 	glUniform1i( hdr_loc_bloomW, 2 );
 	glUniform1f( hdr_loc_bloomAmt, haveBloom ? hdr_bloom_amount : 0.0f );
+	if ( hdr_loc_hal >= 0 ) {
+		/* the same weights the ARB path bakes in */
+		glUniform3f( hdr_loc_hal,
+				1.0f,
+				hdr_halation == 2 ? 0.72f : hdr_halation == 1 ? 0.86f : 1.0f,
+				hdr_halation == 2 ? 0.45f : hdr_halation == 1 ? 0.70f : 1.0f );
+	}
 	glUniform2f( hdr_loc_bandW, bandW0, bandW1 );
 	glUniform1f( hdr_loc_encScale, 1.0f / hdr_scene_encode_scale );
 	if ( hdr_rolloff_mode == HDR_ROLLOFF_FILMICLOG && hdr_filmic_build() ) {
