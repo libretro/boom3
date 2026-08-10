@@ -345,6 +345,33 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "disabled"
    },
    {
+      "doom_hdr_filmiclog_contrast",
+      "Filmic Log: Contrast",
+      NULL,
+      "Which of Sobotka's seven contrast curves Filmic Log uses. They are "
+      "separately authored lookups rather than one curve with a knob, and "
+      "what separates them is the low end - at a scene value of 0.002, "
+      "the sort of dim specular a distant emergency light leaves on wet "
+      "metal, Very Low returns 0.0078 where Very High returns 0.00001. "
+      "Lower contrast lifts those highlights enough to tell matte armour "
+      "from wet organic growth from a steel door while the room around "
+      "them stays dark; higher contrast crushes them for a harder, more "
+      "claustrophobic look. Base is Blender's default.",
+      NULL,
+      NULL,
+      {
+         { "verylow",  "Very Low (most shadow detail)" },
+         { "low",      "Low" },
+         { "medium",   "Medium" },
+         { "base",     "Base (default)" },
+         { "medhigh",  "Medium High" },
+         { "high",     "High" },
+         { "veryhigh", "Very High (most crushed)" },
+         { NULL, NULL },
+      },
+      "base"
+   },
+   {
       "doom_hdr_filmiclog_range",
       "Filmic Log: Highlight Range",
       NULL,

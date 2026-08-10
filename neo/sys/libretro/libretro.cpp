@@ -54,7 +54,7 @@ extern "C" {
 #include "renderer/tr_local.h"
 #include "renderer/aces2_jmh.h"
 #include "renderer/aces2_arb.h"
-#include "renderer/filmic_curve.h"
+#include "renderer/filmic_contrast.h"
 #include "renderer/filmic_desat.h"
 #include "sys/libretro/retro_public.h"
 #include "sys/sys_local.h"
@@ -206,6 +206,9 @@ static int    hdr_aces2_gamut = 2;
  * sized for footage where 1.0 is a nominal white; this engine's scene
  * runs past it. */
 static float  hdr_filmiclog_maxev = 4.026068811f;
+/* Which of Sobotka's seven contrast curves to use, 0 = Very Low.  The
+ * table is uploaded once and rebuilt when this changes. */
+static int    hdr_filmiclog_contrast = 3;   /* Base */
 /* Peak the tables were solved for, and the flag that they need rebuilding.
  * With the shared state because the option parser writes it and the
  * desktop resource path reads it. */
@@ -243,7 +246,9 @@ static bool hdr_filmic_build( void ) {
 		return true;
 	}
 	for ( i = 0; i < 256; i++ ) {
-		double v = filmic_base_contrast[i];
+		double v = filmic_contrast_tables[
+				( hdr_filmiclog_contrast < 0 || hdr_filmiclog_contrast > 6 )
+					? 3 : hdr_filmiclog_contrast ][i];
 		if ( v < 0.0 ) v = 0.0;
 		if ( v > 1.0 ) v = 1.0;
 		lut16[i] = (unsigned short)( v * 65535.0 + 0.5 );
@@ -359,8 +364,10 @@ static void hdr_filmiclog_terms( float out[2] ) {
 	const int    i = (int)pos < FILMIC_CURVE_SIZE - 2
 					? (int)pos : FILMIC_CURVE_SIZE - 2;
 	const double f = pos - (double)i;
-	const double c = filmic_base_contrast[i]
-			+ ( filmic_base_contrast[i+1] - filmic_base_contrast[i] ) * f;
+	const float *tab = filmic_contrast_tables[
+			( hdr_filmiclog_contrast < 0 || hdr_filmiclog_contrast > 6 )
+				? 3 : hdr_filmiclog_contrast ];
+	const double c = tab[i] + ( tab[i+1] - tab[i] ) * f;
 
 	out[0] = (float)( 25.0 / span );
 	out[1] = (float)( 1.0 / pow( c > 1e-6 ? c : 1e-6, 2.2 ) );
@@ -932,6 +939,26 @@ static void update_variables(bool startup)
 		else if (!strcmp(var.value, "devlin"))    hdr_rolloff_mode = HDR_ROLLOFF_DEVLIN;
 		else if (!strcmp(var.value, "filmiclog")) hdr_rolloff_mode = HDR_ROLLOFF_FILMICLOG;
 		else                                     hdr_rolloff_mode = HDR_ROLLOFF_REINHARD;
+	}
+
+	var.key = "doom_hdr_filmiclog_contrast";
+	var.value = NULL;
+	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) {
+		int want = 3;
+		if (!strcmp(var.value, "verylow"))        want = 0;
+		else if (!strcmp(var.value, "low"))       want = 1;
+		else if (!strcmp(var.value, "medium"))    want = 2;
+		else if (!strcmp(var.value, "medhigh"))   want = 4;
+		else if (!strcmp(var.value, "high"))      want = 5;
+		else if (!strcmp(var.value, "veryhigh"))  want = 6;
+		if (want != hdr_filmiclog_contrast) {
+			hdr_filmiclog_contrast = want;
+			/* the curve texture is built from this; drop it */
+			if (hdr_filmic_lut) {
+				glDeleteTextures(1, &hdr_filmic_lut);
+				hdr_filmic_lut = 0;
+			}
+		}
 	}
 
 	var.key = "doom_hdr_filmiclog_range";
