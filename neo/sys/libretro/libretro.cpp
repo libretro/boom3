@@ -332,22 +332,43 @@ static bool hdr_filmic_build( void ) {
 	return true;
 }
 
-static void hdr_filmiclog_terms( float out[3] ) {
+/*
+================
+hdr_filmiclog_terms
+
+Two terms, both of which move with the range option.
+
+out[0] is the rescale applied after the desaturation cube.  The cube has
+to see the 25-stop space it was built in, always, so the range cannot act
+on the encode - it acts here, taking 25 stops back down to the window the
+contrast curve expects.  25/16.5 for the default four stops, which is the
+1.5151515 that used to be hardcoded.
+
+out[1] is the normalisation that pins scene 1.0 to 1.0.  It is read off
+the real contrast curve rather than from the sigmoid that stood in for it
+before the curve landed - the sigmoid's 1.785 against the curve's 1.602,
+which is why scene 1.0 has been arriving at 1.11 rather than 1.0.
+================
+*/
+static void hdr_filmiclog_terms( float out[2] ) {
 	const double mn = -12.4739312;
-	const double mx = hdr_filmiclog_maxev;
-	const double span = mx - mn;
-	const double pivot = ( log( 0.18 ) / log( 2.0 ) - mn ) / span;
+	const double span = hdr_filmiclog_maxev - mn;
 	const double atOne = ( 0.0 - mn ) / span;
-	const double sg = 1.0 / ( 1.0 + exp( -8.0 * ( atOne - pivot ) ) );
-	out[0] = (float)( 1.0 / span );
-	out[1] = (float)pivot;
-	out[2] = (float)( 1.0 / pow( sg, 2.2 ) );
+	const double pos = atOne * (double)( FILMIC_CURVE_SIZE - 1 );
+	const int    i = (int)pos < FILMIC_CURVE_SIZE - 2
+					? (int)pos : FILMIC_CURVE_SIZE - 2;
+	const double f = pos - (double)i;
+	const double c = filmic_base_contrast[i]
+			+ ( filmic_base_contrast[i+1] - filmic_base_contrast[i] ) * f;
+
+	out[0] = (float)( 25.0 / span );
+	out[1] = (float)( 1.0 / pow( c > 1e-6 ? c : 1e-6, 2.2 ) );
 }
 
 static float hdr_filmiclog_norm( void ) {
-	float t[3];
+	float t[2];
 	hdr_filmiclog_terms( t );
-	return t[2];
+	return t[1];
 }
 
 static void hdr_aces2_set_uniforms( void ) {
@@ -2432,7 +2453,9 @@ static const char *hdr_fs_src =
 	"    vec2 uv = vec2((bz * 33.0 + dx + 0.5) / 1089.0, (d.y + 0.5) / 33.0);\n"
 	"    vec3 s0 = texture2D(uFilmDesat, uv).rgb;\n"
 	"    vec3 s1 = texture2D(uFilmDesat, uv + vec2(33.0 / 1089.0, 0.0)).rgb;\n"
-	"    t = clamp(mix(s0, s1, fz) * 1.5151515, 0.0, 1.0);\n"
+	/* uFilm.x is the post-cube rescale - the range option acts here,
+	   after the cube, because the cube must always see 25 stops */
+	"    t = clamp(mix(s0, s1, fz) * uFilm.x, 0.0, 1.0);\n"
 	"    vec3 o;\n"
 	"    o.r = texture2D(uFilmLut, vec2(t.r, 0.5)).r;\n"
 	"    o.g = texture2D(uFilmLut, vec2(t.g, 0.5)).r;\n"
@@ -3103,7 +3126,12 @@ static const char *hdr_arb_up_fs_src =
 	"TEX h, n, texture[4], 2D;\n" \
 	"SUB h, h, g;\n" \
 	"MAD v, h, r.z, g;\n" \
-	"MUL v, v, kFilm2.w;\n" \
+	/* Back out of the 25-stop space the cube lives in and into the \
+	   range the contrast curve expects.  This is where the range \
+	   option acts: the cube must always see 25 stops, because that is \
+	   the space it was built in, so widening the window has to happen \
+	   after it rather than by re-scaling the encode. */ \
+	"MUL v, v, program.env[9].w;\n" \
 	"MAX v, v, 0.0;\n" \
 	"MIN v, v, 1.0;\n" \
 	/* Filmic's Base Contrast curve, from the table on unit 3, one \
@@ -5380,11 +5408,12 @@ static void hdr_present( GLuint dstFbo ) {
 		}
 	}
 	if ( hdr_loc_film >= 0 ) {
-		/* Filmic Log's encode scale, pivot and normalisation - solved on
-		 * the CPU because all three move together with the range. */
-		float ft[3];
+		/* x is the post-cube rescale, z the normalisation; both move with
+		 * the range option.  y is unused now that the contrast curve is a
+		 * lookup rather than a sigmoid with a pivot. */
+		float ft[2];
 		hdr_filmiclog_terms( ft );
-		glUniform3f( hdr_loc_film, ft[0], ft[1], ft[2] );
+		glUniform3f( hdr_loc_film, ft[0], 0.0f, ft[1] );
 	}
 	glUniform1f( hdr_loc_frame, frameN );
 	glUniformMatrix3fv( hdr_loc_mat, 1, GL_FALSE, mat );
@@ -5513,9 +5542,12 @@ static void hdr_present( GLuint dstFbo ) {
 				 * so they share the register rather than each taking
 				 * one and pushing the count up for every program */
 				{
-					float ft[3];
+					/* env[9].w is the post-cube rescale, which is where
+					 * the range option acts; env[8].x below carries the
+					 * normalisation. */
+					float ft[2];
 					hdr_filmiclog_terms( ft );
-					p9[2] = ft[0];   p9[3] = ft[1];
+					p9[2] = 0.0f;   p9[3] = ft[0];
 				}
 				qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 8, p8 );
 				qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 9, p9 );

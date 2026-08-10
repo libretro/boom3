@@ -25,7 +25,9 @@ Indexed by the log-encoded value, 0 to 1.
 ===========================================================================
 */
 
-static const float filmic_base_contrast[256] = {
+#define FILMIC_CURVE_SIZE		256
+
+static const float filmic_base_contrast[FILMIC_CURVE_SIZE] = {
 	0.000000f, 0.000220f, 0.000447f, 0.000681f, 0.000922f, 0.001171f, 0.001428f, 0.001692f,
 	0.001965f, 0.002265f, 0.002556f, 0.002856f, 0.003165f, 0.003484f, 0.003813f, 0.004153f,
 	0.004502f, 0.004863f, 0.005235f, 0.005619f, 0.006015f, 0.006423f, 0.006843f, 0.007277f,
