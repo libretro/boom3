@@ -413,6 +413,12 @@ static bool   hdr_scene_mapped;
  * mapping until a world has been drawn, and mapping before one has
  * been drawn actively breaks the frame. */
 static bool   hdr_world_drawn;   /* the tone map has already run this frame */
+/* Whether the HUD is kept out of the tone curve by mapping the scene
+ * before 2D draws.  Off by default: the two-pass frame is correct on
+ * every structure I have been able to reproduce and still wrong on the
+ * title screen, so it does not get to break a working renderer while it
+ * is being finished. */
+static bool   hdr_hud_bypass;
 static GLint  hdr_loc_tex, hdr_loc_mat, hdr_loc_parms;
 static GLint  hdr_loc_bloomT, hdr_loc_bloomW, hdr_loc_bloomAmt, hdr_loc_encScale;
 static GLint  hdr_loc_film = -1;
@@ -925,6 +931,12 @@ static void update_variables(bool startup)
 		const float ev = (float)atof(var.value);
 		hdr_filmiclog_maxev = ( ev > 4.5f ) ? ev : 4.026068811f;
 	}
+
+	var.key = "doom_hdr_hud_bypass";
+	var.value = NULL;
+	hdr_hud_bypass = false;
+	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+		hdr_hud_bypass = !strcmp(var.value, "enabled");
 
 	var.key = "doom_hdr_aces2_gamut";
 	var.value = NULL;
@@ -5687,7 +5699,7 @@ static void hdr_map_scene( void ) {
  * than for the file it lives in, because that is where it has to be
  * understood. */
 void HDR_MapSceneBeforeHUD( void ) {
-	if ( !hdr_world_drawn ) {
+	if ( !hdr_hud_bypass || !hdr_world_drawn ) {
 		return;
 	}
 	hdr_map_scene();
@@ -5708,6 +5720,9 @@ own composite cleared out from under it.
 ================
 */
 void HDR_BeginFrame( void ) {
+	if ( !hdr_hud_bypass ) {
+		return;
+	}
 	hdr_scene_mapped = false;
 	hdr_world_drawn = false;
 	hdr_bind_scene();

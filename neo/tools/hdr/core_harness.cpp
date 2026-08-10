@@ -47,6 +47,8 @@ extern "C" {
 /* mangled: static functions in libretro.cpp, globalised by objcopy */
 extern "C" bool _ZL17hdr_ensure_targetii(int w, int h);
 extern "C" int _ZL16hdr_rolloff_mode;
+/* the option gate; the harness turns it on to test the path at all */
+extern "C" bool _ZL14hdr_hud_bypass __attribute__((weak));
 /* retro_run clears this at the top of every frame; the harness has to
    do the same or the second frame reuses the first one's mapped image */
 extern "C" bool _ZL16hdr_scene_mapped __attribute__((weak));
@@ -147,6 +149,7 @@ int main(int argc, char **argv)
 	   mapped - the title screen does this.  Its clear lands on whatever
 	   is bound, so the mapped image has to be out of the way by then. */
 	const int lateClear = (argc > 1 && !strcmp(argv[1], "--late-clear"));
+	const int bypassOff = (argc > 1 && !strcmp(argv[1], "--bypass-off"));
 	/* The engine pumps many swaps per retro_run - every menu frame and
 	 * every loading-screen update.  Each is a whole frame: composite,
 	 * present, rebind.  Testing one swap per run misses anything that
@@ -210,6 +213,12 @@ int main(int argc, char **argv)
 	 * the default roll-off because Reinhard's soft knee is the identity
 	 * below 0.75, so a 0.5 panel comes out at 0.5 either way. */
 	for (pass = 0; pass < 2; pass++) {
+	/* The bypass is a core option and ships off.  The harness turns it on
+	   unless --bypass-off, so both the shipping renderer and the opt-in
+	   path are covered: the frame must be correct either way, and the
+	   HUD must be curve-independent only when the bypass is on. */
+	if (&_ZL14hdr_hud_bypass)
+		_ZL14hdr_hud_bypass = !bypassOff;
 	_ZL16hdr_rolloff_mode = pass ? 18 : 0;   /* Filmic Log, then Reinhard */
 	for (swap = 0; swap < swaps; swap++) {
 	/* what GLimp_SwapBuffers does at the top of every engine frame.
@@ -312,7 +321,12 @@ int main(int argc, char **argv)
 		printf("  FAIL: the scene did not change with the curve\n");
 		fail = 1;
 	}
-	if (hudPx[0] != hudPx[1]) {
+	if (bypassOff) {
+		/* the shipping default: the HUD goes through the curve, as it
+		   always has, and what matters is that the frame is right */
+		printf("  bypass off: HUD %d/%d, scene %d -> %d\n",
+			hudPx[0], hudPx[1], wallPx[0], wallPx[1]);
+	} else if (hudPx[0] != hudPx[1]) {
 		printf("  FAIL: the HUD changed with the curve (%d vs %d) - it is\n"
 		       "        going through the scene's tone curve\n",
 			hudPx[0], hudPx[1]);
