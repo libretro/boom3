@@ -3498,7 +3498,11 @@ static const char *hdr_arb_composite_src( int mode, bool twoBand ) {
 	static char buf[2][16384];
 	char *p = buf[twoBand ? 1 : 0];
 
-	idStr::snPrintf( p, sizeof( buf[0] ), "%s%s%s%s%s%s%s",
+	/* Eight pieces, eight specifiers.  Miscount this and the composite
+	 * silently loses its tail - the gamut matrix, the scale to the
+	 * display and the PQ encode - which does not fail to assemble and
+	 * does not warn; it just renders a picture with no output stage. */
+	idStr::snPrintf( p, sizeof( buf[0] ), "%s%s%s%s%s%s%s%s",
 			"!!ARBfp1.0\n"
 			"OPTION ARB_precision_hint_nicest;\n",
 			/* ACES 2.0 brings its own registers; every other curve uses
