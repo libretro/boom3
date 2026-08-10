@@ -284,3 +284,18 @@ void	ACES2_PackHueTables( const aces2Params_t *p, unsigned short *rgba16,
  * million; outside it, it returns the nearest thing that would have
  * produced the same output. */
 void	ACES2_OutputTransformInv( const double RGB[3], const aces2Params_t *p, double aces[3] );
+
+/* A GUI drawn onto a surface in the world is authored in display space:
+ * its 0.5 grey is meant to read as 0.5.  The engine treats that texture
+ * as albedo, so it goes through the output transform and does not land
+ * where the artist put it - 0.10 arrives at 0.064.
+ *
+ * The transform being invertible is what fixes that.  Pre-correcting the
+ * texel through the inverse means the forward transform returns it
+ * exactly.  Doing the full inverse per texel would cost more than the
+ * transform itself, so this bakes the neutral axis into a small table:
+ * given the value the artist wants on screen, the scene value that
+ * produces it.  Exact on greys, and close enough on colour that text
+ * stays the colour it was authored. */
+#define ACES2_GUI_LUT_SIZE	256
+void	ACES2_BuildGuiInverse( const aces2Params_t *p, float table[ACES2_GUI_LUT_SIZE] );

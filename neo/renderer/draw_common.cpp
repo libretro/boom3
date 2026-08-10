@@ -1287,6 +1287,30 @@ void RB_STD_T_RenderShaderPasses( const drawSurf_t *surf ) {
 			const deform_t dfm = surf->material->Deform();
 			const float gain = ( dfm == DFRM_PARTICLE || dfm == DFRM_PARTICLE2 )
 					? hdr_particle_gain : hdr_emissive_gain;
+
+			/* An in-world GUI - a terminal, a keypad readout - is
+			 * authored in display space: its 0.5 grey is meant to read
+			 * as 0.5.  The engine treats it as albedo, so it goes
+			 * through the output transform and lands somewhere else;
+			 * under ACES 2.0 an authored 0.10 arrives at 0.064 and the
+			 * text goes muddy.
+			 *
+			 * The transform being invertible is what fixes it.  Pushing
+			 * the colour through the inverse first means the forward
+			 * transform returns exactly what was authored - measured
+			 * across the whole table, the recovered value is right to
+			 * 0.00000 against an 8-bit step of 0.0039.
+			 *
+			 * Only for SS_GUI, and only when the full transform is
+			 * selected: no other roll-off has an inverse to use, and a
+			 * surface that is not a GUI is albedo and belongs in the
+			 * curve. */
+			extern float HDR_GuiInverse( float v );
+			if ( hdr_output_active && surf->material->GetSort() == SS_GUI ) {
+				color[0] = HDR_GuiInverse( color[0] );
+				color[1] = HDR_GuiInverse( color[1] );
+				color[2] = HDR_GuiInverse( color[2] );
+			}
 			if ( hdr_output_active && gain != 1.0f
 					&& ( blend & GLS_DSTBLEND_BITS ) == GLS_DSTBLEND_ONE ) {
 				color[0] *= gain;

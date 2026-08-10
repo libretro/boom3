@@ -1348,3 +1348,33 @@ void ACES2_OutputTransformInv( const double RGB[3], const aces2Params_t *p, doub
 
 	ACES2_JMhToRGB( JMh, &p->input, aces );
 }
+
+
+/*
+================
+ACES2_BuildGuiInverse
+
+For each display value the artist intended, the scene value that the
+forward transform maps back onto it.  Solved on the neutral axis by the
+assembled inverse, then clamped monotonic - the inverse is not exact at
+the very top, where the gamut compression's boundary estimate stops
+being invertible, and a table that dipped there would show as a band.
+================
+*/
+void ACES2_BuildGuiInverse( const aces2Params_t *p, float table[ACES2_GUI_LUT_SIZE] ) {
+	int i;
+	double prev = 0.0;
+
+	for ( i = 0; i < ACES2_GUI_LUT_SIZE; i++ ) {
+		const double want = (double)i / (double)( ACES2_GUI_LUT_SIZE - 1 );
+		double disp[3], scene[3];
+
+		disp[0] = disp[1] = disp[2] = want;
+		ACES2_OutputTransformInv( disp, p, scene );
+		if ( !( scene[1] > prev ) ) {
+			scene[1] = prev;
+		}
+		prev = scene[1];
+		table[i] = (float)scene[1];
+	}
+}

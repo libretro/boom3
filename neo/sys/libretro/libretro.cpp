@@ -429,6 +429,8 @@ static void hdr_aces2_set_uniforms( void ) {
  * ACES 2.0's tone scale is parameterised by this and rebuilds when it
  * moves, so it is the one runtime variable that retargets the whole
  * transform from an SDR display to a 10000 nit one. */
+static float  hdr_aces2_gui[ACES2_GUI_LUT_SIZE];
+static bool   hdr_aces2_gui_ready = false;
 static float  hdr_peak_override = 0.0f;
 static float  hdr_aces2_wanted_peak = 1000.0f;
 static float  hdr_gt_toe        = 0.22f;
@@ -4079,6 +4081,7 @@ static void hdr_aces2_free( void ) {
 		hdr_aces2_params = NULL;
 	}
 	hdr_aces2_peak = 0.0f;
+	hdr_aces2_gui_ready = false;
 }
 
 static bool hdr_aces2_build( float peakLuminance ) {
@@ -4111,6 +4114,8 @@ static bool hdr_aces2_build( float peakLuminance ) {
 	}
 	ACES2_Init( rec2020, peakLuminance, hdr_aces2_params );
 	ACES2_PackHueTables( hdr_aces2_params, lut, hdr_aces2_scales );
+	ACES2_BuildGuiInverse( hdr_aces2_params, hdr_aces2_gui );
+	hdr_aces2_gui_ready = ( hdr_rolloff_mode == HDR_ROLLOFF_ACES2FULL );
 
 	glGenTextures( 1, &hdr_aces2_lut );
 	glActiveTexture( GL_TEXTURE3 );
@@ -4169,6 +4174,33 @@ static void hdr_aces2_env_col( int reg, const double m[9], int col ) {
 static void hdr_aces2_env_row( int reg, const double m[9], int row ) {
 	ACES2_ENV( reg,
 		(float)m[row*3+0], (float)m[row*3+1], (float)m[row*3+2], 0.0f );
+}
+
+/*
+================
+HDR_GuiInverse
+
+Display value in, scene value out, for surfaces the artist authored in
+display space.  A table because the assembled inverse costs more than
+the transform it undoes; built when the ACES 2.0 tables are, and the
+identity whenever that transform is not the one running - every other
+roll-off has no inverse to offer and a GUI simply goes through it as
+before.
+================
+*/
+float HDR_GuiInverse( float v ) {
+	float x;
+	int i;
+
+	if ( !hdr_aces2_gui_ready || v <= 0.0f ) {
+		return v;
+	}
+	if ( v >= 1.0f ) {
+		return hdr_aces2_gui[ACES2_GUI_LUT_SIZE - 1];
+	}
+	x = v * (float)( ACES2_GUI_LUT_SIZE - 1 );
+	i = (int)x;
+	return hdr_aces2_gui[i] + ( hdr_aces2_gui[i+1] - hdr_aces2_gui[i] ) * ( x - (float)i );
 }
 
 static void hdr_aces2_set_env( void ) {
