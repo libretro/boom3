@@ -61,6 +61,8 @@ extern "C" void _ZL11hdr_presentj(unsigned int dstFbo);
 void HDR_MapSceneBeforeHUD(void) __attribute__((weak));
 /* RB_DrawView calls these; a world view notes itself, a 2D view maps */
 void HDR_NoteWorldView(void) __attribute__((weak));
+/* RB_SetBuffer calls this; it opens a frame and clears the bound target */
+void HDR_BeginFrame(void) __attribute__((weak));
 extern "C" void _ZL18hdr_encode_presentj(unsigned int dstFbo) __attribute__((weak));
 /* present when the scene is mapped before the HUD; absent on builds
    without the two-pass split, hence the weak symbols */
@@ -70,6 +72,8 @@ extern "C" void _ZL18hdr_encode_presentj(unsigned int dstFbo) __attribute__((wea
 void HDR_MapSceneBeforeHUD(void) __attribute__((weak));
 /* RB_DrawView calls these; a world view notes itself, a 2D view maps */
 void HDR_NoteWorldView(void) __attribute__((weak));
+/* RB_SetBuffer calls this; it opens a frame and clears the bound target */
+void HDR_BeginFrame(void) __attribute__((weak));
 extern "C" void _ZL18hdr_encode_presentj(unsigned int dstFbo) __attribute__((weak));
 #define hdr_ensure_target _ZL17hdr_ensure_targetii
 #define hdr_bind_scene    _ZL14hdr_bind_scenev
@@ -139,6 +143,10 @@ int main(int argc, char **argv)
 	   would draw into a display-referred buffer and never be tone
 	   mapped - a blown out picture, not a subtle one. */
 	const int twoDFirst = (argc > 1 && !strcmp(argv[1], "--2d-first"));
+	/* A second RC_SET_BUFFER inside the frame, after the scene has been
+	   mapped - the title screen does this.  Its clear lands on whatever
+	   is bound, so the mapped image has to be out of the way by then. */
+	const int lateClear = (argc > 1 && !strcmp(argv[1], "--late-clear"));
 	/* The engine pumps many swaps per retro_run - every menu frame and
 	 * every loading-screen update.  Each is a whole frame: composite,
 	 * present, rebind.  Testing one swap per run misses anything that
@@ -238,6 +246,17 @@ int main(int argc, char **argv)
 		/* The engine rebinds the scene target between views - loading
 		   screen pumps do it every pump.  Anything drawn after the map
 		   has to still land on the mapped image. */
+		if (lateClear) {
+			/* the engine opening another frame mid-sequence */
+			if (HDR_BeginFrame)
+				HDR_BeginFrame();
+			glClearColor(0.f, 0.f, 0.f, 0.f);
+			glClear(GL_COLOR_BUFFER_BIT);
+			if (HDR_NoteWorldView)
+				HDR_NoteWorldView();
+			drawWorld();
+			HDR_MapSceneBeforeHUD();
+		}
 		if (!noBind)
 			hdr_bind_scene();
 		drawHUD();

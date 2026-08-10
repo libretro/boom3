@@ -5699,6 +5699,22 @@ void HDR_NoteWorldView( void ) {
 
 /*
 ================
+HDR_BeginFrame
+
+RB_SetBuffer opens a frame and clears the bound target.  Put the scene
+target back before that clear and drop the mapping state with it, so a
+frame never inherits the previous one's mapped image and never has its
+own composite cleared out from under it.
+================
+*/
+void HDR_BeginFrame( void ) {
+	hdr_scene_mapped = false;
+	hdr_world_drawn = false;
+	hdr_bind_scene();
+}
+
+/*
+================
 hdr_encode_present
 
 The end-of-frame pass when the scene was already mapped.  Everything in
