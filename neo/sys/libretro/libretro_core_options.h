@@ -446,6 +446,30 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "disabled"
    },
    {
+      "doom_spectral_mix",
+      "Pseudo-Spectral Light Mixing",
+      NULL,
+      "The engine lights a surface by multiplying light and albedo one "
+      "channel at a time. Real light and pigment interact across a "
+      "spectrum, and the per-channel product fails hardest where this "
+      "game lives - a narrow, saturated light over a saturated surface. "
+      "A 620nm flare on a cyan surface should give a dark red; the "
+      "per-channel product gives a green. This mixes them in a basis "
+      "fitted against spectral ground truth instead, which halves the "
+      "colour error and stops opposing lights meeting in a muddy line. "
+      "Blue light on a yellow surface goes from (0.10, 0.18, 0.10) to "
+      "(0.13, 0.23, 0.18). Neutrals are unaffected by construction. "
+      "Desktop only, and it takes effect when programs next load.",
+      NULL,
+      NULL,
+      {
+         { "disabled", NULL },
+         { "enabled",  NULL },
+         { NULL, NULL },
+      },
+      "disabled"
+   },
+   {
       "doom_hdr_emissive",
       "HDR: Emissive Headroom",
       NULL,

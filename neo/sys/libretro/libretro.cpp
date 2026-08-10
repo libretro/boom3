@@ -828,6 +828,14 @@ static void update_variables(bool startup)
 	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
 		mouse_sensitivity = (float)atof(var.value);
 
+	/* Pseudo-spectral mixing.  The ARB interaction program is rewritten
+	 * at load, so this only takes effect on the next program load - the
+	 * option text says as much rather than appearing to do nothing. */
+	var.key = "doom_spectral_mix";
+	var.value = NULL;
+	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+		cvarSystem->SetCVarBool("r_spectralMix", strcmp(var.value, "enabled") == 0);
+
 	/* Quality preset override */
 	var.key = "doom_shadow_smoothing";
 	var.value = NULL;
