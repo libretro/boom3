@@ -4512,6 +4512,17 @@ static bool hdr_arb_ready( void ) {
 		hdr_arb_comp_mode = hdr_rolloff_mode;
 		hdr_arb_comp_halation = hdr_halation;
 		hdr_arb_comp_chroma = hdr_chroma_ab;
+
+		/* Say what was baked in.  These two are baked into the program
+		 * text rather than uploaded, so if a setting is not reaching the
+		 * composite this line is where it shows - and if the line never
+		 * appears at all, the composite is not running, which is the
+		 * other way a display option looks like it does nothing. */
+		if ( log_cb ) {
+			log_cb( RETRO_LOG_INFO,
+					"[boom3] HDR: composite rebuilt - curve %d, halation %d, chromatic %d\n",
+					hdr_rolloff_mode, hdr_halation, hdr_chroma_ab );
+		}
 	}
 
 	if ( !hdr_arb_pyramid && log_cb ) {
