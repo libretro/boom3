@@ -1394,7 +1394,32 @@ void RB_STD_T_RenderShaderPasses( const drawSurf_t *surf ) {
 
 		if ( ffProg ) {
 			bool cube = pStage->texture.image && pStage->texture.image->type == TT_CUBIC;
-			qglBindProgramARB( GL_FRAGMENT_PROGRAM_ARB, cube ? FPROG_FF_GAMMA_CUBE : FPROG_FF_GAMMA );
+			/* An in-world GUI is authored in display space, so the
+			 * output transform moves it: under ACES 2.0 an authored
+			 * 0.10 arrives at 0.064 and the text goes muddy.  Pushing
+			 * the texel through the transform's inverse first means the
+			 * forward transform puts it back exactly.
+			 *
+			 * It has to happen here, on the texel, rather than on the
+			 * stage colour - the stage colour is the material's
+			 * constant modulation and is white for almost every GUI,
+			 * so correcting it would darken the screen and fix nothing.
+			 *
+			 * A separate program, bound only for SS_GUI, so no other
+			 * stage pays for the three extra fetches. */
+			extern bool HDR_GuiCorrectionActive( unsigned int *tex );
+			unsigned int guiLut = 0;
+			const bool guiFix = !cube
+					&& surf->material->GetSort() == SS_GUI
+					&& HDR_GuiCorrectionActive( &guiLut );
+			if ( guiFix ) {
+				GL_SelectTexture( 1 );
+				qglBindTexture( GL_TEXTURE_2D, guiLut );
+				GL_SelectTexture( 0 );
+			}
+			qglBindProgramARB( GL_FRAGMENT_PROGRAM_ARB,
+					guiFix ? FPROG_FF_GAMMA_GUI
+					: cube ? FPROG_FF_GAMMA_CUBE : FPROG_FF_GAMMA );
 			qglEnable( GL_FRAGMENT_PROGRAM_ARB );
 			float cc[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
 			float inv[4] = { 0.0f, 0.0f, 0.0f, 0.0f };

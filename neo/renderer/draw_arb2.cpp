@@ -487,6 +487,7 @@ static progDef_t	progs[MAX_GLPROGS] = {
 	{ GL_FRAGMENT_PROGRAM_ARB, FPROG_SOFT_PARTICLE, "soft_particle.vfp" },
 	{ GL_FRAGMENT_PROGRAM_ARB, FPROG_FF_GAMMA, "ff_gamma.vfp" },
 	{ GL_FRAGMENT_PROGRAM_ARB, FPROG_FF_GAMMA_CUBE, "ff_gamma_cube.vfp" },
+	{ GL_FRAGMENT_PROGRAM_ARB, FPROG_FF_GAMMA_GUI, "ff_gamma_gui.vfp" },
 
 	// additional programs can be dynamically specified in materials
 };
@@ -648,7 +649,8 @@ void R_LoadARBProgram( int progIndex ) {
 
 #if D3_INTEGRATE_SOFTPART_SHADERS
 	if ( progs[progIndex].ident == VPROG_SOFT_PARTICLE || progs[progIndex].ident == FPROG_SOFT_PARTICLE
-	     || progs[progIndex].ident == FPROG_FF_GAMMA || progs[progIndex].ident == FPROG_FF_GAMMA_CUBE ) {
+	     || progs[progIndex].ident == FPROG_FF_GAMMA || progs[progIndex].ident == FPROG_FF_GAMMA_CUBE
+	     || progs[progIndex].ident == FPROG_FF_GAMMA_GUI ) {
 		/*
 		   The fixed-function replication programs: old-style material
 		   stages historically rendered without fragment programs, which
@@ -674,6 +676,38 @@ void R_LoadARBProgram( int progIndex ) {
 			"MUL t, t, w;\n"
 			"MUL result.color, t, cc;\n"
 			"END\n";
+		/* The GUI variant.  Identical to ffGammaFShader except that the
+		   sampled texel is pushed through the ACES 2.0 inverse first, as
+		   a lookup on texture unit 1.
+
+		   An in-world GUI is authored in display space - its 0.5 grey is
+		   meant to read as 0.5 - but the engine hands that texture to the
+		   pipeline as albedo, so the output transform moves it: an
+		   authored 0.10 arrives at 0.064.  Pre-correcting the texel means
+		   the forward transform puts it back exactly.
+
+		   This is a separate program rather than a branch in the shared
+		   one because it is bound only for SS_GUI surfaces, so no other
+		   stage pays for the three extra fetches. */
+		static const char ffGammaGuiFShader[] =
+			"!!ARBfp1.0\n"
+			"PARAM cc = program.local[0];\n"
+			"PARAM inv = program.local[1];\n"
+			"TEMP t, v, w, g;\n"
+			"TEX t, fragment.texcoord[0], texture[0], 2D;\n"
+			"MOV g, 0.5;\n"
+			"MOV g.x, t.r;\n"
+			"TEX t.r, g, texture[1], 2D;\n"
+			"MOV g.x, t.g;\n"
+			"TEX t.g, g, texture[1], 2D;\n"
+			"MOV g.x, t.b;\n"
+			"TEX t.b, g, texture[1], 2D;\n"
+			"SUB v.rgb, 1.0, fragment.color;\n"
+			"LRP w.rgb, inv.x, v, fragment.color;\n"
+			"MOV w.a, fragment.color.a;\n"
+			"MUL t, t, w;\n"
+			"MUL result.color, t, cc;\n"
+			"END\n";
 		static const char ffGammaCubeFShader[] =
 			"!!ARBfp1.0\n"
 			"PARAM cc = program.local[0];\n"
@@ -691,6 +725,7 @@ void R_LoadARBProgram( int progIndex ) {
 		const char* srcstr = (progs[progIndex].ident == VPROG_SOFT_PARTICLE) ? softpartVShader
 			: (progs[progIndex].ident == FPROG_SOFT_PARTICLE) ? softpartFShader
 			: (progs[progIndex].ident == FPROG_FF_GAMMA) ? ffGammaFShader
+			: (progs[progIndex].ident == FPROG_FF_GAMMA_GUI) ? ffGammaGuiFShader
 			: ffGammaCubeFShader;
 
 		// copy to stack memory

@@ -431,6 +431,7 @@ static void hdr_aces2_set_uniforms( void ) {
  * transform from an SDR display to a 10000 nit one. */
 static float  hdr_aces2_gui[ACES2_GUI_LUT_SIZE];
 static bool   hdr_aces2_gui_ready = false;
+static GLuint hdr_aces2_gui_tex = 0;
 static float  hdr_peak_override = 0.0f;
 static float  hdr_aces2_wanted_peak = 1000.0f;
 static float  hdr_gt_toe        = 0.22f;
@@ -1140,6 +1141,7 @@ static void context_reset(void)
       hdr_aces2_params = NULL;
    }
    hdr_aces2_lut  = 0;
+   hdr_aces2_gui_tex = 0;
    hdr_filmic_lut = 0;
    hdr_filmic_desat = 0;
    hdr_loc_film_desat = -1;
@@ -4080,6 +4082,10 @@ static void hdr_aces2_free( void ) {
 		free( hdr_aces2_params );
 		hdr_aces2_params = NULL;
 	}
+	if ( hdr_aces2_gui_tex ) {
+		glDeleteTextures( 1, &hdr_aces2_gui_tex );
+		hdr_aces2_gui_tex = 0;
+	}
 	hdr_aces2_peak = 0.0f;
 	hdr_aces2_gui_ready = false;
 }
@@ -4116,6 +4122,39 @@ static bool hdr_aces2_build( float peakLuminance ) {
 	ACES2_PackHueTables( hdr_aces2_params, lut, hdr_aces2_scales );
 	ACES2_BuildGuiInverse( hdr_aces2_params, hdr_aces2_gui );
 	hdr_aces2_gui_ready = ( hdr_rolloff_mode == HDR_ROLLOFF_ACES2FULL );
+
+	/* The same table as a texture, for the GUI stage program.  One row,
+	 * so the row length is 256 shorts - a multiple of four, which is what
+	 * GL_UNPACK_ALIGNMENT wants and what the desaturation atlas famously
+	 * was not. */
+	if ( hdr_aces2_gui_ready ) {
+		unsigned short g16[ACES2_GUI_LUT_SIZE];
+		int k;
+		for ( k = 0; k < ACES2_GUI_LUT_SIZE; k++ ) {
+			float v = hdr_aces2_gui[k];
+			if ( v < 0.0f ) v = 0.0f;
+			if ( v > 1.0f ) v = 1.0f;
+			g16[k] = (unsigned short)( v * 65535.0f + 0.5f );
+		}
+		if ( !hdr_aces2_gui_tex ) {
+			glGenTextures( 1, &hdr_aces2_gui_tex );
+		}
+		glActiveTexture( GL_TEXTURE1 );
+		glBindTexture( GL_TEXTURE_2D, hdr_aces2_gui_tex );
+		while ( glGetError() != GL_NO_ERROR ) {
+		}
+		glTexImage2D( GL_TEXTURE_2D, 0, GL_LUMINANCE16, ACES2_GUI_LUT_SIZE, 1, 0,
+					  GL_LUMINANCE, GL_UNSIGNED_SHORT, g16 );
+		if ( glGetError() != GL_NO_ERROR ) {
+			glTexImage2D( GL_TEXTURE_2D, 0, GL_LUMINANCE, ACES2_GUI_LUT_SIZE, 1, 0,
+						  GL_LUMINANCE, GL_UNSIGNED_SHORT, g16 );
+		}
+		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
+		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
+		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
+		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
+		glActiveTexture( GL_TEXTURE0 );
+	}
 
 	glGenTextures( 1, &hdr_aces2_lut );
 	glActiveTexture( GL_TEXTURE3 );
@@ -4188,6 +4227,14 @@ roll-off has no inverse to offer and a GUI simply goes through it as
 before.
 ================
 */
+bool HDR_GuiCorrectionActive( unsigned int *tex ) {
+	if ( !hdr_aces2_gui_ready || hdr_aces2_gui_tex == 0 ) {
+		return false;
+	}
+	*tex = hdr_aces2_gui_tex;
+	return true;
+}
+
 float HDR_GuiInverse( float v ) {
 	float x;
 	int i;
