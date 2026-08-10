@@ -2,55 +2,50 @@
 
 Drives the core's own composite under OSMesa - `hdr_ensure_target`,
 `hdr_bind_scene`, `hdr_present` - rather than a reimplementation of
-them.  The functions are static and inlined away at -O3, so
+them.  Those functions are static and inlined away at -O3, so
 libretro.cpp is rebuilt once at `-O1 -fno-inline`, its statics are
 globalised with `objcopy`, and this links against that object plus
 every other object the build already produced.
 
     cd neo && make -j4 && tools/hdr/run.sh
 
-## Status: incomplete
+## What it takes to run core code outside the frontend
 
-It does not yet get through a frame.  Progress so far, each step found
-by instrumenting until the fault moved:
+Four things the frontend and engine normally do first.  Each was found
+by instrumenting until the fault moved, and missing any one of them
+makes every HDR path decline in silence rather than complain:
 
-  - the core's GL symbols have to be resolved through
-    `rglgen_resolve_symbols`, which the frontend normally does.
-  - the four ARB entry points `hdr_arb_available()` tests have to be
-    set; `R_CheckPortableExtensions` normally does that during engine
-    GL init.  Verified resolved and non-null at the call site.
-  - `idLib::Init()` has to run, because the composite assembles its
-    program text with `idStr::snPrintf`.
+  - `rglgen_resolve_symbols`, for the core's GL symbols.
+  - every `qgl` pointer, bound by including `renderer/qgl_proc.h` with
+    the same macro the engine uses.  Picking out the few that
+    `hdr_arb_available()` tests is not enough - the program loader also
+    calls `qglGetError`, `qglGetString` and `qglGetIntegerv`, and a null
+    one of those faults before anything can report why.
+  - the four ARB program entry points, which are declared outside
+    `qgl_proc.h` and assigned by `R_CheckPortableExtensions`.
+  - `idLib::Init()`, because the composite assembles its program text
+    with `idStr::snPrintf`.
 
-With all three the run still faults inside `hdr_arb_ready`, past the
-availability check.  What that function needs beyond the above has not
-been identified yet.
+## Negative controls
 
-That is recorded here rather than left as a passing test, because the
-first version of this file *did* report PASS, and it was wrong.  It
-reported `floor 13, wall 153, highlight 255`, which are the input quads
-at 0.05, 0.6 and 6.0 scaled to bytes and clamped - untouched.  Every
-HDR path had declined silently: no proc-address hook, so no ARB entry
-points, so `hdr_arb_available()` false, so `hdr_ensure_target` false,
-so `hdr_present` returned immediately and the harness read back what it
-had drawn itself.
+A harness that has never been shown to fail is not evidence.  The first
+version of this file reported PASS while testing nothing: it printed
+`floor 13, wall 153, highlight 255`, which are the input quads at 0.05,
+0.6 and 6.0 scaled to bytes and clamped.  Every HDR path had declined
+and `glReadPixels` handed back what the harness itself had drawn.
 
-The lesson is the one this whole exercise keeps teaching: a test that
-has never been shown to fail on broken code is not evidence.  The
-harness now refuses to continue if `hdr_ensure_target` declines, so it
-cannot pass that way again.
+So it now checks the output is not the input, and ships two controls:
+
+    ./frame_harness              # PASS: floor 22, wall 113, highlight 149
+    ./frame_harness --no-bind    # FAIL: the scene never reaches the target
+    ./frame_harness --no-arb     # FAIL: the composite declines
 
 ## What it is for
 
 Every HDR fault that reached a build in this work was in the sequence,
-not the arithmetic:
-
-  - a lookup table uploaded with the default unpack alignment, so its
-    rows arrived sheared.  `glTexImage2D` reported no error.
-  - a flag stored in the scene target's alpha, whose meaning depended
-    on which blend mode each 2D material happened to use.
-  - a second full-screen pass that bound its program but none of the
-    state its draw needed, so the frame came out black.
-
-None of those is visible to assembling a program or checking that a GL
-call did not error.
+not the arithmetic: a table uploaded with the default unpack alignment,
+so its rows arrived sheared, with no GL error; a flag in the scene
+target's alpha whose meaning depended on each 2D material's blend mode;
+and a full-screen pass that bound its program but none of the state its
+draw needed.  None is visible to assembling a program or checking that
+a call did not error.

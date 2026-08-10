@@ -95,11 +95,16 @@ static void drawHUD(void)
 	glEnd();
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
 	static unsigned char backing[W * H * 4];
 	static unsigned char out[W * H * 4];
 	OSMesaContext ctx;
+	/* Negative controls.  A harness that has never been shown to fail is
+	 * not evidence, so these reproduce two real failure shapes: the
+	 * scene never reaching the target, and the composite declining. */
+	const int noBind = (argc > 1 && !strcmp(argv[1], "--no-bind"));
+	const int noArb  = (argc > 1 && !strcmp(argv[1], "--no-arb"));
 	int i, nonBlack = 0, fail = 0;
 
 	setvbuf(stdout, NULL, _IONBF, 0);
@@ -114,17 +119,28 @@ int main(void)
 	idLib::Init();
 	hw_render.get_proc_address = (void *(*)(const char *))OSMesaGetProcAddress;
 	rglgen_resolve_symbols((rglgen_proc_address_t)OSMesaGetProcAddress);
-	/* R_CheckPortableExtensions sets these during engine GL init, which
-	 * the harness does not run; hdr_arb_available() tests all four. */
+	/* Bind every qgl pointer the same way the engine does - by including
+	 * qgl_proc.h with a macro that resolves each name.  Picking out the
+	 * four that hdr_arb_available() happens to test is not enough: the
+	 * loader also calls qglGetError, qglGetString and qglGetIntegerv,
+	 * and a null one of those faults before anything can report why. */
+#define QGLPROC( name, rettype, args ) \
+	q##name = (rettype (APIENTRYP) args)OSMesaGetProcAddress( #name );
+#include "renderer/qgl_proc.h"
+#undef QGLPROC
+
+	/* The ARB program entry points are declared outside qgl_proc.h and
+	 * assigned by R_CheckPortableExtensions, so they need doing too. */
 	qglProgramStringARB = (PFNGLPROGRAMSTRINGARBPROC)
-		OSMesaGetProcAddress("glProgramStringARB");
+		OSMesaGetProcAddress( "glProgramStringARB" );
 	qglGenProgramsARB = (PFNGLGENPROGRAMSARBPROC)
-		OSMesaGetProcAddress("glGenProgramsARB");
+		OSMesaGetProcAddress( "glGenProgramsARB" );
 	qglBindProgramARB = (PFNGLBINDPROGRAMARBPROC)
-		OSMesaGetProcAddress("glBindProgramARB");
+		OSMesaGetProcAddress( "glBindProgramARB" );
 	qglProgramEnvParameter4fvARB = (PFNGLPROGRAMENVPARAMETER4FVARBPROC)
-		OSMesaGetProcAddress("glProgramEnvParameter4fvARB");
-	glConfig.ARBFragmentProgramAvailable = true;
+		OSMesaGetProcAddress( "glProgramEnvParameter4fvARB" );
+
+	glConfig.ARBFragmentProgramAvailable = !noArb;
 	glConfig.ARBVertexProgramAvailable = true;
 	hdr_output_active = true;
 	environ_cb = (void *)env_cb;
@@ -136,7 +152,8 @@ int main(void)
 		printf("  FAIL: hdr_ensure_target declined - the composite never ran\n");
 		return 1;
 	}
-	hdr_bind_scene();
+	if (!noBind)
+		hdr_bind_scene();
 	glViewport(0, 0, W, H);
 	glClearColor(0.f, 0.f, 0.f, 0.f);
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -160,6 +177,14 @@ int main(void)
 		int hudPx   = out[((H - 5) * W + W / 2) * 4];
 		printf("  floor %d, wall %d, highlight %d, HUD %d\n",
 			floorPx, wallPx, hotPx, hudPx);
+		/* 13, 153 and 255 are the input quads scaled to bytes.  Getting
+		   those back means every HDR path declined and glReadPixels
+		   handed over what the harness itself drew - which is exactly
+		   how an earlier version of this file reported PASS. */
+		if (floorPx == 13 && wallPx == 153 && hotPx == 255) {
+			printf("  FAIL: output equals the input - the composite did not run\n");
+			fail = 1;
+		}
 		if (!(floorPx < wallPx && wallPx < hotPx)) {
 			printf("  FAIL: the regions are not ordered\n");
 			fail = 1;
