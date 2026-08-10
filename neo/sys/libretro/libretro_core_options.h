@@ -321,6 +321,31 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "standard"
    },
    {
+      "doom_hdr_chromatic",
+      "HDR: Chromatic Aberration",
+      NULL,
+      "Splits red and blue slightly apart toward the edges of the frame, "
+      "the way a lens does when it focuses different wavelengths at "
+      "different magnifications. It grows with the square of distance "
+      "from the centre, so the middle of the screen stays clean and only "
+      "the corners fringe - Strong shifts the corner by about 1.5 pixels "
+      "at 4K and Subtle by half that. The offset is a fixed fraction of "
+      "the frame rather than a pixel count, so it stays the same "
+      "artifact at any resolution, which is what a lens does. This "
+      "is a lens artifact, not a film one, and it is separate from "
+      "Halation for that reason; they are often used together but they "
+      "come from different parts of a camera.",
+      NULL,
+      NULL,
+      {
+         { "disabled", NULL },
+         { "subtle",   "Subtle" },
+         { "strong",   "Strong" },
+         { NULL, NULL },
+      },
+      "disabled"
+   },
+   {
       "doom_hdr_halation",
       "HDR: Halation",
       NULL,

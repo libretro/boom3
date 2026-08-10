@@ -442,6 +442,7 @@ static GLuint hdr_fbo, hdr_tex, hdr_rbo, hdr_prog;
 static GLint  hdr_loc_tex, hdr_loc_mat, hdr_loc_parms;
 static GLint  hdr_loc_bloomT, hdr_loc_bloomW, hdr_loc_bloomAmt, hdr_loc_encScale;
 static GLint  hdr_loc_hal = -1;
+static GLint  hdr_loc_ca = -1;
 static GLint  hdr_loc_film = -1;
 static GLint  hdr_loc_film_lut = -1;
 static GLint  hdr_loc_film_desat = -1;
@@ -459,6 +460,9 @@ static bool   hdr_warned_sdr, hdr_warned_narrow;
  * because the option parser and the GLSL path both read it and neither
  * is compiled on the ARB-only side. */
 static int    hdr_halation = 0;
+/* Transverse chromatic aberration; 0 off.  Baked into the program with
+ * the halation tint, so both share the cache key below. */
+static int    hdr_chroma_ab = 0;
 static float  hdr_bloom_amount = 1.0f;      /* 0 = off; live-switchable */
 
 /* bloom chain: two bands (1/4-res tight core, 1/16-res wide haze),
@@ -474,7 +478,8 @@ static GLuint hdr_arb_vp, hdr_arb_down, hdr_arb_up;
 static GLuint hdr_arb_bright, hdr_arb_blur;
 static GLuint hdr_arb_comp1, hdr_arb_comp2;
 static int    hdr_arb_comp_mode = -1;   /* roll-off curve baked into the pair above */
-static int    hdr_arb_comp_halation = -1;  /* halation tint baked in with it */
+static int    hdr_arb_comp_halation = -1;
+static int    hdr_arb_comp_chroma = -1;  /* halation tint baked in with it */
 
 /* Every program in the chain is loaded.  On this build there is no other
    chain to run, so this is a load-state flag rather than a path
@@ -931,6 +936,17 @@ static void update_variables(bool startup)
 		else                                     hdr_bloom_amount = 1.0f;
 	}
 
+	var.key = "doom_hdr_chromatic";
+	var.value = NULL;
+	{
+		int want = 0;
+		if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) {
+			if (!strcmp(var.value, "subtle")) want = 1;
+			else if (!strcmp(var.value, "strong")) want = 2;
+		}
+		hdr_chroma_ab = want;
+	}
+
 	var.key = "doom_hdr_halation";
 	var.value = NULL;
 	{
@@ -1120,6 +1136,7 @@ static void context_reset(void)
    hdr_arb_bright = hdr_arb_blur = 0;
    hdr_arb_comp1 = hdr_arb_comp2 = 0;
    hdr_loc_hal = -1;
+   hdr_loc_ca = -1;
    hdr_arb_comp_mode = -1;
    hdr_arb_pyramid = false;
 #endif
@@ -2280,6 +2297,7 @@ static const char *hdr_fs_src =
 	"uniform sampler2D uBloomW;\n"
 	"uniform float uBloomAmt;\n"
 	"uniform vec3 uHal;\n"
+	"uniform float uCa;\n"
 	"uniform vec2 uBandW;\n"
 	"uniform float uEncScale;\n"
 	"uniform float uFrame;\n"
@@ -2737,7 +2755,16 @@ static const char *hdr_fs_src =
 	"  return pow((0.8359375 + 18.8515625 * p) / (1.0 + 18.6875 * p), 78.84375);\n"
 	"}\n"
 	"void main() {\n"
-	"  vec3 lin = srgbToLinear(texture2D(uScene, vUV).rgb * uEncScale);\n"
+	/* transverse chromatic aberration - see the note in the ARB
+	   composite; uCa is zero unless the option is on, and at zero all
+	   three fetches land on the same texel */
+	"  vec2 caD = vUV - 0.5;\n"
+	"  float caR = dot(caD, caD) * uCa;\n"
+	"  vec3 scn;\n"
+	"  scn.r = texture2D(uScene, vUV - caD * caR).r;\n"
+	"  scn.g = texture2D(uScene, vUV).g;\n"
+	"  scn.b = texture2D(uScene, vUV + caD * caR).b;\n"
+	"  vec3 lin = srgbToLinear(scn * uEncScale);\n"
 	/* bloom joins in LINEAR, BEFORE the roll-off: bloomed highlights
 	   ride the same curve into the paper-white..peak headroom, which
 	   is the part SDR output cannot express at all */
@@ -3003,7 +3030,28 @@ static const char *hdr_arb_up_fs_src =
 	"PARAM kDragoE = { 0.2344653, 0.2344653, 0.2344653, 0.2344653 };\n" \
 	"TEMP s, lin, bl, t, u, v, e, a, r, m, y, p, n, d, g, h;\n" \
 	/* lin = pow(abs(scene * encScale), 2.4) */ \
+	/* Transverse chromatic aberration.  A lens focuses short and long \
+	   wavelengths at slightly different magnifications, so red and blue \
+	   land at slightly different distances from the optical axis.  It \
+	   grows with the square of field height - nothing at the centre, \
+	   most at the corners - which is why this scales by r*r and not r; \
+	   a linear ramp would smear the middle of the screen, which no lens \
+	   does. \
+	   \
+	   kCa.x is zero unless the option is on, and at zero the two extra \
+	   fetches land on the same texel as the middle one, so the result \
+	   is the stock sample. */ \
+	"SUB v.xy, fragment.texcoord[0], 0.5;\n" \
+	"DP3 v.z, v, v;\n" \
+	"MUL v.z, v.z, kCa.x;\n" \
+	"MAD v.xy, v, -v.z, fragment.texcoord[0];\n" \
 	"TEX s, fragment.texcoord[0], texture[0], 2D;\n" \
+	"TEX u, v, texture[0], 2D;\n" \
+	"MOV s.r, u.r;\n" \
+	"SUB v.xy, fragment.texcoord[0], 0.5;\n" \
+	"MAD v.xy, v, v.z, fragment.texcoord[0];\n" \
+	"TEX u, v, texture[0], 2D;\n" \
+	"MOV s.b, u.b;\n" \
 	"MUL s, s, program.env[2].x;\n" \
 	"ABS s, s;\n" \
 	"POW lin.x, s.x, kSrgb.x;\n" \
@@ -3621,7 +3669,7 @@ static const char *hdr_arb_composite_src( int mode, bool twoBand ) {
 	 * silently loses its tail - the gamut matrix, the scale to the
 	 * display and the PQ encode - which does not fail to assemble and
 	 * does not warn; it just renders a picture with no output stage. */
-	idStr::snPrintf( p, sizeof( buf[0] ), "%s%s%s%s%s%s%s%s%s",
+	idStr::snPrintf( p, sizeof( buf[0] ), "%s%s%s%s%s%s%s%s%s%s",
 			"!!ARBfp1.0\n"
 			"OPTION ARB_precision_hint_nicest;\n",
 			/* ACES 2.0 brings its own registers; every other curve uses
@@ -3635,6 +3683,11 @@ static const char *hdr_arb_composite_src( int mode, bool twoBand ) {
 			hdr_halation == 2 ? "PARAM kHal = { 1.0, 0.72, 0.45, 0 };\n"
 			: hdr_halation == 1 ? "PARAM kHal = { 1.0, 0.86, 0.70, 0 };\n"
 			: "PARAM kHal = { 1.0, 1.0, 1.0, 0 };\n",
+			/* baked with the halation tint, for the same reason: it
+			 * changes only when the option does */
+			hdr_chroma_ab == 2 ? "PARAM kCa = { 0.0011050, 0, 0, 0 };\n"
+			: hdr_chroma_ab == 1 ? "PARAM kCa = { 0.0005520, 0, 0, 0 };\n"
+			: "PARAM kCa = { 0.0, 0, 0, 0 };\n",
 			HDR_ARB_COMPOSITE_BODY
 			"TEX bl, fragment.texcoord[0], texture[1], 2D;\n"
 			"MUL bl, bl, program.env[2].z;\n",
@@ -4372,7 +4425,8 @@ static bool hdr_arb_load( GLenum target, const char *text, GLuint *out, const ch
 
 static bool hdr_arb_ready( void ) {
 	if ( hdr_arb_pyramid && hdr_arb_comp_mode == hdr_rolloff_mode
-			&& hdr_arb_comp_halation == hdr_halation ) {
+			&& hdr_arb_comp_halation == hdr_halation
+			&& hdr_arb_comp_chroma == hdr_chroma_ab ) {
 		return true;
 	}
 
@@ -4408,7 +4462,8 @@ static bool hdr_arb_ready( void ) {
 	 * that, every toggle would strand two program objects, and the
 	 * option is a menu item somebody will sit and cycle through. */
 	if ( hdr_arb_comp_mode != hdr_rolloff_mode
-			|| hdr_arb_comp_halation != hdr_halation ) {
+			|| hdr_arb_comp_halation != hdr_halation
+			|| hdr_arb_comp_chroma != hdr_chroma_ab ) {
 		if ( hdr_arb_comp1 ) {
 			GLuint dead[2] = { hdr_arb_comp1, hdr_arb_comp2 };
 			glDeleteProgramsARB( 2, dead );
@@ -4424,6 +4479,7 @@ static bool hdr_arb_ready( void ) {
 		}
 		hdr_arb_comp_mode = hdr_rolloff_mode;
 		hdr_arb_comp_halation = hdr_halation;
+		hdr_arb_comp_chroma = hdr_chroma_ab;
 	}
 
 	if ( !hdr_arb_pyramid && log_cb ) {
@@ -4549,6 +4605,7 @@ static bool hdr_ensure_target( int w, int h ) {
 		hdr_loc_bloomW  = glGetUniformLocation( hdr_prog, "uBloomW" );
 		hdr_loc_bloomAmt= glGetUniformLocation( hdr_prog, "uBloomAmt" );
 		hdr_loc_hal    = glGetUniformLocation( hdr_prog, "uHal" );
+		hdr_loc_ca     = glGetUniformLocation( hdr_prog, "uCa" );
 		hdr_loc_bandW   = glGetUniformLocation( hdr_prog, "uBandW" );
 		hdr_loc_encScale= glGetUniformLocation( hdr_prog, "uEncScale" );
 		hdr_loc_frame   = glGetUniformLocation( hdr_prog, "uFrame" );
@@ -5594,6 +5651,11 @@ static void hdr_present( GLuint dstFbo ) {
 	}
 	glUniform1i( hdr_loc_bloomW, 2 );
 	glUniform1f( hdr_loc_bloomAmt, haveBloom ? hdr_bloom_amount : 0.0f );
+	if ( hdr_loc_ca >= 0 ) {
+		/* the same strengths the ARB path bakes in */
+		glUniform1f( hdr_loc_ca,
+				hdr_chroma_ab == 2 ? 0.0011050f : hdr_chroma_ab == 1 ? 0.0005520f : 0.0f );
+	}
 	if ( hdr_loc_hal >= 0 ) {
 		/* the same weights the ARB path bakes in */
 		glUniform3f( hdr_loc_hal,
