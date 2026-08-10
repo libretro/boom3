@@ -459,7 +459,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "colour error and stops opposing lights meeting in a muddy line. "
       "Blue light on a yellow surface goes from (0.10, 0.18, 0.10) to "
       "(0.13, 0.23, 0.18). Neutrals are unaffected by construction. "
-      "Desktop only, and it takes effect when programs next load.",
+      "Takes effect when programs next load.",
       NULL,
       NULL,
       {

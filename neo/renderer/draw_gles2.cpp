@@ -21,6 +21,7 @@
 #include "tr_local.h"
 
 #include "glsl/glsl_shaders.h"
+#include "renderer/spectral_mix.h"
 
 #ifdef HAVE_OPENGLES
 #include "renderer/gles_compat.h"
@@ -321,7 +322,45 @@ static bool RB_GLSL_InitShaders(void) {
   memset(&interactionShader, 0, sizeof(shaderProgram_t));
 
   R_LoadGLSLShader(interactionShaderVP, &interactionShader, GL_VERTEX_SHADER);
-  R_LoadGLSLShader(interactionShaderFP, &interactionShader, GL_FRAGMENT_SHADER);
+  {
+    /*
+       Pseudo-spectral mixing, the GLES twin of the ARB rewrite in
+       draw_arb2.cpp.  The interaction shader ends by multiplying the
+       albedo side by the light's colour:
+
+         gl_FragColor = vec4(dhewm3Epilogue(color), 1.0) * var_Color;
+
+       and that one line becomes a basis change either side of the
+       multiply.  Substituting at load rather than branching in the
+       shader keeps the disabled path exactly the shader that shipped -
+       no extra uniforms, no extra instructions - which matters more
+       here than on the desktop.
+
+       The mix happens where the stock multiply happens, which on this
+       backend is after the gamma epilogue and on the ARB backend is
+       before it.  With the matrix set to identity both reduce to their
+       own stock product exactly, so the two agree wherever it counts;
+       they differ only in a non-default gamma, and matching each
+       backend's own multiply is what makes "off" provably free.
+    */
+    idStr fp( interactionShaderFP );
+    const char *stockLine = "gl_FragColor = vec4(dhewm3Epilogue(color), 1.0) * var_Color;";
+    if ( r_spectralMix.GetBool() && fp.Find( stockLine ) != -1 ) {
+      idStr mix( "vec3 smBase = dhewm3Epilogue(color);\n" );
+      mix += va( "  mat3 smM = mat3(%.7f, %.7f, %.7f, %.7f, %.7f, %.7f, %.7f, %.7f, %.7f);\n",
+          spectral_mix_forward[0][0], spectral_mix_forward[1][0], spectral_mix_forward[2][0],
+          spectral_mix_forward[0][1], spectral_mix_forward[1][1], spectral_mix_forward[2][1],
+          spectral_mix_forward[0][2], spectral_mix_forward[1][2], spectral_mix_forward[2][2] );
+      mix += va( "  mat3 smN = mat3(%.7f, %.7f, %.7f, %.7f, %.7f, %.7f, %.7f, %.7f, %.7f);\n",
+          spectral_mix_inverse[0][0], spectral_mix_inverse[1][0], spectral_mix_inverse[2][0],
+          spectral_mix_inverse[0][1], spectral_mix_inverse[1][1], spectral_mix_inverse[2][1],
+          spectral_mix_inverse[0][2], spectral_mix_inverse[1][2], spectral_mix_inverse[2][2] );
+      mix += "  gl_FragColor = vec4(smN * ((smM * smBase) * (smM * var_Color.rgb)), 1.0);\n";
+      mix += "  gl_FragColor.a = var_Color.a;";
+      fp.Replace( stockLine, mix.c_str() );
+    }
+    R_LoadGLSLShader( fp.c_str(), &interactionShader, GL_FRAGMENT_SHADER );
+  }
 
   if ( !R_LinkGLSLShader(&interactionShader, "interaction") && !R_ValidateGLSLProgram(&interactionShader)) {
     return false;
