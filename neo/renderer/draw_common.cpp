@@ -1078,6 +1078,24 @@ void RB_STD_T_RenderShaderPasses( const drawSurf_t *surf ) {
 				color[1] = regs[pStage->color.registers[1]];
 				color[2] = regs[pStage->color.registers[2]];
 				color[3] = regs[pStage->color.registers[3]];
+				/* The soft-particle path sets colour separately from the
+				 * old-stage path below, so the emissive headroom has to
+				 * be applied here too - a fire or a spark is additive
+				 * light like any other, and having one of the two paths
+				 * scale and the other not would make the same effect
+				 * change brightness depending on which one drew it. */
+				{
+					extern bool  hdr_output_active;
+					extern float hdr_emissive_gain;
+					const int blend = pStage->drawStateBits
+							& ( GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS );
+					if ( hdr_output_active && hdr_emissive_gain != 1.0f
+							&& ( blend & GLS_DSTBLEND_BITS ) == GLS_DSTBLEND_ONE ) {
+						color[0] *= hdr_emissive_gain;
+						color[1] *= hdr_emissive_gain;
+						color[2] *= hdr_emissive_gain;
+					}
+				}
 				qglColor4fv( color );
 			}
 			else
