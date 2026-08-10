@@ -30,6 +30,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "renderer/VertexCache.h"
 
 #include "renderer/tr_local.h"
+#include "renderer/spectral_mix.h"
 
 // DG: if this is defined, the soft particle shaders will be compiled into the executable
 //  otherwise soft_particle.vfp will be opened as a file just like the other shaders
@@ -751,6 +752,63 @@ void R_LoadARBProgram( int progIndex ) {
 		common->Printf( ": !!ARB not found\n" );
 		return;
 	}
+	/*
+	   Pseudo-spectral mixing, for the interaction program only.
+
+	   id Tech 4 lights a surface with a per-channel product, and the
+	   last instruction of interaction.vfp is exactly that product:
+
+	     MUL result.color, color, fragment.color;
+
+	   where color carries the albedo terms and fragment.color is the
+	   light's colour.  Swapping that one instruction for a basis change
+	   either side of the multiply is the whole change - the interior of
+	   the program is untouched, so nothing about how the light is shaped
+	   or attenuated moves.
+
+	   The matrix is in renderer/spectral_mix.h, fitted against spectral
+	   ground truth.  Its rows sum to one, so white light on a white
+	   surface returns exactly white and neutrals cannot shift.  With the
+	   matrix set to identity this tail reproduces the stock product bit
+	   for bit, which is how the option being off is guaranteed to be a
+	   no-op rather than merely intended to be.
+
+	   26 ALU against the stock 16, and 9 temporaries against 6, both
+	   inside native limits on the drivers this was checked on.
+	*/
+	if ( progs[progIndex].ident == FPROG_INTERACTION && r_spectralMix.GetBool() ) {
+		const char *mulLine = strstr( start, "MUL result.color, color, fragment.color;" );
+		if ( mulLine ) {
+			idStr head( start );
+			head.CapLength( (int)( mulLine - start ) );
+			idStr tail( mulLine + strlen( "MUL result.color, color, fragment.color;" ) );
+			idStr mix;
+			mix.Append( "TEMP smA, smL, smP;\n" );
+			for ( int i = 0; i < 3; i++ ) {
+				mix += va( "PARAM smM%d = { %.7f, %.7f, %.7f, 0 };\n", i,
+						spectral_mix_forward[i][0], spectral_mix_forward[i][1],
+						spectral_mix_forward[i][2] );
+			}
+			for ( int i = 0; i < 3; i++ ) {
+				mix += va( "PARAM smN%d = { %.7f, %.7f, %.7f, 0 };\n", i,
+						spectral_mix_inverse[i][0], spectral_mix_inverse[i][1],
+						spectral_mix_inverse[i][2] );
+			}
+			mix.Append( "DP3 smA.x, color, smM0;\nDP3 smA.y, color, smM1;\nDP3 smA.z, color, smM2;\n" );
+			mix.Append( "DP3 smL.x, fragment.color, smM0;\nDP3 smL.y, fragment.color, smM1;\n"
+						"DP3 smL.z, fragment.color, smM2;\n" );
+			mix.Append( "MUL smP, smA, smL;\n" );
+			mix.Append( "DP3 result.color.x, smP, smN0;\nDP3 result.color.y, smP, smN1;\n"
+						"DP3 result.color.z, smP, smN2;\n" );
+			mix.Append( "MOV result.color.w, fragment.color.w;\n" );
+
+			idStr rebuilt = head + mix + tail;
+			buffer = (char *)_alloca( rebuilt.Length() + 1 );
+			strcpy( buffer, rebuilt.c_str() );
+			start = buffer;
+		}
+	}
+
 	end = strstr( start, "END" );
 
 	if ( !end ) {

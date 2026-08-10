@@ -876,6 +876,7 @@ extern idCVar r_flareSize;				// scale the flare deforms from the material def
 extern idCVar r_gamma;					// changes gamma tables
 extern idCVar r_brightness;				// changes gamma tables
 extern idCVar r_gammaInShader;			// set gamma+brightness in shader instead of modifying system gamma tables
+extern idCVar r_spectralMix;			// mix light and albedo in a fitted basis rather than per channel
 
 extern idCVar r_renderer;				// arb2, etc
 
