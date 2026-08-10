@@ -1999,8 +1999,37 @@ void RB_GLSL_T_RenderShaderPasses(const drawSurf_t* surf, const float mvp[16]) {
 
       // Stage dependent state
 
+      /* Emissive headroom, the same rule the ARB renderer applies in
+         draw_common.cpp.  An additive stage is light the surface emits -
+         the glow on a monitor, a spark, a muzzle flash - and its colour
+         is capped at the material's 1.0, so it lands on paper white and
+         no higher.  This renderer sets stage colour through a uniform
+         rather than glColor, which is why the option did not reach it.
+
+         Only additive stages, and alpha is left alone: identical to the
+         other renderer so the two cannot drift apart. */
+      float emissive[4];
+      const float *stageColor = color;
+      {
+        extern bool  hdr_output_active;
+        extern float hdr_emissive_gain;
+        const int blend = pStage->drawStateBits
+            & ( GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS );
+        if ( hdr_output_active && hdr_emissive_gain != 1.0f
+            && ( blend & GLS_DSTBLEND_BITS ) == GLS_DSTBLEND_ONE ) {
+          /* color is const here, so scale a copy rather than casting it
+             away - the original is used further down for the vertex
+             colour modulation and must not move. */
+          emissive[0] = color[0] * hdr_emissive_gain;
+          emissive[1] = color[1] * hdr_emissive_gain;
+          emissive[2] = color[2] * hdr_emissive_gain;
+          emissive[3] = color[3];
+          stageColor = emissive;
+        }
+      }
+
       // Setup the Color uniform
-      GL_Uniform4fv(offsetof(shaderProgram_t, glColor), color);
+      GL_Uniform4fv(offsetof(shaderProgram_t, glColor), stageColor);
 
       // Setup the Color modulation
       switch ( pStage->vertexColor ) {

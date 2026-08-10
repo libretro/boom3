@@ -132,7 +132,7 @@ static idCVar m_strafe( "m_strafe", "0.25", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_FL
    GLimp_SwapBuffers, the full design comment with it. */
 bool          hdr_output_active = false;   /* chosen at load, needs restart; read by draw_arb2 */
 int           r_specularFalloffShape = 0;  /* 0 original hard-knee quadratic, 1 tailed power; read by Image_init */
-float         hdr_emissive_gain = 1.0f;  /* additive-stage scale in HDR mode; read by draw_common */
+float         hdr_emissive_gain = 1.0f;  /* additive-stage scale in HDR mode; read by draw_common and draw_gles2 */
 float         hdr_specular_gain = 2.0f;    /* interaction specular scale in HDR mode; read by draw_arb2 */
 float         hdr_scene_encode_scale = 1.0f; /* 0.5 = one gamma-domain stop of scene headroom; read by the render backend */
 bool          hdr_fp16_scene = false;      /* FP16 scene target: per-pass quantization gone */
