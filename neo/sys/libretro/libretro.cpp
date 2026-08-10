@@ -408,7 +408,11 @@ static GLuint hdr_fbo, hdr_tex, hdr_rbo, hdr_prog;
 static const float hdr_tri_verts[6] = { -1.0f, -1.0f, 3.0f, -1.0f, -1.0f, 3.0f };
 static GLuint hdr_fbo2, hdr_tex2;
 static bool   hdr_mapping;   /* this run of the composite is the pre-HUD pass */
-static bool   hdr_scene_mapped;   /* the tone map has already run this frame */
+static bool   hdr_scene_mapped;
+/* Set by the first world view of a frame.  There is nothing worth
+ * mapping until a world has been drawn, and mapping before one has
+ * been drawn actively breaks the frame. */
+static bool   hdr_world_drawn;   /* the tone map has already run this frame */
 static GLint  hdr_loc_tex, hdr_loc_mat, hdr_loc_parms;
 static GLint  hdr_loc_bloomT, hdr_loc_bloomW, hdr_loc_bloomAmt, hdr_loc_encScale;
 static GLint  hdr_loc_film = -1;
@@ -998,6 +1002,7 @@ static void context_reset(void)
    hdr_fbo = hdr_tex = hdr_rbo = hdr_prog = 0;
    hdr_fbo2 = hdr_tex2 = 0;
    hdr_scene_mapped = false;
+   hdr_world_drawn = false;
    hdr_prog_bright = hdr_prog_blur = 0;
    hdr_bloom_prog_bad = hdr_bloom_tex_bad = false;
    hdr_prog_down = hdr_prog_up = 0;
@@ -2054,6 +2059,7 @@ void retro_run(void)
 	/* a new frame starts on the scene target again, and the mapping has
 	 * not run yet */
 	hdr_scene_mapped = false;
+	hdr_world_drawn = false;
 	hdr_bind_scene();
 
 	common->Frame();
@@ -5681,7 +5687,14 @@ static void hdr_map_scene( void ) {
  * than for the file it lives in, because that is where it has to be
  * understood. */
 void HDR_MapSceneBeforeHUD( void ) {
+	if ( !hdr_world_drawn ) {
+		return;
+	}
 	hdr_map_scene();
+}
+
+void HDR_NoteWorldView( void ) {
+	hdr_world_drawn = true;
 }
 
 /*
@@ -5766,6 +5779,7 @@ void GLimp_SwapBuffers() {
    if ( hdr_scene_mapped ) {
       hdr_encode_present((GLuint)hw_render.get_current_framebuffer());
       hdr_scene_mapped = false;
+   hdr_world_drawn = false;
    } else {
       /* no 2D view drew this frame, so the single-pass path still applies */
       hdr_present((GLuint)hw_render.get_current_framebuffer());
@@ -5789,6 +5803,7 @@ void GLimp_SwapBuffers() {
 	 * scene target while the screen shows the first swap's leftovers,
 	 * which is a black title screen. */
 	hdr_scene_mapped = false;
+	hdr_world_drawn = false;
 	hdr_bind_scene();   /* loading-screen pumps and the next frame render here */
 
 	/* A map load runs synchronously inside a single retro_run(): the engine

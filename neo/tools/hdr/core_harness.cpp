@@ -50,15 +50,26 @@ extern "C" int _ZL16hdr_rolloff_mode;
 /* retro_run clears this at the top of every frame; the harness has to
    do the same or the second frame reuses the first one's mapped image */
 extern "C" bool _ZL16hdr_scene_mapped __attribute__((weak));
+extern "C" bool _ZL15hdr_world_drawn __attribute__((weak));
 extern "C" void _ZL14hdr_bind_scenev(void);
 extern "C" void _ZL11hdr_presentj(unsigned int dstFbo);
 /* Present on builds that map the scene before the HUD; weak, so this
    file drives either shape of frame. */
-extern "C" void _ZL13hdr_map_scenev(void) __attribute__((weak));
+/* Call what RB_DrawView calls, not the static behind it - the gate that
+   decides whether mapping is safe lives in the public entry point, and a
+   harness that reaches past it tests a path the engine never takes. */
+void HDR_MapSceneBeforeHUD(void) __attribute__((weak));
+/* RB_DrawView calls these; a world view notes itself, a 2D view maps */
+void HDR_NoteWorldView(void) __attribute__((weak));
 extern "C" void _ZL18hdr_encode_presentj(unsigned int dstFbo) __attribute__((weak));
 /* present when the scene is mapped before the HUD; absent on builds
    without the two-pass split, hence the weak symbols */
-extern "C" void _ZL13hdr_map_scenev(void) __attribute__((weak));
+/* Call what RB_DrawView calls, not the static behind it - the gate that
+   decides whether mapping is safe lives in the public entry point, and a
+   harness that reaches past it tests a path the engine never takes. */
+void HDR_MapSceneBeforeHUD(void) __attribute__((weak));
+/* RB_DrawView calls these; a world view notes itself, a 2D view maps */
+void HDR_NoteWorldView(void) __attribute__((weak));
 extern "C" void _ZL18hdr_encode_presentj(unsigned int dstFbo) __attribute__((weak));
 #define hdr_ensure_target _ZL17hdr_ensure_targetii
 #define hdr_bind_scene    _ZL14hdr_bind_scenev
@@ -122,6 +133,12 @@ int main(int argc, char **argv)
 	   visible is drawn after that, so this is the case that shows
 	   whether post-map drawing reaches the encode pass. */
 	const int menuOnly = (argc > 1 && !strcmp(argv[1], "--menu-only"));
+	/* A frame that issues a 2D view before the world: a GUI ahead of the
+	   scene, which the engine does.  Mapping there would composite an
+	   empty target and bind the mapped image, so the world that follows
+	   would draw into a display-referred buffer and never be tone
+	   mapped - a blown out picture, not a subtle one. */
+	const int twoDFirst = (argc > 1 && !strcmp(argv[1], "--2d-first"));
 	/* The engine pumps many swaps per retro_run - every menu frame and
 	 * every loading-screen update.  Each is a whole frame: composite,
 	 * present, rebind.  Testing one swap per run misses anything that
@@ -201,19 +218,35 @@ int main(int argc, char **argv)
 	glViewport(0, 0, W, H);
 	glClearColor(0.f, 0.f, 0.f, 0.f);
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-	if (!menuOnly)
+	if (twoDFirst) {
+		/* the early 2D view, before any world has drawn */
+		if (HDR_MapSceneBeforeHUD)
+			HDR_MapSceneBeforeHUD();
+		drawHUD();
+		if (!noBind)
+			hdr_bind_scene();
+	}
+	if (!menuOnly) {
+		if (HDR_NoteWorldView)
+			HDR_NoteWorldView();   /* what a world view does in RB_DrawView */
 		drawWorld();
-	if (_ZL13hdr_map_scenev && _ZL18hdr_encode_presentj) {
+	}
+	if (HDR_MapSceneBeforeHUD && _ZL18hdr_encode_presentj) {
 		/* the two-pass frame: what RB_DrawView calls when a 2D view is
 		   about to draw, then the HUD, then the encode-only present */
-		_ZL13hdr_map_scenev();
+		HDR_MapSceneBeforeHUD();
 		/* The engine rebinds the scene target between views - loading
 		   screen pumps do it every pump.  Anything drawn after the map
 		   has to still land on the mapped image. */
 		if (!noBind)
 			hdr_bind_scene();
 		drawHUD();
-		_ZL18hdr_encode_presentj(0);
+		/* the end-of-frame decision retro_run makes: encode only if the
+		   scene was actually mapped, otherwise the single-pass present */
+		if (&_ZL16hdr_scene_mapped && _ZL16hdr_scene_mapped)
+			_ZL18hdr_encode_presentj(0);
+		else
+			hdr_present(0);
 	} else {
 		drawHUD();
 		hdr_present(0);

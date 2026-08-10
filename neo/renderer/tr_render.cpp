@@ -947,10 +947,22 @@ void RB_DrawView( const void *data ) {
 
 	/* A view with no entities is 2D - the HUD, the menus, the loading
 	 * screens.  That content is display-referred and must not go through
-	 * the scene's tone curve, so the scene is mapped here, before it
-	 * draws, and the HUD lands on the already-mapped image. */
-	if ( !backEnd.viewDef->viewEntitys ) {
-		extern void HDR_MapSceneBeforeHUD( void );
+	 * the scene's tone curve, so the scene is mapped before it draws and
+	 * the 2D content lands on the already-mapped image.
+	 *
+	 * Only once a world view has actually drawn, though.  A frame can
+	 * begin with 2D - a menu over nothing, a loading screen, a GUI issued
+	 * before the world - and mapping there would composite an empty
+	 * target and then bind the mapped image, so a world view arriving
+	 * afterwards would draw into a display-referred buffer and never be
+	 * tone mapped at all.  That is not a subtle error: it is a blown out
+	 * picture.  A frame with no world in it is left on the single-pass
+	 * path, where 2D goes through the curve exactly as it always did. */
+	extern void HDR_MapSceneBeforeHUD( void );
+	extern void HDR_NoteWorldView( void );
+	if ( backEnd.viewDef->viewEntitys ) {
+		HDR_NoteWorldView();
+	} else {
 		HDR_MapSceneBeforeHUD();
 	}
 
