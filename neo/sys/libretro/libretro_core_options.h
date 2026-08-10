@@ -370,6 +370,29 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "4"
    },
    {
+      "doom_hdr_emissive",
+      "HDR: Emissive Headroom",
+      NULL,
+      "Scales the additive stages of materials - the glow layers on "
+      "monitors, keypads and light panels - so they reach into the range "
+      "above paper white. Without it a screen's texture white is 1.0, the "
+      "same value a fully lit wall reaches, so it renders no brighter "
+      "than the corridor around it; through ACES 2.0 at a 1000 nit peak "
+      "that is 107 nits, where 4x reaches 355. Only additive stages are "
+      "affected, so diffuse surfaces and the overall brightness do not "
+      "move. Needs a curve with headroom to spend - ACES 2.0 or Filmic "
+      "Log show it most, Reinhard's soft knee least.",
+      NULL,
+      NULL,
+      {
+         { "disabled", NULL },
+         { "subtle",   "Subtle (2x)" },
+         { "strong",   "Strong (4x)" },
+         { NULL, NULL },
+      },
+      "disabled"
+   },
+   {
       "doom_hdr_hud_bypass",
       "HDR: Keep HUD Out Of Tone Curve",
       NULL,

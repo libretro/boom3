@@ -1234,6 +1234,32 @@ void RB_STD_T_RenderShaderPasses( const drawSurf_t *surf ) {
 			continue;
 		}
 
+		/* Emissive headroom.
+		 *
+		 * An additive stage is light the surface emits rather than light
+		 * it reflects: the glow layers on monitors, keypads and light
+		 * panels.  Its texture white is 1.0, the same value a fully lit
+		 * diffuse wall reaches, so it lands on paper white and never
+		 * enters the headroom - a screen in a dark corridor comes out no
+		 * brighter than the corridor's lit surfaces.  Measured through
+		 * ACES 2.0 at a 1000 nit peak, 1.0 is 107 nits and 4.0 is 355.
+		 *
+		 * Only additive stages are touched.  A diffuse stage scaled this
+		 * way would just be a brightness control, and the alpha is left
+		 * alone because it is coverage, not light. */
+		{
+			extern bool  hdr_output_active;
+			extern float hdr_emissive_gain;
+			const int blend = pStage->drawStateBits
+					& ( GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS );
+			if ( hdr_output_active && hdr_emissive_gain != 1.0f
+					&& ( blend & GLS_DSTBLEND_BITS ) == GLS_DSTBLEND_ONE ) {
+				color[0] *= hdr_emissive_gain;
+				color[1] *= hdr_emissive_gain;
+				color[2] *= hdr_emissive_gain;
+			}
+		}
+
 		// select the vertex color source
 		if ( pStage->vertexColor == SVC_IGNORE ) {
 			qglColor4fv( color );

@@ -133,6 +133,7 @@ static idCVar m_strafe( "m_strafe", "0.25", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_FL
    GLimp_SwapBuffers, the full design comment with it. */
 bool          hdr_output_active = false;   /* chosen at load, needs restart; read by draw_arb2 */
 int           r_specularFalloffShape = 0;  /* 0 original hard-knee quadratic, 1 tailed power; read by Image_init */
+float         hdr_emissive_gain = 1.0f;  /* additive-stage scale in HDR mode; read by draw_common */
 float         hdr_specular_gain = 2.0f;    /* interaction specular scale in HDR mode; read by draw_arb2 */
 float         hdr_scene_encode_scale = 1.0f; /* 0.5 = one gamma-domain stop of scene headroom; read by the render backend */
 bool          hdr_fp16_scene = false;      /* FP16 scene target: per-pass quantization gone */
@@ -930,6 +931,14 @@ static void update_variables(bool startup)
 	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) {
 		const float ev = (float)atof(var.value);
 		hdr_filmiclog_maxev = ( ev > 4.5f ) ? ev : 4.026068811f;
+	}
+
+	var.key = "doom_hdr_emissive";
+	var.value = NULL;
+	hdr_emissive_gain = 1.0f;
+	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) {
+		if (!strcmp(var.value, "subtle"))      hdr_emissive_gain = 2.0f;
+		else if (!strcmp(var.value, "strong")) hdr_emissive_gain = 4.0f;
 	}
 
 	var.key = "doom_hdr_hud_bypass";
