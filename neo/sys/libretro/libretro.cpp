@@ -931,7 +931,8 @@ static void update_variables(bool startup)
 	var.value = NULL;
 	hdr_emissive_gain = 1.0f;
 	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) {
-		if (!strcmp(var.value, "subtle"))      hdr_emissive_gain = 2.0f;
+		if (!strcmp(var.value, "slight"))      hdr_emissive_gain = 1.5f;
+		else if (!strcmp(var.value, "subtle")) hdr_emissive_gain = 2.0f;
 		else if (!strcmp(var.value, "strong")) hdr_emissive_gain = 4.0f;
 	}
 

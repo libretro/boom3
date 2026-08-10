@@ -402,7 +402,8 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "above paper white. Without it a screen's texture white is 1.0, the "
       "same value a fully lit wall reaches, so it renders no brighter "
       "than the corridor around it; through ACES 2.0 at a 1000 nit peak "
-      "that is 107 nits, where 4x reaches 355. Only additive stages are "
+      "that is 107 nits, where 1.5x reaches 159, 2x reaches 206 and 4x "
+      "reaches 355. Only additive stages are "
       "affected, so diffuse surfaces and the overall brightness do not "
       "move. Needs a curve with headroom to spend - ACES 2.0 or Filmic "
       "Log show it most, Reinhard's soft knee least.",
@@ -410,6 +411,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       NULL,
       {
          { "disabled", NULL },
+         { "slight",   "Slight (1.5x)" },
          { "subtle",   "Subtle (2x)" },
          { "strong",   "Strong (4x)" },
          { NULL, NULL },
