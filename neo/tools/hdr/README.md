@@ -61,9 +61,16 @@ and `glReadPixels` handed back what the harness itself had drawn.
 
 So it now checks the output is not the input, and ships two controls:
 
-    ./frame_harness              # PASS: floor 22, wall 113, highlight 149
+    ./frame_harness              # PASS
     ./frame_harness --no-bind    # FAIL: the scene never reaches the target
     ./frame_harness --no-arb     # FAIL: the composite declines
+    ./frame_harness --stale-map  # FAIL: the mapped image is never rebuilt
+
+It also pumps three swaps per run, because the engine does: every menu
+frame and every loading-screen update is a whole frame - composite,
+present, rebind - and there are many of them inside one retro_run.
+Testing a single swap misses anything that only goes wrong on the
+second, which is where a black title screen lived.
 
 ## What it is for
 

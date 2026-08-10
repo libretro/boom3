@@ -117,6 +117,19 @@ int main(int argc, char **argv)
 	 * scene never reaching the target, and the composite declining. */
 	const int noBind = (argc > 1 && !strcmp(argv[1], "--no-bind"));
 	const int noArb  = (argc > 1 && !strcmp(argv[1], "--no-arb"));
+	/* A menu or title screen frame: 2D views only, no world drawn at
+	   all.  The scene gets mapped from an empty target and everything
+	   visible is drawn after that, so this is the case that shows
+	   whether post-map drawing reaches the encode pass. */
+	const int menuOnly = (argc > 1 && !strcmp(argv[1], "--menu-only"));
+	/* The engine pumps many swaps per retro_run - every menu frame and
+	 * every loading-screen update.  Each is a whole frame: composite,
+	 * present, rebind.  Testing one swap per run misses anything that
+	 * only goes wrong on the second, which is where the black title
+	 * screen lived. */
+	const int staleMap = (argc > 1 && !strcmp(argv[1], "--stale-map"));
+	const int swaps = 3;
+	int swap;
 	int i, nonBlack = 0, fail = 0, pass, nonBlackAll = 0;
 	int floorPx[2], wallPx[2], hotPx[2], hudPx[2];
 
@@ -173,7 +186,10 @@ int main(int argc, char **argv)
 	 * below 0.75, so a 0.5 panel comes out at 0.5 either way. */
 	for (pass = 0; pass < 2; pass++) {
 	_ZL16hdr_rolloff_mode = pass ? 18 : 0;   /* Filmic Log, then Reinhard */
-	if (&_ZL16hdr_scene_mapped)
+	for (swap = 0; swap < swaps; swap++) {
+	/* what GLimp_SwapBuffers does at the top of every engine frame.
+	   --stale-map skips it, reproducing the black title screen. */
+	if (&_ZL16hdr_scene_mapped && !staleMap)
 		_ZL16hdr_scene_mapped = false;
 	/* the frame, in the order retro_run runs it */
 	if (!hdr_ensure_target(W, H)) {
@@ -185,11 +201,17 @@ int main(int argc, char **argv)
 	glViewport(0, 0, W, H);
 	glClearColor(0.f, 0.f, 0.f, 0.f);
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-	drawWorld();
+	if (!menuOnly)
+		drawWorld();
 	if (_ZL13hdr_map_scenev && _ZL18hdr_encode_presentj) {
 		/* the two-pass frame: what RB_DrawView calls when a 2D view is
 		   about to draw, then the HUD, then the encode-only present */
 		_ZL13hdr_map_scenev();
+		/* The engine rebinds the scene target between views - loading
+		   screen pumps do it every pump.  Anything drawn after the map
+		   has to still land on the mapped image. */
+		if (!noBind)
+			hdr_bind_scene();
 		drawHUD();
 		_ZL18hdr_encode_presentj(0);
 	} else {
@@ -197,6 +219,7 @@ int main(int argc, char **argv)
 		hdr_present(0);
 	}
 	glFinish();
+	}   /* swap */
 
 	glReadPixels(0, 0, W, H, GL_RGBA, GL_UNSIGNED_BYTE, out);
 	for (i = 0; i < W * H; i++)
@@ -212,6 +235,13 @@ int main(int argc, char **argv)
 	nonBlack = 0;
 	}
 	printf("  non-black pixels: %d of %d\n", nonBlackAll, W * H);
+	if (menuOnly) {
+		/* only the HUD strip is drawn, so most of the frame is legitimately
+		   black; what matters is that the strip survived at all */
+		printf("  menu-only: HUD %d (must be non-zero)\n", hudPx[0]);
+		printf("%s\n", hudPx[0] > 2 ? "  PASS" : "  FAIL: the menu never reached the screen");
+		return hudPx[0] > 2 ? 0 : 1;
+	}
 	if (nonBlackAll < W * H / 4) {
 		printf("  FAIL: the frame came out black\n");
 		fail = 1;

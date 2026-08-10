@@ -4694,7 +4694,18 @@ static void hdr_bind_scene( void ) {
 		return;
 	if ( !hdr_ensure_target( scr_width, scr_height ) )
 		return;
-	glBindFramebuffer( RARCH_GL_FRAMEBUFFER, hdr_fbo );
+	/* Once the scene has been mapped for this frame, everything still to
+	 * be drawn belongs on the mapped image - the menus, the loading
+	 * screen pumps, any further 2D view.  Binding the scene target again
+	 * here would put them in a buffer the encode pass never reads, which
+	 * is a black menu and a half-drawn loading screen. */
+	/* Once the scene has been mapped for this frame, everything still to
+	 * be drawn belongs on the mapped image - the menus, the loading
+	 * screen pumps, any further 2D view.  Binding the scene target again
+	 * here puts them in a buffer the encode pass never reads, which is a
+	 * black title screen and a half-drawn loading screen. */
+	glBindFramebuffer( RARCH_GL_FRAMEBUFFER,
+			( hdr_scene_mapped && hdr_fbo2 ) ? hdr_fbo2 : hdr_fbo );
 }
 
 /* Rec.709 -> Rec.2020 (column-major for glUniformMatrix3fv) */
@@ -5768,6 +5779,16 @@ void GLimp_SwapBuffers() {
    if (!libretro_shared_context)
       glsm_ctl(GLSM_CTL_STATE_BIND, NULL);
 	glBindFramebuffer(RARCH_GL_FRAMEBUFFER, hw_render.get_current_framebuffer());
+	/* A new engine frame starts here, not in retro_run: the engine pumps
+	 * many swaps per retro_run - every menu frame and every loading
+	 * screen update - and each one composites and rebinds the scene
+	 * target.  The mapping flag has to clear here too.  Left to
+	 * retro_run alone it stays set after the first swap, so hdr_map_scene
+	 * returns early for every later one and the encode pass presents a
+	 * mapped image that was never rebuilt: the menu renders into the
+	 * scene target while the screen shows the first swap's leftovers,
+	 * which is a black title screen. */
+	hdr_scene_mapped = false;
 	hdr_bind_scene();   /* loading-screen pumps and the next frame render here */
 
 	/* A map load runs synchronously inside a single retro_run(): the engine
