@@ -1867,6 +1867,27 @@ static void RB_BlendLight( const drawSurf_t *drawSurfs,  const drawSurf_t *drawS
 		backEnd.lightColor[1] = regs[ stage->color.registers[1] ];
 		backEnd.lightColor[2] = regs[ stage->color.registers[2] ];
 		backEnd.lightColor[3] = regs[ stage->color.registers[3] ];
+
+		/* Same headroom as an additive material stage, and for the same
+		 * reason.  An additive blend light is a glow the volume emits -
+		 * the haze around a lamp, the wash off a console bank - and its
+		 * colour is capped at the material's 1.0, so it lands on paper
+		 * white and no higher however bright the thing it surrounds is.
+		 * A filter or modulate blend light darkens, and scaling that
+		 * would be a gamma control rather than a light, so only the
+		 * additive ones move.  Alpha is coverage and stays put. */
+		{
+			extern bool  hdr_output_active;
+			extern float hdr_emissive_gain;
+			const int blend = stage->drawStateBits
+					& ( GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS );
+			if ( hdr_output_active && hdr_emissive_gain != 1.0f
+					&& ( blend & GLS_DSTBLEND_BITS ) == GLS_DSTBLEND_ONE ) {
+				backEnd.lightColor[0] *= hdr_emissive_gain;
+				backEnd.lightColor[1] *= hdr_emissive_gain;
+				backEnd.lightColor[2] *= hdr_emissive_gain;
+			}
+		}
 		qglColor4fv( backEnd.lightColor );
 
 		RB_RenderDrawSurfChainWithFunction( drawSurfs, RB_T_BlendLight );
