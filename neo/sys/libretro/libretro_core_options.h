@@ -393,27 +393,6 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "disabled"
    },
    {
-      "doom_hdr_hud_bypass",
-      "HDR: Keep HUD Out Of Tone Curve",
-      NULL,
-      "The HUD, menus and loading screens are drawn into the same target "
-      "as the world and tone mapped with it, though they were authored to "
-      "look right on a screen rather than to be light in a room. Every "
-      "roll-off except Reinhard lifts them - a mid grey panel at 0.5 "
-      "leaves Filmic Log at 0.743. Enabling this maps the scene before "
-      "2D draws so they bypass the curve. Incomplete: correct in the "
-      "cases reproduced so far, still wrong on the title screen, so it "
-      "is off by default.",
-      NULL,
-      NULL,
-      {
-         { "disabled", NULL },
-         { "enabled",  NULL },
-         { NULL, NULL },
-      },
-      "disabled"
-   },
-   {
       "doom_hdr_aces2_gamut",
       "ACES 2.0: Limiting Gamut",
       NULL,

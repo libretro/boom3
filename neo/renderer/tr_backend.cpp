@@ -445,18 +445,6 @@ static void	RB_SetBuffer( const void *data ) {
 	cmd = (const setBufferCommand_t *)data;
 
 	backEnd.frameCount = cmd->frameCount;
-	/* RC_SET_BUFFER opens a frame, and the clear below wipes whatever
-	 * target is bound.  After the scene has been mapped that target is
-	 * the mapped image, so without this the frame's own composite gets
-	 * cleared away and only what the 2D views draw afterwards survives -
-	 * a mostly black title screen with the menu faintly on top.  Telling
-	 * the HDR chain a frame is starting puts the scene target back and
-	 * clears the mapping state, so the clear lands where it should. */
-	{
-		extern void HDR_BeginFrame( void );
-		HDR_BeginFrame();
-	}
-
 #ifndef HAVE_OPENGLES
 	qglDrawBuffer( cmd->buffer );
 #endif

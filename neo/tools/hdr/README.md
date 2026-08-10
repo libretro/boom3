@@ -51,6 +51,24 @@ and afterwards it passes:
 Same harness, same objects, one changed.  That is the only reason to
 believe the pass says anything.
 
+## Status after the HUD bypass was removed
+
+The two-pass path this harness grew controls for is gone from the core,
+and the harness has not been brought back into line with that: against
+the current tree `hdr_ensure_target` declines and every case reports it.
+Its initialisation notes below are still correct and still the hard-won
+part; what needs redoing is the frame it drives.  Recorded here rather
+than left as a passing test that is not testing.
+
+## Status after the HUD bypass was removed
+
+The two-pass path this harness grew controls for is gone from the core,
+and the harness has not been brought back into line with that: against
+the current tree `hdr_ensure_target` declines and every case reports it.
+Its initialisation notes below are still correct and still the hard-won
+part; what needs redoing is the frame it drives.  Recorded here rather
+than left as a passing test that is not testing.
+
 ## Negative controls
 
 A harness that has never been shown to fail is not evidence.  The first
