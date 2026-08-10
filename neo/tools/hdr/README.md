@@ -36,13 +36,20 @@ roll-off alone - Reinhard's soft knee is the identity below 0.75, so a
 0.5 panel comes out at 0.5 whether or not anything bypasses the curve.
 Testing with the default is how the bug hid in the first place.
 
-On the current tree it fails, correctly:
+Before the scene was mapped ahead of the HUD, this failed:
 
     curve 0:  floor 22, wall 113, highlight 149, HUD 106
     curve 18: floor 11, wall 130, highlight 149, HUD 125
     FAIL: the HUD changed with the curve (106 vs 125)
 
-That is the open bug, stated by the test rather than by a screenshot.
+and afterwards it passes:
+
+    curve 0:  floor 22, wall 113, highlight 148, HUD 106
+    curve 18: floor 12, wall 131, highlight 148, HUD 106
+    HUD is curve-independent at 106, scene moved 113 -> 131
+
+Same harness, same objects, one changed.  That is the only reason to
+believe the pass says anything.
 
 ## Negative controls
 

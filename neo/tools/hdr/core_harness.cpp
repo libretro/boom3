@@ -47,8 +47,15 @@ extern "C" {
 /* mangled: static functions in libretro.cpp, globalised by objcopy */
 extern "C" bool _ZL17hdr_ensure_targetii(int w, int h);
 extern "C" int _ZL16hdr_rolloff_mode;
+/* retro_run clears this at the top of every frame; the harness has to
+   do the same or the second frame reuses the first one's mapped image */
+extern "C" bool _ZL16hdr_scene_mapped __attribute__((weak));
 extern "C" void _ZL14hdr_bind_scenev(void);
 extern "C" void _ZL11hdr_presentj(unsigned int dstFbo);
+/* Present on builds that map the scene before the HUD; weak, so this
+   file drives either shape of frame. */
+extern "C" void _ZL13hdr_map_scenev(void) __attribute__((weak));
+extern "C" void _ZL18hdr_encode_presentj(unsigned int dstFbo) __attribute__((weak));
 /* present when the scene is mapped before the HUD; absent on builds
    without the two-pass split, hence the weak symbols */
 extern "C" void _ZL13hdr_map_scenev(void) __attribute__((weak));
@@ -166,6 +173,8 @@ int main(int argc, char **argv)
 	 * below 0.75, so a 0.5 panel comes out at 0.5 either way. */
 	for (pass = 0; pass < 2; pass++) {
 	_ZL16hdr_rolloff_mode = pass ? 18 : 0;   /* Filmic Log, then Reinhard */
+	if (&_ZL16hdr_scene_mapped)
+		_ZL16hdr_scene_mapped = false;
 	/* the frame, in the order retro_run runs it */
 	if (!hdr_ensure_target(W, H)) {
 		printf("  FAIL: hdr_ensure_target declined - the composite never ran\n");
