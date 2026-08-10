@@ -328,9 +328,11 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "the way a lens does when it focuses different wavelengths at "
       "different magnifications. It grows with the square of distance "
       "from the centre, so the middle of the screen stays clean and only "
-      "the corners fringe - Strong shifts the corner by about 1.5 pixels "
-      "at 4K and Subtle by half that. The offset is a fixed fraction of "
-      "the frame rather than a pixel count, so it stays the same "
+      "the corners fringe. At 4K the corner shifts by about 1.5 pixels on "
+      "Subtle, 3 on Strong and 6 on Heavy; a quarter of the way out from "
+      "the centre those are a tenth of that, which is the point - a lens "
+      "is sharpest where you are looking. The offset is a fixed fraction "
+      "of the frame rather than a pixel count, so it stays the same "
       "artifact at any resolution, which is what a lens does. This "
       "is a lens artifact, not a film one, and it is separate from "
       "Halation for that reason; they are often used together but they "
@@ -339,8 +341,9 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       NULL,
       {
          { "disabled", NULL },
-         { "subtle",   "Subtle" },
-         { "strong",   "Strong" },
+         { "subtle",   "Subtle (1.5px corner at 4K)" },
+         { "strong",   "Strong (3px)" },
+         { "heavy",    "Heavy (6px)" },
          { NULL, NULL },
       },
       "disabled"
