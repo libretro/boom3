@@ -46,8 +46,13 @@ extern "C" {
 }
 /* mangled: static functions in libretro.cpp, globalised by objcopy */
 extern "C" bool _ZL17hdr_ensure_targetii(int w, int h);
+extern "C" int _ZL16hdr_rolloff_mode;
 extern "C" void _ZL14hdr_bind_scenev(void);
 extern "C" void _ZL11hdr_presentj(unsigned int dstFbo);
+/* present when the scene is mapped before the HUD; absent on builds
+   without the two-pass split, hence the weak symbols */
+extern "C" void _ZL13hdr_map_scenev(void) __attribute__((weak));
+extern "C" void _ZL18hdr_encode_presentj(unsigned int dstFbo) __attribute__((weak));
 #define hdr_ensure_target _ZL17hdr_ensure_targetii
 #define hdr_bind_scene    _ZL14hdr_bind_scenev
 #define hdr_present       _ZL11hdr_presentj
@@ -105,7 +110,8 @@ int main(int argc, char **argv)
 	 * scene never reaching the target, and the composite declining. */
 	const int noBind = (argc > 1 && !strcmp(argv[1], "--no-bind"));
 	const int noArb  = (argc > 1 && !strcmp(argv[1], "--no-arb"));
-	int i, nonBlack = 0, fail = 0;
+	int i, nonBlack = 0, fail = 0, pass, nonBlackAll = 0;
+	int floorPx[2], wallPx[2], hotPx[2], hudPx[2];
 
 	setvbuf(stdout, NULL, _IONBF, 0);
 	ctx = OSMesaCreateContextExt(OSMESA_RGBA, 24, 8, 0, NULL);
@@ -140,6 +146,12 @@ int main(int argc, char **argv)
 	qglProgramEnvParameter4fvARB = (PFNGLPROGRAMENVPARAMETER4FVARBPROC)
 		OSMesaGetProcAddress( "glProgramEnvParameter4fvARB" );
 
+	/* Filmic Log rather than the default.  Reinhard's soft knee is the
+	 * identity below 0.75, so a HUD panel at 0.5 comes out at 0.5 under
+	 * it whether or not anything bypasses the curve - which is both why
+	 * this bug hid for so long and why testing with the default proves
+	 * nothing about the bypass.  Filmic Log lifts 0.5 to 0.743, so the
+	 * two paths are distinguishable. */
 	glConfig.ARBFragmentProgramAvailable = !noArb;
 	glConfig.ARBVertexProgramAvailable = true;
 	hdr_output_active = true;
@@ -147,6 +159,13 @@ int main(int argc, char **argv)
 	scr_width = W;
 	scr_height = H;
 
+	/* Two frames, under two curves.  The scene must change with the
+	 * curve and the HUD must not - that is the whole claim of mapping
+	 * the scene before the HUD is drawn, and it cannot be tested with
+	 * the default roll-off because Reinhard's soft knee is the identity
+	 * below 0.75, so a 0.5 panel comes out at 0.5 either way. */
+	for (pass = 0; pass < 2; pass++) {
+	_ZL16hdr_rolloff_mode = pass ? 18 : 0;   /* Filmic Log, then Reinhard */
 	/* the frame, in the order retro_run runs it */
 	if (!hdr_ensure_target(W, H)) {
 		printf("  FAIL: hdr_ensure_target declined - the composite never ran\n");
@@ -158,37 +177,58 @@ int main(int argc, char **argv)
 	glClearColor(0.f, 0.f, 0.f, 0.f);
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 	drawWorld();
-	drawHUD();
-	hdr_present(0);
+	if (_ZL13hdr_map_scenev && _ZL18hdr_encode_presentj) {
+		/* the two-pass frame: what RB_DrawView calls when a 2D view is
+		   about to draw, then the HUD, then the encode-only present */
+		_ZL13hdr_map_scenev();
+		drawHUD();
+		_ZL18hdr_encode_presentj(0);
+	} else {
+		drawHUD();
+		hdr_present(0);
+	}
 	glFinish();
 
 	glReadPixels(0, 0, W, H, GL_RGBA, GL_UNSIGNED_BYTE, out);
 	for (i = 0; i < W * H; i++)
 		if (out[i * 4] > 2 || out[i * 4 + 1] > 2 || out[i * 4 + 2] > 2)
 			nonBlack++;
-	printf("  non-black pixels: %d of %d\n", nonBlack, W * H);
-	if (nonBlack < W * H / 4) {
+	floorPx[pass] = out[(H / 2 * W + W / 6) * 4];
+	wallPx[pass]  = out[(H / 2 * W + W / 2) * 4];
+	hotPx[pass]   = out[(H / 2 * W + 5 * W / 6) * 4];
+	hudPx[pass]   = out[((H - 5) * W + W / 2) * 4];
+	printf("  curve %d: floor %d, wall %d, highlight %d, HUD %d\n",
+		_ZL16hdr_rolloff_mode, floorPx[pass], wallPx[pass], hotPx[pass], hudPx[pass]);
+	nonBlackAll = nonBlack;
+	nonBlack = 0;
+	}
+	printf("  non-black pixels: %d of %d\n", nonBlackAll, W * H);
+	if (nonBlackAll < W * H / 4) {
 		printf("  FAIL: the frame came out black\n");
 		fail = 1;
+	}
+	/* the input quads scaled to bytes; getting them back means nothing ran */
+	if (floorPx[0] == 13 && wallPx[0] == 153 && hotPx[0] == 255) {
+		printf("  FAIL: output equals the input - the composite did not run\n");
+		fail = 1;
+	}
+	for (i = 0; i < 2; i++)
+		if (!(floorPx[i] < wallPx[i] && wallPx[i] < hotPx[i])) {
+			printf("  FAIL: curve %d regions are not ordered\n", i);
+			fail = 1;
+		}
+	if (wallPx[0] == wallPx[1]) {
+		printf("  FAIL: the scene did not change with the curve\n");
+		fail = 1;
+	}
+	if (hudPx[0] != hudPx[1]) {
+		printf("  FAIL: the HUD changed with the curve (%d vs %d) - it is\n"
+		       "        going through the scene's tone curve\n",
+			hudPx[0], hudPx[1]);
+		fail = 1;
 	} else {
-		int floorPx = out[(H / 2 * W + W / 6) * 4];
-		int wallPx  = out[(H / 2 * W + W / 2) * 4];
-		int hotPx   = out[(H / 2 * W + 5 * W / 6) * 4];
-		int hudPx   = out[((H - 5) * W + W / 2) * 4];
-		printf("  floor %d, wall %d, highlight %d, HUD %d\n",
-			floorPx, wallPx, hotPx, hudPx);
-		/* 13, 153 and 255 are the input quads scaled to bytes.  Getting
-		   those back means every HDR path declined and glReadPixels
-		   handed over what the harness itself drew - which is exactly
-		   how an earlier version of this file reported PASS. */
-		if (floorPx == 13 && wallPx == 153 && hotPx == 255) {
-			printf("  FAIL: output equals the input - the composite did not run\n");
-			fail = 1;
-		}
-		if (!(floorPx < wallPx && wallPx < hotPx)) {
-			printf("  FAIL: the regions are not ordered\n");
-			fail = 1;
-		}
+		printf("  HUD is curve-independent at %d, scene moved %d -> %d\n",
+			hudPx[0], wallPx[0], wallPx[1]);
 	}
 	printf("%s\n", fail ? "  FAILED" : "  PASS");
 	OSMesaDestroyContext(ctx);

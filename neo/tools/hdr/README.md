@@ -26,6 +26,24 @@ makes every HDR path decline in silence rather than complain:
   - `idLib::Init()`, because the composite assembles its program text
     with `idStr::snPrintf`.
 
+## What it asserts
+
+It renders the frame twice, under Reinhard and under Filmic Log, and
+requires two things: the scene changes with the curve, and the HUD does
+not.  That second one is the whole claim behind mapping the scene
+before the HUD is drawn, and it cannot be tested with the default
+roll-off alone - Reinhard's soft knee is the identity below 0.75, so a
+0.5 panel comes out at 0.5 whether or not anything bypasses the curve.
+Testing with the default is how the bug hid in the first place.
+
+On the current tree it fails, correctly:
+
+    curve 0:  floor 22, wall 113, highlight 149, HUD 106
+    curve 18: floor 11, wall 130, highlight 149, HUD 125
+    FAIL: the HUD changed with the curve (106 vs 125)
+
+That is the open bug, stated by the test rather than by a screenshot.
+
 ## Negative controls
 
 A harness that has never been shown to fail is not evidence.  The first
