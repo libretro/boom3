@@ -41,6 +41,13 @@ def main(srcdir, outpath):
     out.append('')
     open(outpath,'w').write('\n'.join(out))
     print("entries:", len(names))
+    # The build has no header-dependency tracking for this file, so a
+    # regenerated table with an untouched consumer links the OLD table -
+    # exactly the stale-object failure that hit the first 51-entry run.
+    consumer = os.path.join(os.path.dirname(outpath), 'snd_efxfile.cpp')
+    if os.path.exists(consumer):
+        os.utime(consumer, None)
+        print("touched", consumer, "(no header dep tracking in the Makefile)")
 
 if __name__=='__main__':
     main(sys.argv[1], sys.argv[2])
