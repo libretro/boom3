@@ -328,10 +328,13 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "the way a lens does when it focuses different wavelengths at "
       "different magnifications. It grows with the square of distance "
       "from the centre, so the middle of the screen stays clean and only "
-      "the corners fringe. At 4K the corner shifts by about 1.5 pixels on "
-      "Subtle, 3 on Strong and 6 on Heavy; a quarter of the way out from "
-      "the centre those are a tenth of that, which is the point - a lens "
-      "is sharpest where you are looking. The offset is a fixed fraction "
+      "the corners fringe. At 4K the corner shifts by about 3 pixels on "
+      "Subtle, 6 on Strong and 12 on Heavy; a quarter of the way out from "
+      "the centre even Heavy is about a quarter of a pixel, which is the "
+      "point - a lens is sharpest where you are looking. In this game the "
+      "centre is usually the subject and the corners are usually dark or "
+      "bloomed, so the effect reads as a soft anamorphic edge rather than "
+      "an obvious split. The offset is a fixed fraction "
       "of the frame rather than a pixel count, so it stays the same "
       "artifact at any resolution, which is what a lens does. This "
       "is a lens artifact, not a film one, and it is separate from "
@@ -341,9 +344,9 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       NULL,
       {
          { "disabled", NULL },
-         { "subtle",   "Subtle (1.5px corner at 4K)" },
-         { "strong",   "Strong (3px)" },
-         { "heavy",    "Heavy (6px)" },
+         { "subtle",   "Subtle (3px corner at 4K)" },
+         { "strong",   "Strong (6px)" },
+         { "heavy",    "Heavy (12px)" },
          { "debug",    "Debug (show the displacement)" },
          { NULL, NULL },
       },

@@ -3726,10 +3726,10 @@ static const char *hdr_arb_composite_src( int mode, bool twoBand ) {
 			: "PARAM kHal = { 1.0, 1.0, 1.0, 0 };\n",
 			/* baked with the halation tint, for the same reason: it
 			 * changes only when the option does */
-			hdr_chroma_ab == 4 ? "PARAM kCa = { 0.0044200, 0, 0, 1 };\n"
-			: hdr_chroma_ab == 3 ? "PARAM kCa = { 0.0044200, 0, 0, 0 };\n"
-			: hdr_chroma_ab == 2 ? "PARAM kCa = { 0.0022100, 0, 0, 0 };\n"
-			: hdr_chroma_ab == 1 ? "PARAM kCa = { 0.0011050, 0, 0, 0 };\n"
+			hdr_chroma_ab == 4 ? "PARAM kCa = { 0.0088400, 0, 0, 1 };\n"
+			: hdr_chroma_ab == 3 ? "PARAM kCa = { 0.0088400, 0, 0, 0 };\n"
+			: hdr_chroma_ab == 2 ? "PARAM kCa = { 0.0044200, 0, 0, 0 };\n"
+			: hdr_chroma_ab == 1 ? "PARAM kCa = { 0.0022100, 0, 0, 0 };\n"
 			: "PARAM kCa = { 0.0, 0, 0, 0 };\n",
 			HDR_ARB_COMPOSITE_BODY
 			"TEX bl, fragment.texcoord[0], texture[1], 2D;\n"
@@ -5710,9 +5710,9 @@ static void hdr_present( GLuint dstFbo ) {
 	if ( hdr_loc_ca >= 0 ) {
 		/* the same strengths the ARB path bakes in */
 		glUniform1f( hdr_loc_ca,
-				hdr_chroma_ab == 3 ? 0.0044200f
-				: hdr_chroma_ab == 2 ? 0.0022100f
-				: hdr_chroma_ab == 1 ? 0.0011050f : 0.0f );
+				hdr_chroma_ab >= 3 ? 0.0088400f
+				: hdr_chroma_ab == 2 ? 0.0044200f
+				: hdr_chroma_ab == 1 ? 0.0022100f : 0.0f );
 	}
 	if ( hdr_loc_hal >= 0 ) {
 		/* the same weights the ARB path bakes in */
