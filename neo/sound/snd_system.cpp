@@ -865,9 +865,19 @@ void idSoundSystemLocal::EndLevelLoadStart( const char *mapstring ) {
 			 * file so the parameters are bit-identical to an on-disk
 			 * copy of the same text.  A real efxs/<map>.efx always wins
 			 * because this only runs when there is none. */
-			efxloaded = EFXDatabase.LoadDefaults();
-			common->Printf( "sound: missing %s, using built-in default reverb\n",
-					efxname.c_str() );
+			/* the RoE set is embedded per map; base-campaign maps are
+			 * not in it and take the generic default */
+			idStr bare( mapname );
+			bare.StripFileExtension();
+			if ( EFXDatabase.LoadEmbedded( bare.c_str() ) ) {
+				efxloaded = true;
+				common->Printf( "sound: missing %s, using embedded %s.efx\n",
+						efxname.c_str(), bare.c_str() );
+			} else {
+				efxloaded = EFXDatabase.LoadDefaults();
+				common->Printf( "sound: missing %s, using built-in default reverb\n",
+						efxname.c_str() );
+			}
 		}
 	}
 

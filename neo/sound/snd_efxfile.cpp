@@ -221,6 +221,58 @@ bytes it writes to disk - one copy, so the test and the implementation
 cannot drift apart.
 ================
 */
+#include "sound/efx_embedded.h"
+
+/*
+================
+idEFXFile::LoadEmbedded
+
+The RoE efxs/ set, embedded byte-for-byte, keyed by map name.  Only
+consulted when the pak has no efxs/<map>.efx, so a real file always
+wins; base-campaign maps are not in the set and fall through to the
+generic default.  The bytes go through the same ParseSource as a file's
+would, and the per-file test compares both the bytes and the parses.
+================
+*/
+/*
+================
+idEFXFile::EmbeddedSource
+
+The raw embedded bytes for one map, for the test that compares them
+against the source file byte for byte.
+================
+*/
+const char *idEFXFile::EmbeddedSource( const char *mapname, int *length ) {
+	int i;
+
+	for ( i = 0; i < (int)( sizeof( efx_embedded ) / sizeof( efx_embedded[0] ) ); i++ ) {
+		if ( idStr::Icmp( efx_embedded[i].mapname, mapname ) == 0 ) {
+			if ( length ) {
+				*length = efx_embedded[i].length;
+			}
+			return efx_embedded[i].text;
+		}
+	}
+	return NULL;
+}
+
+bool idEFXFile::LoadEmbedded( const char *mapname ) {
+	int i;
+
+	for ( i = 0; i < (int)( sizeof( efx_embedded ) / sizeof( efx_embedded[0] ) ); i++ ) {
+		if ( idStr::Icmp( efx_embedded[i].mapname, mapname ) == 0 ) {
+			idLexer src( LEXFL_NOSTRINGCONCAT );
+			src.LoadMemory( efx_embedded[i].text, efx_embedded[i].length,
+					efx_embedded[i].mapname );
+			if ( !src.IsLoaded() ) {
+				return false;
+			}
+			return ParseSource( src );
+		}
+	}
+	return false;
+}
+
 const char *idEFXFile::DefaultSource( int *length ) {
 	if ( length ) {
 		*length = (int)sizeof( defaultEfx ) - 1;

@@ -35,7 +35,12 @@ public:
 	 * same content would produce - by construction, and verified by
 	 * test. */
 	bool	LoadDefaults( void );
+	bool	LoadEmbedded( const char *mapname );
+	/* test access: enumerate the parsed effects */
+	int		NumEffects( void ) const { return effects.Num(); }
+	const idSoundEffect *GetEffect( int i ) const { return effects[i]; }
 	static const char *DefaultSource( int *length );
+	static const char *EmbeddedSource( const char *mapname, int *length );
 	/* test entry: the shared parser on a caller-supplied lexer */
 	bool	TestParse( idLexer &src ) { return ParseSource( src ); }
 	void	Clear( void ) { effects.DeleteContents( true ); }
