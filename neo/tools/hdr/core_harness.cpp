@@ -51,6 +51,8 @@ extern "C" int _ZL16hdr_rolloff_mode;
 /* the CA setting, baked into the composite at build; weak so the harness
  * still links if the symbol moves */
 extern "C" int _ZL13hdr_chroma_ab __attribute__((weak));
+extern "C" int _ZL8hdr_ssaa __attribute__((weak));
+extern "C" volatile float _ZL21hdr_ssaa_env_override __attribute__((weak));
 /* the option gate; the harness turns it on to test the path at all */
 /* retro_run clears this at the top of every frame; the harness has to
    do the same or the second frame reuses the first one's mapped image */
@@ -139,6 +141,15 @@ int main(int argc, char **argv)
 	   session shipped a CA whose visibility was never executed, only
 	   reasoned about. */
 	const int chroma = (argc > 1 && !strcmp(argv[1], "--chroma"));
+	/* Karis-weighted supersampling.  The scene is a firefly field - one
+	   hot texel per 2x2, three dark - and the same spliced program runs
+	   twice: env[10] at the half-texel offsets (four distinct taps,
+	   Karis) and at zero (all taps between the texels, which under
+	   GL_LINEAR is the driver's own box average - the linear control).
+	   The Karis frame must come out materially darker, because the
+	   whole point is that one hot sample no longer dominates the mean;
+	   if the two frames match, the weighting is not happening. */
+	const int ssaa = (argc > 1 && !strcmp(argv[1], "--ssaa"));
 	/* The engine pumps many swaps per retro_run - every menu frame and
 	 * every loading-screen update.  Each is a whole frame: composite,
 	 * present, rebind.  Testing one swap per run misses anything that
@@ -198,6 +209,131 @@ int main(int argc, char **argv)
 	 * the scene before the HUD is drawn, and it cannot be tested with
 	 * the default roll-off because Reinhard's soft knee is the identity
 	 * below 0.75, so a 0.5 panel comes out at 0.5 either way. */
+	if (ssaa) {
+		const int OW = 256, SW = OW * 2;
+		unsigned char *out2 = (unsigned char *)malloc((size_t)OW * OW * 4);
+		double sum[2] = { 0, 0 };
+		int phase, x, y;
+
+		if (&_ZL8hdr_ssaa)
+			_ZL8hdr_ssaa = 2;
+		if (&_ZL13hdr_chroma_ab)
+			_ZL13hdr_chroma_ab = 0;
+		_ZL16hdr_rolloff_mode = 0;
+		scr_width = OW;
+		scr_height = OW;
+		if (!out2 || !hdr_ensure_target(SW, SW)) {
+			printf("  FAIL: no ssaa target\n");
+			return 1;
+		}
+		for (phase = 0; phase < 2; phase++) {
+			/* hdr_present leaves the ARB programs enabled - in the game
+			 * the next frame rebinds everything, but here the scene
+			 * redraw would otherwise run through the composite */
+			glDisable(GL_FRAGMENT_PROGRAM_ARB);
+			glDisable(GL_VERTEX_PROGRAM_ARB);
+			/* and texturing: the present leaves unit state behind, and a
+			 * textured colour draw samples a dark texel at (0,0) and
+			 * silently scales the whole scene */
+			glActiveTexture(GL_TEXTURE1);
+			glDisable(GL_TEXTURE_2D);
+			glActiveTexture(GL_TEXTURE0);
+			glDisable(GL_TEXTURE_2D);
+			glBindTexture(GL_TEXTURE_2D, 0);
+			hdr_bind_scene();
+			glViewport(0, 0, SW, SW);
+			glClearColor(0.f, 0.f, 0.f, 0.f);
+			glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+			/* fireflies: one bright texel per 2x2 cell via 1px points */
+			glBegin(GL_QUADS);
+			glColor4f(0.01f, 0.01f, 0.01f, 1.0f);
+			glVertex2f(-1.f, -1.f); glVertex2f(1.f, -1.f);
+			glVertex2f(1.f, 1.f);  glVertex2f(-1.f, 1.f);
+			glEnd();
+			if (phase == 0) {
+				/* fireflies: one 8.0 texel per 2x2 cell, three at 0.01 */
+				glPointSize(1.0f);
+				glColor4f(8.0f, 8.0f, 8.0f, 1.0f);
+				glBegin(GL_POINTS);
+				for (y = 0; y < SW; y += 2)
+					for (x = 0; x < SW; x += 2)
+						glVertex2f((x + 0.5f) * 2.0f / SW - 1.0f,
+						           (y + 0.5f) * 2.0f / SW - 1.0f);
+				glEnd();
+			} else {
+				/* the linear control: a flat scene at the firefly
+				 * field's arithmetic mean, (8.0 + 3*0.01)/4.  Any
+				 * resolve of a uniform field is that value, so this
+				 * phase shows what a linear average of the fireflies
+				 * would have produced, through the same program - no
+				 * dependence on how the sampler rounds at texel
+				 * corners, which is what sank the env-zero control:
+				 * exact-corner taps round to one texel per pixel on
+				 * this driver and render a checkerboard, not a box. */
+				glColor4f(2.0075f, 2.0075f, 2.0075f, 1.0f);
+				glBegin(GL_QUADS);
+				glVertex2f(-1.f, -1.f); glVertex2f(1.f, -1.f);
+				glVertex2f(1.f, 1.f);  glVertex2f(-1.f, 1.f);
+				glEnd();
+			}
+
+			/* real offsets both phases; the phases differ in scene */
+			if (&_ZL21hdr_ssaa_env_override)
+				_ZL21hdr_ssaa_env_override = -1.0f;
+			{
+				GLuint dstTex = 0, dstFbo = 0;
+				glGenTextures(1, &dstTex);
+				glBindTexture(GL_TEXTURE_2D, dstTex);
+				glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, OW, OW, 0,
+						GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+				glGenFramebuffers(1, &dstFbo);
+				glBindFramebuffer(GL_FRAMEBUFFER, dstFbo);
+				glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+						GL_TEXTURE_2D, dstTex, 0);
+				hdr_present(dstFbo);
+				glFinish();
+				glBindFramebuffer(GL_FRAMEBUFFER, dstFbo);
+				glReadPixels(0, 0, OW, OW, GL_RGBA, GL_UNSIGNED_BYTE, out2);
+				glBindFramebuffer(GL_FRAMEBUFFER, 0);
+				glDeleteFramebuffers(1, &dstFbo);
+				glDeleteTextures(1, &dstTex);
+			}
+			{
+				float rb[4] = { -9, -9, -9, -9 };
+				PFNGLGETPROGRAMENVPARAMETERFVARBPROC getev =
+					(PFNGLGETPROGRAMENVPARAMETERFVARBPROC)OSMesaGetProcAddress(
+						"glGetProgramEnvParameterfvARB");
+				if (getev)
+					getev(GL_FRAGMENT_PROGRAM_ARB, 10, rb);
+				printf("  phase %d: env[10]=%.6f  sample px (%d,%d) rgb %d %d %d\n",
+					phase, rb[0], OW/2, OW/2,
+					out2[(OW/2*OW+OW/2)*4], out2[(OW/2*OW+OW/2)*4+1],
+					out2[(OW/2*OW+OW/2)*4+2]);
+			}
+			for (y = OW / 4; y < 3 * OW / 4; y++)
+				for (x = OW / 4; x < 3 * OW / 4; x++)
+					sum[phase] += out2[(y * OW + x) * 4 + 1];
+		}
+		{
+			float rb[4] = { -9, -9, -9, -9 };
+			PFNGLGETPROGRAMENVPARAMETERFVARBPROC getev =
+				(PFNGLGETPROGRAMENVPARAMETERFVARBPROC)OSMesaGetProcAddress(
+					"glGetProgramEnvParameterfvARB");
+			if (getev)
+				getev(GL_FRAGMENT_PROGRAM_ARB, 10, rb);
+			printf("  probe: env[10] after last present = %.6f %.6f\n", rb[0], rb[1]);
+		}
+		printf("  ssaa: karis-of-fireflies %.1f, linear-average-equivalent %.1f (centre quarter, green)\n",
+			sum[0] / (OW * OW / 4), sum[1] / (OW * OW / 4));
+		if (!(sum[0] < sum[1] * 0.9)) {
+			printf("  FAIL: the Karis resolve did not suppress the fireflies\n");
+			return 1;
+		}
+		printf("  PASS\n");
+		OSMesaDestroyContext(ctx);
+		return 0;
+	}
+
 	if (chroma) {
 		/* Chromatic aberration needs room: the offset is a fraction of
 		 * the frame, so at 128 px even Heavy's corner shift is under

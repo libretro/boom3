@@ -445,6 +445,7 @@ static GLint  hdr_loc_tex, hdr_loc_mat, hdr_loc_parms;
 static GLint  hdr_loc_bloomT, hdr_loc_bloomW, hdr_loc_bloomAmt, hdr_loc_encScale;
 static GLint  hdr_loc_hal = -1;
 static GLint  hdr_loc_ca = -1;
+static GLint  hdr_loc_ssaa = -1;
 static GLint  hdr_loc_film = -1;
 static GLint  hdr_loc_film_lut = -1;
 static GLint  hdr_loc_film_desat = -1;
@@ -465,6 +466,18 @@ static int    hdr_halation = 0;
 /* Transverse chromatic aberration; 0 off.  Baked into the program with
  * the halation tint, so both share the cache key below. */
 static int    hdr_chroma_ab = 0;
+/* Supersampled scene with a tone-weighted resolve; 1 off, 2 = 2x2.
+ * Baked into the composite with the halation tint and CA, sharing the
+ * cache key: the resolve is the one place HDR and antialiasing meet,
+ * and a linear average there lets a single hot sample dominate the
+ * mean, which is why MSAA-style resolves fall apart under HDR. */
+static int    hdr_ssaa = 1;
+/* Test seam: when non-negative, uploaded as env[10].xy in place of the
+ * computed half-texel offsets.  The harness's --ssaa case uses it to
+ * run the same spliced program as its own linear control - offsets at
+ * zero make all four taps land between the texels, which under
+ * GL_LINEAR is the driver's box average. */
+static volatile float hdr_ssaa_env_override = -1.0f;
 static float  hdr_bloom_amount = 1.0f;      /* 0 = off; live-switchable */
 
 /* bloom chain: two bands (1/4-res tight core, 1/16-res wide haze),
@@ -481,7 +494,8 @@ static GLuint hdr_arb_bright, hdr_arb_blur;
 static GLuint hdr_arb_comp1, hdr_arb_comp2;
 static int    hdr_arb_comp_mode = -1;   /* roll-off curve baked into the pair above */
 static int    hdr_arb_comp_halation = -1;
-static int    hdr_arb_comp_chroma = -1;  /* halation tint baked in with it */
+static int    hdr_arb_comp_chroma = -1;
+static int    hdr_arb_comp_ssaa = -1;  /* halation tint baked in with it */
 
 /* Every program in the chain is loaded.  On this build there is no other
    chain to run, so this is a load-state flag rather than a path
@@ -826,10 +840,12 @@ static void update_variables(bool startup)
 
 		if(pch)
 		{
-			glConfig.vidWidth  = scr_width;
-			glConfig.vidHeight = scr_height;
-			glConfig.winWidth  = scr_width;
-			glConfig.winHeight = scr_height;
+			/* the engine renders at the supersampled size; scr_width
+			 * stays the presentation size the frontend sees */
+			glConfig.vidWidth  = scr_width * hdr_ssaa;
+			glConfig.vidHeight = scr_height * hdr_ssaa;
+			glConfig.winWidth  = scr_width * hdr_ssaa;
+			glConfig.winHeight = scr_height * hdr_ssaa;
 		}
 
 		initial_resolution_set = true;
@@ -936,6 +952,24 @@ static void update_variables(bool startup)
 		else if (!strcmp(var.value, "subtle"))   hdr_bloom_amount = 0.55f;
 		else if (!strcmp(var.value, "intense"))  hdr_bloom_amount = 1.7f;
 		else                                     hdr_bloom_amount = 1.0f;
+	}
+
+	var.key = "doom_hdr_ssaa";
+	var.value = NULL;
+	{
+		int want = 1;
+		if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value
+				&& !strcmp(var.value, "2x2"))
+			want = 2;
+		if (want != hdr_ssaa) {
+			hdr_ssaa = want;
+			/* the engine's render size follows; the scene target
+			 * follows on the next bind via its own size check */
+			glConfig.vidWidth  = scr_width * hdr_ssaa;
+			glConfig.vidHeight = scr_height * hdr_ssaa;
+			glConfig.winWidth  = scr_width * hdr_ssaa;
+			glConfig.winHeight = scr_height * hdr_ssaa;
+		}
 	}
 
 	var.key = "doom_hdr_chromatic";
@@ -1155,7 +1189,7 @@ static void context_reset(void)
       }
    }
    hdr_aces2_loc_lut = -1;
-   hdr_loc_hal = hdr_loc_ca = -1;
+   hdr_loc_hal = hdr_loc_ca = hdr_loc_ssaa = -1;
    hdr_loc_tex = hdr_loc_mat = hdr_loc_parms = -1;
    hdr_loc_bloomT = hdr_loc_bloomW = hdr_loc_bloomAmt = hdr_loc_encScale = -1;
    hdr_loc_film = hdr_loc_film_lut = hdr_loc_film_desat = -1;
@@ -2322,6 +2356,7 @@ static const char *hdr_fs_src =
 	"uniform float uBloomAmt;\n"
 	"uniform vec3 uHal;\n"
 	"uniform float uCa;\n"
+	"uniform vec2 uSsaa;\n"
 	"uniform vec2 uBandW;\n"
 	"uniform float uEncScale;\n"
 	"uniform float uFrame;\n"
@@ -2784,10 +2819,33 @@ static const char *hdr_fs_src =
 	   three fetches land on the same texel */
 	"  vec2 caD = vUV - 0.5;\n"
 	"  float caR = dot(caD, caD) * uCa;\n"
-	"  vec3 scn;\n"
-	"  scn.r = texture2D(uScene, vUV - caD * caR).r;\n"
-	"  scn.g = texture2D(uScene, vUV).g;\n"
-	"  scn.b = texture2D(uScene, vUV + caD * caR).b;\n"
+	/* uSsaa holds the half-texel offsets when supersampling, zero
+	   otherwise.  The centre value is the Karis average of the 2x2 -
+	   each tap weighted 1/(1+maxRGB) so one hot sample cannot dominate
+	   the mean, which is the whole difference between supersampling
+	   that resolves HDR edges and supersampling that does not.  When
+	   CA is off, red and blue come from the resolved base rather than
+	   single centre taps, which would undo the resolve on two of the
+	   three channels. */
+	"  vec3 base;\n"
+	"  if (uSsaa.x > 0.0) {\n"
+	"    vec3 acc = vec3(0.0); float wsum = 0.0;\n"
+	"    for (int ky = -1; ky <= 1; ky += 2) {\n"
+	"      for (int kx = -1; kx <= 1; kx += 2) {\n"
+	"        vec3 c = texture2D(uScene, vUV + vec2(float(kx), float(ky)) * uSsaa).rgb;\n"
+	"        float w = 1.0 / (1.0 + max(c.r, max(c.g, c.b)));\n"
+	"        acc += c * w; wsum += w;\n"
+	"      }\n"
+	"    }\n"
+	"    base = acc / wsum;\n"
+	"  } else {\n"
+	"    base = texture2D(uScene, vUV).rgb;\n"
+	"  }\n"
+	"  vec3 scn = base;\n"
+	"  if (caR != 0.0) {\n"
+	"    scn.r = texture2D(uScene, vUV - caD * caR).r;\n"
+	"    scn.b = texture2D(uScene, vUV + caD * caR).b;\n"
+	"  }\n"
 	"  vec3 lin = srgbToLinear(scn * uEncScale);\n"
 	/* bloom joins in LINEAR, BEFORE the roll-off: bloomed highlights
 	   ride the same curve into the paper-white..peak headroom, which
@@ -3018,6 +3076,46 @@ static const char *hdr_arb_up_fs_src =
    env[4..6] = gamut matrix rows
    texture[0] scene, texture[1] bloom band 0, texture[2] bloom band 1
 */
+/* The supersampled centre fetch, spliced over the stock single tap at
+ * program build when doom_hdr_ssaa is on - the same exact-line
+ * replacement the spectral mix uses on interaction.vfp.  Four taps at
+ * the 2x2 texel centres, each weighted 1/(1+maxRGB) before the average
+ * and unweighted after: the Karis average.  A linear average lets one
+ * hot sample dominate and the edge stays roped; weighting in a
+ * tonemapped domain is what makes supersampling actually resolve HDR
+ * edges.  env[10].xy holds the half-texel offsets; at zero all four
+ * taps sit on the same point and the result is the driver's own box
+ * filter, which is the linear control the harness measures against.
+ *
+ * No new temporaries - the composite is at the native limit of 16 -
+ * so e, m, u and a are reused; all are dead until after this point,
+ * and v belongs to chromatic aberration and is not touched. */
+static const char hdr_karis_fetch[] =
+	"MOV e, 0.0;\n"
+	"MOV m.x, 0.0;\n"
+	"ADD t.xy, fragment.texcoord[0], -program.env[10];\n"
+	"TEX u, t, texture[0], 2D;\n"
+	"MAX a.x, u.x, u.y; MAX a.x, a.x, u.z;\n"
+	"ADD a.x, a.x, 1.0; RCP a.x, a.x;\n"
+	"MAD e, u, a.x, e; ADD m.x, m.x, a.x;\n"
+	"MOV t.x, fragment.texcoord[0].x; ADD t.x, t.x, program.env[10].x;\n"
+	"TEX u, t, texture[0], 2D;\n"
+	"MAX a.x, u.x, u.y; MAX a.x, a.x, u.z;\n"
+	"ADD a.x, a.x, 1.0; RCP a.x, a.x;\n"
+	"MAD e, u, a.x, e; ADD m.x, m.x, a.x;\n"
+	"ADD t.xy, fragment.texcoord[0], program.env[10];\n"
+	"TEX u, t, texture[0], 2D;\n"
+	"MAX a.x, u.x, u.y; MAX a.x, a.x, u.z;\n"
+	"ADD a.x, a.x, 1.0; RCP a.x, a.x;\n"
+	"MAD e, u, a.x, e; ADD m.x, m.x, a.x;\n"
+	"MOV t.x, fragment.texcoord[0].x; ADD t.x, t.x, -program.env[10].x;\n"
+	"TEX u, t, texture[0], 2D;\n"
+	"MAX a.x, u.x, u.y; MAX a.x, a.x, u.z;\n"
+	"ADD a.x, a.x, 1.0; RCP a.x, a.x;\n"
+	"MAD e, u, a.x, e; ADD m.x, m.x, a.x;\n"
+	"RCP m.x, m.x;\n"
+	"MUL s, e, m.x;\n";
+
 #define HDR_ARB_COMPOSITE_BODY \
 	/* POW takes scalar operands and a scalar operand needs an explicit
 	   component selector, which a bare literal cannot carry - the
@@ -3075,6 +3173,13 @@ static const char *hdr_arb_up_fs_src =
 	"MAD v.z, v.y, v.y, v.z;\n" \
 	"MUL v.z, v.z, kCa.x;\n" \
 	"MAD v.xy, v, -v.z, fragment.texcoord[0];\n" \
+	/* HDR_ARB_SSAA_FETCH is spliced here when supersampling is on: the \
+	   centre fetch becomes four taps at the 2x2 texel centres, each \
+	   weighted 1/(1+maxRGB) before the average and unweighted after - \
+	   the Karis average.  A linear average lets one hot sample dominate \
+	   and the edge stays roped; weighting in a tonemapped domain is \
+	   what makes supersampling actually resolve HDR edges.  env[10].xy \
+	   holds the half-texel offsets. */ \
 	"TEX s, fragment.texcoord[0], texture[0], 2D;\n" \
 	"TEX u, v, texture[0], 2D;\n" \
 	"MOV s.r, u.r;\n" \
@@ -3740,6 +3845,45 @@ static const char *hdr_arb_composite_src( int mode, bool twoBand ) {
 			hdr_arb_curve_src( mode ),
 			mode == HDR_ROLLOFF_ACES2FULL ? "" : HDR_ARB_COMPOSITE_SHOULDER,
 			HDR_ARB_COMPOSITE_TAIL2 );
+
+	/* Supersampling splices the Karis fetch over the stock centre tap -
+	 * the same exact-line replacement the spectral mix performs on
+	 * interaction.vfp, and like there, "off" is provably stock because
+	 * nothing is spliced at all. */
+	if ( hdr_ssaa == 2 ) {
+		static const char stockFetch[] = "TEX s, fragment.texcoord[0], texture[0], 2D;\n";
+		char *at = strstr( p, stockFetch );
+		if ( at ) {
+			const size_t stockLen = sizeof( stockFetch ) - 1;
+			const size_t karisLen = sizeof( hdr_karis_fetch ) - 1;
+			const size_t tail = strlen( at + stockLen ) + 1;
+			if ( strlen( p ) - stockLen + karisLen < sizeof( buf[0] ) ) {
+				memmove( at + karisLen, at + stockLen, tail );
+				memcpy( at, hdr_karis_fetch, karisLen );
+			}
+		}
+		/* With chromatic aberration off, its gather is no longer the
+		 * identity it is against a single-tap fetch: overwriting red
+		 * and blue with centre single taps would undo the resolve on
+		 * two of three channels and colour every edge.  Remove the
+		 * gather and its debug exit outright; the radius prologue that
+		 * remains is dead arithmetic. */
+		if ( hdr_chroma_ab == 0 ) {
+			static const char *cut[][2] = {
+				{ "TEX u, v, texture[0], 2D;\n", "MOV s.b, u.b;\n" },
+				{ "SUB t.xy, fragment.texcoord[0], 0.5;\n", "LRP s, kCa.w, t, s;\n" },
+			};
+			int c;
+			for ( c = 0; c < 2; c++ ) {
+				char *from = strstr( p, cut[c][0] );
+				char *last = from ? strstr( from, cut[c][1] ) : NULL;
+				if ( from && last ) {
+					char *end = last + strlen( cut[c][1] );
+					memmove( from, end, strlen( end ) + 1 );
+				}
+			}
+		}
+	}
 	return p;
 }
 
@@ -4471,7 +4615,8 @@ static bool hdr_arb_load( GLenum target, const char *text, GLuint *out, const ch
 static bool hdr_arb_ready( void ) {
 	if ( hdr_arb_pyramid && hdr_arb_comp_mode == hdr_rolloff_mode
 			&& hdr_arb_comp_halation == hdr_halation
-			&& hdr_arb_comp_chroma == hdr_chroma_ab ) {
+			&& hdr_arb_comp_chroma == hdr_chroma_ab
+			&& hdr_arb_comp_ssaa == hdr_ssaa ) {
 		return true;
 	}
 
@@ -4508,7 +4653,8 @@ static bool hdr_arb_ready( void ) {
 	 * option is a menu item somebody will sit and cycle through. */
 	if ( hdr_arb_comp_mode != hdr_rolloff_mode
 			|| hdr_arb_comp_halation != hdr_halation
-			|| hdr_arb_comp_chroma != hdr_chroma_ab ) {
+			|| hdr_arb_comp_chroma != hdr_chroma_ab
+			|| hdr_arb_comp_ssaa != hdr_ssaa ) {
 		if ( hdr_arb_comp1 ) {
 			GLuint dead[2] = { hdr_arb_comp1, hdr_arb_comp2 };
 			glDeleteProgramsARB( 2, dead );
@@ -4525,6 +4671,7 @@ static bool hdr_arb_ready( void ) {
 		hdr_arb_comp_mode = hdr_rolloff_mode;
 		hdr_arb_comp_halation = hdr_halation;
 		hdr_arb_comp_chroma = hdr_chroma_ab;
+		hdr_arb_comp_ssaa = hdr_ssaa;
 
 		/* Say what was baked in.  These two are baked into the program
 		 * text rather than uploaded, so if a setting is not reaching the
@@ -4533,8 +4680,8 @@ static bool hdr_arb_ready( void ) {
 		 * other way a display option looks like it does nothing. */
 		if ( log_cb ) {
 			log_cb( RETRO_LOG_INFO,
-					"[boom3] HDR: composite rebuilt - curve %d, halation %d, chromatic %d\n",
-					hdr_rolloff_mode, hdr_halation, hdr_chroma_ab );
+					"[boom3] HDR: composite rebuilt - curve %d, halation %d, chromatic %d, ssaa %d\n",
+					hdr_rolloff_mode, hdr_halation, hdr_chroma_ab, hdr_ssaa );
 		}
 	}
 
@@ -4662,6 +4809,7 @@ static bool hdr_ensure_target( int w, int h ) {
 		hdr_loc_bloomAmt= glGetUniformLocation( hdr_prog, "uBloomAmt" );
 		hdr_loc_hal    = glGetUniformLocation( hdr_prog, "uHal" );
 		hdr_loc_ca     = glGetUniformLocation( hdr_prog, "uCa" );
+		hdr_loc_ssaa   = glGetUniformLocation( hdr_prog, "uSsaa" );
 		hdr_loc_bandW   = glGetUniformLocation( hdr_prog, "uBandW" );
 		hdr_loc_encScale= glGetUniformLocation( hdr_prog, "uEncScale" );
 		hdr_loc_frame   = glGetUniformLocation( hdr_prog, "uFrame" );
@@ -4949,7 +5097,7 @@ static bool hdr_ensure_target( int w, int h ) {
 static void hdr_bind_scene( void ) {
 	if ( !hdr_output_active )
 		return;
-	if ( !hdr_ensure_target( scr_width, scr_height ) )
+	if ( !hdr_ensure_target( scr_width * hdr_ssaa, scr_height * hdr_ssaa ) )
 		return;
 	glBindFramebuffer( RARCH_GL_FRAMEBUFFER, hdr_fbo );
 }
@@ -5707,6 +5855,12 @@ static void hdr_present( GLuint dstFbo ) {
 	}
 	glUniform1i( hdr_loc_bloomW, 2 );
 	glUniform1f( hdr_loc_bloomAmt, haveBloom ? hdr_bloom_amount : 0.0f );
+	if ( hdr_loc_ssaa >= 0 ) {
+		if ( hdr_ssaa == 2 && hdr_w > 0 && hdr_h > 0 )
+			glUniform2f( hdr_loc_ssaa, 0.5f / (float)hdr_w, 0.5f / (float)hdr_h );
+		else
+			glUniform2f( hdr_loc_ssaa, 0.0f, 0.0f );
+	}
 	if ( hdr_loc_ca >= 0 ) {
 		/* the same strengths the ARB path bakes in */
 		glUniform1f( hdr_loc_ca,
@@ -5819,6 +5973,23 @@ static void hdr_present( GLuint dstFbo ) {
 		const float r0[4] = { gm[0], gm[3], gm[6], 0.0f };
 		const float r1[4] = { gm[1], gm[4], gm[7], 0.0f };
 		const float r2[4] = { gm[2], gm[5], gm[8], 0.0f };
+		{
+			/* env[10]: the supersample half-texel offsets.  Uploaded for
+			 * every curve, not just Filmic Log - the first placement sat
+			 * inside that branch, and the harness's Reinhard case caught
+			 * it as offsets that never arrived.  Zero when off, so even
+			 * a stale program with the Karis fetch collapses to the
+			 * driver's box filter. */
+			float p10[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+			if ( hdr_ssaa == 2 && hdr_w > 0 && hdr_h > 0 ) {
+				p10[0] = 0.5f / (float)hdr_w;
+				p10[1] = 0.5f / (float)hdr_h;
+			}
+			if ( hdr_ssaa_env_override >= 0.0f ) {
+				p10[0] = p10[1] = hdr_ssaa_env_override;
+			}
+			qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 10, p10 );
+		}
 		qglBindProgramARB( GL_FRAGMENT_PROGRAM_ARB,
 				bandW1 > 0.0f ? hdr_arb_comp2 : hdr_arb_comp1 );
 		qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 0, p0 );
@@ -5880,6 +6051,8 @@ static void hdr_present( GLuint dstFbo ) {
 				}
 				qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 8, p8 );
 				qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 9, p9 );
+			}
+			{
 			}
 		}
 	}

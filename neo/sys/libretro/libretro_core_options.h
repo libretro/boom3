@@ -321,6 +321,30 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "standard"
    },
    {
+      "doom_hdr_ssaa",
+      "HDR: Supersampling (Karis resolve)",
+      NULL,
+      "Renders the scene at twice the width and height and resolves each "
+      "output pixel from the four samples with a tone-weighted average - "
+      "each sample weighted by 1/(1+brightness) before the mean and "
+      "unweighted after. A plain average lets a single hot sample "
+      "dominate, so edges against HDR highlights stay roped no matter "
+      "how many samples exist; the weighting is what makes supersampling "
+      "actually resolve them. Costs 4x fill rate and scene memory - at "
+      "4K output the scene target alone is around 265MB - so it is "
+      "priced for high-end hardware or lower output resolutions. Only "
+      "active in 30-bit HDR mode; the bloom reads slightly tighter under "
+      "it because the pyramid runs at the supersampled size.",
+      NULL,
+      NULL,
+      {
+         { "disabled", NULL },
+         { "2x2",      "2x2 (4 samples per pixel)" },
+         { NULL, NULL },
+      },
+      "disabled"
+   },
+   {
       "doom_hdr_chromatic",
       "HDR: Chromatic Aberration",
       NULL,
