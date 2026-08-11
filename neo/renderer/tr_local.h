@@ -857,7 +857,7 @@ extern glconfig_t			glConfig;		// outside of TR since it shouldn't be cleared du
 // cvars
 //
 extern idCVar r_mode;					// video mode number
-extern idCVar r_multiSamples;			// number of antialiasing samples
+extern idCVar r_multiSamples;			// repurposed: 2x2 supersampling, 0 or 2 - this port has no MSAA
 
 extern idCVar r_ignore;					// used for random debugging without defining new vars
 extern idCVar r_ignore2;				// used for random debugging without defining new vars

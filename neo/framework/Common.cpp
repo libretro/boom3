@@ -1356,6 +1356,18 @@ void idCommonLocal::InitLanguageDict( void ) {
 	}
 
 	fileSystem->FreeFileList(langFiles);
+	/* Port override: the main menu's Antialiasing row is repurposed as
+	 * the supersampling control - MSAA was never implemented here, the
+	 * cvar fed a GLimp stub that discarded it - so the label and the
+	 * choice list are overridden in the dictionary rather than by
+	 * shipping modified guis.  AddKeyVal prepends to the hash chain, so
+	 * these shadow the pak's strings.  The gui's literal value list
+	 * "0;2;4;8;16" stays; with two choices the choice window can only
+	 * ever write 0 or 2, and the libretro layer normalises anything
+	 * else left in old configs. */
+	languageDict.AddKeyVal( "#str_04128", "Supersampled Antialiasing (SSAA)" );
+	languageDict.AddKeyVal( "#str_04231", "None;2x2" );
+
 }
 
 /*

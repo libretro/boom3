@@ -533,6 +533,8 @@ static GLint  hdr_bright_loc_ffknee = -1;
 static void hdr_bind_scene( void );
 static void hdr_present( GLuint dstFbo );
 static void ldr_destroy_target( void );
+static void ssaa_apply( int want );
+extern bool ssaa_push_cvar;
 
 static retro_log_printf_t log_cb;
 static retro_video_refresh_t video_cb;
@@ -977,15 +979,11 @@ static void update_variables(bool startup)
 				&& !strcmp(var.value, "2x2"))
 			want = 2;
 		if (want != hdr_ssaa) {
-			hdr_ssaa = want;
-			if (want == 1)
-				ldr_destroy_target();   /* ~130MB at 4K; not worth holding */
-			/* the engine's render size follows; the scene target
-			 * follows on the next bind via its own size check */
-			glConfig.vidWidth  = scr_width * hdr_ssaa;
-			glConfig.vidHeight = scr_height * hdr_ssaa;
-			glConfig.winWidth  = scr_width * hdr_ssaa;
-			glConfig.winHeight = scr_height * hdr_ssaa;
+			ssaa_apply(want);
+			/* the option changed, so the in-game menu's cvar follows;
+			 * deferred to the frame hook because the cvar system may
+			 * not exist yet on the first update_variables */
+			ssaa_push_cvar = true;
 		}
 	}
 
@@ -5171,6 +5169,56 @@ static bool ldr_ensure_target( int w, int h ) {
 	return true;
 }
 
+/* One place applies a supersample change, whichever side asked for it:
+ * the core option, or the in-game menu writing r_multiSamples. */
+bool ssaa_push_cvar = false;   /* declared above update_variables */
+static void ssaa_apply( int want ) {
+	if ( want == hdr_ssaa )
+		return;
+	hdr_ssaa = want;
+	if ( want == 1 )
+		ldr_destroy_target();   /* ~130MB at 4K; not worth holding */
+	/* the engine's render size follows; the scene target follows on the
+	 * next bind via its own size check */
+	glConfig.vidWidth  = scr_width * hdr_ssaa;
+	glConfig.vidHeight = scr_height * hdr_ssaa;
+	glConfig.winWidth  = scr_width * hdr_ssaa;
+	glConfig.winHeight = scr_height * hdr_ssaa;
+}
+
+/* Called once per swap, with the engine alive.  The retail menu's
+ * Antialiasing row writes r_multiSamples directly, repurposed to mean
+ * supersampling; this keeps the cvar, the core option and the applied
+ * state agreeing whichever one moved.  Anything but 0 or 2 in the cvar
+ * - an old config's 8x, say - is normalised first, so the menu, which
+ * matches the cvar against its value list, never shows a stale rung. */
+static void ssaa_reconcile( void ) {
+	int cv, want;
+
+	if ( !glConfig.isInitialized )
+		return;
+	cv = r_multiSamples.GetInteger();
+	if ( cv != 0 && cv != 2 ) {
+		cv = ( cv >= 2 ) ? 2 : 0;
+		r_multiSamples.SetInteger( cv );
+	}
+	if ( ssaa_push_cvar ) {
+		/* the core option moved last; the cvar follows */
+		ssaa_push_cvar = false;
+		r_multiSamples.SetInteger( hdr_ssaa == 2 ? 2 : 0 );
+		return;
+	}
+	want = ( cv == 2 ) ? 2 : 1;
+	if ( want != hdr_ssaa ) {
+		/* the menu moved last; the state and the core option follow */
+		struct retro_variable var;
+		ssaa_apply( want );
+		var.key = "doom_hdr_ssaa";
+		var.value = ( want == 2 ) ? "2x2" : "disabled";
+		environ_cb( RETRO_ENVIRONMENT_SET_VARIABLE, &var );
+	}
+}
+
 static void ldr_destroy_target( void ) {
 	if ( ldr_fbo ) glDeleteFramebuffers( 1, &ldr_fbo );
 	if ( ldr_tex ) glDeleteTextures( 1, &ldr_tex );
@@ -6284,6 +6332,7 @@ void GLimp_SwapBuffers() {
    */
    /* 30-bit HDR: convert the scene target into the frontend framebuffer
       before presentation; 24-bit mode skips straight past. */
+   ssaa_reconcile();
    hdr_present((GLuint)hw_render.get_current_framebuffer());
    ldr_present((GLuint)hw_render.get_current_framebuffer());
 

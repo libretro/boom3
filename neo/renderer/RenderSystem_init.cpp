@@ -61,7 +61,14 @@ const char *r_rendererArgs[] = { "best", "arb2", NULL };
 
 idCVar r_inhibitFragmentProgram( "r_inhibitFragmentProgram", "0", CVAR_RENDERER | CVAR_BOOL, "ignore the fragment program extension" );
 idCVar r_useLightPortalFlow( "r_useLightPortalFlow", "1", CVAR_RENDERER | CVAR_BOOL, "use a more precise area reference determination" );
-idCVar r_multiSamples( "r_multiSamples", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "number of antialiasing samples" );
+/* Repurposed: this cvar never produced MSAA in this port - it fed
+   parms.multiSamples into a GLimp_Init stub that discarded it, and no
+   multisample GL state exists anywhere in the backend.  It now means
+   2x2 supersampling, 0 or 2, because the retail main menu's
+   Antialiasing row writes exactly this cvar and repurposing it lets the
+   in-game menu drive the real feature.  The libretro layer keeps it,
+   the core option and the actual supersample state in sync. */
+idCVar r_multiSamples( "r_multiSamples", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "2x2 supersampled antialiasing: 0 off, 2 on (this port has no MSAA)" );
 idCVar r_mode( "r_mode", "5", CVAR_ARCHIVE | CVAR_RENDERER | CVAR_INTEGER, "video mode number" );
 idCVar r_customWidth( "r_customWidth", "720", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "custom screen width. set r_mode to -1 to activate" );
 idCVar r_customHeight( "r_customHeight", "486", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "custom screen height. set r_mode to -1 to activate" );
@@ -868,7 +875,7 @@ void R_InitOpenGL( void ) {
 
 		parms.width = glConfig.vidWidth;
 		parms.height = glConfig.vidHeight;
-		parms.multiSamples = r_multiSamples.GetInteger();
+		parms.multiSamples = 0;		// no MSAA in this port; the cvar means supersampling now
 		parms.stereo = false;
 
 		if ( GLimp_Init( parms ) ) {
@@ -885,7 +892,8 @@ void R_InitOpenGL( void ) {
 		r_customWidth.SetInteger( 1920 );
 		r_customHeight.SetInteger( 1080 );
 		r_mode.SetInteger( 3 );
-		r_multiSamples.SetInteger( 0 );
+		/* r_multiSamples no longer touched here: it means supersampling
+		 * now, which has nothing to do with GL context creation */
 	}
 
 #ifndef HAVE_OPENGLES
