@@ -381,7 +381,7 @@ int main(int argc, char **argv)
 	if (ssaa) {
 		const int OW = 256, SW = OW * 2;
 		unsigned char *out2 = (unsigned char *)malloc((size_t)OW * OW * 4);
-		double sum[3] = { 0, 0, 0 };
+		double sum[4] = { 0, 0, 0, 0 };
 		int phase, x, y;
 
 		if (&_ZL8hdr_ssaa)
@@ -395,7 +395,7 @@ int main(int argc, char **argv)
 			printf("  FAIL: no ssaa target\n");
 			return 1;
 		}
-		for (phase = 0; phase < 3; phase++) {
+		for (phase = 0; phase < 4; phase++) {
 			/* hdr_present leaves the ARB programs enabled - in the game
 			 * the next frame rebinds everything, but here the scene
 			 * redraw would otherwise run through the composite */
@@ -413,7 +413,9 @@ int main(int argc, char **argv)
 			 * resolve is the geometric mean: it must land below the Karis
 			 * phase, because log-domain averaging is harder on fireflies
 			 * by construction. */
-			_ZL16hdr_rolloff_mode = (phase == 2) ? 18 : 0;
+			_ZL16hdr_rolloff_mode = (phase == 2) ? 18 : (phase == 3) ? 21 : 0;
+			/* phase 3: Khronos PBR Neutral, whose resolve weights by the
+			 * curve derivative - on this field it must land below Karis */
 			hdr_bind_scene();
 			glViewport(0, 0, SW, SW);
 			glClearColor(0.f, 0.f, 0.f, 0.f);
@@ -497,9 +499,9 @@ int main(int argc, char **argv)
 				getev(GL_FRAGMENT_PROGRAM_ARB, 10, rb);
 			printf("  probe: env[10] after last present = %.6f %.6f\n", rb[0], rb[1]);
 		}
-		printf("  ssaa: karis %.1f, linear-equivalent %.1f, filmiclog-geomean %.1f (centre quarter, green)\n",
-			sum[0] / (OW * OW / 4), sum[1] / (OW * OW / 4), sum[2] / (OW * OW / 4));
-		if (!(sum[2] < sum[0] && sum[0] < sum[1] * 0.9)) {
+		printf("  ssaa: karis %.1f, linear-eq %.1f, geomean %.1f, neutral %.1f (centre quarter, green)\n",
+			sum[0] / (OW * OW / 4), sum[1] / (OW * OW / 4), sum[2] / (OW * OW / 4), sum[3] / (OW * OW / 4));
+		if (!(sum[2] < sum[0] && sum[3] < sum[0] && sum[0] < sum[1] * 0.9)) {
 			printf("  FAIL: the Karis resolve did not suppress the fireflies\n");
 			return 1;
 		}

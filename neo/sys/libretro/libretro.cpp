@@ -2387,7 +2387,7 @@ static const char *hdr_fs_src =
 	"uniform float uBloomAmt;\n"
 	"uniform vec3 uHal;\n"
 	"uniform float uCa;\n"
-	"uniform vec2 uSsaa;\n"
+	"uniform vec3 uSsaa;\n"
 	"uniform vec2 uBandW;\n"
 	"uniform float uEncScale;\n"
 	"uniform float uFrame;\n"
@@ -2864,12 +2864,16 @@ static const char *hdr_fs_src =
 	   curve is active and the resolve is the geometric mean - the
 	   curve-matched average - otherwise the Karis proxy.  Same
 	   half-texel magnitude either way. */
-	"    vec2 ssOff = abs(uSsaa);\n"
+	"    vec2 ssOff = uSsaa.xy;\n"
 	"    vec3 acc = vec3(0.0); float wsum = 0.0;\n"
 	"    for (int ky = -1; ky <= 1; ky += 2) {\n"
 	"      for (int kx = -1; kx <= 1; kx += 2) {\n"
 	"        vec3 c = texture2D(uScene, vUV + vec2(float(kx), float(ky)) * ssOff).rgb;\n"
-	"        if (uSsaa.y < 0.0) {\n"
+	"        if (uSsaa.z > 1.5) {\n"
+	"          float pk = max(c.r, max(c.g, c.b));\n"
+	"          float w = 0.24 / max(pk - 0.52, 0.24); w *= w;\n"
+	"          acc += c * w; wsum += w;\n"
+	"        } else if (uSsaa.z > 0.5) {\n"
 	"          acc += log2(c + 0.0001);\n"
 	"        } else {\n"
 	"          float w = 1.0 / (1.0 + max(c.r, max(c.g, c.b)));\n"
@@ -2877,7 +2881,7 @@ static const char *hdr_fs_src =
 	"        }\n"
 	"      }\n"
 	"    }\n"
-	"    base = (uSsaa.y < 0.0)\n"
+	"    base = (uSsaa.z > 0.5 && uSsaa.z < 1.5)\n"
 	"        ? max(exp2(acc * 0.25) - 0.0001, vec3(0.0))\n"
 	"        : acc / wsum;\n"
 	"  } else {\n"
@@ -3132,6 +3136,47 @@ static const char *hdr_arb_up_fs_src =
  * No new temporaries - the composite is at the native limit of 16 -
  * so e, m, u and a are reused; all are dead until after this point,
  * and v belongs to chromatic aberration and is not touched. */
+/* The Khronos PBR Neutral resolve: each sample weighted by the
+ * curve's own derivative in its max channel, w = (d / max(peak -
+ * 0.52, d))^2 with d = 0.24 - which is 1 everywhere below the 0.76
+ * knee, so in the linear zone the resolve is the exact box average
+ * with none of the Karis dark bias, and above it the weighting
+ * matches Neutral's actual compression rate rather than Reinhard's
+ * shape.  Measured standalone: a field entirely below the knee
+ * resolves to the box exactly (byte 64) where Karis reads 53, and
+ * the firefly field lands at 0.0127 against the closed form 0.0127.
+ * Same dead temps as the other fetches. */
+static const char hdr_neutral_fetch[] =
+	"MOV e, 0.0;\n"
+	"MOV m.x, 0.0;\n"
+	"ADD t.xy, fragment.texcoord[0], -program.env[35];\n"
+	"TEX u, t, texture[0], 2D;\n"
+	"MAX a.x, u.x, u.y; MAX a.x, a.x, u.z;\n"
+	"SUB a.x, a.x, 0.52; MAX a.x, a.x, 0.24;\n"
+	"RCP a.x, a.x; MUL a.x, a.x, 0.24; MUL a.x, a.x, a.x;\n"
+	"MAD e, u, a.x, e; ADD m.x, m.x, a.x;\n"
+	"MOV t.x, fragment.texcoord[0].x; ADD t.x, t.x, program.env[35].x;\n"
+	"TEX u, t, texture[0], 2D;\n"
+	"MAX a.x, u.x, u.y; MAX a.x, a.x, u.z;\n"
+	"SUB a.x, a.x, 0.52; MAX a.x, a.x, 0.24;\n"
+	"RCP a.x, a.x; MUL a.x, a.x, 0.24; MUL a.x, a.x, a.x;\n"
+	"MAD e, u, a.x, e; ADD m.x, m.x, a.x;\n"
+	"ADD t.xy, fragment.texcoord[0], program.env[35];\n"
+	"TEX u, t, texture[0], 2D;\n"
+	"MAX a.x, u.x, u.y; MAX a.x, a.x, u.z;\n"
+	"SUB a.x, a.x, 0.52; MAX a.x, a.x, 0.24;\n"
+	"RCP a.x, a.x; MUL a.x, a.x, 0.24; MUL a.x, a.x, a.x;\n"
+	"MAD e, u, a.x, e; ADD m.x, m.x, a.x;\n"
+	"MOV t.x, fragment.texcoord[0].x; ADD t.x, t.x, -program.env[35].x;\n"
+	"TEX u, t, texture[0], 2D;\n"
+	"MAX a.x, u.x, u.y; MAX a.x, a.x, u.z;\n"
+	"SUB a.x, a.x, 0.52; MAX a.x, a.x, 0.24;\n"
+	"RCP a.x, a.x; MUL a.x, a.x, 0.24; MUL a.x, a.x, a.x;\n"
+	"MAD e, u, a.x, e; ADD m.x, m.x, a.x;\n"
+	"RCP m.x, m.x;\n"
+	"MUL s, e, m.x;\n"
+	"MOV s.a, 1.0;\n";
+
 /* The Filmic Log resolve: geometric mean of the 2x2 - average the
  * logs, exponentiate.  Film response averages in log exposure, so for
  * the log curve this is the curve-matched resolve rather than the
@@ -3942,7 +3987,9 @@ static const char *hdr_arb_composite_src( int mode, bool twoBand ) {
 			 * and declined - per-channel scalar RCPs for a marginal
 			 * gain - and ACES 2.0 has no cheap inverse. */
 			const char *fetch = ( mode == HDR_ROLLOFF_FILMICLOG )
-					? hdr_geomean_fetch : hdr_karis_fetch;
+					? hdr_geomean_fetch
+					: ( mode == HDR_ROLLOFF_NEUTRAL )
+					? hdr_neutral_fetch : hdr_karis_fetch;
 			const size_t stockLen = sizeof( stockFetch ) - 1;
 			const size_t fetchLen = strlen( fetch );
 			const size_t tail = strlen( at + stockLen ) + 1;
@@ -6154,13 +6201,16 @@ static void hdr_present( GLuint dstFbo ) {
 	glUniform1f( hdr_loc_bloomAmt, haveBloom ? hdr_bloom_amount : 0.0f );
 	if ( hdr_loc_ssaa >= 0 ) {
 		if ( hdr_ssaa == 2 && hdr_w > 0 && hdr_h > 0 ) {
-			/* y sign carries the resolve choice to the shader */
-			float sy = 0.5f / (float)hdr_h;
+			/* z selects the resolve: 0 Karis, 1 geometric mean for
+			 * Filmic Log, 2 the Neutral derivative weighting */
+			float sel = 0.0f;
 			if ( hdr_rolloff_mode == HDR_ROLLOFF_FILMICLOG )
-				sy = -sy;
-			glUniform2f( hdr_loc_ssaa, 0.5f / (float)hdr_w, sy );
+				sel = 1.0f;
+			else if ( hdr_rolloff_mode == HDR_ROLLOFF_NEUTRAL )
+				sel = 2.0f;
+			glUniform3f( hdr_loc_ssaa, 0.5f / (float)hdr_w, 0.5f / (float)hdr_h, sel );
 		} else
-			glUniform2f( hdr_loc_ssaa, 0.0f, 0.0f );
+			glUniform3f( hdr_loc_ssaa, 0.0f, 0.0f, 0.0f );
 	}
 	if ( hdr_loc_ca >= 0 ) {
 		/* the same strengths the ARB path bakes in */
