@@ -5199,8 +5199,14 @@ static bool ldr_ensure_target( int w, int h ) {
 	}
 	glGenTextures( 1, &ldr_tex );
 	glBindTexture( GL_TEXTURE_2D, ldr_tex );
+#ifdef HAVE_OPENGLES
+	/* GLES2 has no sized GL_RGBA8 internal format token */
+	glTexImage2D( GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA,
+			GL_UNSIGNED_BYTE, NULL );
+#else
 	glTexImage2D( GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA,
 			GL_UNSIGNED_BYTE, NULL );
+#endif
 	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
 	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
 	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
@@ -5323,24 +5329,24 @@ static void ldr_present( GLuint dstFbo ) {
 	glActiveTexture( GL_TEXTURE0 );
 	glEnable( GL_TEXTURE_2D );
 	glBindTexture( GL_TEXTURE_2D, ldr_tex );
-	glTexEnvi( GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE );
-	glMatrixMode( GL_PROJECTION );
-	glPushMatrix();
-	glLoadIdentity();
-	glMatrixMode( GL_MODELVIEW );
-	glPushMatrix();
-	glLoadIdentity();
-	glColor4f( 1.f, 1.f, 1.f, 1.f );
-	glBegin( GL_QUADS );
-	glTexCoord2f( 0.f, 0.f ); glVertex2f( -1.f, -1.f );
-	glTexCoord2f( 1.f, 0.f ); glVertex2f(  1.f, -1.f );
-	glTexCoord2f( 1.f, 1.f ); glVertex2f(  1.f,  1.f );
-	glTexCoord2f( 0.f, 1.f ); glVertex2f( -1.f,  1.f );
-	glEnd();
-	glMatrixMode( GL_PROJECTION );
-	glPopMatrix();
-	glMatrixMode( GL_MODELVIEW );
-	glPopMatrix();
+	qglTexEnvi( GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE );
+	qglMatrixMode( GL_PROJECTION );
+	qglPushMatrix();
+	qglLoadIdentity();
+	qglMatrixMode( GL_MODELVIEW );
+	qglPushMatrix();
+	qglLoadIdentity();
+	qglColor4f( 1.f, 1.f, 1.f, 1.f );
+	qglBegin( GL_QUADS );
+	qglTexCoord2f( 0.f, 0.f ); qglVertex2f( -1.f, -1.f );
+	qglTexCoord2f( 1.f, 0.f ); qglVertex2f(  1.f, -1.f );
+	qglTexCoord2f( 1.f, 1.f ); qglVertex2f(  1.f,  1.f );
+	qglTexCoord2f( 0.f, 1.f ); qglVertex2f( -1.f,  1.f );
+	qglEnd();
+	qglMatrixMode( GL_PROJECTION );
+	qglPopMatrix();
+	qglMatrixMode( GL_MODELVIEW );
+	qglPopMatrix();
 	glDisable( GL_TEXTURE_2D );
 #else
 	if ( !ldr_prog ) {
