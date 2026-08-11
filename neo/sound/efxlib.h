@@ -24,11 +24,26 @@ public:
 
 	bool	FindEffect( const idStr &name, sndReverbParams_t *out ) const;
 	bool	LoadFile( const char *filename, bool OSPath = false );
+	/* The built-in fallback for when the map has no efxs/<map>.efx.
+	 * Retail Doom 3 shipped no efx files at all - they came with the
+	 * expansion - so without this the reverb engine never engages on
+	 * stock content.  The fallback is one effect named "default",
+	 * which is the last rung of the world's lookup ladder, holding
+	 * the canonical EAX GENERIC preset.  It is parsed from embedded
+	 * text through the exact same grammar as a file, so the resulting
+	 * parameters are bit-identical to what an on-disk file with the
+	 * same content would produce - by construction, and verified by
+	 * test. */
+	bool	LoadDefaults( void );
+	static const char *DefaultSource( int *length );
+	/* test entry: the shared parser on a caller-supplied lexer */
+	bool	TestParse( idLexer &src ) { return ParseSource( src ); }
 	void	Clear( void ) { effects.DeleteContents( true ); }
 	bool	IsLoaded( void ) const { return effects.Num() > 0; }
 
 private:
 	bool	ReadEffect( idLexer &lexer, idSoundEffect *effect );
+	bool	ParseSource( idLexer &src );
 
 	idList<idSoundEffect *> effects;
 };

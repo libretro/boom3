@@ -131,19 +131,22 @@ bool idEFXFile::ReadEffect( idLexer &src, idSoundEffect *effect ) {
 	return true;
 }
 
-bool idEFXFile::LoadFile( const char *filename, bool OSPath ) {
-	idLexer src( LEXFL_NOSTRINGCONCAT );
+/*
+================
+idEFXFile::ParseSource
 
-	src.LoadFile( filename, OSPath );
-	if ( !src.IsLoaded() ) {
-		return false;
-	}
-
+One grammar for both sources.  LoadFile and LoadDefaults both come
+through here, which is what makes the fallback bit-exact with a real
+file rather than merely similar: there is no second implementation to
+drift.
+================
+*/
+bool idEFXFile::ParseSource( idLexer &src ) {
 	if ( !src.ExpectTokenString( "Version" ) ) {
 		return false;
 	}
 	if ( src.ParseInt() != 1 ) {
-		src.Error( "idEFXFile::LoadFile: Unknown file version" );
+		src.Error( "idEFXFile::ParseSource: Unknown file version" );
 		return false;
 	}
 
@@ -156,4 +159,81 @@ bool idEFXFile::LoadFile( const char *filename, bool OSPath ) {
 	}
 
 	return true;
+}
+
+bool idEFXFile::LoadFile( const char *filename, bool OSPath ) {
+	idLexer src( LEXFL_NOSTRINGCONCAT );
+
+	src.LoadFile( filename, OSPath );
+	if ( !src.IsLoaded() ) {
+		return false;
+	}
+	return ParseSource( src );
+}
+
+/*
+================
+idEFXFile::LoadDefaults
+
+The canonical EAX GENERIC preset, expressed in the file grammar - the
+millibel and size fields go through the same conversions a file's would.
+Values are Creative's EFX_REVERB_PRESET_GENERIC / EAX standard preset:
+room -1000 mB, room hf -100 mB, decay 1.49 s with an HF ratio of 0.83,
+reflections -2602 mB at 7 ms, late reverb 200 mB at 11 ms, and the
+decay-HF-limit flag set.  A deliberately unremarkable room: present
+enough that the reverb engine runs, subtle enough to sit under a game
+that was mixed without it.
+================
+*/
+static const char defaultEfx[] =
+		"Version 1\n"
+		"reverb default {\n"
+		"\t\"environment\" 0\n"
+		"\t\"environment size\" 7.5\n"
+		"\t\"environment diffusion\" 1.0\n"
+		"\t\"room\" -1000\n"
+		"\t\"room hf\" -100\n"
+		"\t\"room lf\" 0\n"
+		"\t\"decay time\" 1.49\n"
+		"\t\"decay hf ratio\" 0.83\n"
+		"\t\"decay lf ratio\" 1.0\n"
+		"\t\"reflections\" -2602\n"
+		"\t\"reflections delay\" 0.007\n"
+		"\t\"reverb\" 200\n"
+		"\t\"reverb delay\" 0.011\n"
+		"\t\"echo time\" 0.25\n"
+		"\t\"echo depth\" 0.0\n"
+		"\t\"modulation time\" 0.25\n"
+		"\t\"modulation depth\" 0.0\n"
+		"\t\"air absorption hf\" -5.0\n"
+		"\t\"hf reference\" 5000.0\n"
+		"\t\"lf reference\" 250.0\n"
+		"\t\"room rolloff factor\" 0.0\n"
+		"\t\"flags\" 0x20\n"
+		"}\n";
+
+/*
+================
+idEFXFile::DefaultSource
+
+The embedded text, exported so the bit-exactness test parses the same
+bytes it writes to disk - one copy, so the test and the implementation
+cannot drift apart.
+================
+*/
+const char *idEFXFile::DefaultSource( int *length ) {
+	if ( length ) {
+		*length = (int)sizeof( defaultEfx ) - 1;
+	}
+	return defaultEfx;
+}
+
+bool idEFXFile::LoadDefaults( void ) {
+	idLexer src( LEXFL_NOSTRINGCONCAT );
+
+	src.LoadMemory( defaultEfx, (int)sizeof( defaultEfx ) - 1, "<built-in default efx>" );
+	if ( !src.IsLoaded() ) {
+		return false;
+	}
+	return ParseSource( src );
 }

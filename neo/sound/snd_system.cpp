@@ -857,7 +857,17 @@ void idSoundSystemLocal::EndLevelLoadStart( const char *mapstring ) {
 		if ( efxloaded ) {
 			common->Printf( "sound: found %s\n", efxname.c_str() );
 		} else {
-			common->Printf( "sound: missing %s\n", efxname.c_str() );
+			/* Retail Doom 3 shipped no efx files at all - the expansion
+			 * introduced them - so on stock content this branch runs for
+			 * every map and the reverb engine never engaged.  The
+			 * built-in default is one "default" entry, the last rung of
+			 * the lookup ladder, parsed through the same grammar as a
+			 * file so the parameters are bit-identical to an on-disk
+			 * copy of the same text.  A real efxs/<map>.efx always wins
+			 * because this only runs when there is none. */
+			efxloaded = EFXDatabase.LoadDefaults();
+			common->Printf( "sound: missing %s, using built-in default reverb\n",
+					efxname.c_str() );
 		}
 	}
 
