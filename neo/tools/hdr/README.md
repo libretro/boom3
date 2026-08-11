@@ -51,23 +51,17 @@ and afterwards it passes:
 Same harness, same objects, one changed.  That is the only reason to
 believe the pass says anything.
 
-## Status after the HUD bypass was removed
+## Cases
 
-The two-pass path this harness grew controls for is gone from the core,
-and the harness has not been brought back into line with that: against
-the current tree `hdr_ensure_target` declines and every case reports it.
-Its initialisation notes below are still correct and still the hard-won
-part; what needs redoing is the frame it drives.  Recorded here rather
-than left as a passing test that is not testing.
-
-## Status after the HUD bypass was removed
-
-The two-pass path this harness grew controls for is gone from the core,
-and the harness has not been brought back into line with that: against
-the current tree `hdr_ensure_target` declines and every case reports it.
-Its initialisation notes below are still correct and still the hard-won
-part; what needs redoing is the frame it drives.  Recorded here rather
-than left as a passing test that is not testing.
+    normal        two frames under two curves; the scene must respond to
+                  the curve, which is what proves the composite ran
+    --menu-only   a 2D-only frame; the HUD strip must reach the screen
+    --chroma      a 2048px frame with one hard edge at 85% across; Heavy
+                  chromatic aberration must put red about 2px outside
+                  blue at that edge.  Edges are located by gradient
+                  centroid because the bloom skirt defeats any fixed
+                  threshold - both channels cross it on the glow, pixels
+                  before the edge, and read as coincident.
 
 ## Negative controls
 
