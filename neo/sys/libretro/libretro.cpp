@@ -2860,15 +2860,26 @@ static const char *hdr_fs_src =
 	   three channels. */
 	"  vec3 base;\n"
 	"  if (uSsaa.x > 0.0) {\n"
+	/* uSsaa.y sign selects the resolve: negative means the Filmic Log
+	   curve is active and the resolve is the geometric mean - the
+	   curve-matched average - otherwise the Karis proxy.  Same
+	   half-texel magnitude either way. */
+	"    vec2 ssOff = abs(uSsaa);\n"
 	"    vec3 acc = vec3(0.0); float wsum = 0.0;\n"
 	"    for (int ky = -1; ky <= 1; ky += 2) {\n"
 	"      for (int kx = -1; kx <= 1; kx += 2) {\n"
-	"        vec3 c = texture2D(uScene, vUV + vec2(float(kx), float(ky)) * uSsaa).rgb;\n"
-	"        float w = 1.0 / (1.0 + max(c.r, max(c.g, c.b)));\n"
-	"        acc += c * w; wsum += w;\n"
+	"        vec3 c = texture2D(uScene, vUV + vec2(float(kx), float(ky)) * ssOff).rgb;\n"
+	"        if (uSsaa.y < 0.0) {\n"
+	"          acc += log2(c + 0.0001);\n"
+	"        } else {\n"
+	"          float w = 1.0 / (1.0 + max(c.r, max(c.g, c.b)));\n"
+	"          acc += c * w; wsum += w;\n"
+	"        }\n"
 	"      }\n"
 	"    }\n"
-	"    base = acc / wsum;\n"
+	"    base = (uSsaa.y < 0.0)\n"
+	"        ? max(exp2(acc * 0.25) - 0.0001, vec3(0.0))\n"
+	"        : acc / wsum;\n"
 	"  } else {\n"
 	"    base = texture2D(uScene, vUV).rgb;\n"
 	"  }\n"
@@ -3121,6 +3132,39 @@ static const char *hdr_arb_up_fs_src =
  * No new temporaries - the composite is at the native limit of 16 -
  * so e, m, u and a are reused; all are dead until after this point,
  * and v belongs to chromatic aberration and is not touched. */
+/* The Filmic Log resolve: geometric mean of the 2x2 - average the
+ * logs, exponentiate.  Film response averages in log exposure, so for
+ * the log curve this is the curve-matched resolve rather than the
+ * Karis proxy, and it is harder on fireflies by construction: the
+ * standalone measurement puts the 8.0-per-2x2 field at 0.053 against
+ * Karis 0.298 and linear 2.0075, matching (8 * 0.01^3)^(1/4) exactly.
+ * kSsEps guards log(0) and is subtracted back, so a uniform field is a
+ * fixed point and pure black survives - both executed as invariants
+ * before this was wired.  Same dead temps as the Karis fetch. */
+static const char hdr_geomean_fetch[] =
+	"PARAM kSsEps = { 0.0001, 0.0001, 0.0001, 1.0 };\n"
+	"MOV e, 0.0;\n"
+	"ADD t.xy, fragment.texcoord[0], -program.env[35];\n"
+	"TEX u, t, texture[0], 2D;\n"
+	"ADD u.xyz, u, kSsEps; LG2 u.x, u.x; LG2 u.y, u.y; LG2 u.z, u.z;\n"
+	"MAD e.xyz, u, 0.25, e;\n"
+	"MOV t.x, fragment.texcoord[0].x; ADD t.x, t.x, program.env[35].x;\n"
+	"TEX u, t, texture[0], 2D;\n"
+	"ADD u.xyz, u, kSsEps; LG2 u.x, u.x; LG2 u.y, u.y; LG2 u.z, u.z;\n"
+	"MAD e.xyz, u, 0.25, e;\n"
+	"ADD t.xy, fragment.texcoord[0], program.env[35];\n"
+	"TEX u, t, texture[0], 2D;\n"
+	"ADD u.xyz, u, kSsEps; LG2 u.x, u.x; LG2 u.y, u.y; LG2 u.z, u.z;\n"
+	"MAD e.xyz, u, 0.25, e;\n"
+	"MOV t.x, fragment.texcoord[0].x; ADD t.x, t.x, -program.env[35].x;\n"
+	"TEX u, t, texture[0], 2D;\n"
+	"ADD u.xyz, u, kSsEps; LG2 u.x, u.x; LG2 u.y, u.y; LG2 u.z, u.z;\n"
+	"MAD e.xyz, u, 0.25, e;\n"
+	"EX2 s.x, e.x; EX2 s.y, e.y; EX2 s.z, e.z;\n"
+	"ADD s.xyz, s, -kSsEps;\n"
+	"MOV s.a, kSsEps.a;\n"
+	"MAX s, s, 0.0;\n";
+
 static const char hdr_karis_fetch[] =
 	"MOV e, 0.0;\n"
 	"MOV m.x, 0.0;\n"
@@ -3893,12 +3937,18 @@ static const char *hdr_arb_composite_src( int mode, bool twoBand ) {
 		static const char stockFetch[] = "TEX s, fragment.texcoord[0], texture[0], 2D;\n";
 		char *at = strstr( p, stockFetch );
 		if ( at ) {
+			/* Filmic Log gets its curve-matched resolve; every other
+			 * curve keeps the Karis proxy.  Reinhard-exact was priced
+			 * and declined - per-channel scalar RCPs for a marginal
+			 * gain - and ACES 2.0 has no cheap inverse. */
+			const char *fetch = ( mode == HDR_ROLLOFF_FILMICLOG )
+					? hdr_geomean_fetch : hdr_karis_fetch;
 			const size_t stockLen = sizeof( stockFetch ) - 1;
-			const size_t karisLen = sizeof( hdr_karis_fetch ) - 1;
+			const size_t fetchLen = strlen( fetch );
 			const size_t tail = strlen( at + stockLen ) + 1;
-			if ( strlen( p ) - stockLen + karisLen < sizeof( buf[0] ) ) {
-				memmove( at + karisLen, at + stockLen, tail );
-				memcpy( at, hdr_karis_fetch, karisLen );
+			if ( strlen( p ) - stockLen + fetchLen < sizeof( buf[0] ) ) {
+				memmove( at + fetchLen, at + stockLen, tail );
+				memcpy( at, fetch, fetchLen );
 			}
 		}
 		/* With chromatic aberration off, its gather is no longer the
@@ -6097,9 +6147,13 @@ static void hdr_present( GLuint dstFbo ) {
 	glUniform1i( hdr_loc_bloomW, 2 );
 	glUniform1f( hdr_loc_bloomAmt, haveBloom ? hdr_bloom_amount : 0.0f );
 	if ( hdr_loc_ssaa >= 0 ) {
-		if ( hdr_ssaa == 2 && hdr_w > 0 && hdr_h > 0 )
-			glUniform2f( hdr_loc_ssaa, 0.5f / (float)hdr_w, 0.5f / (float)hdr_h );
-		else
+		if ( hdr_ssaa == 2 && hdr_w > 0 && hdr_h > 0 ) {
+			/* y sign carries the resolve choice to the shader */
+			float sy = 0.5f / (float)hdr_h;
+			if ( hdr_rolloff_mode == HDR_ROLLOFF_FILMICLOG )
+				sy = -sy;
+			glUniform2f( hdr_loc_ssaa, 0.5f / (float)hdr_w, sy );
+		} else
 			glUniform2f( hdr_loc_ssaa, 0.0f, 0.0f );
 	}
 	if ( hdr_loc_ca >= 0 ) {
