@@ -344,6 +344,23 @@ static bool RB_GLSL_InitShaders(void) {
        backend's own multiply is what makes "off" provably free.
     */
     idStr fp( interactionShaderFP );
+
+    /* Toksvig specular antialiasing: N is deliberately unnormalised
+       above, so its length carries the mip variance; the falloff
+       exponent 12 is what this backend hardcodes.  Load-time
+       substitution for the same reason as the spectral mix: off is
+       exactly the shader that shipped. */
+    if ( r_specularAA.GetBool() ) {
+      const char *tokStock = "  float NdotH2 = NdotH * NdotH;\n  float NdotH4 = NdotH2 * NdotH2;\n  float specularFalloff = NdotH4 * NdotH4 * NdotH4;";
+      if ( fp.Find( tokStock ) != -1 ) {
+        fp.Replace( tokStock,
+          "  float tkLen = length(N);\n"
+          "  float tkFt = tkLen / (tkLen + 12.0 * (1.0 - tkLen));\n"
+          "  float specularFalloff = pow(max(NdotH, 0.0), 12.0 * tkFt);" );
+      } else {
+        common->Warning( "r_specularAA: GLES falloff lines not found; shader left stock" );
+      }
+    }
     const char *stockLine = "gl_FragColor = vec4(dhewm3Epilogue(color), 1.0) * var_Color;";
     if ( r_spectralMix.GetBool() && fp.Find( stockLine ) != -1 ) {
       idStr mix( "vec3 smBase = dhewm3Epilogue(color);\n" );

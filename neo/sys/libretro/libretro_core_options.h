@@ -321,6 +321,26 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "standard"
    },
    {
+      "doom_specular_aa",
+      "Specular Antialiasing (Toksvig)",
+      NULL,
+      "Widens the specular lobe where the surface is rough at the current "
+      "mip footprint, using the normal shortening that mip averaging "
+      "already encodes. This band-limits the highlight itself, so subpixel "
+      "speculars stop shimmering - with or without supersampling, and it "
+      "composes with it. Flat, full-length normals are untouched. Applied "
+      "when shaders load, so changing it takes effect on the next level "
+      "load or renderer restart.",
+      NULL,
+      NULL,
+      {
+         { "disabled", NULL },
+         { "enabled",  NULL },
+         { NULL, NULL },
+      },
+      "disabled"
+   },
+   {
       "doom_hdr_ssaa",
       "Supersampling (2x2)",
       NULL,

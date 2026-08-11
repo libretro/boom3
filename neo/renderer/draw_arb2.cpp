@@ -843,6 +843,49 @@ void R_LoadARBProgram( int progIndex ) {
 			start = buffer;
 		}
 	}
+	/* Toksvig specular antialiasing, spliced the same way.  The stock
+	   program never normalises localNormal, and R_MipMap averages
+	   without renormalising, so at the specular table read the
+	   normal length still carries the variance the mip folded in.
+	   The dot is raised to ft = len / (len + s(1-len)) before the
+	   table, which is exactly pow(dot, s*ft) against the table's
+	   own exponent - wider lobe where the surface is rough at this
+	   footprint, the stock lobe where it is flat.  s matches the
+	   falloff shape: 9.1 is the tailed ramp's true exponent; the
+	   original ramp is a shifted quadratic, not a power, and 12 is
+	   the same effective exponent the GLES backend hardcodes to
+	   match the D3 look - an approximation, and said so.  Only R2 is
+	   used, dead at this point; no temporaries are added. */
+	if ( progs[progIndex].ident == FPROG_INTERACTION && r_specularAA.GetBool() ) {
+		extern int r_specularFalloffShape;
+		const char *tabLine = strstr( start, "TEX\tR1, specular, texture[6], 2D;" );
+		if ( !tabLine )
+			tabLine = strstr( start, "TEX R1, specular, texture[6], 2D;" );
+		if ( !tabLine ) {
+			common->Warning( "r_specularAA: specular table read not found; program left stock" );
+		} else {
+			idStr head( start );
+			head.CapLength( (int)( tabLine - start ) );
+			idStr tail( tabLine );
+			idStr tok;
+			const float s = ( r_specularFalloffShape != 0 ) ? 9.1f : 12.0f;
+			tok.Append( "DP3 R2.x, localNormal, localNormal;\n" );
+			tok.Append( "RSQ R2.y, R2.x;\n" );
+			tok.Append( "MUL R2.x, R2.x, R2.y;\n" );
+			tok.Append( "MAD R2.y, R2.x, -1.0, 1.0;\n" );
+			tok += va( "MAD R2.y, R2.y, %.4f, R2.x;\n", s );
+			tok.Append( "RCP R2.y, R2.y;\n" );
+			tok.Append( "MUL R2.x, R2.x, R2.y;\n" );
+			tok.Append( "MAX R2.z, specular.x, 0.0;\n" );
+			tok.Append( "POW R2.z, R2.z, R2.x;\n" );
+			tok.Append( "MOV specular, R2.z;\n" );
+			idStr rebuilt = head + tok + tail;
+			buffer = (char *)_alloca( rebuilt.Length() + 1 );
+			strcpy( buffer, rebuilt.c_str() );
+			start = buffer;
+		}
+	}
+
 
 	end = strstr( start, "END" );
 

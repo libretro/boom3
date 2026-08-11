@@ -68,6 +68,16 @@ idCVar r_useLightPortalFlow( "r_useLightPortalFlow", "1", CVAR_RENDERER | CVAR_B
    Antialiasing row writes exactly this cvar and repurposing it lets the
    in-game menu drive the real feature.  The libretro layer keeps it,
    the core option and the actual supersample state in sync. */
+/* Toksvig specular antialiasing.  The normal maps are mipped by a
+   plain byte average with no renormalisation, so a distant or oblique
+   surface samples a shortened normal whose length encodes the normal
+   variance the mip averaged away.  With this on, the specular lobe is
+   widened by that variance - the dot is raised to ft before the
+   falloff, ft = len / (len + s(1-len)) - which band-limits the BRDF
+   itself and stops subpixel highlights shimmering.  A full-length
+   normal gives ft = 1 and the stock result.  Applied at program load,
+   like the spectral mix. */
+idCVar r_specularAA( "r_specularAA", "0", CVAR_RENDERER | CVAR_BOOL | CVAR_ARCHIVE, "Toksvig specular antialiasing: widen the lobe by mip-shortened normal variance" );
 idCVar r_multiSamples( "r_multiSamples", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "2x2 supersampled antialiasing: 0 off, 2 on (this port has no MSAA)" );
 idCVar r_mode( "r_mode", "5", CVAR_ARCHIVE | CVAR_RENDERER | CVAR_INTEGER, "video mode number" );
 idCVar r_customWidth( "r_customWidth", "720", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "custom screen width. set r_mode to -1 to activate" );

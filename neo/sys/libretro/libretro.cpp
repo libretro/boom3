@@ -888,6 +888,13 @@ static void update_variables(bool startup)
 	/* Pseudo-spectral mixing.  The ARB interaction program is rewritten
 	 * at load, so this only takes effect on the next program load - the
 	 * option text says as much rather than appearing to do nothing. */
+	/* Toksvig specular antialiasing - rewritten at program load like
+	 * the spectral mix, and the option text says so. */
+	var.key = "doom_specular_aa";
+	var.value = NULL;
+	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+		cvarSystem->SetCVarBool("r_specularAA", strcmp(var.value, "enabled") == 0);
+
 	var.key = "doom_spectral_mix";
 	var.value = NULL;
 	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
