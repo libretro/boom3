@@ -317,6 +317,18 @@ int main(int argc, char **argv)
 		glVertex2f(0.05f, 1.f);   glVertex2f(-0.05f, 1.f);
 		glVertex2f(-1.f, -0.05f); glVertex2f(1.f, -0.05f);
 		glVertex2f(1.f, 0.05f);   glVertex2f(-1.f, 0.05f);
+		/* the anti-magnification marker: the brightest thing in the
+		 * frame, well off centre.  A geometry bug that scales or
+		 * crops the presentation moves it or loses it, and the
+		 * checkerboard cannot say so because magnifying a periodic
+		 * pattern reproduces the pattern - which is how the
+		 * hdr_w-viewport 2x-zoom shipped past the first dump. */
+		/* magenta, because everything else bright in the scene is
+		 * neutral: the detector keys on R+B-2G, which the white cross
+		 * and its bloom cannot win no matter how the curve saturates */
+		glColor4f(20.f, 0.f, 20.f, 1.f);
+		glVertex2f(-0.52f, 0.23f); glVertex2f(-0.48f, 0.23f);
+		glVertex2f(-0.48f, 0.27f); glVertex2f(-0.52f, 0.27f);
 		glEnd();
 		{
 			GLuint dstTex = 0, dstFbo = 0;
@@ -340,6 +352,26 @@ int main(int argc, char **argv)
 				for (x = 0; x < OW; x++)
 					fwrite(&out2[(y * OW + x) * 4], 1, 3, f);
 			fclose(f);
+		}
+		{
+			int bx = -1, by = -1, bv = -1000;
+			for (y = 0; y < OW; y++)
+				for (x = 0; x < OW; x++) {
+					int v = out2[(y * OW + x) * 4]
+						+ out2[(y * OW + x) * 4 + 2]
+						- 2 * out2[(y * OW + x) * 4 + 1];
+					if (v > bv) { bv = v; bx = x; by = y; }
+				}
+			/* marker at NDC (-0.5, 0.25) -> pixel (0.25, 0.625) of the
+			   presentation, whatever the scene size is */
+			printf("  marker argmax (%d,%d), expected (%d,%d)\n",
+				bx, by, OW / 4, (int)(OW * 0.625f));
+			if (bx < OW / 4 - 6 || bx > OW / 4 + 6 ||
+			    by < (int)(OW * 0.625f) - 6 || by > (int)(OW * 0.625f) + 6) {
+				printf("  FAIL: the marker is not where the scene put it - "
+					"the presentation geometry is wrong\n");
+				return 1;
+			}
 		}
 		printf("  dumped mode=%d ca=%d ssaa=%d hal=%d\n", mode, ca, ss, hal);
 		OSMesaDestroyContext(ctx);

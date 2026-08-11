@@ -5985,7 +5985,15 @@ static void hdr_present( GLuint dstFbo ) {
 
 
 	glBindFramebuffer( RARCH_GL_FRAMEBUFFER, dstFbo );
-	glViewport( 0, 0, hdr_w, hdr_h );
+	/* The presentation viewport is the frontend's size, not the scene's.
+	 * These were the same number until supersampling split them, at
+	 * which point hdr_w here meant "draw the fullscreen triangle twice
+	 * as large as the buffer" - only its lower-left quarter landed, and
+	 * the picture arrived magnified 2x.  The dump scene that should
+	 * have caught it was a checkerboard, and magnifying a periodic
+	 * pattern reproduces the pattern; the dump now carries an
+	 * off-centre marker whose output position is asserted instead. */
+	glViewport( 0, 0, scr_width, scr_height );
 
 #ifdef HAVE_OPENGLES
 	glUseProgram( hdr_prog );
