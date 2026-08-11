@@ -52,6 +52,7 @@ extern "C" int _ZL16hdr_rolloff_mode;
  * still links if the symbol moves */
 extern "C" int _ZL13hdr_chroma_ab __attribute__((weak));
 extern "C" int _ZL8hdr_ssaa __attribute__((weak));
+extern "C" int _ZL12hdr_halation __attribute__((weak));
 extern "C" volatile float _ZL21hdr_ssaa_env_override __attribute__((weak));
 /* the option gate; the harness turns it on to test the path at all */
 /* retro_run clears this at the top of every frame; the harness has to
@@ -59,6 +60,7 @@ extern "C" volatile float _ZL21hdr_ssaa_env_override __attribute__((weak));
 extern "C" bool _ZL15hdr_world_drawn __attribute__((weak));
 extern "C" void _ZL14hdr_bind_scenev(void);
 extern "C" void _ZL11hdr_presentj(unsigned int dstFbo);
+extern "C" void _ZL11ldr_presentj(unsigned int dstFbo);
 /* Present on builds that map the scene before the HUD; weak, so this
    file drives either shape of frame. */
 /* Call what RB_DrawView calls, not the static behind it - the gate that
@@ -150,6 +152,11 @@ int main(int argc, char **argv)
 	   whole point is that one hot sample no longer dominates the mean;
 	   if the two frames match, the weighting is not happening. */
 	const int ssaa = (argc > 1 && !strcmp(argv[1], "--ssaa"));
+	/* --dump <mode> <chroma> <ssaa> <halation>: render a structured scene
+	   with the given options and write /tmp/dump.ppm for eyes-on
+	   comparison; the fix for a screenshot begins with reproducing the
+	   screenshot. */
+	const int dump = (argc > 5 && !strcmp(argv[1], "--dump"));
 	/* The engine pumps many swaps per retro_run - every menu frame and
 	 * every loading-screen update.  Each is a whole frame: composite,
 	 * present, rebind.  Testing one swap per run misses anything that
@@ -209,6 +216,136 @@ int main(int argc, char **argv)
 	 * the scene before the HUD is drawn, and it cannot be tested with
 	 * the default roll-off because Reinhard's soft knee is the identity
 	 * below 0.75, so a 0.5 panel comes out at 0.5 either way. */
+	/* --ldr-ssaa: supersampling without HDR.  1-texel vertical stripes of
+	   1.0 and 0.0 at the 2x scene resolve to a uniform 0.5 - the box
+	   average - so the output must be flat at ~127 with next to no
+	   variance.  An unresolved pass-through would keep the stripes and
+	   the variance catches it. */
+	if (argc > 1 && !strcmp(argv[1], "--ldr-ssaa")) {
+		const int OW = 128, SW = OW * 2;
+		unsigned char *out2 = (unsigned char *)malloc((size_t)OW * OW * 4);
+		int x, y;
+		hdr_output_active = 0;
+		if (&_ZL8hdr_ssaa) _ZL8hdr_ssaa = 2;
+		scr_width = OW; scr_height = OW;
+		_ZL14hdr_bind_scenev();   /* binds the LDR target */
+		glViewport(0, 0, SW, SW);
+		glClearColor(0.f, 0.f, 0.f, 1.f);
+		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+		glDisable(GL_FRAGMENT_PROGRAM_ARB);
+		glDisable(GL_VERTEX_PROGRAM_ARB);
+		glActiveTexture(GL_TEXTURE0);
+		glDisable(GL_TEXTURE_2D);
+		glColor4f(1.f, 1.f, 1.f, 1.f);
+		glBegin(GL_QUADS);
+		for (x = 0; x < SW; x += 2) {
+			glVertex2f(x * 2.0f / SW - 1.0f,       -1.f);
+			glVertex2f((x + 1) * 2.0f / SW - 1.0f, -1.f);
+			glVertex2f((x + 1) * 2.0f / SW - 1.0f,  1.f);
+			glVertex2f(x * 2.0f / SW - 1.0f,        1.f);
+		}
+		glEnd();
+		{
+			GLuint dstTex = 0, dstFbo = 0;
+			double mean = 0, var = 0;
+			glGenTextures(1, &dstTex);
+			glBindTexture(GL_TEXTURE_2D, dstTex);
+			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, OW, OW, 0,
+					GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+			glGenFramebuffers(1, &dstFbo);
+			glBindFramebuffer(GL_FRAMEBUFFER, dstFbo);
+			glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+					GL_TEXTURE_2D, dstTex, 0);
+			_ZL11ldr_presentj(dstFbo);
+			glFinish();
+			glBindFramebuffer(GL_FRAMEBUFFER, dstFbo);
+			glReadPixels(0, 0, OW, OW, GL_RGBA, GL_UNSIGNED_BYTE, out2);
+			for (y = 8; y < OW - 8; y++)
+				for (x = 8; x < OW - 8; x++)
+					mean += out2[(y * OW + x) * 4];
+			mean /= (OW - 16) * (OW - 16);
+			for (y = 8; y < OW - 8; y++)
+				for (x = 8; x < OW - 8; x++) {
+					double d = out2[(y * OW + x) * 4] - mean;
+					var += d * d;
+				}
+			var /= (OW - 16) * (OW - 16);
+			printf("  ldr-ssaa: mean %.1f (want ~127), variance %.2f (want ~0)\n",
+				mean, var);
+			if (mean < 100 || mean > 155 || var > 40) {
+				printf("  FAIL: the box resolve is not happening\n");
+				return 1;
+			}
+		}
+		printf("  PASS\n");
+		OSMesaDestroyContext(ctx);
+		return 0;
+	}
+
+	if (dump) {
+		const int mode = atoi(argv[2]), ca = atoi(argv[3]);
+		const int ss = atoi(argv[4]), hal = atoi(argv[5]);
+		const int OW = 384, SW = OW * ss;
+		unsigned char *out2 = (unsigned char *)malloc((size_t)OW * OW * 4);
+		int x, y;
+
+		_ZL16hdr_rolloff_mode = mode;
+		if (&_ZL13hdr_chroma_ab) _ZL13hdr_chroma_ab = ca;
+		if (&_ZL8hdr_ssaa) _ZL8hdr_ssaa = ss;
+		if (&_ZL12hdr_halation) _ZL12hdr_halation = hal;
+		scr_width = OW; scr_height = OW;
+		if (!out2 || !hdr_ensure_target(SW, SW)) { printf("no target\n"); return 1; }
+		glDisable(GL_FRAGMENT_PROGRAM_ARB);
+		glDisable(GL_VERTEX_PROGRAM_ARB);
+		hdr_bind_scene();
+		glViewport(0, 0, SW, SW);
+		glClearColor(0.02f, 0.02f, 0.02f, 1.f);
+		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+		/* a structured scene: mid-grey checker, bright bars, hot spots */
+		glBegin(GL_QUADS);
+		for (y = 0; y < 8; y++)
+			for (x = 0; x < 8; x++) {
+				float g = ((x + y) & 1) ? 0.35f : 0.12f;
+				glColor4f(g, g, g, 1.f);
+				glVertex2f(-1.f + x * 0.25f,        -1.f + y * 0.25f);
+				glVertex2f(-1.f + (x + 1) * 0.25f,  -1.f + y * 0.25f);
+				glVertex2f(-1.f + (x + 1) * 0.25f,  -1.f + (y + 1) * 0.25f);
+				glVertex2f(-1.f + x * 0.25f,        -1.f + (y + 1) * 0.25f);
+			}
+		glColor4f(6.f, 6.f, 6.f, 1.f);
+		glVertex2f(-0.05f, -1.f); glVertex2f(0.05f, -1.f);
+		glVertex2f(0.05f, 1.f);   glVertex2f(-0.05f, 1.f);
+		glVertex2f(-1.f, -0.05f); glVertex2f(1.f, -0.05f);
+		glVertex2f(1.f, 0.05f);   glVertex2f(-1.f, 0.05f);
+		glEnd();
+		{
+			GLuint dstTex = 0, dstFbo = 0;
+			glGenTextures(1, &dstTex);
+			glBindTexture(GL_TEXTURE_2D, dstTex);
+			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, OW, OW, 0,
+					GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+			glGenFramebuffers(1, &dstFbo);
+			glBindFramebuffer(GL_FRAMEBUFFER, dstFbo);
+			glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+					GL_TEXTURE_2D, dstTex, 0);
+			hdr_present(dstFbo);
+			glFinish();
+			glBindFramebuffer(GL_FRAMEBUFFER, dstFbo);
+			glReadPixels(0, 0, OW, OW, GL_RGBA, GL_UNSIGNED_BYTE, out2);
+		}
+		{
+			FILE *f = fopen("/tmp/dump.ppm", "wb");
+			fprintf(f, "P6 %d %d 255\n", OW, OW);
+			for (y = OW - 1; y >= 0; y--)
+				for (x = 0; x < OW; x++)
+					fwrite(&out2[(y * OW + x) * 4], 1, 3, f);
+			fclose(f);
+		}
+		printf("  dumped mode=%d ca=%d ssaa=%d hal=%d\n", mode, ca, ss, hal);
+		OSMesaDestroyContext(ctx);
+		return 0;
+	}
+
 	if (ssaa) {
 		const int OW = 256, SW = OW * 2;
 		unsigned char *out2 = (unsigned char *)malloc((size_t)OW * OW * 4);

@@ -478,6 +478,20 @@ static int    hdr_ssaa = 1;
  * zero make all four taps land between the texels, which under
  * GL_LINEAR is the driver's box average. */
 static volatile float hdr_ssaa_env_override = -1.0f;
+/* The 24-bit supersample target.  Without HDR there is no scene target
+ * at all - the engine renders straight into the frontend framebuffer -
+ * so supersampling needs one of its own: RGBA8 with the same depth
+ * attachment the HDR target carries.  The resolve is a single LINEAR
+ * tap at the 2x2 centre, which is the exact box average, and for
+ * display-referred 24-bit content the box is the correct resolve - the
+ * Karis weighting exists to stop linear-light hot samples dominating a
+ * mean, which is a problem 24-bit content cannot have. */
+static GLuint ldr_fbo = 0, ldr_tex = 0, ldr_rbo = 0;
+static int    ldr_w = 0, ldr_h = 0;
+#ifdef HAVE_OPENGLES
+static GLuint ldr_prog = 0;
+static GLint  ldr_loc_tex = -1;
+#endif
 static float  hdr_bloom_amount = 1.0f;      /* 0 = off; live-switchable */
 
 /* bloom chain: two bands (1/4-res tight core, 1/16-res wide haze),
@@ -518,6 +532,7 @@ static GLint  hdr_bright_loc_knee;
 static GLint  hdr_bright_loc_ffknee = -1;
 static void hdr_bind_scene( void );
 static void hdr_present( GLuint dstFbo );
+static void ldr_destroy_target( void );
 
 static retro_log_printf_t log_cb;
 static retro_video_refresh_t video_cb;
@@ -963,6 +978,8 @@ static void update_variables(bool startup)
 			want = 2;
 		if (want != hdr_ssaa) {
 			hdr_ssaa = want;
+			if (want == 1)
+				ldr_destroy_target();   /* ~130MB at 4K; not worth holding */
 			/* the engine's render size follows; the scene target
 			 * follows on the next bind via its own size check */
 			glConfig.vidWidth  = scr_width * hdr_ssaa;
@@ -1203,6 +1220,15 @@ static void context_reset(void)
    memset(hdr_bloom_fbo, 0, sizeof hdr_bloom_fbo);
    memset(hdr_bloom_tex, 0, sizeof hdr_bloom_tex);
    hdr_w = hdr_h = 0;
+   /* the 24-bit supersample target died with the context too; zeroing
+    * the ids without deleting is correct here for the same reason as
+    * above - the objects are already gone with the context */
+   ldr_fbo = ldr_tex = ldr_rbo = 0;
+   ldr_w = ldr_h = 0;
+#ifdef HAVE_OPENGLES
+   ldr_prog = 0;
+   ldr_loc_tex = -1;
+#endif
    /* The ACES 2.0 hue table is a GL object like the rest of these, and
     * was the one name this list did not clear.  A context reset
     * invalidates it while the variable stays non-zero, so the next
@@ -3093,22 +3119,22 @@ static const char *hdr_arb_up_fs_src =
 static const char hdr_karis_fetch[] =
 	"MOV e, 0.0;\n"
 	"MOV m.x, 0.0;\n"
-	"ADD t.xy, fragment.texcoord[0], -program.env[10];\n"
+	"ADD t.xy, fragment.texcoord[0], -program.env[35];\n"
 	"TEX u, t, texture[0], 2D;\n"
 	"MAX a.x, u.x, u.y; MAX a.x, a.x, u.z;\n"
 	"ADD a.x, a.x, 1.0; RCP a.x, a.x;\n"
 	"MAD e, u, a.x, e; ADD m.x, m.x, a.x;\n"
-	"MOV t.x, fragment.texcoord[0].x; ADD t.x, t.x, program.env[10].x;\n"
+	"MOV t.x, fragment.texcoord[0].x; ADD t.x, t.x, program.env[35].x;\n"
 	"TEX u, t, texture[0], 2D;\n"
 	"MAX a.x, u.x, u.y; MAX a.x, a.x, u.z;\n"
 	"ADD a.x, a.x, 1.0; RCP a.x, a.x;\n"
 	"MAD e, u, a.x, e; ADD m.x, m.x, a.x;\n"
-	"ADD t.xy, fragment.texcoord[0], program.env[10];\n"
+	"ADD t.xy, fragment.texcoord[0], program.env[35];\n"
 	"TEX u, t, texture[0], 2D;\n"
 	"MAX a.x, u.x, u.y; MAX a.x, a.x, u.z;\n"
 	"ADD a.x, a.x, 1.0; RCP a.x, a.x;\n"
 	"MAD e, u, a.x, e; ADD m.x, m.x, a.x;\n"
-	"MOV t.x, fragment.texcoord[0].x; ADD t.x, t.x, -program.env[10].x;\n"
+	"MOV t.x, fragment.texcoord[0].x; ADD t.x, t.x, -program.env[35].x;\n"
 	"TEX u, t, texture[0], 2D;\n"
 	"MAX a.x, u.x, u.y; MAX a.x, a.x, u.z;\n"
 	"ADD a.x, a.x, 1.0; RCP a.x, a.x;\n"
@@ -3850,6 +3876,14 @@ static const char *hdr_arb_composite_src( int mode, bool twoBand ) {
 	 * the same exact-line replacement the spectral mix performs on
 	 * interaction.vfp, and like there, "off" is provably stock because
 	 * nothing is spliced at all. */
+	/* Debug: HDR_DUMP_PROG=<path> appends every composite program text
+	 * as built, pre- and post-splice.  This is how the env[10]/ACES2
+	 * collision was found from a single screenshot; it stays because
+	 * the next program-text bug will want it. */
+	if ( getenv( "HDR_DUMP_PROG" ) ) {
+		FILE *df = fopen( getenv( "HDR_DUMP_PROG" ), "ab" );
+		if ( df ) { fwrite( p, 1, strlen( p ), df ); fwrite( "\n=====\n", 1, 7, df ); fclose( df ); }
+	}
 	if ( hdr_ssaa == 2 ) {
 		static const char stockFetch[] = "TEX s, fragment.texcoord[0], texture[0], 2D;\n";
 		char *at = strstr( p, stockFetch );
@@ -3868,6 +3902,10 @@ static const char *hdr_arb_composite_src( int mode, bool twoBand ) {
 		 * two of three channels and colour every edge.  Remove the
 		 * gather and its debug exit outright; the radius prologue that
 		 * remains is dead arithmetic. */
+		if ( getenv( "HDR_DUMP_PROG" ) ) {
+			FILE *df = fopen( getenv( "HDR_DUMP_PROG" ), "ab" );
+			if ( df ) { fwrite( p, 1, strlen( p ), df ); fwrite( "\n=SPLICED=\n", 1, 11, df ); fclose( df ); }
+		}
 		if ( hdr_chroma_ab == 0 ) {
 			static const char *cut[][2] = {
 				{ "TEX u, v, texture[0], 2D;\n", "MOV s.b, u.b;\n" },
@@ -5094,12 +5132,152 @@ static bool hdr_ensure_target( int w, int h ) {
 }
 
 /* bind the scene target as the engine's render destination */
+static bool ldr_ensure_target( int w, int h ) {
+	if ( ldr_fbo && ldr_w == w && ldr_h == h )
+		return true;
+	if ( ldr_fbo ) {
+		glDeleteFramebuffers( 1, &ldr_fbo );
+		glDeleteTextures( 1, &ldr_tex );
+		glDeleteRenderbuffers( 1, &ldr_rbo );
+		ldr_fbo = ldr_tex = ldr_rbo = 0;
+		ldr_w = ldr_h = 0;
+	}
+	glGenTextures( 1, &ldr_tex );
+	glBindTexture( GL_TEXTURE_2D, ldr_tex );
+	glTexImage2D( GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA,
+			GL_UNSIGNED_BYTE, NULL );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
+	glGenRenderbuffers( 1, &ldr_rbo );
+	glBindRenderbuffer( GL_RENDERBUFFER, ldr_rbo );
+	glRenderbufferStorage( GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, w, h );
+	glGenFramebuffers( 1, &ldr_fbo );
+	glBindFramebuffer( RARCH_GL_FRAMEBUFFER, ldr_fbo );
+	glFramebufferTexture2D( RARCH_GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+			GL_TEXTURE_2D, ldr_tex, 0 );
+	glFramebufferRenderbuffer( RARCH_GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
+			GL_RENDERBUFFER, ldr_rbo );
+	if ( glCheckFramebufferStatus( RARCH_GL_FRAMEBUFFER ) != GL_FRAMEBUFFER_COMPLETE ) {
+		glDeleteFramebuffers( 1, &ldr_fbo );
+		glDeleteTextures( 1, &ldr_tex );
+		glDeleteRenderbuffers( 1, &ldr_rbo );
+		ldr_fbo = ldr_tex = ldr_rbo = 0;
+		return false;
+	}
+	ldr_w = w;
+	ldr_h = h;
+	return true;
+}
+
+static void ldr_destroy_target( void ) {
+	if ( ldr_fbo ) glDeleteFramebuffers( 1, &ldr_fbo );
+	if ( ldr_tex ) glDeleteTextures( 1, &ldr_tex );
+	if ( ldr_rbo ) glDeleteRenderbuffers( 1, &ldr_rbo );
+	ldr_fbo = ldr_tex = ldr_rbo = 0;
+	ldr_w = ldr_h = 0;
+#ifdef HAVE_OPENGLES
+	if ( ldr_prog ) glDeleteProgram( ldr_prog );
+	ldr_prog = 0;
+	ldr_loc_tex = -1;
+#endif
+}
+
 static void hdr_bind_scene( void ) {
-	if ( !hdr_output_active )
+	if ( !hdr_output_active ) {
+		/* 24-bit supersampling renders into its own target; everything
+		 * else in 24-bit renders where the caller already bound */
+		if ( hdr_ssaa == 2
+				&& ldr_ensure_target( scr_width * 2, scr_height * 2 ) )
+			glBindFramebuffer( RARCH_GL_FRAMEBUFFER, ldr_fbo );
 		return;
+	}
 	if ( !hdr_ensure_target( scr_width * hdr_ssaa, scr_height * hdr_ssaa ) )
 		return;
 	glBindFramebuffer( RARCH_GL_FRAMEBUFFER, hdr_fbo );
+}
+
+/* the 24-bit downsample: one LINEAR tap per output pixel at the centre
+ * of its 2x2, the exact box average */
+static void ldr_present( GLuint dstFbo ) {
+	if ( hdr_output_active || hdr_ssaa != 2 || ldr_fbo == 0 )
+		return;
+	glBindFramebuffer( RARCH_GL_FRAMEBUFFER, dstFbo );
+	glViewport( 0, 0, scr_width, scr_height );
+	glDisable( GL_DEPTH_TEST );
+	glDisable( GL_BLEND );
+	glDisable( GL_CULL_FACE );
+#ifndef HAVE_OPENGLES
+	if ( qglBindProgramARB ) {
+		glDisable( GL_FRAGMENT_PROGRAM_ARB );
+		glDisable( GL_VERTEX_PROGRAM_ARB );
+	}
+	glActiveTexture( GL_TEXTURE1 );
+	glDisable( GL_TEXTURE_2D );
+	glActiveTexture( GL_TEXTURE0 );
+	glEnable( GL_TEXTURE_2D );
+	glBindTexture( GL_TEXTURE_2D, ldr_tex );
+	glTexEnvi( GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE );
+	glMatrixMode( GL_PROJECTION );
+	glPushMatrix();
+	glLoadIdentity();
+	glMatrixMode( GL_MODELVIEW );
+	glPushMatrix();
+	glLoadIdentity();
+	glColor4f( 1.f, 1.f, 1.f, 1.f );
+	glBegin( GL_QUADS );
+	glTexCoord2f( 0.f, 0.f ); glVertex2f( -1.f, -1.f );
+	glTexCoord2f( 1.f, 0.f ); glVertex2f(  1.f, -1.f );
+	glTexCoord2f( 1.f, 1.f ); glVertex2f(  1.f,  1.f );
+	glTexCoord2f( 0.f, 1.f ); glVertex2f( -1.f,  1.f );
+	glEnd();
+	glMatrixMode( GL_PROJECTION );
+	glPopMatrix();
+	glMatrixMode( GL_MODELVIEW );
+	glPopMatrix();
+	glDisable( GL_TEXTURE_2D );
+#else
+	if ( !ldr_prog ) {
+		static const char vs[] =
+			"attribute vec2 aPos;\n"
+			"varying vec2 vUV;\n"
+			"void main() {\n"
+			"  vUV = aPos * 0.5 + 0.5;\n"
+			"  gl_Position = vec4(aPos, 0.0, 1.0);\n"
+			"}\n";
+		static const char fs[] =
+			"precision mediump float;\n"
+			"varying vec2 vUV;\n"
+			"uniform sampler2D uTex;\n"
+			"void main() { gl_FragColor = texture2D(uTex, vUV); }\n";
+		GLuint v = hdr_compile( GL_VERTEX_SHADER, vs );
+		GLuint f = hdr_compile( GL_FRAGMENT_SHADER, fs );
+		if ( v && f ) {
+			ldr_prog = glCreateProgram();
+			glAttachShader( ldr_prog, v );
+			glAttachShader( ldr_prog, f );
+			glBindAttribLocation( ldr_prog, 0, "aPos" );
+			glLinkProgram( ldr_prog );
+			ldr_loc_tex = glGetUniformLocation( ldr_prog, "uTex" );
+		}
+		if ( v ) glDeleteShader( v );
+		if ( f ) glDeleteShader( f );
+	}
+	if ( ldr_prog ) {
+		static const GLfloat quad[8] = { -1,-1, 1,-1, -1,1, 1,1 };
+		glUseProgram( ldr_prog );
+		glActiveTexture( GL_TEXTURE0 );
+		glBindTexture( GL_TEXTURE_2D, ldr_tex );
+		if ( ldr_loc_tex >= 0 )
+			glUniform1i( ldr_loc_tex, 0 );
+		glEnableVertexAttribArray( 0 );
+		glVertexAttribPointer( 0, 2, GL_FLOAT, GL_FALSE, 0, quad );
+		glDrawArrays( GL_TRIANGLE_STRIP, 0, 4 );
+		glDisableVertexAttribArray( 0 );
+		glUseProgram( 0 );
+	}
+#endif
 }
 
 /* Rec.709 -> Rec.2020 (column-major for glUniformMatrix3fv) */
@@ -5974,7 +6152,15 @@ static void hdr_present( GLuint dstFbo ) {
 		const float r1[4] = { gm[1], gm[4], gm[7], 0.0f };
 		const float r2[4] = { gm[2], gm[5], gm[8], 0.0f };
 		{
-			/* env[10]: the supersample half-texel offsets.  Uploaded for
+			/* env[35]: the supersample half-texel offsets.  env[10] was
+			 * the first choice and produced a production screenshot of
+			 * green/magenta ghosting: ACES 2.0's declarations bind
+			 * env[10] through env[34] as curve parameters, so the
+			 * offsets clobbered inA and inA's own upload fed the taps a
+			 * curve coefficient as a UV offset.  The lesson is that env
+			 * slots are claimed declaratively in PARAM statements, not
+			 * just in upload calls, and a grep of uploads is not an
+			 * audit.  Uploaded for
 			 * every curve, not just Filmic Log - the first placement sat
 			 * inside that branch, and the harness's Reinhard case caught
 			 * it as offsets that never arrived.  Zero when off, so even
@@ -5988,7 +6174,7 @@ static void hdr_present( GLuint dstFbo ) {
 			if ( hdr_ssaa_env_override >= 0.0f ) {
 				p10[0] = p10[1] = hdr_ssaa_env_override;
 			}
-			qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 10, p10 );
+			qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 35, p10 );
 		}
 		qglBindProgramARB( GL_FRAGMENT_PROGRAM_ARB,
 				bandW1 > 0.0f ? hdr_arb_comp2 : hdr_arb_comp1 );
@@ -6091,6 +6277,7 @@ void GLimp_SwapBuffers() {
    /* 30-bit HDR: convert the scene target into the frontend framebuffer
       before presentation; 24-bit mode skips straight past. */
    hdr_present((GLuint)hw_render.get_current_framebuffer());
+   ldr_present((GLuint)hw_render.get_current_framebuffer());
 
    if (libretro_shared_context)
       glFlush();
