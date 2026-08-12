@@ -119,7 +119,10 @@ struct retro_core_option_v2_definition option_defs_us[] = {
    },
    {
       "doom_color_format",
-      "Color Format (Restart Required)",
+      "Color Format (Restart Required)"
+      " 24-bit tone-mapped runs the same scene pipeline - curves, bloom, "
+      "every enhancement - encoded to the stock 24-bit surface: the full "
+      "transform family on any SDR display, no HDR frontend support needed.",
       NULL,
       "24-bit is the standard XRGB8888 output. 30-bit Color (HDR) renders "
       "into a 10-bit surface and emits HDR10 (PQ, Rec.2020): use with the "
@@ -130,6 +133,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       NULL,
       {
          { "24bit",     "24-bit (Standard)" },
+         { "24bit-tonemapped", "24-bit, tone-mapped" },
          { "30bit-hdr", "30-bit Color (HDR)" },
          { NULL, NULL },
       },
@@ -322,7 +326,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
    },
    {
       "doom_hdr_bloom_select",
-      "HDR: Bloom Selection",
+      "Bloom Selection",
       NULL,
       "What counts as a highlight for bloom. Classic keeps the measured "
       "0.70 threshold the bloom was tuned against. Curve knee derives it "
@@ -341,7 +345,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
    },
    {
       "doom_hdr_aces2_surround",
-      "HDR: ACES 2.0 Surround",
+      "ACES 2.0: Surround",
       NULL,
       "The viewing-environment compensation from the ACES 2.0 transform: "
       "dim is the reference assumption and the previous fixed behaviour; "
@@ -359,7 +363,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
    },
    {
       "doom_hdr_highlight_desat",
-      "HDR: Highlight Desaturation",
+      "Highlight Desaturation",
       NULL,
       "Khronos PBR Neutral's hue-preservation stage, made available to "
       "the curves that lack one: saturated highlights that would clip per "
@@ -377,7 +381,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
    },
    {
       "doom_hdr_agx_look",
-      "HDR: AgX Look",
+      "AgX: Look",
       NULL,
       "A grade applied only under the AgX transform. Punchy is the "
       "official higher-contrast, higher-saturation look - contrast 1.35 "
@@ -441,7 +445,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
    },
    {
       "doom_hdr_chromatic",
-      "HDR: Chromatic Aberration",
+      "Chromatic Aberration",
       NULL,
       "Splits red and blue slightly apart toward the edges of the frame, "
       "the way a lens does when it focuses different wavelengths at "
@@ -473,7 +477,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
    },
    {
       "doom_hdr_halation",
-      "HDR: Halation",
+      "Halation",
       NULL,
       "Warms the bloom around bright areas toward red, the way film does. "
       "In a real print the glow around a bright window is orange rather "
@@ -669,7 +673,9 @@ struct retro_core_option_v2_definition option_defs_us[] = {
    },
    {
       "doom_hdr_peak",
-      "HDR: Display Peak Luminance",
+      "HDR: Display Peak Luminance"
+      " HDR10 output only: SDR tone-mapped fixes the display at the "
+      "100-nit reference.",
       NULL,
       "Overrides the peak brightness the frontend reports. ACES 2.0's "
       "tone scale is parameterised by this single number and rebuilds "
@@ -787,7 +793,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
    },
    {
       "doom_hdr_rolloff",
-      "HDR Highlight Roll-Off",
+      "Display Transform (Tone Curve)",
       NULL,
       "How highlights use the headroom between paper white and the "
       "display's peak in 30-bit HDR mode. Reinhard (Soft-Knee) is the "

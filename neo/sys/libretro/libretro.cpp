@@ -131,6 +131,12 @@ static idCVar m_strafe( "m_strafe", "0.25", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_FL
 /* 30-bit / HDR10 output state; the implementation lives above
    GLimp_SwapBuffers, the full design comment with it. */
 bool          hdr_output_active = false;   /* chosen at load, needs restart; read by draw_arb2 */
+/* The second half of the split: hdr_output_active means the scene
+ * pipeline - FP16 scene, curves, every enhancement - and this means the
+ * PQ/HDR10 encode specifically.  24bit-tonemapped runs the first
+ * without the second: the same composite, ending in a gamma 1/2.4
+ * encode to the stock 24-bit surface instead of PQ to the HDR10 one. */
+static bool   hdr_pq_output = false;
 int           r_specularFalloffShape = 0;  /* 0 original hard-knee quadratic, 1 tailed power; read by Image_init */
 float         hdr_particle_gain = 1.0f;  /* particle-stage scale in HDR mode; read by draw_common and draw_gles2 */
 float         hdr_emissive_gain = 1.0f;  /* additive-stage scale in HDR mode; read by draw_common and draw_gles2 */
@@ -447,6 +453,7 @@ static GLint  hdr_loc_hal = -1;
 static GLint  hdr_loc_ca = -1;
 static GLint  hdr_loc_ssaa = -1;
 static GLint  hdr_loc_hldesat = -1;
+static GLint  hdr_loc_outenc = -1;
 static GLint  hdr_loc_film = -1;
 static GLint  hdr_loc_film_lut = -1;
 static GLint  hdr_loc_film_desat = -1;
@@ -546,7 +553,8 @@ static int    hdr_arb_comp_halation = -1;
 static int    hdr_arb_comp_chroma = -1;
 static int    hdr_arb_comp_ssaa = -1;
 static int    hdr_arb_comp_agxlook = -1;
-static int    hdr_arb_comp_desat = -1;  /* halation tint baked in with it */
+static int    hdr_arb_comp_desat = -1;
+static int    hdr_arb_comp_pqout = -1;  /* halation tint baked in with it */
 
 /* Every program in the chain is loaded.  On this build there is no other
    chain to run, so this is a load-state flag rather than a path
@@ -860,6 +868,10 @@ static void update_option_visibility( void ) {
 		d.visible = ( m == curveOpt[i].mode );
 		environ_cb( RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &d );
 	}
+	/* display peak drives the PQ mapping; SDR has no use for it */
+	d.key = "doom_hdr_peak";
+	d.visible = hdr_pq_output;
+	environ_cb( RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &d );
 	d.key = "doom_hdr_highlight_desat";
 	d.visible = ( m != HDR_ROLLOFF_NEUTRAL && m != HDR_ROLLOFF_ACES2FULL
 			&& m != HDR_ROLLOFF_AGX );
@@ -1321,7 +1333,7 @@ static void context_reset(void)
       }
    }
    hdr_aces2_loc_lut = -1;
-   hdr_loc_hal = hdr_loc_ca = hdr_loc_ssaa = hdr_loc_hldesat = -1;
+   hdr_loc_hal = hdr_loc_ca = hdr_loc_ssaa = hdr_loc_hldesat = hdr_loc_outenc = -1;
    hdr_loc_tex = hdr_loc_mat = hdr_loc_parms = -1;
    hdr_loc_bloomT = hdr_loc_bloomW = hdr_loc_bloomAmt = hdr_loc_encScale = -1;
    hdr_loc_film = hdr_loc_film_lut = hdr_loc_film_desat = -1;
@@ -2112,10 +2124,19 @@ bool retro_load_game(const struct retro_game_info *info)
 		   older frontend falls back to the stock 24-bit path. */
 		struct retro_variable cfv = { "doom_color_format", NULL };
 		if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &cfv) && cfv.value
+				&& strcmp(cfv.value, "24bit-tonemapped") == 0) {
+			/* the whole scene pipeline, encoded to the stock surface:
+			 * no pixel-format negotiation, nothing to be refused */
+			hdr_output_active = true;
+			hdr_pq_output = false;
+			if (log_cb)
+				log_cb(RETRO_LOG_INFO, "[boom3] SDR tone-mapped output enabled\n");
+		} else if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &cfv) && cfv.value
 				&& strcmp(cfv.value, "30bit-hdr") == 0) {
 			enum retro_pixel_format hf = RETRO_PIXEL_FORMAT_HDR10_2101010;
 			if (environ_cb(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &hf)) {
 				hdr_output_active = true;
+				hdr_pq_output = true;
 				if (log_cb)
 					log_cb(RETRO_LOG_INFO, "[boom3] 30-bit HDR10 output enabled\n");
 			} else if (log_cb) {
@@ -2499,6 +2520,7 @@ static const char *hdr_fs_src =
 	"uniform float uCa;\n"
 	"uniform vec3 uSsaa;\n"
 	"uniform float uHlDesat;\n"
+	"uniform vec2 uOutEnc;\n"   /* x: 1 PQ / 0 gamma-2.4, y: dither LSB */
 	"uniform vec2 uBandW;\n"
 	"uniform float uEncScale;\n"
 	"uniform float uFrame;\n"
@@ -3047,7 +3069,10 @@ static const char *hdr_fs_src =
 	"  }\n"
 	"  lin = uGamut * lin;\n"
 	"  vec3 y = clamp(lin * uParms.x, 0.0, 1.0);\n"
-	"  vec3 e = vec3(pq(y.r), pq(y.g), pq(y.b));\n"
+	/* SDR tone-mapped ends in gamma 1/2.4 instead of PQ */
+	"  vec3 e = (uOutEnc.x > 0.5)\n"
+	"      ? vec3(pq(y.r), pq(y.g), pq(y.b))\n"
+	"      : pow(y, vec3(1.0 / 2.4));\n"
 	/* +-0.5 LSB (10-bit) dither against PQ-remap banding.
 
 	   Interleaved gradient noise rather than the usual sin() hash: sin()
@@ -3092,7 +3117,7 @@ static const char *hdr_fs_src =
 	"  vec3 d = vec3(fract(n + (k + 0.0) * 0.6180339887),\n"
 	"                fract(n + (k + 1.0) * 0.6180339887),\n"
 	"                fract(n + (k + 2.0) * 0.6180339887)) - 0.5;\n"
-	"  gl_FragColor = vec4(clamp(e + d / 1023.0, 0.0, 1.0), 1.0);\n"
+	"  gl_FragColor = vec4(clamp(e + d * uOutEnc.y, 0.0, 1.0), 1.0);\n"
 	"}\n";
 #endif /* HAVE_OPENGLES */
 
@@ -4284,6 +4309,31 @@ static const char *hdr_arb_composite_src( int mode, bool twoBand ) {
 	/* Highlight desat before the shoulder: pre-curve peak from lin,
 	 * which no curve writes, post-curve peak from t; the mix is
 	 * Neutral's own, g = 1 - 1/(0.15 (P - p') + 1). */
+	/* SDR tone-mapped output: the same composite ends in a gamma
+	 * 1/2.4 encode instead of PQ.  The curve output is display-linear
+	 * in [0,1] once H is 1 and env[0].x is 1, so the encode is the
+	 * whole difference; the dither that follows reads its amplitude
+	 * from env[3].z either way. */
+	if ( !hdr_pq_output ) {
+		static const char pqHead[] =
+			"POW p.x, y.x, kPqA.x;\n";
+		static const char pqTail[] =
+			"POW e.z, t.z, kPqB.x;\n";
+		char *ph = strstr( p, pqHead );
+		char *pt = ph ? strstr( ph, pqTail ) : NULL;
+		if ( ph && pt ) {
+			static const char gammaEnc[] =
+			"PARAM kSdrG = { 0.41666667, 0.41666667, 0.41666667, 0.0 };\n"
+			"POW e.x, y.x, kSdrG.x;\n"
+			"POW e.y, y.y, kSdrG.x;\n"
+			"POW e.z, y.z, kSdrG.x;\n";
+			char *after = pt + sizeof( pqTail ) - 1;
+			const size_t encLen = sizeof( gammaEnc ) - 1;
+			const size_t rest = strlen( after ) + 1;
+			memcpy( ph, gammaEnc, encLen );
+			memmove( ph + encLen, after, rest );
+		}
+	}
 	if ( hdr_hl_desat == 1 && mode != HDR_ROLLOFF_NEUTRAL
 			&& mode != HDR_ROLLOFF_ACES2FULL && mode != HDR_ROLLOFF_AGX ) {
 		static const char shoulderHead[] = "SUB v, lin, 1.0;\n";
@@ -4768,6 +4818,7 @@ static void hdr_fail( const char *why ) {
 				"[boom3] HDR: %s; disabling the HDR pass. Switch Color Format "
 				"to 24-bit for correct colors.\n", why );
 	hdr_output_active = false;
+	hdr_pq_output = false;
 }
 
 #ifndef HAVE_OPENGLES
@@ -5149,7 +5200,8 @@ static bool hdr_arb_ready( void ) {
 			&& hdr_arb_comp_chroma == hdr_chroma_ab
 			&& hdr_arb_comp_ssaa == hdr_ssaa
 			&& hdr_arb_comp_agxlook == hdr_agx_look
-			&& hdr_arb_comp_desat == hdr_hl_desat ) {
+			&& hdr_arb_comp_desat == hdr_hl_desat
+			&& hdr_arb_comp_pqout == (int)hdr_pq_output ) {
 		return true;
 	}
 
@@ -5191,7 +5243,8 @@ static bool hdr_arb_ready( void ) {
 			|| hdr_arb_comp_chroma != hdr_chroma_ab
 			|| hdr_arb_comp_ssaa != hdr_ssaa
 			|| hdr_arb_comp_agxlook != hdr_agx_look
-			|| hdr_arb_comp_desat != hdr_hl_desat ) {
+			|| hdr_arb_comp_desat != hdr_hl_desat
+			|| hdr_arb_comp_pqout != (int)hdr_pq_output ) {
 		if ( hdr_arb_comp1 ) {
 			GLuint dead[2] = { hdr_arb_comp1, hdr_arb_comp2 };
 			glDeleteProgramsARB( 2, dead );
@@ -5211,6 +5264,7 @@ static bool hdr_arb_ready( void ) {
 		hdr_arb_comp_ssaa = hdr_ssaa;
 		hdr_arb_comp_agxlook = hdr_agx_look;
 		hdr_arb_comp_desat = hdr_hl_desat;
+		hdr_arb_comp_pqout = (int)hdr_pq_output;
 
 		/* Say what was baked in.  These two are baked into the program
 		 * text rather than uploaded, so if a setting is not reaching the
@@ -5350,6 +5404,7 @@ static bool hdr_ensure_target( int w, int h ) {
 		hdr_loc_ca     = glGetUniformLocation( hdr_prog, "uCa" );
 		hdr_loc_ssaa   = glGetUniformLocation( hdr_prog, "uSsaa" );
 		hdr_loc_hldesat = glGetUniformLocation( hdr_prog, "uHlDesat" );
+		hdr_loc_outenc = glGetUniformLocation( hdr_prog, "uOutEnc" );
 		hdr_loc_bandW   = glGetUniformLocation( hdr_prog, "uBandW" );
 		hdr_loc_encScale= glGetUniformLocation( hdr_prog, "uEncScale" );
 		hdr_loc_frame   = glGetUniformLocation( hdr_prog, "uFrame" );
@@ -6260,11 +6315,22 @@ static void hdr_present( GLuint dstFbo ) {
 	/* frontend HDR state, re-queried per present as the contract asks */
 	float paperWhite = 200.0f, maxNits = 1000.0f;
 	unsigned gamutMode = 0, outMode = 1;
-	environ_cb( RETRO_ENVIRONMENT_GET_HDR_PAPER_WHITE_NITS, &paperWhite );
-	environ_cb( RETRO_ENVIRONMENT_GET_HDR_MAX_NITS, &maxNits );
-	/* the ACES 2.0 tables are solved for this, and rebuilt when it moves */
-	if ( hdr_peak_override > 0.0f ) {
-		maxNits = hdr_peak_override;
+	if ( !hdr_pq_output ) {
+		/* SDR tone-mapped: the display is the 100-nit Rec.709 reference
+		 * - ACES 2.0's own SDR output-transform convention, which its
+		 * surround option still modulates per spec.  H becomes 1, the
+		 * curves solve for unity headroom, and the frontend's HDR
+		 * metadata is not consulted because there is none. */
+		paperWhite = 100.0f;
+		maxNits = 100.0f;
+	} else {
+		environ_cb( RETRO_ENVIRONMENT_GET_HDR_PAPER_WHITE_NITS, &paperWhite );
+		environ_cb( RETRO_ENVIRONMENT_GET_HDR_MAX_NITS, &maxNits );
+		/* the ACES 2.0 tables are solved for this, and rebuilt when it
+		 * moves */
+		if ( hdr_peak_override > 0.0f ) {
+			maxNits = hdr_peak_override;
+		}
 	}
 	hdr_aces2_wanted_peak = maxNits;
 	environ_cb( RETRO_ENVIRONMENT_GET_HDR_EXPAND_GAMUT, &gamutMode );
@@ -6629,6 +6695,9 @@ static void hdr_present( GLuint dstFbo ) {
 	}
 	glUniform1i( hdr_loc_bloomW, 2 );
 	glUniform1f( hdr_loc_bloomAmt, haveBloom ? hdr_bloom_amount : 0.0f );
+	if ( hdr_loc_outenc >= 0 )
+		glUniform2f( hdr_loc_outenc, hdr_pq_output ? 1.0f : 0.0f,
+				hdr_pq_output ? 1.0f / 1023.0f : 1.0f / 255.0f );
 	if ( hdr_loc_hldesat >= 0 ) {
 		int on = hdr_hl_desat == 1
 				&& hdr_rolloff_mode != HDR_ROLLOFF_NEUTRAL
@@ -6691,7 +6760,7 @@ static void hdr_present( GLuint dstFbo ) {
 	}
 	glUniform1f( hdr_loc_frame, frameN );
 	glUniformMatrix3fv( hdr_loc_mat, 1, GL_FALSE, mat );
-	glUniform4f( hdr_loc_parms, paperWhite / 10000.0f, H,
+	glUniform4f( hdr_loc_parms, hdr_pq_output ? paperWhite / 10000.0f : 1.0f, H,
 			(float)hdr_rolloff_mode, 0.75f /* Reinhard knee */ );
 	/* Same 0.75 knee as the Reinhard roll-off: expansion starts where
 	 * the diffuse range ends, so the two meet at the same place. */
@@ -6740,13 +6809,15 @@ static void hdr_present( GLuint dstFbo ) {
 		 * highlight roll-off stays the transform's rather than becoming
 		 * a straight multiply. */
 		hdr_aces2_exposure = aces2Abs ? ( paperWhite / 100.0f ) : 1.0f;
-		const float p0[4] = { ( aces2Abs ? 100.0f : paperWhite ) / 10000.0f, H,
+		const float p0[4] = { hdr_pq_output
+					? ( aces2Abs ? 100.0f : paperWhite ) / 10000.0f : 1.0f, H,
 				(float)hdr_rolloff_mode, 0.75f };
 		const float p1[4] = { (float)hdr_expand_mode, eknee,
 				1.0f / ( 1.0f - eknee < 1e-4f ? 1e-4f : 1.0f - eknee ), 0.0f };
 		const float p2[4] = { 1.0f / hdr_scene_encode_scale,
 				haveBloom ? hdr_bloom_amount : 0.0f, bandW0, bandW1 };
-		const float p3[4] = { frameN * 3.0f, 0.6180339887f, 1.0f / 1023.0f, 0.0f };
+		const float p3[4] = { frameN * 3.0f, 0.6180339887f,
+				hdr_pq_output ? 1.0f / 1023.0f : 1.0f / 255.0f, 0.0f };
 		/* rows, from the column-major matrix the GLSL upload uses */
 		/* ACES 2.0 lands in the output primaries itself, so the gamut
 		 * stage that follows it is fed identity rows.  Rotating an

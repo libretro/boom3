@@ -48,6 +48,7 @@ extern "C" {
 /* mangled: static functions in libretro.cpp, globalised by objcopy */
 extern "C" bool _ZL17hdr_ensure_targetii(int w, int h);
 extern "C" int _ZL16hdr_rolloff_mode;
+extern "C" bool _ZL13hdr_pq_output;
 /* the CA setting, baked into the composite at build; weak so the harness
  * still links if the symbol moves */
 extern "C" int _ZL13hdr_chroma_ab __attribute__((weak));
@@ -130,6 +131,7 @@ int main(int argc, char **argv)
 	/* Negative controls.  A harness that has never been shown to fail is
 	 * not evidence, so these reproduce two real failure shapes: the
 	 * scene never reaching the target, and the composite declining. */
+	_ZL13hdr_pq_output = true;   /* the suite asserts against PQ, its historical coverage; --sdr-out flips this */
 	const int noBind = (argc > 1 && !strcmp(argv[1], "--no-bind"));
 	const int noArb  = (argc > 1 && !strcmp(argv[1], "--no-arb"));
 	/* A menu or title screen frame: 2D views only, no world drawn at
@@ -143,6 +145,7 @@ int main(int argc, char **argv)
 	   session shipped a CA whose visibility was never executed, only
 	   reasoned about. */
 	const int chroma = (argc > 1 && !strcmp(argv[1], "--chroma"));
+	const int sdrOut = (argc > 1 && !strcmp(argv[1], "--sdr-out"));
 	/* Karis-weighted supersampling.  The scene is a firefly field - one
 	   hot texel per 2x2, three dark - and the same spliced program runs
 	   twice: env[10] at the half-texel offsets (four distinct taps,
@@ -656,6 +659,36 @@ int main(int argc, char **argv)
 
 	}
 	printf("  non-black pixels: %d of %d\n", nonBlackAll, W * H);
+	if (sdrOut) {
+		/* rerun one pass under the gamma tail: same scene, same curve;
+		 * the wall grey must come out at a different byte than PQ gave,
+		 * or the encode selection is not reaching the program */
+		int pqWall = wallPx[0];
+		_ZL13hdr_pq_output = false;
+		_ZL16hdr_rolloff_mode = 0;
+		hdr_bind_scene();
+		drawWorld();
+		drawHUD();
+		hdr_present(0);
+		glFinish();
+		glReadPixels(0, 0, W, H, GL_RGBA, GL_UNSIGNED_BYTE, out);
+		int sdrWall = out[(H / 2 * W + W / 2) * 4];
+		int sdrHot  = out[(H / 2 * W + 5 * W / 6) * 4];
+		int sdrFloor = out[(H / 2 * W + W / 6) * 4];
+		printf("  sdr-out: wall %d (pq %d), floor %d, highlight %d\n",
+			sdrWall, pqWall, sdrFloor, sdrHot);
+		if (sdrWall == pqWall) {
+			printf("  FAIL: the encode tails are indistinguishable\n");
+			return 1;
+		}
+		if (!(sdrFloor < sdrWall && sdrWall < sdrHot)) {
+			printf("  FAIL: the gamma tail is not monotone\n");
+			return 1;
+		}
+		printf("  PASS\n");
+		return 0;
+	}
+
 
 	if (menuOnly) {
 		/* only the HUD strip is drawn, so most of the frame is
