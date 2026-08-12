@@ -55,9 +55,21 @@ it wrong in two shader dialects at once.
 static const double ref_luminance = 100.0;
 static const double L_A           = 100.0;
 static const double Y_b           = 20.0;
-/* dim surround */
-static const double surround_1    = 0.59;
-static const double surround_2    = 0.9;
+/* Viewing-condition surround, CAM16's (c, F) pair.  The reference sets
+   are average (0.69, 1.0), dim (0.59, 0.9) and dark (0.525, 0.8); dim
+   has always been the baked value here and stays the default.  Settable
+   before the tables are built - the caller owns the rebuild, exactly as
+   it does for peak luminance changes. */
+static double surround_1    = 0.59;
+static double surround_2    = 0.9;
+
+void ACES2_SetSurround( int mode ) {
+	switch ( mode ) {
+	case 0:  surround_1 = 0.525; surround_2 = 0.8; break;   /* dark */
+	case 2:  surround_1 = 0.69;  surround_2 = 1.0; break;   /* average */
+	default: surround_1 = 0.59;  surround_2 = 0.9; break;   /* dim */
+	}
+}
 
 static const double J_scale             = 100.0;
 static const double cam_nl_Y_reference  = 100.0;

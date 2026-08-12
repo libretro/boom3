@@ -25,6 +25,7 @@ typedef struct {
 } aces2JMhParams_t;
 
 /* prims is red xy, green xy, blue xy, white xy - the CTL's Chromaticities */
+void	ACES2_SetSurround( int mode );   /* 0 dark, 1 dim (default), 2 average */
 void	ACES2_InitJMhParams( const double prims[8], aces2JMhParams_t *p );
 
 void	ACES2_RGBToJMh( const double RGB[3], const aces2JMhParams_t *p, double JMh[3] );

@@ -483,6 +483,9 @@ static int    hdr_agx_look = 0;
  * was compressed.  Skipped under Neutral, ACES 2.0 full and AgX, which
  * manage hue themselves. */
 static int    hdr_hl_desat = 0;
+/* ACES 2.0 surround: 0 dark, 1 dim (the reference and prior baked
+ * value), 2 average.  A change re-solves the tables. */
+static int    hdr_aces2_surround = 1;
 /* Test seam: when non-negative, uploaded as env[10].xy in place of the
  * computed half-texel offsets.  The harness's --ssaa case uses it to
  * run the same spliced program as its own linear control - offsets at
@@ -990,6 +993,21 @@ static void update_variables(bool startup)
 		else if (!strcmp(var.value, "subtle"))   hdr_bloom_amount = 0.55f;
 		else if (!strcmp(var.value, "intense"))  hdr_bloom_amount = 1.7f;
 		else                                     hdr_bloom_amount = 1.0f;
+	}
+
+	var.key = "doom_hdr_aces2_surround";
+	var.value = NULL;
+	{
+		int want = 1;
+		if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) {
+			if (!strcmp(var.value, "dark")) want = 0;
+			else if (!strcmp(var.value, "average")) want = 2;
+		}
+		if (want != hdr_aces2_surround) {
+			hdr_aces2_surround = want;
+			ACES2_SetSurround( want );
+			hdr_aces2_peak = 0.0f;   /* re-solve the tables */
+		}
 	}
 
 	var.key = "doom_hdr_highlight_desat";

@@ -321,6 +321,24 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "standard"
    },
    {
+      "doom_hdr_aces2_surround",
+      "HDR: ACES 2.0 Surround",
+      NULL,
+      "The viewing-environment compensation from the ACES 2.0 transform: "
+      "dim is the reference assumption and the previous fixed behaviour; "
+      "dark suits a lights-off room, average a bright one. Changing it "
+      "re-solves the transform tables. Only affects the aces2full curve.",
+      NULL,
+      NULL,
+      {
+         { "dark", NULL },
+         { "dim", NULL },
+         { "average", NULL },
+         { NULL, NULL },
+      },
+      "dim"
+   },
+   {
       "doom_hdr_highlight_desat",
       "HDR: Highlight Desaturation",
       NULL,
