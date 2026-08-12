@@ -343,12 +343,6 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       },
       "classic"
    },
-      "dim"
-   },
-      "disabled"
-   },
-      "default"
-   },
    {
       "doom_specular_aa",
       "Specular Antialiasing (Toksvig)",
@@ -472,10 +466,6 @@ struct retro_core_option_v2_definition option_defs_us[] = {
          { NULL, NULL },
       },
       "disabled"
-   },
-      "base"
-   },
-      "4"
    },
    {
       "doom_hdr_bloom_range",
@@ -605,12 +595,6 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       },
       "auto"
    },
-      "rec2020"
-   },
-      "0.22"
-   },
-      "0.40"
-   },
    {
       "doom_hdr_expansion",
       "HDR Expansion",
@@ -713,6 +697,8 @@ struct retro_core_option_v2_definition option_defs_us[] = {
          { "schlick",   "Schlick (Classic)" },
          { NULL, NULL },
       },
+      "reinhard"
+   },
    /* Everything from here to Highlight Desaturation belongs to a
     * specific display transform and is shown only under it (the
     * desaturation is the inverse: hidden under the three transforms
@@ -734,6 +720,8 @@ struct retro_core_option_v2_definition option_defs_us[] = {
          { "average", NULL },
          { NULL, NULL },
       },
+      "dim"
+   },
    {
       "doom_hdr_aces2_gamut",
       "ACES 2.0: Limiting Gamut",
@@ -755,6 +743,8 @@ struct retro_core_option_v2_definition option_defs_us[] = {
          { "rec709",  "Rec.709 (SDR gamut)" },
          { NULL, NULL },
       },
+      "rec2020"
+   },
    {
       "doom_hdr_agx_look",
       "AgX: Look",
@@ -771,6 +761,8 @@ struct retro_core_option_v2_definition option_defs_us[] = {
          { "punchy",  NULL },
          { NULL, NULL },
       },
+      "default"
+   },
    {
       "doom_hdr_gt_toe",
       "GT Roll-Off: Toe",
@@ -790,6 +782,8 @@ struct retro_core_option_v2_definition option_defs_us[] = {
          { "0.40", "0.40 (long toe)" },
          { NULL, NULL },
       },
+      "0.22"
+   },
    {
       "doom_hdr_gt_shoulder",
       "GT Roll-Off: Linear Length",
@@ -808,6 +802,8 @@ struct retro_core_option_v2_definition option_defs_us[] = {
          { "0.70", "0.70 (late shoulder)" },
          { NULL, NULL },
       },
+      "0.40"
+   },
    {
       "doom_hdr_filmiclog_contrast",
       "Filmic Log: Contrast",
@@ -833,6 +829,8 @@ struct retro_core_option_v2_definition option_defs_us[] = {
          { "veryhigh", "Very High (most crushed)" },
          { NULL, NULL },
       },
+      "base"
+   },
    {
       "doom_hdr_filmiclog_range",
       "Filmic Log: Highlight Range",
@@ -856,6 +854,8 @@ struct retro_core_option_v2_definition option_defs_us[] = {
          { "10", "10 stops (saturates at 1024)" },
          { NULL, NULL },
       },
+      "4"
+   },
    {
       "doom_hdr_highlight_desat",
       "Highlight Desaturation",
@@ -872,7 +872,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
          { "enabled",  NULL },
          { NULL, NULL },
       },
-      "reinhard"
+      "disabled"
    },
    {
       "doom_hrtf",
