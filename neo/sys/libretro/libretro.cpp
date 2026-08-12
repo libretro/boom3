@@ -501,9 +501,10 @@ static GLuint hdr_bloom_fbo[4], hdr_bloom_tex[4];   /* [0,1]=1/4 A/B, [2,3]=1/16
    the two-band buffers above so switching the option needs no reallocation. */
 #define HDR_CONV_MAX 6
 static GLuint hdr_conv_fbo[HDR_CONV_MAX], hdr_conv_tex[HDR_CONV_MAX];
-static GLuint hdr_prog_down, hdr_prog_up;
+static GLuint hdr_prog_down, hdr_prog_down_karis, hdr_prog_up;
+static GLint  hdr_down_k_loc_texel = -1;
 #ifndef HAVE_OPENGLES
-static GLuint hdr_arb_vp, hdr_arb_down, hdr_arb_up;
+static GLuint hdr_arb_vp, hdr_arb_down, hdr_arb_down_karis, hdr_arb_up;
 static GLuint hdr_arb_bright, hdr_arb_blur;
 static GLuint hdr_arb_comp1, hdr_arb_comp2;
 static int    hdr_arb_comp_mode = -1;   /* roll-off curve baked into the pair above */
@@ -1190,9 +1191,10 @@ static void context_reset(void)
    hdr_prog_bright = hdr_prog_blur = 0;
    hdr_bright_loc_ffknee = -1;
    hdr_bloom_prog_bad = hdr_bloom_tex_bad = false;
-   hdr_prog_down = hdr_prog_up = 0;
+   hdr_prog_down = hdr_prog_down_karis = hdr_prog_up = 0;
+   hdr_down_k_loc_texel = -1;
 #ifndef HAVE_OPENGLES
-   hdr_arb_vp = hdr_arb_down = hdr_arb_up = 0;
+   hdr_arb_vp = hdr_arb_down = hdr_arb_down_karis = hdr_arb_up = 0;
    hdr_arb_bright = hdr_arb_blur = 0;
    hdr_arb_comp1 = hdr_arb_comp2 = 0;
    hdr_arb_comp_mode = -1;
@@ -2989,6 +2991,105 @@ static const char *hdr_fs_src =
    walls do not.
 */
 #ifndef HAVE_OPENGLES
+/* The first-mip downsample with the Karis weight on every tap: the
+ * same 13-tap footprint and the same group weights, but each tap is
+ * additionally weighted 1/(1+maxRGB) and the sum renormalised.  A
+ * subpixel firefly entering the bloom chain through a linear 13-tap
+ * flickers the whole pyramid as it drifts across tap weights; the
+ * tone weighting is the same mechanism the supersample resolve uses,
+ * applied at the one averaging site that still let hot samples
+ * dominate.  Only the first level uses this - deeper mips are already
+ * band-limited and reweighting them would bias energy twice. */
+static const char *hdr_arb_down_karis_fs_src =
+	"!!ARBfp1.0\n"
+	"OPTION ARB_precision_hint_nicest;\n"
+	"PARAM texel = program.env[0];\n"
+	"TEMP uv, t, ring, mid, o;\n"
+	"MOV o, 0.0;\n"
+	"MOV mid.x, 0.0;\n"
+	"TEX t, fragment.texcoord[0], texture[0], 2D;\n"
+	"MAX ring.x, t.x, t.y; MAX ring.x, ring.x, t.z;\n"
+	"ADD ring.x, ring.x, 1.0; RCP ring.x, ring.x;\n"
+	"MUL ring.x, ring.x, 0.12500;\n"
+	"MAD o, t, ring.x, o; ADD mid.x, mid.x, ring.x;\n"
+	"MAD uv, texel, { -2.0,  2.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
+	"TEX t, uv, texture[0], 2D;\n"
+	"MAX ring.x, t.x, t.y; MAX ring.x, ring.x, t.z;\n"
+	"ADD ring.x, ring.x, 1.0; RCP ring.x, ring.x;\n"
+	"MUL ring.x, ring.x, 0.03125;\n"
+	"MAD o, t, ring.x, o; ADD mid.x, mid.x, ring.x;\n"
+	"MAD uv, texel, {  2.0,  2.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
+	"TEX t, uv, texture[0], 2D;\n"
+	"MAX ring.x, t.x, t.y; MAX ring.x, ring.x, t.z;\n"
+	"ADD ring.x, ring.x, 1.0; RCP ring.x, ring.x;\n"
+	"MUL ring.x, ring.x, 0.03125;\n"
+	"MAD o, t, ring.x, o; ADD mid.x, mid.x, ring.x;\n"
+	"MAD uv, texel, { -2.0, -2.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
+	"TEX t, uv, texture[0], 2D;\n"
+	"MAX ring.x, t.x, t.y; MAX ring.x, ring.x, t.z;\n"
+	"ADD ring.x, ring.x, 1.0; RCP ring.x, ring.x;\n"
+	"MUL ring.x, ring.x, 0.03125;\n"
+	"MAD o, t, ring.x, o; ADD mid.x, mid.x, ring.x;\n"
+	"MAD uv, texel, {  2.0, -2.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
+	"TEX t, uv, texture[0], 2D;\n"
+	"MAX ring.x, t.x, t.y; MAX ring.x, ring.x, t.z;\n"
+	"ADD ring.x, ring.x, 1.0; RCP ring.x, ring.x;\n"
+	"MUL ring.x, ring.x, 0.03125;\n"
+	"MAD o, t, ring.x, o; ADD mid.x, mid.x, ring.x;\n"
+	"MAD uv, texel, {  0.0,  2.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
+	"TEX t, uv, texture[0], 2D;\n"
+	"MAX ring.x, t.x, t.y; MAX ring.x, ring.x, t.z;\n"
+	"ADD ring.x, ring.x, 1.0; RCP ring.x, ring.x;\n"
+	"MUL ring.x, ring.x, 0.06250;\n"
+	"MAD o, t, ring.x, o; ADD mid.x, mid.x, ring.x;\n"
+	"MAD uv, texel, { -2.0,  0.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
+	"TEX t, uv, texture[0], 2D;\n"
+	"MAX ring.x, t.x, t.y; MAX ring.x, ring.x, t.z;\n"
+	"ADD ring.x, ring.x, 1.0; RCP ring.x, ring.x;\n"
+	"MUL ring.x, ring.x, 0.06250;\n"
+	"MAD o, t, ring.x, o; ADD mid.x, mid.x, ring.x;\n"
+	"MAD uv, texel, {  2.0,  0.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
+	"TEX t, uv, texture[0], 2D;\n"
+	"MAX ring.x, t.x, t.y; MAX ring.x, ring.x, t.z;\n"
+	"ADD ring.x, ring.x, 1.0; RCP ring.x, ring.x;\n"
+	"MUL ring.x, ring.x, 0.06250;\n"
+	"MAD o, t, ring.x, o; ADD mid.x, mid.x, ring.x;\n"
+	"MAD uv, texel, {  0.0, -2.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
+	"TEX t, uv, texture[0], 2D;\n"
+	"MAX ring.x, t.x, t.y; MAX ring.x, ring.x, t.z;\n"
+	"ADD ring.x, ring.x, 1.0; RCP ring.x, ring.x;\n"
+	"MUL ring.x, ring.x, 0.06250;\n"
+	"MAD o, t, ring.x, o; ADD mid.x, mid.x, ring.x;\n"
+	"MAD uv, texel, { -1.0,  1.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
+	"TEX t, uv, texture[0], 2D;\n"
+	"MAX ring.x, t.x, t.y; MAX ring.x, ring.x, t.z;\n"
+	"ADD ring.x, ring.x, 1.0; RCP ring.x, ring.x;\n"
+	"MUL ring.x, ring.x, 0.12500;\n"
+	"MAD o, t, ring.x, o; ADD mid.x, mid.x, ring.x;\n"
+	"MAD uv, texel, {  1.0,  1.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
+	"TEX t, uv, texture[0], 2D;\n"
+	"MAX ring.x, t.x, t.y; MAX ring.x, ring.x, t.z;\n"
+	"ADD ring.x, ring.x, 1.0; RCP ring.x, ring.x;\n"
+	"MUL ring.x, ring.x, 0.12500;\n"
+	"MAD o, t, ring.x, o; ADD mid.x, mid.x, ring.x;\n"
+	"MAD uv, texel, { -1.0, -1.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
+	"TEX t, uv, texture[0], 2D;\n"
+	"MAX ring.x, t.x, t.y; MAX ring.x, ring.x, t.z;\n"
+	"ADD ring.x, ring.x, 1.0; RCP ring.x, ring.x;\n"
+	"MUL ring.x, ring.x, 0.12500;\n"
+	"MAD o, t, ring.x, o; ADD mid.x, mid.x, ring.x;\n"
+	"MAD uv, texel, {  1.0, -1.0, 0.0, 0.0 }, fragment.texcoord[0];\n"
+	"TEX t, uv, texture[0], 2D;\n"
+	"MAX ring.x, t.x, t.y; MAX ring.x, ring.x, t.z;\n"
+	"ADD ring.x, ring.x, 1.0; RCP ring.x, ring.x;\n"
+	"MUL ring.x, ring.x, 0.12500;\n"
+	"MAD o, t, ring.x, o; ADD mid.x, mid.x, ring.x;\n"
+	"RCP mid.x, mid.x;\n"
+	"MUL o, o, mid.x;\n"
+	"MOV o.w, 1.0;\n"
+	"MOV result.color, o;\n"
+	"END\n";
+
 /*
    ARB versions of the bloom pyramid's downsample and upsample passes.
 
@@ -4315,6 +4416,44 @@ static const char *hdr_bright_fs_src =
    while the viewport is the half-size destination.
 */
 #ifdef HAVE_OPENGLES
+/* the GLES twin of the first-mip weighted downsample */
+static const char *hdr_down_karis_fs_src =
+	"#ifdef GL_ES\nprecision highp float;\n#endif\n"
+	"varying vec2 vUV;\n"
+	"uniform sampler2D uScene;\n"
+	"uniform vec2 uTexel;\n"
+	"float kw(vec3 c) { return 1.0 / (1.0 + max(c.r, max(c.g, c.b))); }\n"
+	"void main() {\n"
+	"  vec3 a = texture2D(uScene, vUV + uTexel * vec2(-2.0,  2.0)).rgb;\n"
+	"  vec3 b = texture2D(uScene, vUV + uTexel * vec2( 0.0,  2.0)).rgb;\n"
+	"  vec3 c = texture2D(uScene, vUV + uTexel * vec2( 2.0,  2.0)).rgb;\n"
+	"  vec3 d = texture2D(uScene, vUV + uTexel * vec2(-2.0,  0.0)).rgb;\n"
+	"  vec3 e = texture2D(uScene, vUV).rgb;\n"
+	"  vec3 f = texture2D(uScene, vUV + uTexel * vec2( 2.0,  0.0)).rgb;\n"
+	"  vec3 g = texture2D(uScene, vUV + uTexel * vec2(-2.0, -2.0)).rgb;\n"
+	"  vec3 h = texture2D(uScene, vUV + uTexel * vec2( 0.0, -2.0)).rgb;\n"
+	"  vec3 i = texture2D(uScene, vUV + uTexel * vec2( 2.0, -2.0)).rgb;\n"
+	"  vec3 j = texture2D(uScene, vUV + uTexel * vec2(-1.0,  1.0)).rgb;\n"
+	"  vec3 k = texture2D(uScene, vUV + uTexel * vec2( 1.0,  1.0)).rgb;\n"
+	"  vec3 l = texture2D(uScene, vUV + uTexel * vec2(-1.0, -1.0)).rgb;\n"
+	"  vec3 m = texture2D(uScene, vUV + uTexel * vec2( 1.0, -1.0)).rgb;\n"
+	"  vec3 acc = vec3(0.0); float ws = 0.0; float w;\n"
+	"  w = kw(a) * 0.03125; acc += a * w; ws += w;\n"
+	"  w = kw(b) * 0.06250; acc += b * w; ws += w;\n"
+	"  w = kw(c) * 0.03125; acc += c * w; ws += w;\n"
+	"  w = kw(d) * 0.06250; acc += d * w; ws += w;\n"
+	"  w = kw(e) * 0.12500; acc += e * w; ws += w;\n"
+	"  w = kw(f) * 0.06250; acc += f * w; ws += w;\n"
+	"  w = kw(g) * 0.03125; acc += g * w; ws += w;\n"
+	"  w = kw(h) * 0.06250; acc += h * w; ws += w;\n"
+	"  w = kw(i) * 0.03125; acc += i * w; ws += w;\n"
+	"  w = kw(j) * 0.12500; acc += j * w; ws += w;\n"
+	"  w = kw(k) * 0.12500; acc += k * w; ws += w;\n"
+	"  w = kw(l) * 0.12500; acc += l * w; ws += w;\n"
+	"  w = kw(m) * 0.12500; acc += m * w; ws += w;\n"
+	"  gl_FragColor = vec4(acc / ws, 1.0);\n"
+	"}\n";
+
 static const char *hdr_down_fs_src =
 	"#ifdef GL_ES\nprecision highp float;\n#endif\n"
 	"varying vec2 vUV;\n"
@@ -4870,6 +5009,8 @@ static bool hdr_arb_ready( void ) {
 					&hdr_arb_blur, "bloom blur program" )
 				|| !hdr_arb_load( GL_FRAGMENT_PROGRAM_ARB, hdr_arb_down_fs_src,
 					&hdr_arb_down, "bloom downsample program" )
+				|| !hdr_arb_load( GL_FRAGMENT_PROGRAM_ARB, hdr_arb_down_karis_fs_src,
+					&hdr_arb_down_karis, "bloom first-mip weighted downsample" )
 				|| !hdr_arb_load( GL_FRAGMENT_PROGRAM_ARB, hdr_arb_up_fs_src,
 					&hdr_arb_up, "bloom upsample program" ) ) {
 			return false;
@@ -5104,6 +5245,7 @@ static bool hdr_ensure_target( int w, int h ) {
 	if ( hdr_prog_down == 0 && !hdr_bloom_prog_bad ) {
 		GLuint vs  = hdr_compile( GL_VERTEX_SHADER, hdr_vs_src );
 		GLuint fsd = hdr_compile( GL_FRAGMENT_SHADER, hdr_down_fs_src );
+		GLuint fsdk = hdr_compile( GL_FRAGMENT_SHADER, hdr_down_karis_fs_src );
 		GLuint fsu = hdr_compile( GL_FRAGMENT_SHADER, hdr_up_fs_src );
 		if ( vs && fsd && fsu ) {
 			GLint okD = 0, okU = 0;
@@ -5128,6 +5270,15 @@ static bool hdr_ensure_target( int w, int h ) {
 					log_cb( RETRO_LOG_WARN, "[boom3] HDR: convolution bloom program did not link; bloom disabled\n" );
 			} else {
 				hdr_down_loc_texel = glGetUniformLocation( hdr_prog_down, "uTexel" );
+			if ( fsdk ) {
+				hdr_prog_down_karis = glCreateProgram();
+				glAttachShader( hdr_prog_down_karis, vs );
+				glAttachShader( hdr_prog_down_karis, fsdk );
+				glBindAttribLocation( hdr_prog_down_karis, 0, "aPos" );
+				glLinkProgram( hdr_prog_down_karis );
+				hdr_down_k_loc_texel = glGetUniformLocation( hdr_prog_down_karis, "uTexel" );
+				glDeleteShader( fsdk );
+			}
 				hdr_up_loc_texel   = glGetUniformLocation( hdr_prog_up, "uTexel" );
 				hdr_up_loc_radius  = glGetUniformLocation( hdr_prog_up, "uRadius" );
 			}
@@ -6116,6 +6267,13 @@ static void hdr_present( GLuint dstFbo ) {
 			qglBindProgramARB( GL_FRAGMENT_PROGRAM_ARB, hdr_arb_down );
 #endif
 			for ( i = 1; i < convN; i++ ) {
+#ifndef HAVE_OPENGLES
+				/* the first level reads the bright output, where fireflies
+				 * live; every deeper level is already band-limited */
+				qglBindProgramARB( GL_FRAGMENT_PROGRAM_ARB,
+						i == 1 ? hdr_arb_down_karis : hdr_arb_down );
+#endif
+
 				int pw = ( hdr_w / 4 ) >> ( i - 1 ), ph = ( hdr_h / 4 ) >> ( i - 1 );
 				if ( pw < 1 ) pw = 1;
 				if ( ph < 1 ) ph = 1;
@@ -6123,7 +6281,20 @@ static void hdr_present( GLuint dstFbo ) {
 				glViewport( 0, 0, pw > 1 ? pw / 2 : 1, ph > 1 ? ph / 2 : 1 );
 				glBindTexture( GL_TEXTURE_2D, hdr_conv_tex[i - 1] );
 #ifdef HAVE_OPENGLES
+				{
+#ifdef HAVE_OPENGLES
+				/* level one gets the tone-weighted program */
+				if ( i == 1 && hdr_prog_down_karis ) {
+					glUseProgram( hdr_prog_down_karis );
+					glUniform2f( hdr_down_k_loc_texel, 1.0f / (float)pw, 1.0f / (float)ph );
+				} else {
+					glUseProgram( hdr_prog_down );
+					glUniform2f( hdr_down_loc_texel, 1.0f / (float)pw, 1.0f / (float)ph );
+				}
+#else
 				glUniform2f( hdr_down_loc_texel, 1.0f / (float)pw, 1.0f / (float)ph );
+#endif
+			}
 #else
 				{
 					const float texel[4] = { 1.0f / (float)pw, 1.0f / (float)ph, 0.0f, 0.0f };
