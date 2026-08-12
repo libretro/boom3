@@ -2869,7 +2869,12 @@ static const char *hdr_fs_src =
 	"    for (int ky = -1; ky <= 1; ky += 2) {\n"
 	"      for (int kx = -1; kx <= 1; kx += 2) {\n"
 	"        vec3 c = texture2D(uScene, vUV + vec2(float(kx), float(ky)) * ssOff).rgb;\n"
-	"        if (uSsaa.z > 1.5) {\n"
+	"        if (uSsaa.z > 2.5) {\n"
+	"          float pk = max(c.r, max(c.g, c.b));\n"
+	"          float w = min(1.0, uGt.z * uGt.w * exp2(-1.442695 * uGt.w * max(pk - uGt.y, 0.0)));\n"
+	"          w = (pk >= uGt.y) ? w : 1.0;\n"
+	"          acc += c * w; wsum += w;\n"
+	"        } else if (uSsaa.z > 1.5) {\n"
 	"          float pk = max(c.r, max(c.g, c.b));\n"
 	"          float w = 0.24 / max(pk - 0.52, 0.24); w *= w;\n"
 	"          acc += c * w; wsum += w;\n"
@@ -3173,6 +3178,84 @@ static const char hdr_neutral_fetch[] =
 	"SUB a.x, a.x, 0.52; MAX a.x, a.x, 0.24;\n"
 	"RCP a.x, a.x; MUL a.x, a.x, 0.24; MUL a.x, a.x, a.x;\n"
 	"MAD e, u, a.x, e; ADD m.x, m.x, a.x;\n"
+	"RCP m.x, m.x;\n"
+	"MUL s, e, m.x;\n"
+	"MOV s.a, 1.0;\n";
+
+/* The GT/Uchimura resolve: weights from the curve derivative,
+ * reading the same env[8] the curve reads - (m, S0, 1-S1, C2),
+ * solved on the CPU per frame - so the resolve adapts with the
+ * curve.  Below the S0 knee the weight is exactly one, because
+ * GT's linear span makes the resolve the plain box average there,
+ * the same zero-bias property as the Neutral resolve; the toe
+ * region shares the weight of one, an approximation confined to
+ * near-black and stated as one.  Above the knee the weight is the
+ * shoulder's own derivative, (1-S1) C2 e^(-C2(p-S0)), clamped to
+ * one and mask-selected so the knee has no discontinuity from
+ * below.  Same dead temps as the other fetches. */
+static const char hdr_gt_fetch[] =
+	"MOV e, 0.0;\n"
+	"MOV m.x, 0.0;\n"
+	"ADD t.xy, fragment.texcoord[0], -program.env[35];\n"
+	"TEX u, t, texture[0], 2D;\n"
+	"MAX a.x, u.x, u.y; MAX a.x, a.x, u.z;\n"
+	"SUB a.y, a.x, program.env[8].y;\n"
+	"MAX a.y, a.y, 0.0;\n"
+	"MUL a.y, a.y, program.env[8].w;\n"
+	"MUL a.y, a.y, -1.4426950;\n"
+	"EX2 a.y, a.y;\n"
+	"MUL a.y, a.y, program.env[8].z;\n"
+	"MUL a.y, a.y, program.env[8].w;\n"
+	"MIN a.y, a.y, 1.0;\n"
+	"SGE a.z, a.x, program.env[8].y;\n"
+	"SUB a.y, a.y, 1.0;\n"
+	"MAD a.y, a.z, a.y, 1.0;\n"
+	"MAD e, u, a.y, e; ADD m.x, m.x, a.y;\n"
+	"MOV t.x, fragment.texcoord[0].x; ADD t.x, t.x, program.env[35].x;\n"
+	"TEX u, t, texture[0], 2D;\n"
+	"MAX a.x, u.x, u.y; MAX a.x, a.x, u.z;\n"
+	"SUB a.y, a.x, program.env[8].y;\n"
+	"MAX a.y, a.y, 0.0;\n"
+	"MUL a.y, a.y, program.env[8].w;\n"
+	"MUL a.y, a.y, -1.4426950;\n"
+	"EX2 a.y, a.y;\n"
+	"MUL a.y, a.y, program.env[8].z;\n"
+	"MUL a.y, a.y, program.env[8].w;\n"
+	"MIN a.y, a.y, 1.0;\n"
+	"SGE a.z, a.x, program.env[8].y;\n"
+	"SUB a.y, a.y, 1.0;\n"
+	"MAD a.y, a.z, a.y, 1.0;\n"
+	"MAD e, u, a.y, e; ADD m.x, m.x, a.y;\n"
+	"ADD t.xy, fragment.texcoord[0], program.env[35];\n"
+	"TEX u, t, texture[0], 2D;\n"
+	"MAX a.x, u.x, u.y; MAX a.x, a.x, u.z;\n"
+	"SUB a.y, a.x, program.env[8].y;\n"
+	"MAX a.y, a.y, 0.0;\n"
+	"MUL a.y, a.y, program.env[8].w;\n"
+	"MUL a.y, a.y, -1.4426950;\n"
+	"EX2 a.y, a.y;\n"
+	"MUL a.y, a.y, program.env[8].z;\n"
+	"MUL a.y, a.y, program.env[8].w;\n"
+	"MIN a.y, a.y, 1.0;\n"
+	"SGE a.z, a.x, program.env[8].y;\n"
+	"SUB a.y, a.y, 1.0;\n"
+	"MAD a.y, a.z, a.y, 1.0;\n"
+	"MAD e, u, a.y, e; ADD m.x, m.x, a.y;\n"
+	"MOV t.x, fragment.texcoord[0].x; ADD t.x, t.x, -program.env[35].x;\n"
+	"TEX u, t, texture[0], 2D;\n"
+	"MAX a.x, u.x, u.y; MAX a.x, a.x, u.z;\n"
+	"SUB a.y, a.x, program.env[8].y;\n"
+	"MAX a.y, a.y, 0.0;\n"
+	"MUL a.y, a.y, program.env[8].w;\n"
+	"MUL a.y, a.y, -1.4426950;\n"
+	"EX2 a.y, a.y;\n"
+	"MUL a.y, a.y, program.env[8].z;\n"
+	"MUL a.y, a.y, program.env[8].w;\n"
+	"MIN a.y, a.y, 1.0;\n"
+	"SGE a.z, a.x, program.env[8].y;\n"
+	"SUB a.y, a.y, 1.0;\n"
+	"MAD a.y, a.z, a.y, 1.0;\n"
+	"MAD e, u, a.y, e; ADD m.x, m.x, a.y;\n"
 	"RCP m.x, m.x;\n"
 	"MUL s, e, m.x;\n"
 	"MOV s.a, 1.0;\n";
@@ -3986,10 +4069,16 @@ static const char *hdr_arb_composite_src( int mode, bool twoBand ) {
 			 * curve keeps the Karis proxy.  Reinhard-exact was priced
 			 * and declined - per-channel scalar RCPs for a marginal
 			 * gain - and ACES 2.0 has no cheap inverse. */
-			const char *fetch = ( mode == HDR_ROLLOFF_FILMICLOG )
+			/* AgX shares the geometric mean: its own encoding is log2, so
+			 * the log-domain average is its native arithmetic, not an
+			 * analogy. */
+			const char *fetch =
+					( mode == HDR_ROLLOFF_FILMICLOG || mode == HDR_ROLLOFF_AGX )
 					? hdr_geomean_fetch
 					: ( mode == HDR_ROLLOFF_NEUTRAL )
-					? hdr_neutral_fetch : hdr_karis_fetch;
+					? hdr_neutral_fetch
+					: ( mode == HDR_ROLLOFF_GT )
+					? hdr_gt_fetch : hdr_karis_fetch;
 			const size_t stockLen = sizeof( stockFetch ) - 1;
 			const size_t fetchLen = strlen( fetch );
 			const size_t tail = strlen( at + stockLen ) + 1;
@@ -6204,10 +6293,13 @@ static void hdr_present( GLuint dstFbo ) {
 			/* z selects the resolve: 0 Karis, 1 geometric mean for
 			 * Filmic Log, 2 the Neutral derivative weighting */
 			float sel = 0.0f;
-			if ( hdr_rolloff_mode == HDR_ROLLOFF_FILMICLOG )
+			if ( hdr_rolloff_mode == HDR_ROLLOFF_FILMICLOG
+					|| hdr_rolloff_mode == HDR_ROLLOFF_AGX )
 				sel = 1.0f;
 			else if ( hdr_rolloff_mode == HDR_ROLLOFF_NEUTRAL )
 				sel = 2.0f;
+			else if ( hdr_rolloff_mode == HDR_ROLLOFF_GT )
+				sel = 3.0f;
 			glUniform3f( hdr_loc_ssaa, 0.5f / (float)hdr_w, 0.5f / (float)hdr_h, sel );
 		} else
 			glUniform3f( hdr_loc_ssaa, 0.0f, 0.0f, 0.0f );
