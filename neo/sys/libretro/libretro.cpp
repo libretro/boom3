@@ -446,6 +446,7 @@ static GLint  hdr_loc_bloomT, hdr_loc_bloomW, hdr_loc_bloomAmt, hdr_loc_encScale
 static GLint  hdr_loc_hal = -1;
 static GLint  hdr_loc_ca = -1;
 static GLint  hdr_loc_ssaa = -1;
+static GLint  hdr_loc_hldesat = -1;
 static GLint  hdr_loc_film = -1;
 static GLint  hdr_loc_film_lut = -1;
 static GLint  hdr_loc_film_desat = -1;
@@ -475,6 +476,13 @@ static int    hdr_ssaa = 1;
 /* AgX look: 0 default, 1 Punchy - a post-transform contrast/saturation
  * grade applied only under the AgX curve, spliced at program build. */
 static int    hdr_agx_look = 0;
+/* Highlight desaturation: the Khronos Neutral hue-preservation stage
+ * lifted out as an option for the curves that lack one - per-channel
+ * clipping of saturated highlights skews hue, and the fix is Neutral's
+ * own: mix toward the achromatic compressed peak by how much the peak
+ * was compressed.  Skipped under Neutral, ACES 2.0 full and AgX, which
+ * manage hue themselves. */
+static int    hdr_hl_desat = 0;
 /* Test seam: when non-negative, uploaded as env[10].xy in place of the
  * computed half-texel offsets.  The harness's --ssaa case uses it to
  * run the same spliced program as its own linear control - offsets at
@@ -514,7 +522,8 @@ static int    hdr_arb_comp_mode = -1;   /* roll-off curve baked into the pair ab
 static int    hdr_arb_comp_halation = -1;
 static int    hdr_arb_comp_chroma = -1;
 static int    hdr_arb_comp_ssaa = -1;
-static int    hdr_arb_comp_agxlook = -1;  /* halation tint baked in with it */
+static int    hdr_arb_comp_agxlook = -1;
+static int    hdr_arb_comp_desat = -1;  /* halation tint baked in with it */
 
 /* Every program in the chain is loaded.  On this build there is no other
    chain to run, so this is a load-state flag rather than a path
@@ -983,6 +992,11 @@ static void update_variables(bool startup)
 		else                                     hdr_bloom_amount = 1.0f;
 	}
 
+	var.key = "doom_hdr_highlight_desat";
+	var.value = NULL;
+	hdr_hl_desat = (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value
+			&& !strcmp(var.value, "enabled")) ? 1 : 0;
+
 	var.key = "doom_hdr_agx_look";
 	var.value = NULL;
 	{
@@ -1228,7 +1242,7 @@ static void context_reset(void)
       }
    }
    hdr_aces2_loc_lut = -1;
-   hdr_loc_hal = hdr_loc_ca = hdr_loc_ssaa = -1;
+   hdr_loc_hal = hdr_loc_ca = hdr_loc_ssaa = hdr_loc_hldesat = -1;
    hdr_loc_tex = hdr_loc_mat = hdr_loc_parms = -1;
    hdr_loc_bloomT = hdr_loc_bloomW = hdr_loc_bloomAmt = hdr_loc_encScale = -1;
    hdr_loc_film = hdr_loc_film_lut = hdr_loc_film_desat = -1;
@@ -2405,6 +2419,7 @@ static const char *hdr_fs_src =
 	"uniform vec3 uHal;\n"
 	"uniform float uCa;\n"
 	"uniform vec3 uSsaa;\n"
+	"uniform float uHlDesat;\n"
 	"uniform vec2 uBandW;\n"
 	"uniform float uEncScale;\n"
 	"uniform float uFrame;\n"
@@ -2942,8 +2957,15 @@ static const char *hdr_fs_src =
 	"  lin = expand(lin);\n"
 	/* Modes 9 and up look at the whole colour, so they run once rather
 	   than once per channel. */
+	"  float hlP = max(lin.r, max(lin.g, lin.b));\n"
 	"  if (uParms.z > 17.5) lin = rolloffRGB(lin);\n"
 	"  else lin = vec3(rolloff(lin.r), rolloff(lin.g), rolloff(lin.b));\n"
+	/* the Neutral hue-preservation stage for curves without one */
+	"  if (uHlDesat > 0.5) {\n"
+	"    float hlq = max(lin.r, max(lin.g, lin.b));\n"
+	"    float hlg = 1.0 - 1.0 / (0.15 * max(hlP - hlq, 0.0) + 1.0);\n"
+	"    lin = mix(lin, vec3(hlq), hlg);\n"
+	"  }\n"
 	"  lin = uGamut * lin;\n"
 	"  vec3 y = clamp(lin * uParms.x, 0.0, 1.0);\n"
 	"  vec3 e = vec3(pq(y.r), pq(y.g), pq(y.b));\n"
@@ -4180,6 +4202,29 @@ static const char *hdr_arb_composite_src( int mode, bool twoBand ) {
 	/* AgX Punchy: contrast 1.35 and saturation 1.4 on the transform
 	 * output, the official look expressed on this pipeline's ordering
 	 * - the grade sits after the outset and decode, and says so. */
+	/* Highlight desat before the shoulder: pre-curve peak from lin,
+	 * which no curve writes, post-curve peak from t; the mix is
+	 * Neutral's own, g = 1 - 1/(0.15 (P - p') + 1). */
+	if ( hdr_hl_desat == 1 && mode != HDR_ROLLOFF_NEUTRAL
+			&& mode != HDR_ROLLOFF_ACES2FULL && mode != HDR_ROLLOFF_AGX ) {
+		static const char shoulderHead[] = "SUB v, lin, 1.0;\n";
+		char *at = strstr( p, shoulderHead );
+		if ( at ) {
+			static const char desat[] =
+			"MAX u.x, lin.x, lin.y; MAX u.x, u.x, lin.z;\n"
+			"MAX u.y, t.x, t.y; MAX u.y, u.y, t.z;\n"
+			"SUB u.z, u.x, u.y; MAX u.z, u.z, 0.0;\n"
+			"MAD u.w, u.z, 0.15, 1.0; RCP u.w, u.w;\n"
+			"SUB u.w, 1.0, u.w;\n"
+			"LRP t.xyz, u.w, u.y, t;\n";
+			const size_t addLen = sizeof( desat ) - 1;
+			const size_t rest = strlen( at ) + 1;
+			if ( strlen( p ) + addLen < sizeof( buf[0] ) ) {
+				memmove( at + addLen, at, rest );
+				memcpy( at, desat, addLen );
+			}
+		}
+	}
 	if ( mode == HDR_ROLLOFF_AGX && hdr_agx_look == 1 ) {
 		static const char agxTail[] = "MUL t, t, 1.4491792;\n";
 		char *at = strstr( p, agxTail );
@@ -5024,7 +5069,8 @@ static bool hdr_arb_ready( void ) {
 			&& hdr_arb_comp_halation == hdr_halation
 			&& hdr_arb_comp_chroma == hdr_chroma_ab
 			&& hdr_arb_comp_ssaa == hdr_ssaa
-			&& hdr_arb_comp_agxlook == hdr_agx_look ) {
+			&& hdr_arb_comp_agxlook == hdr_agx_look
+			&& hdr_arb_comp_desat == hdr_hl_desat ) {
 		return true;
 	}
 
@@ -5065,7 +5111,8 @@ static bool hdr_arb_ready( void ) {
 			|| hdr_arb_comp_halation != hdr_halation
 			|| hdr_arb_comp_chroma != hdr_chroma_ab
 			|| hdr_arb_comp_ssaa != hdr_ssaa
-			|| hdr_arb_comp_agxlook != hdr_agx_look ) {
+			|| hdr_arb_comp_agxlook != hdr_agx_look
+			|| hdr_arb_comp_desat != hdr_hl_desat ) {
 		if ( hdr_arb_comp1 ) {
 			GLuint dead[2] = { hdr_arb_comp1, hdr_arb_comp2 };
 			glDeleteProgramsARB( 2, dead );
@@ -5084,6 +5131,7 @@ static bool hdr_arb_ready( void ) {
 		hdr_arb_comp_chroma = hdr_chroma_ab;
 		hdr_arb_comp_ssaa = hdr_ssaa;
 		hdr_arb_comp_agxlook = hdr_agx_look;
+		hdr_arb_comp_desat = hdr_hl_desat;
 
 		/* Say what was baked in.  These two are baked into the program
 		 * text rather than uploaded, so if a setting is not reaching the
@@ -5222,6 +5270,7 @@ static bool hdr_ensure_target( int w, int h ) {
 		hdr_loc_hal    = glGetUniformLocation( hdr_prog, "uHal" );
 		hdr_loc_ca     = glGetUniformLocation( hdr_prog, "uCa" );
 		hdr_loc_ssaa   = glGetUniformLocation( hdr_prog, "uSsaa" );
+		hdr_loc_hldesat = glGetUniformLocation( hdr_prog, "uHlDesat" );
 		hdr_loc_bandW   = glGetUniformLocation( hdr_prog, "uBandW" );
 		hdr_loc_encScale= glGetUniformLocation( hdr_prog, "uEncScale" );
 		hdr_loc_frame   = glGetUniformLocation( hdr_prog, "uFrame" );
@@ -6501,6 +6550,13 @@ static void hdr_present( GLuint dstFbo ) {
 	}
 	glUniform1i( hdr_loc_bloomW, 2 );
 	glUniform1f( hdr_loc_bloomAmt, haveBloom ? hdr_bloom_amount : 0.0f );
+	if ( hdr_loc_hldesat >= 0 ) {
+		int on = hdr_hl_desat == 1
+				&& hdr_rolloff_mode != HDR_ROLLOFF_NEUTRAL
+				&& hdr_rolloff_mode != HDR_ROLLOFF_ACES2FULL
+				&& hdr_rolloff_mode != HDR_ROLLOFF_AGX;
+		glUniform1f( hdr_loc_hldesat, on ? 1.0f : 0.0f );
+	}
 	if ( hdr_loc_ssaa >= 0 ) {
 		if ( hdr_ssaa == 2 && hdr_w > 0 && hdr_h > 0 ) {
 			/* z selects the resolve: 0 Karis, 1 geometric mean for

@@ -321,6 +321,24 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "standard"
    },
    {
+      "doom_hdr_highlight_desat",
+      "HDR: Highlight Desaturation",
+      NULL,
+      "Khronos PBR Neutral's hue-preservation stage, made available to "
+      "the curves that lack one: saturated highlights that would clip per "
+      "channel and skew hue are mixed toward the achromatic compressed "
+      "peak by how much the peak was compressed. Ignored under Neutral, "
+      "ACES 2.0 (Full) and AgX, which manage hue themselves.",
+      NULL,
+      NULL,
+      {
+         { "disabled", NULL },
+         { "enabled",  NULL },
+         { NULL, NULL },
+      },
+      "disabled"
+   },
+   {
       "doom_hdr_agx_look",
       "HDR: AgX Look",
       NULL,
