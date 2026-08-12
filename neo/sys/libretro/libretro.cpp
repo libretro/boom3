@@ -486,6 +486,26 @@ static int    hdr_hl_desat = 0;
 /* ACES 2.0 surround: 0 dark, 1 dim (the reference and prior baked
  * value), 2 average.  A change re-solves the tables. */
 static int    hdr_aces2_surround = 1;
+/* Bloom selection: classic keeps the measured 0.70/0.25 bright pass;
+ * curve-knee derives the threshold from the active transform's own
+ * knee - Neutral's 0.76 start of compression, GT's solved S0 - so
+ * bloom picks exactly the pixels the curve will compress.  Curves
+ * without a clean knee keep 0.70, and the option text names the two
+ * that have one.  The bright pass and the curve read the same decoded
+ * linear domain, which is what makes the number transplantable; with
+ * dynamic-range expansion active the mapping is approximate, since
+ * expansion sits between them. */
+static int    hdr_bloom_select = 0;
+static float  hdr_gt_s0_last = 0.55f;
+static float hdr_bright_threshold( void ) {
+	if ( hdr_bloom_select == 1 ) {
+		if ( hdr_rolloff_mode == HDR_ROLLOFF_NEUTRAL )
+			return 0.76f;
+		if ( hdr_rolloff_mode == HDR_ROLLOFF_GT )
+			return hdr_gt_s0_last;
+	}
+	return 0.70f;
+}
 /* Test seam: when non-negative, uploaded as env[10].xy in place of the
  * computed half-texel offsets.  The harness's --ssaa case uses it to
  * run the same spliced program as its own linear control - offsets at
@@ -994,6 +1014,11 @@ static void update_variables(bool startup)
 		else if (!strcmp(var.value, "intense"))  hdr_bloom_amount = 1.7f;
 		else                                     hdr_bloom_amount = 1.0f;
 	}
+
+	var.key = "doom_hdr_bloom_select";
+	var.value = NULL;
+	hdr_bloom_select = (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value
+			&& !strcmp(var.value, "curve knee")) ? 1 : 0;
 
 	var.key = "doom_hdr_aces2_surround";
 	var.value = NULL;
@@ -6325,7 +6350,7 @@ static void hdr_present( GLuint dstFbo ) {
 		   (0.6021 itself came from matching gamma code 0.8095 across
 		   the inverse-sRGB to gamma-2.4 decode change.) */
 #ifdef HAVE_OPENGLES
-		glUniform1f( hdr_bright_loc_thresh, 0.70f );
+		glUniform1f( hdr_bright_loc_thresh, hdr_bright_threshold() );
 		glUniform1f( hdr_bright_loc_knee, 0.25f );
 		if ( hdr_bright_loc_ffknee >= 0 ) {
 			glUniform1f( hdr_bright_loc_ffknee, hdr_bloom_firefly_knee );
@@ -6335,7 +6360,7 @@ static void hdr_present( GLuint dstFbo ) {
 		{
 			/* 1/(1-thresh) and 1/(4*knee) are pass constants; computing
 			   them here keeps two RCPs out of every fragment. */
-			const float thresh = 0.70f, knee = 0.25f;
+			const float thresh = hdr_bright_threshold(), knee = 0.25f;
 			const float p[4] = { thresh, knee, 1.0f / hdr_scene_encode_scale,
 					1.0f / ( 1.0f - thresh ) };
 			/* The firefly limiter's knee.  1 is the original b/(1+luma),
@@ -6642,6 +6667,7 @@ static void hdr_present( GLuint dstFbo ) {
 			double l0, S0, S1, C2;
 			hdr_gt_params( hdr_gt_toe, hdr_gt_shoulder, &l0, &S0, &S1, &C2 );
 			glUniform3f( hdr_loc_aces, as, an, (float)hdr_gt_norm() );
+			hdr_gt_s0_last = (float)S0;
 			glUniform4f( hdr_loc_gt, hdr_gt_toe, (float)S0,
 					(float)( 1.0 - S1 ), (float)C2 );
 		}

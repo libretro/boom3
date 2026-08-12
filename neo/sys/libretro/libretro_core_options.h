@@ -321,6 +321,25 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "standard"
    },
    {
+      "doom_hdr_bloom_select",
+      "HDR: Bloom Selection",
+      NULL,
+      "What counts as a highlight for bloom. Classic keeps the measured "
+      "0.70 threshold the bloom was tuned against. Curve knee derives it "
+      "from the active transform: Neutral's 0.76 start of compression or "
+      "GT's solved shoulder start, so bloom picks exactly the pixels the "
+      "curve will compress; other curves keep 0.70. Approximate when "
+      "dynamic-range expansion is active.",
+      NULL,
+      NULL,
+      {
+         { "classic", NULL },
+         { "curve knee", NULL },
+         { NULL, NULL },
+      },
+      "classic"
+   },
+   {
       "doom_hdr_aces2_surround",
       "HDR: ACES 2.0 Surround",
       NULL,
