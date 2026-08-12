@@ -343,58 +343,10 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       },
       "classic"
    },
-   {
-      "doom_hdr_aces2_surround",
-      "ACES 2.0: Surround",
-      NULL,
-      "The viewing-environment compensation from the ACES 2.0 transform: "
-      "dim is the reference assumption and the previous fixed behaviour; "
-      "dark suits a lights-off room, average a bright one. Changing it "
-      "re-solves the transform tables. Only affects the aces2full curve.",
-      NULL,
-      NULL,
-      {
-         { "dark", NULL },
-         { "dim", NULL },
-         { "average", NULL },
-         { NULL, NULL },
-      },
       "dim"
    },
-   {
-      "doom_hdr_highlight_desat",
-      "Highlight Desaturation",
-      NULL,
-      "Khronos PBR Neutral's hue-preservation stage, made available to "
-      "the curves that lack one: saturated highlights that would clip per "
-      "channel and skew hue are mixed toward the achromatic compressed "
-      "peak by how much the peak was compressed. Ignored under Neutral, "
-      "ACES 2.0 (Full) and AgX, which manage hue themselves.",
-      NULL,
-      NULL,
-      {
-         { "disabled", NULL },
-         { "enabled",  NULL },
-         { NULL, NULL },
-      },
       "disabled"
    },
-   {
-      "doom_hdr_agx_look",
-      "AgX: Look",
-      NULL,
-      "A grade applied only under the AgX transform. Punchy is the "
-      "official higher-contrast, higher-saturation look - contrast 1.35 "
-      "and saturation 1.4 - expressed on this pipeline's ordering: the "
-      "grade sits on the transform's output. Ignored by every other "
-      "curve.",
-      NULL,
-      NULL,
-      {
-         { "default", NULL },
-         { "punchy",  NULL },
-         { NULL, NULL },
-      },
       "default"
    },
    {
@@ -521,56 +473,8 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       },
       "disabled"
    },
-   {
-      "doom_hdr_filmiclog_contrast",
-      "Filmic Log: Contrast",
-      NULL,
-      "Which of Sobotka's seven contrast curves Filmic Log uses. They are "
-      "separately authored lookups rather than one curve with a knob, and "
-      "what separates them is the low end - at a scene value of 0.002, "
-      "the sort of dim specular a distant emergency light leaves on wet "
-      "metal, Very Low returns 0.0078 where Very High returns 0.00001. "
-      "Lower contrast lifts those highlights enough to tell matte armour "
-      "from wet organic growth from a steel door while the room around "
-      "them stays dark; higher contrast crushes them for a harder, more "
-      "claustrophobic look. Base is Blender's default.",
-      NULL,
-      NULL,
-      {
-         { "verylow",  "Very Low (most shadow detail)" },
-         { "low",      "Low" },
-         { "medium",   "Medium" },
-         { "base",     "Base (default)" },
-         { "medhigh",  "Medium High" },
-         { "high",     "High" },
-         { "veryhigh", "Very High (most crushed)" },
-         { NULL, NULL },
-      },
       "base"
    },
-   {
-      "doom_hdr_filmiclog_range",
-      "Filmic Log: Highlight Range",
-      NULL,
-      "How many stops above mid grey the Filmic Log roll-off's encode "
-      "covers. Blender's default is about 4, which was chosen for camera "
-      "footage where 1.0 is a nominal white - it saturates at a scene "
-      "value of 19 and everything brighter maps identically. This "
-      "engine's HDR scene routinely goes past that: multi-pass lights "
-      "accumulate unbounded on an FP16 target and the specular boost "
-      "multiplies on top, so bright speculars and bloom land in the flat "
-      "region. Widening the range keeps them separable at the cost of "
-      "lifting mid grey slightly - 0.389 at 4 stops, 0.416 at 6, 0.442 "
-      "at 8. Only affects that one roll-off.",
-      NULL,
-      NULL,
-      {
-         { "4",  "4 stops (Blender default)" },
-         { "6",  "6 stops (saturates at 64)" },
-         { "8",  "8 stops (saturates at 256)" },
-         { "10", "10 stops (saturates at 1024)" },
-         { NULL, NULL },
-      },
       "4"
    },
    {
@@ -701,68 +605,10 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       },
       "auto"
    },
-   {
-      "doom_hdr_aces2_gamut",
-      "ACES 2.0: Limiting Gamut",
-      NULL,
-      "Which gamut the full ACES 2.0 transform compresses colour toward. "
-      "Its gamut compression works by pulling out-of-range colour onto a "
-      "boundary, so the boundary should be the one the display actually "
-      "has. Most HDR displays are close to P3, which covers about 72% of "
-      "Rec.2020 - leaving this at Rec.2020 on such a panel means the "
-      "compression stops short and the panel clips the difference "
-      "itself, which is the harsh clipping the transform exists to "
-      "avoid. Rec.709 is for an SDR-gamut display. Only affects the full "
-      "transform; no other roll-off has a gamut to limit to.",
-      NULL,
-      NULL,
-      {
-         { "rec2020", "Rec.2020 (widest)" },
-         { "p3",      "P3-D65 (most HDR displays)" },
-         { "rec709",  "Rec.709 (SDR gamut)" },
-         { NULL, NULL },
-      },
       "rec2020"
    },
-   {
-      "doom_hdr_gt_toe",
-      "GT Roll-Off: Toe",
-      NULL,
-      "Where GT's linear section starts. Everything below this is the "
-      "toe, so a larger value gives a longer, softer approach out of "
-      "black and slightly darker mid-tones; a smaller one puts more of "
-      "the image on the straight section. Only affects the GT "
-      "(Uchimura) roll-off.",
-      NULL,
-      NULL,
-      {
-         { "0.10", "0.10 (short toe)" },
-         { "0.16", "0.16" },
-         { "0.22", "0.22 (default)" },
-         { "0.30", "0.30" },
-         { "0.40", "0.40 (long toe)" },
-         { NULL, NULL },
-      },
       "0.22"
    },
-   {
-      "doom_hdr_gt_shoulder",
-      "GT Roll-Off: Linear Length",
-      NULL,
-      "How much of the range stays perfectly linear before the "
-      "shoulder takes over. Longer keeps mid-tones truer and bends "
-      "later but more sharply; shorter starts easing into the "
-      "highlights sooner. Only affects the GT (Uchimura) roll-off.",
-      NULL,
-      NULL,
-      {
-         { "0.20", "0.20 (early shoulder)" },
-         { "0.30", "0.30" },
-         { "0.40", "0.40 (default)" },
-         { "0.50", "0.50" },
-         { "0.70", "0.70 (late shoulder)" },
-         { NULL, NULL },
-      },
       "0.40"
    },
    {
@@ -865,6 +711,165 @@ struct retro_core_option_v2_definition option_defs_us[] = {
          { "tumblin",   "Tumblin-Rushmeier (Classic)" },
          { "ward",      "Ward (Classic, Linear)" },
          { "schlick",   "Schlick (Classic)" },
+         { NULL, NULL },
+      },
+   /* Everything from here to Highlight Desaturation belongs to a
+    * specific display transform and is shown only under it (the
+    * desaturation is the inverse: hidden under the three transforms
+    * that ignore it), so the group lives directly beneath the
+    * transform selector it depends on. */
+   {
+      "doom_hdr_aces2_surround",
+      "ACES 2.0: Surround",
+      NULL,
+      "The viewing-environment compensation from the ACES 2.0 transform: "
+      "dim is the reference assumption and the previous fixed behaviour; "
+      "dark suits a lights-off room, average a bright one. Changing it "
+      "re-solves the transform tables. Only affects the aces2full curve.",
+      NULL,
+      NULL,
+      {
+         { "dark", NULL },
+         { "dim", NULL },
+         { "average", NULL },
+         { NULL, NULL },
+      },
+   {
+      "doom_hdr_aces2_gamut",
+      "ACES 2.0: Limiting Gamut",
+      NULL,
+      "Which gamut the full ACES 2.0 transform compresses colour toward. "
+      "Its gamut compression works by pulling out-of-range colour onto a "
+      "boundary, so the boundary should be the one the display actually "
+      "has. Most HDR displays are close to P3, which covers about 72% of "
+      "Rec.2020 - leaving this at Rec.2020 on such a panel means the "
+      "compression stops short and the panel clips the difference "
+      "itself, which is the harsh clipping the transform exists to "
+      "avoid. Rec.709 is for an SDR-gamut display. Only affects the full "
+      "transform; no other roll-off has a gamut to limit to.",
+      NULL,
+      NULL,
+      {
+         { "rec2020", "Rec.2020 (widest)" },
+         { "p3",      "P3-D65 (most HDR displays)" },
+         { "rec709",  "Rec.709 (SDR gamut)" },
+         { NULL, NULL },
+      },
+   {
+      "doom_hdr_agx_look",
+      "AgX: Look",
+      NULL,
+      "A grade applied only under the AgX transform. Punchy is the "
+      "official higher-contrast, higher-saturation look - contrast 1.35 "
+      "and saturation 1.4 - expressed on this pipeline's ordering: the "
+      "grade sits on the transform's output. Ignored by every other "
+      "curve.",
+      NULL,
+      NULL,
+      {
+         { "default", NULL },
+         { "punchy",  NULL },
+         { NULL, NULL },
+      },
+   {
+      "doom_hdr_gt_toe",
+      "GT Roll-Off: Toe",
+      NULL,
+      "Where GT's linear section starts. Everything below this is the "
+      "toe, so a larger value gives a longer, softer approach out of "
+      "black and slightly darker mid-tones; a smaller one puts more of "
+      "the image on the straight section. Only affects the GT "
+      "(Uchimura) roll-off.",
+      NULL,
+      NULL,
+      {
+         { "0.10", "0.10 (short toe)" },
+         { "0.16", "0.16" },
+         { "0.22", "0.22 (default)" },
+         { "0.30", "0.30" },
+         { "0.40", "0.40 (long toe)" },
+         { NULL, NULL },
+      },
+   {
+      "doom_hdr_gt_shoulder",
+      "GT Roll-Off: Linear Length",
+      NULL,
+      "How much of the range stays perfectly linear before the "
+      "shoulder takes over. Longer keeps mid-tones truer and bends "
+      "later but more sharply; shorter starts easing into the "
+      "highlights sooner. Only affects the GT (Uchimura) roll-off.",
+      NULL,
+      NULL,
+      {
+         { "0.20", "0.20 (early shoulder)" },
+         { "0.30", "0.30" },
+         { "0.40", "0.40 (default)" },
+         { "0.50", "0.50" },
+         { "0.70", "0.70 (late shoulder)" },
+         { NULL, NULL },
+      },
+   {
+      "doom_hdr_filmiclog_contrast",
+      "Filmic Log: Contrast",
+      NULL,
+      "Which of Sobotka's seven contrast curves Filmic Log uses. They are "
+      "separately authored lookups rather than one curve with a knob, and "
+      "what separates them is the low end - at a scene value of 0.002, "
+      "the sort of dim specular a distant emergency light leaves on wet "
+      "metal, Very Low returns 0.0078 where Very High returns 0.00001. "
+      "Lower contrast lifts those highlights enough to tell matte armour "
+      "from wet organic growth from a steel door while the room around "
+      "them stays dark; higher contrast crushes them for a harder, more "
+      "claustrophobic look. Base is Blender's default.",
+      NULL,
+      NULL,
+      {
+         { "verylow",  "Very Low (most shadow detail)" },
+         { "low",      "Low" },
+         { "medium",   "Medium" },
+         { "base",     "Base (default)" },
+         { "medhigh",  "Medium High" },
+         { "high",     "High" },
+         { "veryhigh", "Very High (most crushed)" },
+         { NULL, NULL },
+      },
+   {
+      "doom_hdr_filmiclog_range",
+      "Filmic Log: Highlight Range",
+      NULL,
+      "How many stops above mid grey the Filmic Log roll-off's encode "
+      "covers. Blender's default is about 4, which was chosen for camera "
+      "footage where 1.0 is a nominal white - it saturates at a scene "
+      "value of 19 and everything brighter maps identically. This "
+      "engine's HDR scene routinely goes past that: multi-pass lights "
+      "accumulate unbounded on an FP16 target and the specular boost "
+      "multiplies on top, so bright speculars and bloom land in the flat "
+      "region. Widening the range keeps them separable at the cost of "
+      "lifting mid grey slightly - 0.389 at 4 stops, 0.416 at 6, 0.442 "
+      "at 8. Only affects that one roll-off.",
+      NULL,
+      NULL,
+      {
+         { "4",  "4 stops (Blender default)" },
+         { "6",  "6 stops (saturates at 64)" },
+         { "8",  "8 stops (saturates at 256)" },
+         { "10", "10 stops (saturates at 1024)" },
+         { NULL, NULL },
+      },
+   {
+      "doom_hdr_highlight_desat",
+      "Highlight Desaturation",
+      NULL,
+      "Khronos PBR Neutral's hue-preservation stage, made available to "
+      "the curves that lack one: saturated highlights that would clip per "
+      "channel and skew hue are mixed toward the achromatic compressed "
+      "peak by how much the peak was compressed. Ignored under Neutral, "
+      "ACES 2.0 (Full) and AgX, which manage hue themselves.",
+      NULL,
+      NULL,
+      {
+         { "disabled", NULL },
+         { "enabled",  NULL },
          { NULL, NULL },
       },
       "reinhard"
