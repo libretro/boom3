@@ -833,6 +833,39 @@ static void update_audio_samplerate(void)
 		log_cb(RETRO_LOG_INFO, "[boom3] audio sample rate: %u Hz\n", sample_rate);
 }
 
+/* Curve-specific options are shown only under their curve.  The
+ * frontend owns the rendering of this - RETRO_ENVIRONMENT_SET_CORE_
+ * OPTIONS_DISPLAY - and a frontend that lacks it simply shows
+ * everything, which is the previous behaviour.  Two shapes of
+ * dependency: options that belong to one curve (surround and gamut to
+ * the full ACES 2.0, the look to AgX, toe and shoulder to GT,
+ * contrast and range to Filmic Log), and one inverse - highlight
+ * desaturation is Neutral's stage offered to the curves that lack
+ * one, so it hides under the three transforms that ignore it. */
+static void update_option_visibility( void ) {
+	struct retro_core_option_display d;
+	const int m = hdr_rolloff_mode;
+	size_t i;
+	static const struct { const char *key; int mode; } curveOpt[] = {
+		{ "doom_hdr_aces2_surround",    HDR_ROLLOFF_ACES2FULL },
+		{ "doom_hdr_aces2_gamut",       HDR_ROLLOFF_ACES2FULL },
+		{ "doom_hdr_agx_look",          HDR_ROLLOFF_AGX },
+		{ "doom_hdr_gt_toe",            HDR_ROLLOFF_GT },
+		{ "doom_hdr_gt_shoulder",       HDR_ROLLOFF_GT },
+		{ "doom_hdr_filmiclog_contrast", HDR_ROLLOFF_FILMICLOG },
+		{ "doom_hdr_filmiclog_range",   HDR_ROLLOFF_FILMICLOG },
+	};
+	for ( i = 0; i < sizeof( curveOpt ) / sizeof( curveOpt[0] ); i++ ) {
+		d.key = curveOpt[i].key;
+		d.visible = ( m == curveOpt[i].mode );
+		environ_cb( RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &d );
+	}
+	d.key = "doom_hdr_highlight_desat";
+	d.visible = ( m != HDR_ROLLOFF_NEUTRAL && m != HDR_ROLLOFF_ACES2FULL
+			&& m != HDR_ROLLOFF_AGX );
+	environ_cb( RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &d );
+}
+
 static void update_variables(bool startup)
 {
 	struct retro_variable var;
@@ -1227,6 +1260,9 @@ static void update_variables(bool startup)
 			cvarSystem->SetCVarInteger("com_machineSpec", preset);
 		}
 	}
+
+	/* the curve just parsed decides which of its options are shown */
+	update_option_visibility();
 }
 
 gp_layout_t *gp_layoutp = NULL;
