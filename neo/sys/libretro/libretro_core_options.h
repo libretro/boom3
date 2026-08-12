@@ -321,6 +321,24 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "standard"
    },
    {
+      "doom_hdr_agx_look",
+      "HDR: AgX Look",
+      NULL,
+      "A grade applied only under the AgX transform. Punchy is the "
+      "official higher-contrast, higher-saturation look - contrast 1.35 "
+      "and saturation 1.4 - expressed on this pipeline's ordering: the "
+      "grade sits on the transform's output. Ignored by every other "
+      "curve.",
+      NULL,
+      NULL,
+      {
+         { "default", NULL },
+         { "punchy",  NULL },
+         { NULL, NULL },
+      },
+      "default"
+   },
+   {
       "doom_specular_aa",
       "Specular Antialiasing (Toksvig)",
       NULL,

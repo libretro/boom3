@@ -472,6 +472,9 @@ static int    hdr_chroma_ab = 0;
  * and a linear average there lets a single hot sample dominate the
  * mean, which is why MSAA-style resolves fall apart under HDR. */
 static int    hdr_ssaa = 1;
+/* AgX look: 0 default, 1 Punchy - a post-transform contrast/saturation
+ * grade applied only under the AgX curve, spliced at program build. */
+static int    hdr_agx_look = 0;
 /* Test seam: when non-negative, uploaded as env[10].xy in place of the
  * computed half-texel offsets.  The harness's --ssaa case uses it to
  * run the same spliced program as its own linear control - offsets at
@@ -510,7 +513,8 @@ static GLuint hdr_arb_comp1, hdr_arb_comp2;
 static int    hdr_arb_comp_mode = -1;   /* roll-off curve baked into the pair above */
 static int    hdr_arb_comp_halation = -1;
 static int    hdr_arb_comp_chroma = -1;
-static int    hdr_arb_comp_ssaa = -1;  /* halation tint baked in with it */
+static int    hdr_arb_comp_ssaa = -1;
+static int    hdr_arb_comp_agxlook = -1;  /* halation tint baked in with it */
 
 /* Every program in the chain is loaded.  On this build there is no other
    chain to run, so this is a load-state flag rather than a path
@@ -978,6 +982,17 @@ static void update_variables(bool startup)
 		else if (!strcmp(var.value, "intense"))  hdr_bloom_amount = 1.7f;
 		else                                     hdr_bloom_amount = 1.0f;
 	}
+
+	var.key = "doom_hdr_agx_look";
+	var.value = NULL;
+	{
+		int want = 0;
+		if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value
+				&& !strcmp(var.value, "punchy"))
+			want = 1;
+		hdr_agx_look = want;   /* cache key rebuilds the composite */
+	}
+
 
 	var.key = "doom_hdr_ssaa";
 	var.value = NULL;
@@ -4162,6 +4177,30 @@ static const char *hdr_arb_composite_src( int mode, bool twoBand ) {
 		FILE *df = fopen( getenv( "HDR_DUMP_PROG" ), "ab" );
 		if ( df ) { fwrite( p, 1, strlen( p ), df ); fwrite( "\n=====\n", 1, 7, df ); fclose( df ); }
 	}
+	/* AgX Punchy: contrast 1.35 and saturation 1.4 on the transform
+	 * output, the official look expressed on this pipeline's ordering
+	 * - the grade sits after the outset and decode, and says so. */
+	if ( mode == HDR_ROLLOFF_AGX && hdr_agx_look == 1 ) {
+		static const char agxTail[] = "MUL t, t, 1.4491792;\n";
+		char *at = strstr( p, agxTail );
+		if ( at ) {
+			static const char punchy[] =
+			"PARAM kAgxLuma = { 0.2126, 0.7152, 0.0722, 1.35 };\n"
+			"POW u.x, t.x, kAgxLuma.w; POW u.y, t.y, kAgxLuma.w; POW u.z, t.z, kAgxLuma.w;\n"
+			"DP3 n.x, u, kAgxLuma;\n"
+			"ADD v.xyz, u, -n.x;\n"
+			"MAD t.xyz, v, 1.4, n.x;\n"
+			"MAX t.xyz, t, 0.0;\n";
+			const size_t tailLen = sizeof( agxTail ) - 1;
+			const size_t addLen = sizeof( punchy ) - 1;
+			char *after = at + tailLen;
+			const size_t rest = strlen( after ) + 1;
+			if ( strlen( p ) + addLen < sizeof( buf[0] ) ) {
+				memmove( after + addLen, after, rest );
+				memcpy( after, punchy, addLen );
+			}
+		}
+	}
 	if ( hdr_ssaa == 2 ) {
 		static const char stockFetch[] = "TEX s, fragment.texcoord[0], texture[0], 2D;\n";
 		char *at = strstr( p, stockFetch );
@@ -4984,7 +5023,8 @@ static bool hdr_arb_ready( void ) {
 	if ( hdr_arb_pyramid && hdr_arb_comp_mode == hdr_rolloff_mode
 			&& hdr_arb_comp_halation == hdr_halation
 			&& hdr_arb_comp_chroma == hdr_chroma_ab
-			&& hdr_arb_comp_ssaa == hdr_ssaa ) {
+			&& hdr_arb_comp_ssaa == hdr_ssaa
+			&& hdr_arb_comp_agxlook == hdr_agx_look ) {
 		return true;
 	}
 
@@ -5024,7 +5064,8 @@ static bool hdr_arb_ready( void ) {
 	if ( hdr_arb_comp_mode != hdr_rolloff_mode
 			|| hdr_arb_comp_halation != hdr_halation
 			|| hdr_arb_comp_chroma != hdr_chroma_ab
-			|| hdr_arb_comp_ssaa != hdr_ssaa ) {
+			|| hdr_arb_comp_ssaa != hdr_ssaa
+			|| hdr_arb_comp_agxlook != hdr_agx_look ) {
 		if ( hdr_arb_comp1 ) {
 			GLuint dead[2] = { hdr_arb_comp1, hdr_arb_comp2 };
 			glDeleteProgramsARB( 2, dead );
@@ -5042,6 +5083,7 @@ static bool hdr_arb_ready( void ) {
 		hdr_arb_comp_halation = hdr_halation;
 		hdr_arb_comp_chroma = hdr_chroma_ab;
 		hdr_arb_comp_ssaa = hdr_ssaa;
+		hdr_arb_comp_agxlook = hdr_agx_look;
 
 		/* Say what was baked in.  These two are baked into the program
 		 * text rather than uploaded, so if a setting is not reaching the
