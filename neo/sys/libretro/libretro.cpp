@@ -916,6 +916,26 @@ static void update_variables(bool startup)
 		/* feed the deterministic clock and the exact tic schedule */
 		Core_SetFramerate(framerate);
 		Com_SetFrameSchedule(framerate);
+
+		/* Unlocked Framerate.  Interpolation is the classic arrangement:
+		 * simulate at 60 and smooth the presentation between tics.  Fixed
+		 * simulates at the output rate instead, so every rendered frame is
+		 * a simulated one, the interpolation becomes inert, and the input
+		 * latency floor - half a tick on average - falls with it.  Read
+		 * here and only here: the game clock maps a frame number to
+		 * absolute milliseconds through the tick, so it cannot move
+		 * mid-session. */
+		{
+			struct retro_variable uf = { "doom_unlocked_framerate", NULL };
+			int tick = CONTENT_AUTHORED_HZ;
+			if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &uf) && uf.value
+					&& !strcmp(uf.value, "fixed"))
+				tick = (int)framerate;
+			Usercmd_SetRate(tick);
+			if (log_cb)
+				log_cb(RETRO_LOG_INFO, "[boom3] simulation tick %d Hz, output %u Hz\n",
+						tick, framerate);
+		}
 	}
 	
 	var.key = "doom_resolution";

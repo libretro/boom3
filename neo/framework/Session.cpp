@@ -2336,6 +2336,17 @@ bool idSessionLocal::SaveGame( const char *saveName, bool autosave, const char* 
 			fileDesc->Printf( "\"\"\n" );
 		}
 
+		/* The tick this save was taken at, as a third token.  A save
+		 * carries absolute millisecond times and a frame number whose
+		 * mapping to them is the tick, so one taken under a different
+		 * Unlocked Framerate mode resumes on a timeline it was not
+		 * written against.  It goes in the description sidecar rather
+		 * than the binary header because the header is read positionally
+		 * and every existing save would have to move; a sidecar without
+		 * this token is simply read as the standard rate, which is what
+		 * every save written before now was. */
+		fileDesc->Printf( "%d\n", USERCMD_HZ );
+
 		fileSystem->CloseFile( fileDesc );
 	}
 
@@ -2382,6 +2393,36 @@ bool idSessionLocal::LoadGame( const char *saveName, idFile *overrideFile ) {
 	} else {
 		loadFile = saveName;
 		ScrubSaveGameFileName( loadFile );
+
+		/* Refuse a save taken at a different simulation tick.  It would
+		 * not crash, which is exactly why it needs refusing: absolute
+		 * times and the frame number stop agreeing and the world resumes
+		 * on a timeline it was never written against.  The load menu
+		 * already marks these, so this is the backstop rather than the
+		 * first thing the player learns. */
+		{
+			idStr descFile = loadFile;
+			descFile.SetFileExtension( ".txt" );
+			idLexer src( LEXFL_NOERRORS | LEXFL_NOSTRINGCONCAT );
+			int saveTick = CONTENT_AUTHORED_HZ;
+			if ( src.LoadFile( va( "savegames/%s", descFile.c_str() ) ) ) {
+				idToken tok;
+				if ( src.ReadToken( &tok ) && src.ReadToken( &tok )
+						&& src.ReadToken( &tok ) ) {
+					int t = atoi( tok.c_str() );
+					if ( t > 0 ) {
+						saveTick = t;
+					}
+				}
+			}
+			if ( saveTick != USERCMD_HZ ) {
+				common->Warning( "savegame was taken with the simulation at "
+						"%d Hz and this session runs at %d; change Unlocked "
+						"Framerate back to load it", saveTick, USERCMD_HZ );
+				return false;
+			}
+		}
+
 		loadFile.SetFileExtension( ".save" );
 
 		in = "savegames/";

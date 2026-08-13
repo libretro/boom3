@@ -60,7 +60,16 @@ const idVec3 DEFAULT_GRAVITY_VEC3( 0, 0, -DEFAULT_GRAVITY );
 
 const int	CINEMATIC_SKIP_DELAY	= SEC2MS( 2.0f );
 
-const float USERCMD_MSEC_PRECISE = 1000.0f / (float)USERCMD_HZ;
+/* Not a const: initialising it from the tick at namespace scope would
+   have compiled quietly and frozen it at the static-init value of 60
+   forever, which is the whole trap of making the tick a variable.  It
+   is written by Usercmd_SetRate through this hook, before anything
+   reads it. */
+float USERCMD_MSEC_PRECISE = 1000.0f / 60.0f;
+
+void Game_SetUsercmdRate( int hz ) {
+	USERCMD_MSEC_PRECISE = 1000.0f / (float)( hz > 0 ? hz : 60 );
+}
 
 idRenderWorld *				gameRenderWorld = NULL;		// all drawing is done to this world
 idSoundWorld *				gameSoundWorld = NULL;		// all audio goes to this world

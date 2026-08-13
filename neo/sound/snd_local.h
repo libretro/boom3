@@ -50,7 +50,12 @@ typedef enum {
 } soundDemoCommand_t;
 
 const int SOUND_MAX_CHANNELS		= 8;
-const int SOUND_DECODER_FREE_DELAY	= 1000 * MIXBUFFER_SAMPLES / USERCMD_MSEC;		// four seconds
+// four seconds.  Pinned to the content rate on purpose: this is a
+// wall-clock grace period before a decoder is released, not a count of
+// tics, and deriving it from a tick that can now vary would silently
+// halve it.  It was also a namespace-scope const initialised from the
+// tick, which would have frozen at whatever the static-init value was.
+const int SOUND_DECODER_FREE_DELAY	= 1000 * MIXBUFFER_SAMPLES / ( 1000 / CONTENT_AUTHORED_HZ );
 
 /*
    Output sample rate. Chosen once at startup from the core option and fixed

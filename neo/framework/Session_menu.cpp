@@ -204,12 +204,29 @@ void idSessionLocal::SetSaveGameGuiVars( void ) {
 		loadGameList[i] = fileList[fileTimes[i].index];
 
 		idLexer src(LEXFL_NOERRORS|LEXFL_NOSTRINGCONCAT);
+		int saveTick = CONTENT_AUTHORED_HZ;
 		if ( src.LoadFile( va("savegames/%s.txt", loadGameList[i].c_str()) ) ) {
 			idToken tok;
 			src.ReadToken( &tok );
 			name = tok;
+			/* second token is the level shot, third - if present - is the
+			 * tick the save was taken at.  Saves written before this
+			 * existed have no third token and were all taken at the
+			 * standard rate, which is the default above. */
+			if ( src.ReadToken( &tok ) && src.ReadToken( &tok ) ) {
+				int t = atoi( tok.c_str() );
+				if ( t > 0 ) {
+					saveTick = t;
+				}
+			}
 		} else {
 			name = loadGameList[i];
+		}
+
+		/* Mark the ones this session cannot load.  Loading is refused in
+		 * LoadGame as well - this is so the refusal is not a surprise. */
+		if ( saveTick != USERCMD_HZ ) {
+			name += va( " [%d Hz]", saveTick );
 		}
 
 		name += "\t";

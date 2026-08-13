@@ -423,6 +423,23 @@ idCVar idUsercmdGenLocal::m_invertLook( "m_invertLook", "0", CVAR_SYSTEM | CVAR_
 static idUsercmdGenLocal localUsercmdGen;
 idUsercmdGen	*usercmdGen = &localUsercmdGen;
 
+/* Set once during init, before anything derives a timing from it. */
+int usercmd_hz   = 60;
+int usercmd_msec = 1000 / 60;
+
+void Usercmd_SetRate( int hz ) {
+	if ( hz < 1 ) {
+		hz = 60;
+	}
+	usercmd_hz   = hz;
+	usercmd_msec = 1000 / hz;
+
+	/* the game side keeps a float form of the same number; one entry
+	 * point so the two cannot disagree */
+	extern void Game_SetUsercmdRate( int hz );
+	Game_SetUsercmdRate( hz );
+}
+
 /*
 ================
 idUsercmdGenLocal::idUsercmdGenLocal

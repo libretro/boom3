@@ -37,33 +37,32 @@ If you have questions concerning this license or the applicable additional terms
 ===============================================================================
 */
 
-/* The simulation tick.  60 is the rate this engine has always run at and
-   the rate its content was authored against; it stays the default and
-   nothing about a stock build changes.
+/* The simulation tick, chosen at load from the Unlocked Framerate core
+   option: Interpolation keeps the classic 60 and smooths presentation
+   between tics, Fixed ticks at the output framerate so every rendered
+   frame is simulated and interpolation is inert.  It cannot change
+   mid-session - the game clock maps a frame number to absolute
+   milliseconds through it - so it is set once during init and read
+   everywhere else.
 
-   D3_USERCMD_HZ exists because the tick is the whole of the input
-   latency floor - a command waits on average half a tick to be
-   simulated, 8 ms at 60 - and the machinery that would have made
-   raising it hard is already here and already rate-generic: CalcMSec is
-   an exact residual-carrying clock parameterised on this constant, and
-   Com_UpdateTicNumber schedules its tics against the render rate in
-   fixed point.  Raising it is a savegame, demo and network protocol
-   break, and the code refuses those combinations rather than corrupting
-   them.  It must stay a compile-time constant: sound and physics
-   constants are derived from it at namespace scope.
+   The machinery that would have made a non-60 tick hard is already here
+   and already rate-generic: CalcMSec is an exact residual-carrying
+   clock parameterised on this, and Com_UpdateTicNumber schedules tics
+   against the render rate in fixed point.  Divisors of 1000 are not
+   required; the remainder is carried, so 120 yields the 8 and 9 ms
+   steps that sum to exactly 1000. */
+extern int usercmd_hz;
+extern int usercmd_msec;
 
-   Divisors of 1000 are not required.  CalcMSec carries the remainder,
-   so 120 yields the 8 and 9 ms steps that sum to exactly 1000. */
-#ifndef D3_USERCMD_HZ
-#define D3_USERCMD_HZ 60
-#endif
+#define USERCMD_HZ				( usercmd_hz )
+#define USERCMD_MSEC			( usercmd_msec )
 
-const int USERCMD_HZ			= D3_USERCMD_HZ;
-const int USERCMD_MSEC			= 1000 / USERCMD_HZ;
+void Usercmd_SetRate( int hz );
 
 /* The rate the shipped content was authored against, which is not the
    same question as how fast the engine ticks.  Script frame waits and
-   articulated-figure friction are both expressed in these units. */
+   articulated-figure friction are both expressed in these units, and
+   this one never moves. */
 const int CONTENT_AUTHORED_HZ	= 60;
 
 // usercmd_t->button bits

@@ -85,7 +85,8 @@ extern idSoundWorld *				gameSoundWorld;
 extern const int NUM_RENDER_PORTAL_BITS;
 
 // DG: USERCMD_MSEC is 16, USERCMD_MSEC_PRECISE is a float and 16.6666..
-extern const float USERCMD_MSEC_PRECISE;
+extern float USERCMD_MSEC_PRECISE;
+void Game_SetUsercmdRate( int hz );   // keeps USERCMD_MSEC_PRECISE with the tick
 /*
 ===============================================================================
 
