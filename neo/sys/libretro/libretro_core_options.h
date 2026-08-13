@@ -879,13 +879,15 @@ struct retro_core_option_v2_definition option_defs_us[] = {
    },
    {
       "doom_hdr_highlight_desat",
-      "Highlight Desaturation",
+      "Highlight Hue Preservation",
       NULL,
-      "Khronos PBR Neutral's hue-preservation stage, made available to "
-      "the curves that lack one: saturated highlights that would clip per "
-      "channel and skew hue are mixed toward the achromatic compressed "
-      "peak by how much the peak was compressed. Ignored under Neutral, "
-      "ACES 2.0 (Full) and AgX, which manage hue themselves.",
+      "Keeps the hue of saturated highlights. Without it a bright colour "
+      "clips one channel at a time and its hue slides toward whichever "
+      "channel survives - a hot orange goes yellow, then white. With it "
+      "the colour is mixed toward an achromatic peak by however much that "
+      "peak was compressed, so it desaturates along its own hue instead of "
+      "drifting off it. Neutral, ACES 2.0 (Full) and AgX already do this "
+      "internally, so this row only appears for the curves that need it.",
       NULL,
       NULL,
       {

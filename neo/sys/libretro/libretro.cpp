@@ -483,12 +483,15 @@ static int    hdr_ssaa = 1;
 /* AgX look: 0 default, 1 Punchy - a post-transform contrast/saturation
  * grade applied only under the AgX curve, spliced at program build. */
 static int    hdr_agx_look = 0;
-/* Highlight desaturation: the Khronos Neutral hue-preservation stage
- * lifted out as an option for the curves that lack one - per-channel
- * clipping of saturated highlights skews hue, and the fix is Neutral's
- * own: mix toward the achromatic compressed peak by how much the peak
- * was compressed.  Skipped under Neutral, ACES 2.0 full and AgX, which
- * manage hue themselves. */
+/* Highlight hue preservation, for the curves that have none of their
+ * own.  Per-channel clipping slides a saturated highlight toward
+ * whichever channel survives longest; mixing toward an achromatic peak
+ * by the amount that peak was compressed desaturates it along its own
+ * hue instead.  The construction is the one Khronos PBR Neutral uses
+ * internally, which is why it is skipped under Neutral, ACES 2.0 full
+ * and AgX - they already do it, and the option surface hides the row
+ * for exactly those three rather than offering a control that would do
+ * nothing. */
 static int    hdr_hl_desat = 0;
 /* ACES 2.0 surround: 0 dark, 1 dim (the reference and prior baked
  * value), 2 average.  A change re-solves the tables. */
@@ -3117,7 +3120,7 @@ static const char *hdr_fs_src =
 	"  float hlP = max(lin.r, max(lin.g, lin.b));\n"
 	"  if (uParms.z > 17.5) lin = rolloffRGB(lin);\n"
 	"  else lin = vec3(rolloff(lin.r), rolloff(lin.g), rolloff(lin.b));\n"
-	/* the Neutral hue-preservation stage for curves without one */
+	/* hue preservation for the curves that have none of their own */
 	"  if (uHlDesat > 0.5) {\n"
 	"    float hlq = max(lin.r, max(lin.g, lin.b));\n"
 	"    float hlg = 1.0 - 1.0 / (0.15 * max(hlP - hlq, 0.0) + 1.0);\n"
@@ -4362,7 +4365,7 @@ static const char *hdr_arb_composite_src( int mode, bool twoBand ) {
 	/* AgX Punchy: contrast 1.35 and saturation 1.4 on the transform
 	 * output, the official look expressed on this pipeline's ordering
 	 * - the grade sits after the outset and decode, and says so. */
-	/* Highlight desat before the shoulder: pre-curve peak from lin,
+	/* Hue preservation before the shoulder: pre-curve peak from lin,
 	 * which no curve writes, post-curve peak from t; the mix is
 	 * Neutral's own, g = 1 - 1/(0.15 (P - p') + 1). */
 	/* SDR tone-mapped output: the same composite ends in a gamma
