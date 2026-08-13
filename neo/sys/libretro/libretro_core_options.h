@@ -97,6 +97,28 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "auto"
    },
    {
+      "doom_unlocked_framerate",
+      "Unlocked Framerate (Restart Required)",
+      NULL,
+      "How framerates above 60 are reached. Interpolation is the classic "
+      "arrangement and the default: the simulation runs at 60 Hz and the "
+      "presentation is smoothed between tics. Fixed simulates at the output "
+      "framerate instead, so every frame drawn is a frame simulated and input "
+      "is acted on sooner - around 4 ms of average wait at 120 Hz against 8.3 "
+      "at 60. Fixed costs proportionally more CPU, disables multiplayer, and "
+      "its savegames are not interchangeable with Interpolation ones: the load "
+      "menu marks those with the rate they were taken at and will not load "
+      "them. Applied at startup.",
+      NULL,
+      NULL,
+      {
+         { "interpolation", "Interpolation" },
+         { "fixed",         "Fixed" },
+         { NULL, NULL },
+      },
+      "interpolation"
+   },
+   {
       "doom_sound_samplerate",
       "Sound Samplerate (Hint) (Restart Required)",
       NULL,
@@ -119,16 +141,16 @@ struct retro_core_option_v2_definition option_defs_us[] = {
    },
    {
       "doom_color_format",
-      "Color Format (Restart Required)"
-      " 24-bit tone-mapped runs the same scene pipeline - curves, bloom, "
-      "every enhancement - encoded to the stock 24-bit surface: the full "
-      "transform family on any SDR display, no HDR frontend support needed.",
+      "Color Format (Restart Required)",
       NULL,
       "24-bit is the standard XRGB8888 output. 30-bit Color (HDR) renders "
       "into a 10-bit surface and emits HDR10 (PQ, Rec.2020): use with the "
       "frontend's HDR output enabled on an HDR display. The conversion "
       "honors the frontend's paper white, peak luminance, and Colour Boost "
-      "settings, and dithers the 10-bit quantization.",
+      "settings, and dithers the 10-bit quantization. 24-bit tone-mapped "
+      "runs that same scene pipeline - curves, bloom, every enhancement - "
+      "encoded to the stock 24-bit surface: the full transform family on any "
+      "SDR display, with no HDR frontend support needed.",
       NULL,
       NULL,
       {
@@ -567,9 +589,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
    },
    {
       "doom_hdr_peak",
-      "HDR: Display Peak Luminance"
-      " HDR10 output only: SDR tone-mapped fixes the display at the "
-      "100-nit reference.",
+      "HDR: Display Peak Luminance",
       NULL,
       "Overrides the peak brightness the frontend reports. ACES 2.0's "
       "tone scale is parameterised by this single number and rebuilds "
@@ -580,7 +600,8 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "nothing, in which case it falls back to 1000, or unless your "
       "display's real peak differs from what it claims. Only the full "
       "ACES 2.0 transform uses it; the other roll-offs have no notion "
-      "of an absolute peak.",
+      "of an absolute peak. HDR10 output only: the 24-bit tone-mapped mode "
+      "fixes the display at the 100-nit SDR reference.",
       NULL,
       NULL,
       {
