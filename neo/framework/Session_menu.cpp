@@ -226,7 +226,16 @@ void idSessionLocal::SetSaveGameGuiVars( void ) {
 		/* Mark the ones this session cannot load.  Loading is refused in
 		 * LoadGame as well - this is so the refusal is not a surprise. */
 		if ( saveTick != USERCMD_HZ ) {
-			name += va( " [%d Hz]", saveTick );
+			/* Name the mode, not the number: "60 Hz" told the player the
+			 * rate but not which setting to go back to.  A save taken at
+			 * the content rate is an Interpolation save whichever way it
+			 * was reached - Fixed at 60 output is the same simulation - so
+			 * the rate is only worth printing for the Fixed ones. */
+			if ( saveTick == CONTENT_AUTHORED_HZ ) {
+				name += " [Interpolation]";
+			} else {
+				name += va( " [Fixed %d Hz]", saveTick );
+			}
 		}
 
 		name += "\t";

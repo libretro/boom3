@@ -11,9 +11,13 @@ cannot see any of it and neither can a build.  This can.
 Field order: key, desc, desc_categorized, info, info_categorized,
 category_key, values[], default_value.
 """
-import re, sys
+import os, re, sys
 
-PATH = 'neo/sys/libretro/libretro_core_options.h'
+# resolve relative to this file, not the caller's working directory: a
+# checker that only runs from the repository root is a checker that gets
+# skipped
+PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                    '..', '..', 'sys', 'libretro', 'libretro_core_options.h')
 LABEL_MAX = 64
 
 def literals(text):

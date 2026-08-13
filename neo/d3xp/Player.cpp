@@ -5874,7 +5874,17 @@ void idPlayer::UpdateAir( void ) {
 				hud->HandleNamedEvent( "noAir" );
 			}
 		}
-		airTics--;
+		/* Sixty times a second, not once a tic.  pm_airTics is authored
+		 * as a count of 60 Hz frames - 1800 for thirty seconds - so
+		 * decrementing per tic drained the air twice as fast at a 120 Hz
+		 * simulation.  Reported from play, and the only counter of its
+		 * kind left in the game code: a sweep for bare per-frame
+		 * increments and decrements across d3xp turned up event counters
+		 * and loop indices and nothing else time-like, and stamina was
+		 * already integrating MS2SEC( gameLocal.msec ). */
+		if ( Game_ContentTic( gameLocal.framenum ) ) {
+			airTics--;
+		}
 		if ( airTics < 0 ) {
 			airTics = 0;
 			// check for damage

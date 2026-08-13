@@ -86,6 +86,16 @@ extern const int NUM_RENDER_PORTAL_BITS;
 
 // DG: USERCMD_MSEC is 16, USERCMD_MSEC_PRECISE is a float and 16.6666..
 extern float USERCMD_MSEC_PRECISE;
+
+/* True on exactly CONTENT_AUTHORED_HZ tics per second, whatever the
+   simulation tick is: the integer-division boundary test carries the
+   remainder the same way CalcMSec does, so it needs no state and is
+   unconditionally true at 60.  Counters that were written as "once per
+   tic" and mean "sixty times a second" test this instead. */
+ID_INLINE bool Game_ContentTic( int framenum ) {
+	return ( framenum * CONTENT_AUTHORED_HZ ) / USERCMD_HZ
+			!= ( ( framenum - 1 ) * CONTENT_AUTHORED_HZ ) / USERCMD_HZ;
+}
 void Game_SetUsercmdRate( int hz );   // keeps USERCMD_MSEC_PRECISE with the tick
 /*
 ===============================================================================

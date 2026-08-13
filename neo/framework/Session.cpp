@@ -2416,9 +2416,10 @@ bool idSessionLocal::LoadGame( const char *saveName, idFile *overrideFile ) {
 				}
 			}
 			if ( saveTick != USERCMD_HZ ) {
-				common->Warning( "savegame was taken with the simulation at "
-						"%d Hz and this session runs at %d; change Unlocked "
-						"Framerate back to load it", saveTick, USERCMD_HZ );
+				common->Warning( "this savegame needs Unlocked Framerate set "
+						"to %s; the session is running %s",
+						saveTick == CONTENT_AUTHORED_HZ ? "Interpolation" : "Fixed",
+						USERCMD_HZ == CONTENT_AUTHORED_HZ ? "Interpolation" : "Fixed" );
 				return false;
 			}
 		}
