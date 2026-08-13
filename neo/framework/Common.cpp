@@ -97,7 +97,7 @@ idCVar com_updateLoadSize( "com_updateLoadSize", "0", CVAR_BOOL | CVAR_SYSTEM | 
 idCVar com_product_lang_ext( "com_product_lang_ext", "1", CVAR_INTEGER | CVAR_SYSTEM | CVAR_ARCHIVE, "Extension to use when creating language files." );
 
 int		com_frameTime;			// time (since start) for the current frame in milliseconds
-volatile int	com_ticNumber;			// 60 hz tics
+volatile int	com_ticNumber;			// simulation tics, USERCMD_HZ of them a second
 int		com_editors;			// currently opened editor(s)
 bool		com_editorActive;		//  true if an editor has focus
 
@@ -277,7 +277,15 @@ void Com_UpdateFrameTime() {
 	// Integer rounded division rather than Rint on a double: verified to give
 	// the same answer for every tic across 8 hours of 60Hz play, without
 	// depending on the FPU rounding mode or on -ffast-math.
-	com_frameTime = (int)( ( (int64_t)com_ticNumber * 1000 + 30 ) / 60 );
+	/* Tics to milliseconds.  The 60 here was a bare literal, so the tick
+	 * audit - which searched for USERCMD_HZ and USERCMD_MSEC - walked
+	 * straight past it, and at a 120 Hz simulation this clock ran at
+	 * twice wall speed.  It is the engine s master frame time: menus,
+	 * GUI animation and cinematics are all driven from it, which is why
+	 * the startup video played at double speed.  The rounding term is
+	 * half the divisor, as it was. */
+	com_frameTime = (int)( ( (int64_t)com_ticNumber * 1000 + USERCMD_HZ / 2 )
+			/ USERCMD_HZ );
 }
 
 

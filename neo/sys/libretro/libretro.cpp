@@ -841,6 +841,41 @@ static void update_audio_samplerate(void)
 		log_cb(RETRO_LOG_INFO, "[boom3] audio sample rate: %u Hz\n", sample_rate);
 }
 
+/* One mapping from option string to curve, used by the parse and by
+ * the visibility check.  They were separate before only by accident,
+ * and the visibility check additionally depended on the parse having
+ * already run this frame - which it has not when the frontend asks
+ * the core what to show. */
+static int hdr_rolloff_from_string( const char *v ) {
+	if ( !v ) {
+		return HDR_ROLLOFF_REINHARD;
+	}
+	if ( !strcmp( v, "aces" ) ) return HDR_ROLLOFF_ACES;
+	if ( !strcmp( v, "hejl" ) ) return HDR_ROLLOFF_HEJL;
+	if ( !strcmp( v, "gt" ) ) return HDR_ROLLOFF_GT;
+	if ( !strcmp( v, "hable" ) ) return HDR_ROLLOFF_HABLE;
+	if ( !strcmp( v, "lottes" ) ) return HDR_ROLLOFF_LOTTES;
+	if ( !strcmp( v, "drago" ) ) return HDR_ROLLOFF_DRAGO;
+	if ( !strcmp( v, "unreal" ) ) return HDR_ROLLOFF_UNREAL;
+	if ( !strcmp( v, "filmicalu" ) ) return HDR_ROLLOFF_FILMICALU;
+	if ( !strcmp( v, "jodie" ) ) return HDR_ROLLOFF_JODIE;
+	if ( !strcmp( v, "acesfit" ) ) return HDR_ROLLOFF_ACESFIT;
+	if ( !strcmp( v, "neutral" ) ) return HDR_ROLLOFF_NEUTRAL;
+	if ( !strcmp( v, "agx" ) ) return HDR_ROLLOFF_AGX;
+	if ( !strcmp( v, "aces2full" ) ) return HDR_ROLLOFF_ACES2FULL;
+	if ( !strcmp( v, "rplain" ) ) return HDR_ROLLOFF_RPLAIN;
+	if ( !strcmp( v, "rext" ) ) return HDR_ROLLOFF_REXT;
+	if ( !strcmp( v, "expo" ) ) return HDR_ROLLOFF_EXPO;
+	if ( !strcmp( v, "hable2017" ) ) return HDR_ROLLOFF_HABLE2017;
+	if ( !strcmp( v, "aces2" ) ) return HDR_ROLLOFF_ACES2;
+	if ( !strcmp( v, "tumblin" ) ) return HDR_ROLLOFF_TUMBLIN;
+	if ( !strcmp( v, "ward" ) ) return HDR_ROLLOFF_WARD;
+	if ( !strcmp( v, "schlick" ) ) return HDR_ROLLOFF_SCHLICK;
+	if ( !strcmp( v, "devlin" ) ) return HDR_ROLLOFF_DEVLIN;
+	if ( !strcmp( v, "filmiclog" ) ) return HDR_ROLLOFF_FILMICLOG;
+	return HDR_ROLLOFF_REINHARD;
+}
+
 /* Curve-specific options are shown only under their curve.  The
  * frontend owns the rendering of this - RETRO_ENVIRONMENT_SET_CORE_
  * OPTIONS_DISPLAY - and a frontend that lacks it simply shows
@@ -850,9 +885,27 @@ static void update_audio_samplerate(void)
  * contrast and range to Filmic Log), and one inverse - highlight
  * desaturation is Neutral's stage offered to the curves that lack
  * one, so it hides under the three transforms that ignore it. */
-static void update_option_visibility( void ) {
+static bool update_option_visibility( void ) {
 	struct retro_core_option_display d;
-	const int m = hdr_rolloff_mode;
+	struct retro_variable rv;
+	static int lastMode = -1;
+	static int lastPq = -1;
+	int m;
+	bool changed;
+
+	/* Read the curve straight from the option rather than from the
+	 * parsed copy.  The frontend asks what to show at menu time, which
+	 * is before update_variables runs for the new value, so keying off
+	 * the parsed copy showed the previous curve's options - select ACES
+	 * 2.0 after Filmic Log and Filmic Log's rows were still there. */
+	rv.key = "doom_hdr_rolloff";
+	rv.value = NULL;
+	m = ( environ_cb( RETRO_ENVIRONMENT_GET_VARIABLE, &rv ) && rv.value )
+			? hdr_rolloff_from_string( rv.value ) : hdr_rolloff_mode;
+
+	changed = ( m != lastMode ) || ( (int)hdr_pq_output != lastPq );
+	lastMode = m;
+	lastPq = (int)hdr_pq_output;
 	size_t i;
 	static const struct { const char *key; int mode; } curveOpt[] = {
 		{ "doom_hdr_aces2_surround",    HDR_ROLLOFF_ACES2FULL },
@@ -876,6 +929,14 @@ static void update_option_visibility( void ) {
 	d.visible = ( m != HDR_ROLLOFF_NEUTRAL && m != HDR_ROLLOFF_ACES2FULL
 			&& m != HDR_ROLLOFF_AGX );
 	environ_cb( RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &d );
+
+	return changed;
+}
+
+/* The frontend pulls this when it is about to show the option list, so
+ * the answer is current instead of one change behind. */
+static bool option_display_cb( void ) {
+	return update_option_visibility();
 }
 
 static void update_variables(bool startup)
@@ -1164,32 +1225,7 @@ static void update_variables(bool startup)
 	var.key = "doom_hdr_rolloff";
 	var.value = NULL;
 	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
-	{
-		if (!strcmp(var.value, "aces"))      hdr_rolloff_mode = HDR_ROLLOFF_ACES;
-		else if (!strcmp(var.value, "hejl")) hdr_rolloff_mode = HDR_ROLLOFF_HEJL;
-		else if (!strcmp(var.value, "gt"))   hdr_rolloff_mode = HDR_ROLLOFF_GT;
-		else if (!strcmp(var.value, "hable"))  hdr_rolloff_mode = HDR_ROLLOFF_HABLE;
-		else if (!strcmp(var.value, "lottes")) hdr_rolloff_mode = HDR_ROLLOFF_LOTTES;
-		else if (!strcmp(var.value, "drago"))  hdr_rolloff_mode = HDR_ROLLOFF_DRAGO;
-		else if (!strcmp(var.value, "unreal")) hdr_rolloff_mode = HDR_ROLLOFF_UNREAL;
-		else if (!strcmp(var.value, "filmicalu")) hdr_rolloff_mode = HDR_ROLLOFF_FILMICALU;
-		else if (!strcmp(var.value, "jodie"))     hdr_rolloff_mode = HDR_ROLLOFF_JODIE;
-		else if (!strcmp(var.value, "acesfit"))   hdr_rolloff_mode = HDR_ROLLOFF_ACESFIT;
-		else if (!strcmp(var.value, "neutral"))   hdr_rolloff_mode = HDR_ROLLOFF_NEUTRAL;
-		else if (!strcmp(var.value, "agx"))       hdr_rolloff_mode = HDR_ROLLOFF_AGX;
-		else if (!strcmp(var.value, "aces2full")) hdr_rolloff_mode = HDR_ROLLOFF_ACES2FULL;
-		else if (!strcmp(var.value, "rplain"))    hdr_rolloff_mode = HDR_ROLLOFF_RPLAIN;
-		else if (!strcmp(var.value, "rext"))      hdr_rolloff_mode = HDR_ROLLOFF_REXT;
-		else if (!strcmp(var.value, "expo"))      hdr_rolloff_mode = HDR_ROLLOFF_EXPO;
-		else if (!strcmp(var.value, "hable2017")) hdr_rolloff_mode = HDR_ROLLOFF_HABLE2017;
-		else if (!strcmp(var.value, "aces2"))     hdr_rolloff_mode = HDR_ROLLOFF_ACES2;
-		else if (!strcmp(var.value, "tumblin"))   hdr_rolloff_mode = HDR_ROLLOFF_TUMBLIN;
-		else if (!strcmp(var.value, "ward"))      hdr_rolloff_mode = HDR_ROLLOFF_WARD;
-		else if (!strcmp(var.value, "schlick"))   hdr_rolloff_mode = HDR_ROLLOFF_SCHLICK;
-		else if (!strcmp(var.value, "devlin"))    hdr_rolloff_mode = HDR_ROLLOFF_DEVLIN;
-		else if (!strcmp(var.value, "filmiclog")) hdr_rolloff_mode = HDR_ROLLOFF_FILMICLOG;
-		else                                     hdr_rolloff_mode = HDR_ROLLOFF_REINHARD;
-	}
+			hdr_rolloff_mode = hdr_rolloff_from_string(var.value);
 
 	var.key = "doom_hdr_filmiclog_contrast";
 	var.value = NULL;
@@ -1294,7 +1330,7 @@ static void update_variables(bool startup)
 	}
 
 	/* the curve just parsed decides which of its options are shown */
-	update_option_visibility();
+	(void)update_option_visibility();
 }
 
 gp_layout_t *gp_layoutp = NULL;
@@ -7417,6 +7453,17 @@ void retro_set_environment(retro_environment_t cb)
 
    libretro_set_core_options(environ_cb,
          &libretro_supports_option_categories);
+
+   {
+      /* Pull-based visibility.  Pushing on every update_variables was
+       * always a change behind, because the frontend renders the option
+       * list before the core has parsed the new value; with this the
+       * frontend asks and the answer is current.  Frontends without it
+       * keep the pushed updates, one change stale but not wrong. */
+      struct retro_core_options_update_display_callback ucb;
+      ucb.callback = option_display_cb;
+      environ_cb( RETRO_ENVIRONMENT_SET_CORE_OPTIONS_UPDATE_DISPLAY_CALLBACK, &ucb );
+   }
    cb(RETRO_ENVIRONMENT_SET_CONTROLLER_INFO, (void*)ports);
 
    struct retro_perf_callback perf;
