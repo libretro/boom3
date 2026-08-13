@@ -2407,8 +2407,9 @@ bool idSessionLocal::LoadGame( const char *saveName, idFile *overrideFile ) {
 			int saveTick = CONTENT_AUTHORED_HZ;
 			if ( src.LoadFile( va( "savegames/%s", descFile.c_str() ) ) ) {
 				idToken tok;
+				/* four tokens: name, map, level shot, tick */
 				if ( src.ReadToken( &tok ) && src.ReadToken( &tok )
-						&& src.ReadToken( &tok ) ) {
+						&& src.ReadToken( &tok ) && src.ReadToken( &tok ) ) {
 					int t = atoi( tok.c_str() );
 					if ( t > 0 ) {
 						saveTick = t;

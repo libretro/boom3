@@ -213,7 +213,12 @@ void idSessionLocal::SetSaveGameGuiVars( void ) {
 			 * tick the save was taken at.  Saves written before this
 			 * existed have no third token and were all taken at the
 			 * standard rate, which is the default above. */
-			if ( src.ReadToken( &tok ) && src.ReadToken( &tok ) ) {
+			/* the sidecar is four tokens: save name, map name, level shot,
+			 * and then the tick.  Skipping two and reading the third landed
+			 * on the level shot, whose atoi is zero, so every save read back
+			 * as the default rate no matter what was written. */
+			if ( src.ReadToken( &tok ) && src.ReadToken( &tok )
+					&& src.ReadToken( &tok ) ) {
 				int t = atoi( tok.c_str() );
 				if ( t > 0 ) {
 					saveTick = t;
