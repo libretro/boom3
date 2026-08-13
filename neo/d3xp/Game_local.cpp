@@ -60,7 +60,7 @@ const idVec3 DEFAULT_GRAVITY_VEC3( 0, 0, -DEFAULT_GRAVITY );
 
 const int	CINEMATIC_SKIP_DELAY	= SEC2MS( 2.0f );
 
-const float USERCMD_MSEC_PRECISE = 1000.0f/60.0f;
+const float USERCMD_MSEC_PRECISE = 1000.0f / (float)USERCMD_HZ;
 
 idRenderWorld *				gameRenderWorld = NULL;		// all drawing is done to this world
 idSoundWorld *				gameSoundWorld = NULL;		// all audio goes to this world
@@ -311,6 +311,19 @@ void idGameLocal::Init( void ) {
 
 	Printf( "----- Initializing Game -----\n" );
 	Printf( "gamename: %s\n", GAME_VERSION );
+
+	/* Say it once, loudly, on any build that is not running the standard
+	 * tick.  Savegames carry absolute times and a frame number whose
+	 * mapping is the tick, and demos replay tic for tic, so neither
+	 * survives the change - they do not crash, they play back against a
+	 * timeline they were not recorded on, which is worse to diagnose
+	 * than a refusal.  Multiplayer is refused outright elsewhere.
+	 * Compiled away entirely at the default tick. */
+	if ( USERCMD_HZ != CONTENT_AUTHORED_HZ ) {
+		Warning( "simulation tick is %d Hz, not the standard %d: savegames "
+				"and demos are not interchangeable with standard builds, and "
+				"multiplayer is unavailable", USERCMD_HZ, CONTENT_AUTHORED_HZ );
+	}
 	Printf( "gamedate: %s\n", ID__DATE__ );
 
 	// register game specific decl types
@@ -1301,6 +1314,17 @@ void idGameLocal::InitFromNewMap(const char* mapName, idRenderWorld* renderWorld
 	this->isServer = isServer;
 	this->isClient = isClient;
 	this->isMultiplayer = isServer || isClient;
+
+	/* The network tick is USERCMD_MSEC on both sides - AsyncClient and
+	 * AsyncServer advance gameTime by it and build prediction and
+	 * snapshot cadence on it - so a build with a different tick cannot
+	 * talk to a stock one, and would desync rather than fail cleanly.
+	 * Refuse instead.  Compiled away entirely at the default tick. */
+	if ( USERCMD_HZ != CONTENT_AUTHORED_HZ && this->isMultiplayer ) {
+		common->Error( "This build runs the simulation at %d Hz; multiplayer "
+				"requires the standard %d Hz tick because the network protocol "
+				"is built on it.", USERCMD_HZ, CONTENT_AUTHORED_HZ );
+	}
 
 	if ( mapFileName.Length() ) {
 		MapShutdown();

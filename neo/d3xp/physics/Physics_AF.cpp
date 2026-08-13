@@ -40,13 +40,11 @@ If you have questions concerning this license or the applicable additional terms
 CLASS_DECLARATION( idPhysics_Base, idPhysics_AF )
 END_CLASS
 
-/* The rate the friction values in the def files were authored against.
-   Deliberately a constant and not USERCMD_HZ: the numbers describe how
-   a ragdoll should behave in a second of wall clock, so the reference
-   must not move when the tick does - making it follow the tick would
-   drive the exponent back to one at every rate and reintroduce exactly
-   the dependence this removes. */
-const float AF_FRICTION_REFERENCE_HZ		= 60.0f;
+/* The rate the friction values in the def files were authored against -
+   the shared content constant, deliberately not USERCMD_HZ: the numbers
+   describe how a ragdoll should behave in a second of wall clock, so
+   the reference must not move when the tick does. */
+const float AF_FRICTION_REFERENCE_HZ		= (float)CONTENT_AUTHORED_HZ;
 
 const float ERROR_REDUCTION					= 0.5f;
 const float ERROR_REDUCTION_MAX				= 256.0f;

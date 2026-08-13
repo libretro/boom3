@@ -37,8 +37,34 @@ If you have questions concerning this license or the applicable additional terms
 ===============================================================================
 */
 
-const int USERCMD_HZ			= 60;			// 60 frames per second
+/* The simulation tick.  60 is the rate this engine has always run at and
+   the rate its content was authored against; it stays the default and
+   nothing about a stock build changes.
+
+   D3_USERCMD_HZ exists because the tick is the whole of the input
+   latency floor - a command waits on average half a tick to be
+   simulated, 8 ms at 60 - and the machinery that would have made
+   raising it hard is already here and already rate-generic: CalcMSec is
+   an exact residual-carrying clock parameterised on this constant, and
+   Com_UpdateTicNumber schedules its tics against the render rate in
+   fixed point.  Raising it is a savegame, demo and network protocol
+   break, and the code refuses those combinations rather than corrupting
+   them.  It must stay a compile-time constant: sound and physics
+   constants are derived from it at namespace scope.
+
+   Divisors of 1000 are not required.  CalcMSec carries the remainder,
+   so 120 yields the 8 and 9 ms steps that sum to exactly 1000. */
+#ifndef D3_USERCMD_HZ
+#define D3_USERCMD_HZ 60
+#endif
+
+const int USERCMD_HZ			= D3_USERCMD_HZ;
 const int USERCMD_MSEC			= 1000 / USERCMD_HZ;
+
+/* The rate the shipped content was authored against, which is not the
+   same question as how fast the engine ticks.  Script frame waits and
+   articulated-figure friction are both expressed in these units. */
+const int CONTENT_AUTHORED_HZ	= 60;
 
 // usercmd_t->button bits
 const int BUTTON_ATTACK			= BIT(0);

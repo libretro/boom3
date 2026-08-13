@@ -920,7 +920,13 @@ void idThread::WaitFrame( void ) {
 	// manual control threads don't set waitingUntil so that they can be run again
 	// that frame if necessary.
 	if ( !manualControl ) {
-		waitingUntil = gameLocal.time + gameLocal.msecPrecise;
+		/* A content duration, not one tic.  The shipped scripts call
+		 * waitFrame 495 times across 86 files and every one of them was
+		 * written against a sixtieth of a second; waiting one tic instead
+		 * would halve all of them if the tick were ever doubled, which is
+		 * a content break disguised as an engine setting.  At the default
+		 * tick this is the same number that was here. */
+		waitingUntil = gameLocal.time + 1000.0f / (float)CONTENT_AUTHORED_HZ;
 	}
 }
 
