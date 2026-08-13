@@ -40,6 +40,14 @@ If you have questions concerning this license or the applicable additional terms
 CLASS_DECLARATION( idPhysics_Base, idPhysics_AF )
 END_CLASS
 
+/* The rate the friction values in the def files were authored against.
+   Deliberately a constant and not USERCMD_HZ: the numbers describe how
+   a ragdoll should behave in a second of wall clock, so the reference
+   must not move when the tick does - making it follow the tick would
+   drive the exponent back to one at every rate and reintroduce exactly
+   the dependence this removes. */
+const float AF_FRICTION_REFERENCE_HZ		= 60.0f;
+
 const float ERROR_REDUCTION					= 0.5f;
 const float ERROR_REDUCTION_MAX				= 256.0f;
 const float LIMIT_ERROR_REDUCTION			= 0.3f;
@@ -5392,9 +5400,39 @@ void idPhysics_AF::Evolve( float timeStep ) {
 		body->next->worldAxis = body->current->worldAxis * rotation.ToMat3();
 		body->next->worldAxis.OrthoNormalizeSelf();
 
-		// linear and angular friction
-		body->next->spatialVelocity.SubVec3(0) -= body->linearFriction * body->next->spatialVelocity.SubVec3(0);
-		body->next->spatialVelocity.SubVec3(1) -= body->angularFriction * body->next->spatialVelocity.SubVec3(1);
+		/* Linear and angular friction.  This was a bare per-step decay,
+		 * v -= friction * v, with no timestep in it, so the velocity lost
+		 * per second was a function of how many steps that second
+		 * happened to contain.  The sibling class never had the problem:
+		 * idPhysics_RigidBody puts friction in the derivative as a force,
+		 * -friction * momentum, and lets the integrator handle it.
+		 *
+		 * Raising the factor to the step's share of a 60 Hz reference
+		 * gives the same decay per unit time at any step size.  The
+		 * reference is a constant, not the current tick, because the
+		 * friction values are authored to describe a second of wall
+		 * clock: tying it to the tick would drive the exponent back to
+		 * one at every rate and reintroduce what this removes.
+		 *
+		 * At the shipping rate this is not bit-identical, and the
+		 * reason is worth stating: the AF is not handed 1/60 s steps,
+		 * it is handed the alternating 16 and 17 ms that CalcMSec
+		 * produces so a second sums to 1000 - twenty and forty of them
+		 * respectively.  The old expression applied one decay to both
+		 * lengths; this one honours the difference, exponents 0.96 and
+		 * 1.02, which average to exactly one over that second.  Three
+		 * seconds of decay measured 2.07e-06 relative apart, in the
+		 * direction of the shorter step damping less.  Every visible
+		 * behaviour is unchanged at 60 Hz; the same three seconds at
+		 * 120 Hz go from 0.1646 of the starting speed to 0.4057, which
+		 * is the 60 Hz answer, which is the point. */
+		if ( body->linearFriction != 0.0f || body->angularFriction != 0.0f ) {
+			const float frames = timeStep * AF_FRICTION_REFERENCE_HZ;
+			body->next->spatialVelocity.SubVec3(0) *=
+					idMath::Pow( 1.0f - body->linearFriction, frames );
+			body->next->spatialVelocity.SubVec3(1) *=
+					idMath::Pow( 1.0f - body->angularFriction, frames );
+		}
 	}
 }
 
