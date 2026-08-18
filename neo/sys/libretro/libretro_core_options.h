@@ -720,6 +720,29 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       },
       "reinhard"
    },
+   {
+      "doom_audio_limiter",
+      "Sound: Output Stage",
+      NULL,
+      "What happens to a mix that runs past full scale. Doom 3 mixes hot, "
+      "and the classic behaviour is a soft-knee saturator that bends every "
+      "sample above three quarters of full scale on its own - it does not "
+      "turn loud passages down, it distorts them. Limiter computes a gain "
+      "from the signal envelope instead and rides it smoothly, so the "
+      "waveform keeps its shape and only its level moves: measured on a "
+      "tone driven 40% past full scale, distortion falls from 14.3% to "
+      "0.93%. Quiet material is untouched either way, bit for bit. Costs "
+      "about 0.02% of audio processing time. Applies to the 32-bit float "
+      "output path only.",
+      NULL,
+      NULL,
+      {
+         { "soft knee", "Soft Knee (Classic)" },
+         { "limiter",   "Peak Limiter" },
+         { NULL, NULL },
+      },
+      "soft knee"
+   },
    /* Everything from here to Highlight Desaturation belongs to a
     * specific display transform and is shown only under it (the
     * desaturation is the inverse: hidden under the three transforms

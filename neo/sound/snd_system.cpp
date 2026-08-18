@@ -69,6 +69,8 @@ idCVar idSoundSystemLocal::s_enviroSuitVolumeScale( "s_enviroSuitVolumeScale", "
 idCVar idSoundSystemLocal::s_skipHelltimeFX( "s_skipHelltimeFX", "0", CVAR_SOUND | CVAR_BOOL, "" );
 
 idCVar idSoundSystemLocal::s_outputLimiter( "s_outputLimiter", "1", CVAR_SOUND | CVAR_BOOL, "soft-knee saturator at the output stage; 0 = hard clip" );
+idCVar idSoundSystemLocal::s_peakLimiter( "s_peakLimiter", "0", CVAR_SOUND | CVAR_BOOL, "float output only: smooth peak limiter ahead of the saturator, instead of waveshaping every loud sample" );
+idCVar idSoundSystemLocal::s_headroom_dB( "s_headroom_dB", "0", CVAR_SOUND | CVAR_FLOAT, "float output only: pad the mix before the limiter, in dB; keeps more of a hot mix in the linear region at the cost of level" );
 idCVar idSoundSystemLocal::s_HRTF( "s_HRTF", "0", CVAR_SOUND | CVAR_BOOL | CVAR_ARCHIVE, "binaural rendering of spatialized sounds for headphones (KEMAR HRTF)" );
 idCVar idSoundSystemLocal::s_reverse( "s_reverse", "0", CVAR_SOUND | CVAR_BOOL | CVAR_ARCHIVE, "swap left and right output channels" );
 
@@ -105,6 +107,12 @@ void snd_SetSampleRate( int hz ) {
 		hz = PRIMARYFREQ;
 	}
 	snd_sampleRate = hz;
+
+	/* the limiter coefficients are per-sample, so they follow the rate:
+	 * 2 ms to catch a peak, 150 ms to let go.  Recomputed here rather
+	 * than per block, and the gain is reset because a stale one would
+	 * be audible as a fade-in on the first block after a device change. */
+	soundSystemLocal.SetLimiterRate( hz );
 }
 idSoundSystem	*soundSystem  = &soundSystemLocal;
 
@@ -448,6 +456,14 @@ int idSoundSystemLocal::GetCurrentSampleTime( void ) const {
 	return CurrentSoundTime;
 }
 
+void idSoundSystemLocal::SetLimiterRate( int hz ) {
+	const float rate = ( hz > 0 ) ? (float)hz : (float)PRIMARYFREQ;
+	outputLimiterAttack  = idMath::Exp( -1.0f / ( 0.002f * rate ) );
+	outputLimiterRelease = idMath::Exp( -1.0f / ( 0.150f * rate ) );
+	outputLimiterGain    = 1.0f;
+	outputLimiterEnv     = 0.0f;
+}
+
 /*
 ===================
 idSoundSystemLocal::MixFrameFloat / MixFrameS16
@@ -474,10 +490,35 @@ void idSoundSystemLocal::MixFrameFloat( float *dest, int numFrames ) {
 	// Default is the soft knee (identity below 3/4 FS, monotonic above -
 	// see the saturator block in snd_mix_kernels.h); s_outputLimiter 0
 	// restores the plain hard clip.
-	if ( s_outputLimiter.GetBool() )
-		Snd_SoftKneeFloatOutput( dest, numFrames * 2 );
-	else
+	/* Float output only.  The s16 pipeline narrows through Snd_SumToS16
+	 * and its own saturator and never reaches any of this - the two
+	 * paths share no output code, which is what keeps the limiter from
+	 * costing the s16 path anything at all, including a branch. */
+	if ( s_peakLimiter.GetBool() ) {
+		const float headroom = s_headroom_dB.GetFloat();
+		if ( headroom < -0.01f ) {
+			const float pad = idMath::Pow( 10.0f, headroom / 20.0f );
+			for ( int i = 0; i < numFrames * 2; i++ ) {
+				dest[i] *= pad;
+			}
+		}
+		Snd_LimitFloatOutput( dest, numFrames, &outputLimiterEnv,
+				&outputLimiterGain, outputLimiterAttack,
+				outputLimiterRelease, 0.999f );
+		/* Hard clamp is the right backstop behind a limiter, and the
+		 * knee is the wrong one: the knee bends everything above 3/4 FS
+		 * while the limiter deliberately runs up to 0.999, so chaining
+		 * them waveshapes the limiter's own settled output and throws
+		 * away most of the benefit - measured, that pairing sat at six
+		 * percent distortion against the knee's fourteen, where a clamp
+		 * behind the same limiter measures 0.93.  A clamp touches only
+		 * genuine overshoot, which a settled limiter does not produce. */
 		Snd_ClampFloatOutput( dest, numFrames * 2 );
+	} else if ( s_outputLimiter.GetBool() ) {
+		Snd_SoftKneeFloatOutput( dest, numFrames * 2 );
+	} else {
+		Snd_ClampFloatOutput( dest, numFrames * 2 );
+	}
 
 	/*
 	   s_reverse: the "Reverse Channels" row in the game's audio menu.

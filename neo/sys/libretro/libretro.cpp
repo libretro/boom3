@@ -1225,6 +1225,15 @@ static void update_variables(bool startup)
 	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
 		hdr_bloom_convolution = !strcmp(var.value, "enabled");
 
+	/* Float output only; the s16 pipeline shares no output code with it. */
+	var.key = "doom_audio_limiter";
+	var.value = NULL;
+	{
+		bool on = (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value
+				&& !strcmp(var.value, "limiter"));
+		cvarSystem->SetCVarBool("s_peakLimiter", on);
+	}
+
 	var.key = "doom_hdr_rolloff";
 	var.value = NULL;
 	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)

@@ -683,6 +683,7 @@ public:
 	// async loop, when the sound driver uses a write strategy
 	// direct mixing called from the sound driver thread for OSes that support it
 	virtual void			MixFrameFloat( float *dest, int numFrames );
+	void					SetLimiterRate( int hz );
 	virtual void			MixFrameS16( short *dest, int numFrames );
 	virtual void			SetOutputFloat( bool isFloat ) { outputIsFloat = isFloat; }
 
@@ -715,6 +716,14 @@ public:
 	int				CurrentSoundTime;		// master output-rate sample clock, advanced only by MixFrame*
 
 	float				realAccum[6*MIXBUFFER_SAMPLES+16];
+
+	/* peak limiter state: the smoothed gain and the per-sample
+	 * coefficients, derived from the output rate.  Float pipeline
+	 * only - nothing in the s16 path reads these. */
+	float				outputLimiterEnv;
+	float				outputLimiterGain;
+	float				outputLimiterAttack;
+	float				outputLimiterRelease;
 	float *				finalMixBuffer;			// points inside realAccum at a 16 byte aligned boundary
 
 	s_stats				soundStats;				// NOTE: updated throughout the code, not displayed anywhere
@@ -793,6 +802,8 @@ public:
 	// OpenAL-era s_alOutputLimiter, whose dangling declaration this
 	// replaces.
 	static idCVar			s_outputLimiter;
+	static idCVar			s_peakLimiter;
+	static idCVar			s_headroom_dB;
 
 	static idCVar			s_slowAttenuate;
 

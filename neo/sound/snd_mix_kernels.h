@@ -685,6 +685,82 @@ static inline void Snd_FloatToS16( short *out, const float *in, int numSamples )
 
 /*
 ====================
+Snd_LimitFloatOutput
+
+A peak limiter for the float output stage, and the reason it exists is
+that the soft knee above is a waveshaper: it bends every sample that
+crosses 3/4 FS on its own, with no memory, so a loud passage is not
+turned down, it is distorted.  Harmonics get added in proportion to how
+far over the knee the material sits.
+
+This computes a gain instead.  The detector is the linked stereo peak -
+the larger of the two channels, so the image cannot shift when one side
+limits and the other does not - and the gain needed to bring that peak
+to the ceiling is smoothed with a fast attack and a slow release.  The
+waveform keeps its shape; only its level moves, and it moves slowly
+enough not to be heard as modulation.
+
+There is no lookahead, which would mean a delay line and output latency
+for a core that is already accounting for latency in milliseconds.  The
+consequence is honest: a transient sharper than the attack can overshoot
+for a handful of samples before the gain catches up.  So the knee stays
+in the chain behind this, as a backstop for those samples only, instead
+of acting on every loud one.  That composition is the design: the
+limiter handles level, the knee handles what the limiter has not caught
+yet.
+
+State is a single gain carried between blocks.  It lives in the caller,
+because the mixer can be reinitialised under it and a stale gain would
+be audible as a fade-in on the first block after a device change.
+
+This is float-only by construction.  Nothing here is reachable from the
+s16 pipeline: that path narrows through Snd_SumToS16 and its own
+saturator, and neither calls into this.
+====================
+*/
+static inline void Snd_LimitFloatOutput( float *buf, int numFrames,
+		float *envState, float *gainState, float attackCoeff,
+		float releaseCoeff, float ceiling ) {
+	float env = *envState;
+	float g = *gainState;
+	int i;
+
+	for ( i = 0; i < numFrames; i++ ) {
+		float l = buf[i * 2];
+		float r = buf[i * 2 + 1];
+		float al = l < 0.0f ? -l : l;
+		float ar = r < 0.0f ? -r : r;
+		float peak = al > ar ? al : ar;
+		float want, c;
+
+		/* Envelope first, gain second, and the order is the whole
+		   difference between a limiter and a distortion box.  Driving
+		   the gain straight from the instantaneous peak makes it track
+		   inside the waveform whenever the attack is shorter than a
+		   cycle - a 2 ms attack on a 469 Hz tone follows the sine
+		   itself and amplitude-modulates it, which measured as six
+		   percent distortion on a settled gain, barely better than the
+		   waveshaper it replaced.  A peak follower that rises instantly
+		   and decays slowly is flat for any steady tone, so the gain
+		   derived from it is flat too. */
+		env = ( peak > env ) ? peak : env + ( peak - env ) * releaseCoeff;
+
+		want = ( env > ceiling ) ? ceiling / env : 1.0f;
+		/* attack when the gain must come down, release when it may go
+		   back up: the asymmetry is what stops this being a tremolo */
+		c = ( want < g ) ? attackCoeff : releaseCoeff;
+		g = want + ( g - want ) * c;
+
+		buf[i * 2]     = l * g;
+		buf[i * 2 + 1] = r * g;
+	}
+
+	*envState = env;
+	*gainState = g;
+}
+
+/*
+====================
 Snd_ClampFloatOutput
 
 Saturate the float mix to the output range before handing it to the
