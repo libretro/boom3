@@ -893,6 +893,7 @@ static bool update_option_visibility( void ) {
 	struct retro_variable rv;
 	static int lastMode = -1;
 	static int lastPq = -1;
+	static int lastLimiter = -1;
 	int m;
 	bool changed;
 
@@ -906,7 +907,14 @@ static bool update_option_visibility( void ) {
 	m = ( environ_cb( RETRO_ENVIRONMENT_GET_VARIABLE, &rv ) && rv.value )
 			? hdr_rolloff_from_string( rv.value ) : hdr_rolloff_mode;
 
-	changed = ( m != lastMode ) || ( (int)hdr_pq_output != lastPq );
+	{
+		struct retro_variable lv = { "doom_audio_limiter", NULL };
+		int lim = ( environ_cb( RETRO_ENVIRONMENT_GET_VARIABLE, &lv ) && lv.value
+				&& !strcmp( lv.value, "limiter" ) ) ? 1 : 0;
+		changed = ( m != lastMode ) || ( (int)hdr_pq_output != lastPq )
+				|| ( lim != lastLimiter );
+		lastLimiter = lim;
+	}
 	lastMode = m;
 	lastPq = (int)hdr_pq_output;
 	size_t i;
@@ -925,6 +933,16 @@ static bool update_option_visibility( void ) {
 		environ_cb( RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &d );
 	}
 	/* display peak drives the PQ mapping; SDR has no use for it */
+	/* the headroom pad is applied inside the limiter branch, so it does
+	 * nothing at all under the classic soft knee - hide the row rather
+	 * than offer a control with no effect */
+	rv.key = "doom_audio_limiter";
+	rv.value = NULL;
+	d.key = "doom_audio_headroom";
+	d.visible = ( environ_cb( RETRO_ENVIRONMENT_GET_VARIABLE, &rv ) && rv.value
+			&& !strcmp( rv.value, "limiter" ) );
+	environ_cb( RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &d );
+
 	d.key = "doom_hdr_peak";
 	d.visible = hdr_pq_output;
 	environ_cb( RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &d );
@@ -1232,6 +1250,15 @@ static void update_variables(bool startup)
 		bool on = (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value
 				&& !strcmp(var.value, "limiter"));
 		cvarSystem->SetCVarBool("s_peakLimiter", on);
+	}
+
+	var.key = "doom_audio_headroom";
+	var.value = NULL;
+	{
+		float pad = 0.0f;
+		if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+			pad = (float)atof(var.value);   /* "0", "-3", "-6" */
+		cvarSystem->SetCVarFloat("s_headroom_dB", pad);
 	}
 
 	var.key = "doom_hdr_rolloff";

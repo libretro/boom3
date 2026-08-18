@@ -743,6 +743,30 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       },
       "soft knee"
    },
+   {
+      "doom_audio_headroom",
+      "Sound: Headroom",
+      NULL,
+      "Pads the mix before the output stage, trading loudness for room. "
+      "Doom 3 mixes hot enough that a loud hit forces the limiter to pull "
+      "the whole mix down, and the quiet ambience underneath is dragged "
+      "with it until the release lets go - measured with a 20 ms hit over "
+      "a quiet bed, the bed ducks 3.4 dB at 0, 1.6 dB at -3, and not at "
+      "all at -6, where the hit fits without any gain reduction. The cost "
+      "is exactly the number chosen: everything is that much quieter, and "
+      "you make it back on your own volume control. Needs the Peak "
+      "Limiter output stage to be worth anything, and applies to the "
+      "32-bit float path only.",
+      NULL,
+      NULL,
+      {
+         { "0",  "0 dB (loudest)" },
+         { "-3", "-3 dB" },
+         { "-6", "-6 dB (most dynamic range)" },
+         { NULL, NULL },
+      },
+      "0"
+   },
    /* Everything from here to Highlight Desaturation belongs to a
     * specific display transform and is shown only under it (the
     * desaturation is the inverse: hidden under the three transforms
