@@ -744,6 +744,19 @@ static inline void Snd_LimitFloatOutput( float *buf, int numFrames,
 		   and decays slowly is flat for any steady tone, so the gain
 		   derived from it is flat too. */
 		env = ( peak > env ) ? peak : env + ( peak - env ) * releaseCoeff;
+		/* A NaN reaching both channels of one frame poisons the follower
+		 * for good: NaN fails every comparison, so it is never replaced by
+		 * a later peak and never decays, and because NaN > ceiling is also
+		 * false the limiter quietly stops limiting for the rest of the
+		 * session - no silence, no message, just the feature dead.  One
+		 * NaN in one channel is harmless by luck, since the max picks the
+		 * other side, which is exactly the kind of luck not to depend on.
+		 * The test is written to catch NaN rather than to test for it:
+		 * !(env >= 0) is true for NaN and for a negative, and false for
+		 * every value the follower should hold. */
+		if ( !( env >= 0.0f ) ) {
+			env = 0.0f;
+		}
 
 		want = ( env > ceiling ) ? ceiling / env : 1.0f;
 		/* attack when the gain must come down, release when it may go
