@@ -61,6 +61,14 @@ void rmp4_video_set_avail(rmp4_video_t *mp4, size_t avail);
 /* True if the last rmp4_video_process_image() produced XRGB2101010. */
 bool rmp4_video_is_10bit(const rmp4_video_t *mp4);
 
+/* Half floats for an HDR still: with want set, a PQ or HLG source's
+ * first frame - VP9, H.264 or H.265 - is rendered as linear scRGB
+ * (rwebm_video_blit_i420_fp16) straight into the frame process hands
+ * out, 8 bytes a pixel; is_fp16 says whether the last one came out so.
+ * Any other source decodes as it always did. */
+void rmp4_video_set_want_fp16(rmp4_video_t *mp4, int want);
+bool rmp4_video_is_fp16(const rmp4_video_t *mp4);
+
 /* Decodes the first displayed frame of the first supported video track
  * into a freshly malloc'd buffer at *buf. Returns IMAGE_PROCESS_END on
  * success, IMAGE_PROCESS_ERROR on failure (no supported video track,
@@ -127,6 +135,47 @@ const uint32_t *rmp4_video_stream_next(rmp4_video_stream_t *stream,
  * the default order. */
 void rmp4_video_stream_set_argb(rmp4_video_stream_t *stream, int argb);
 
+/* Blit decoded frames into @out - width * height words, the caller's,
+ * which then comes back from rmp4_video_stream_next and _render -
+ * instead of the stream's own frame, so a caller uploading from its
+ * own buffer needs no copy out of the stream. NULL restores the
+ * stream's frame. Takes effect from the next rendered frame; @out must
+ * stay valid until the next call that renders has returned. */
+/* While @behind is set, pictures nothing references are consumed
+ * without being decoded and their presentation slots pass, so the
+ * stream catches up with a caller that has fallen behind its clock;
+ * what is shown is decoded exactly as before. Clear it once caught
+ * up. */
+void rmp4_video_stream_set_catchup(rmp4_video_stream_t *stream, int behind);
+
+/* The stream's H.264 decoder, for a bench to ask about, or NULL. */
+void *rmp4_video_stream_h264(rmp4_video_stream_t *stream);
+void *rmp4_video_stream_h265(rmp4_video_stream_t *stream);
+
+void rmp4_video_stream_set_output(rmp4_video_stream_t *stream,
+      uint32_t *out);
+
+/* Linear scRGB half floats for an HDR source: a 10-bit PQ or HLG
+ * frame - VP9, H.264 or H.265 - decoded into the caller's frame
+ * (rmp4_video_stream_set_output), which then holds 8 bytes a pixel,
+ * through rwebm_video_blit_i420_fp16 - no tone map. Every other frame,
+ * and every frame without a caller's output, takes the paths it always
+ * did. is_fp16 answers for the last frame decoded; is_hdr for the
+ * source, from its colr transfer. */
+void rmp4_video_stream_set_want_fp16(rmp4_video_stream_t *stream,
+      int want);
+int rmp4_video_stream_is_fp16(const rmp4_video_stream_t *stream);
+int rmp4_video_stream_is_hdr(const rmp4_video_stream_t *stream);
+
+/* Convert decoded frames in @bands row bands on @pool (an rthreads
+ * tpool_t of at least bands - 1 threads; the calling thread takes one
+ * band and joins the rest), and decode a VP9 frame's tile columns on
+ * the same threads (rvp9_set_tile_pool). NULL or bands <= 1 keeps
+ * everything on the calling thread. The pool is the caller's and must
+ * outlive every decode call made while it is set. */
+void rmp4_video_stream_set_blit_pool(rmp4_video_stream_t *stream,
+      void *pool, unsigned bands);
+
 /* Advance past the next displayed frame without colour-converting it:
  * the picture stays inside the decoder and no work is spent on its
  * pixels.  Returns 1 when a frame was consumed (its display duration
@@ -154,6 +203,8 @@ void rmp4_video_stream_set_avail(rmp4_video_stream_t *stream,
 /* Bounded-memory streaming support (see rmp4_media_floor/consumed). */
 size_t rmp4_video_stream_media_floor(rmp4_video_stream_t *s);
 size_t rmp4_video_stream_consumed(rmp4_video_stream_t *s);
+/* Container duration in nanoseconds (mvhd), 0 when absent. */
+int64_t rmp4_video_stream_duration_ns(rmp4_video_stream_t *s);
 
 void rmp4_video_stream_rewind(rmp4_video_stream_t *stream);
 

@@ -1,7 +1,7 @@
 /* Copyright  (C) 2010-2020 The RetroArch team
  *
  * ---------------------------------------------------------------------------------------
- * The following license statement only applies to this file (apple_compat.h).
+ * The following license statement only applies to this file (sinc_resampler.h).
  * ---------------------------------------------------------------------------------------
  *
  * Permission is hereby granted, free of charge,
@@ -20,69 +20,27 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
-#ifndef __APPLE_COMPAT_H
-#define __APPLE_COMPAT_H
-#ifdef __MACH__
-#include <TargetConditionals.h>
-#endif
+#ifndef LIBRETRO_AUDIO_SINC_RESAMPLER_H
+#define LIBRETRO_AUDIO_SINC_RESAMPLER_H
 
-#ifdef __APPLE__
-#include <AvailabilityMacros.h>
-#include <CoreFoundation/CoreFoundation.h>
-#endif
+#include <audio/audio_resampler.h>
 
-#ifdef __OBJC__
+RETRO_BEGIN_DECLS
 
-#if (MAC_OS_X_VERSION_MAX_ALLOWED <= MAC_OS_X_VERSION_10_4)
-typedef int NSInteger;
-typedef unsigned NSUInteger;
-typedef float CGFloat;
-#endif
+#define SINC_HQ_CUTOFF        0.962
+#define SINC_HQ_SIDELOBES     192
+#define SINC_HQ_PHASE_BITS    10
+#define SINC_HQ_SUBPHASE_BITS 14
+#define SINC_HQ_KAISER_BETA   16.0
 
-#ifndef __has_feature
-/* Compatibility with non-Clang compilers. */
-#define __has_feature(x) 0
-#endif
+/* Experimental opt-in table preset. Use sinc_resampler's process/reset/free.
+ * bandwidth_mod is the nominal output/input ratio, not a live DRC ratio.
+ * At ratios below 2, or with HQ off, the selected quality is unchanged.
+ * Returns NULL if the nominal ratio cannot safely advance the phase clock. */
+void *sinc_resampler_init_hq(double bandwidth_mod,
+      enum resampler_quality quality, resampler_simd_mask_t mask,
+      int hq_oversampling);
 
-#ifndef CF_RETURNS_RETAINED
-#if __has_feature(attribute_cf_returns_retained)
-#define CF_RETURNS_RETAINED __attribute__((cf_returns_retained))
-#else
-#define CF_RETURNS_RETAINED
-#endif
-#endif
-
-#ifndef NS_INLINE
-#define NS_INLINE inline
-#endif
-
-NS_INLINE CF_RETURNS_RETAINED CFTypeRef CFBridgingRetainCompat(id X)
-{
-#if __has_feature(objc_arc)
-   return (__bridge_retained CFTypeRef)X;
-#else
-   return X;
-#endif
-}
-
-#endif
-
-#if TARGET_OS_IPHONE
-#ifndef __IPHONE_5_0
-#warning "This project uses features only available in iOS SDK 5.0 and later."
-#endif
-
-#ifdef __OBJC__
-#import <UIKit/UIKit.h>
-#import <GLKit/GLKit.h>
-#import <Foundation/Foundation.h>
-#endif
-
-#else
-
-#ifdef __OBJC__
-#include <objc/objc-runtime.h>
-#endif
-#endif
+RETRO_END_DECLS
 
 #endif
