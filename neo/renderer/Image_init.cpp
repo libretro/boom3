@@ -1903,6 +1903,11 @@ void idImageManager::CompleteBackgroundImageLoads() {
 	idImage	*remainingList = NULL;
 	idImage	*next;
 
+	if ( !backgroundImageLoads ) {
+		return;
+	}
+	fileSystem->CompleteBackgroundDownloads();
+
 	for ( idImage *image = backgroundImageLoads ; image ; image = next ) {
 		next = image->bglNext;
 		if ( image->bgl.completed ) {

@@ -119,12 +119,11 @@ typedef struct fileDownload_s {
 } fileDownload_t;
 
 struct backgroundDownload_t {
-	backgroundDownload_t	*next;	// set by the fileSystem
 	dlType_t			opcode;
 	idFile *			f;
 	fileDownload_t		file;
 	urlDownload_t		url;
-	volatile bool		completed;
+	bool				completed;	// main thread only; see CompleteBackgroundDownloads
 };
 
 // file list for directory listings
@@ -255,6 +254,8 @@ public:
 	virtual void			CloseFile( idFile *f ) = 0;
 							// Returns immediately, performing the read from a background thread.
 	virtual void			BackgroundDownload( backgroundDownload_t *bgl ) = 0;
+							// marks finished background reads as completed; main thread
+	virtual void			CompleteBackgroundDownloads( void ) = 0;
 							// resets the bytes read counter
 	virtual void			ResetReadCount( void ) = 0;
 							// retrieves the current read count

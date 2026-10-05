@@ -36,6 +36,10 @@ If you have questions concerning this license or the applicable additional terms
 
 #include <streams/file_stream.h>
 #include <libretro.h>
+// before the idlib headers, for the reason File.cpp gives: retro_atomic.h
+// reaches <atomic>, and Str.h's strcmp macros break libc++'s <cstring>
+#include <retro_spsc.h>
+#include <rthreads/retro_eventcount.h>
 
 #include "sys/platform.h"
 
@@ -370,6 +374,7 @@ public:
 	virtual idFile *		OpenExplicitFileWrite( const char *OSPath );
 	virtual void			CloseFile( idFile *f );
 	virtual void			BackgroundDownload( backgroundDownload_t *bgl );
+	virtual void			CompleteBackgroundDownloads( void );
 	virtual void			ResetReadCount( void ) { readCount = 0; }
 	virtual void			AddToReadCount( int c ) { readCount += c; }
 	virtual int				GetReadCount( void ) { return readCount; }
@@ -430,10 +435,19 @@ private:
 	// DG: additional directory to search for game DLLs
 	static idCVar			fs_gameDllPath;
 
-	backgroundDownload_t *	backgroundDownloads;
-	backgroundDownload_t	defaultBackgroundDownload;
+	// Background reads. A request is the caller's backgroundDownload_t,
+	// handed to the reader thread by pointer over one single-producer/
+	// single-consumer ring and handed back over another, so nothing in it
+	// is ever touched by both threads at once and there is no lock. The
+	// reader parks on an eventcount; the main thread never waits for it.
+	enum { MAX_BACKGROUND_READS = 16 };		// in flight; a power of two
+	retro_spsc_t			backgroundRequests;		// main -> reader
+	retro_spsc_t			backgroundResults;		// reader -> main
+	retro_eventcount_t		backgroundWake;			// reader parks here
+	retro_atomic_int_t		backgroundThread_exit;	// main sets, reader reads
+	int						backgroundInFlight;		// main thread only
+	bool					backgroundReady;		// rings and eventcount exist
 	xthreadInfo				backgroundThread;
-	bool					backgroundThread_exit;
 
 	idList<pack_t *>		serverPaks;
 	bool					loadedFileFromDir;		// set to true once a file was loaded from a directory - can't switch to pure anymore
@@ -516,7 +530,9 @@ idFileSystemLocal::idFileSystemLocal( void ) {
 	d3xp = 0;
 	loadedFileFromDir = false;
 	memset( &backgroundThread, 0, sizeof( backgroundThread ) );
-	backgroundThread_exit = false;
+	retro_atomic_int_init( &backgroundThread_exit, 0 );
+	backgroundInFlight = 0;
+	backgroundReady = false;
 	addonPaks = NULL;
 }
 
@@ -2880,10 +2896,22 @@ void idFileSystemLocal::Shutdown( bool reloading ) {
 	}
 	viewsOutstanding = 0;
 
-	backgroundThread_exit = true;
-	Sys_TriggerEvent();
-	Sys_DestroyThread(backgroundThread);
-	backgroundThread_exit = false;
+	if ( backgroundThread.threadHandle ) {
+		retro_atomic_store_release_int( &backgroundThread_exit, 1 );
+		retro_eventcount_notify( &backgroundWake );
+		Sys_DestroyThread( backgroundThread );
+		retro_atomic_store_release_int( &backgroundThread_exit, 0 );
+	}
+	if ( backgroundReady && !reloading ) {
+		// The reader is joined, so the rings are ours. Requests that were
+		// still queued die with the filesystem; across a restart they are
+		// kept and the next reader thread picks them up.
+		retro_spsc_free( &backgroundRequests );
+		retro_spsc_free( &backgroundResults );
+		retro_eventcount_free( &backgroundWake );
+		backgroundInFlight = 0;
+		backgroundReady = false;
+	}
 
 	gameFolder.Clear();
 
@@ -3574,38 +3602,48 @@ back ground loading
 
 /*
 ===================
-BackgroundDownload
+BackgroundDownloadThread
 
 Reads part of a file from a background thread.
+
+Takes requests off backgroundRequests, reads, and hands each one back on
+backgroundResults. The request belongs to this thread between those two
+points and to the main thread outside them; retro_spsc publishes each
+hand-off, so the buffer this thread filled is visible to the main thread
+by the time it sees the request come back.
+
+backgroundResults cannot be full here: both rings hold
+MAX_BACKGROUND_READS entries and the main thread never has more than that
+in flight.
 ===================
 */
-int BackgroundDownloadThread( void *pexit ) {
-	bool *exit = (bool *)pexit;
+int BackgroundDownloadThread( void *parm ) {
+	idFileSystemLocal *fs = (idFileSystemLocal *)parm;
 
-	while (!(*exit)) {
-		Sys_EnterCriticalSection();
-		backgroundDownload_t	*bgl = fileSystemLocal.backgroundDownloads;
-		if ( !bgl ) {
-			Sys_LeaveCriticalSection();
-			Sys_WaitForEvent();
+	for ( ; ; ) {
+		backgroundDownload_t *bgl;
+		int key;
+
+		if ( retro_atomic_load_acquire_int( &fs->backgroundThread_exit ) ) {
+			break;
+		}
+
+		if ( retro_spsc_read_avail( &fs->backgroundRequests ) >= sizeof( bgl ) ) {
+			retro_spsc_read( &fs->backgroundRequests, &bgl, sizeof( bgl ) );
+			// the low level read function, because the idFile one may allocate memory
+			filestream_read( static_cast<idFile_Permanent*>(bgl->f)->GetFilePtr(), bgl->file.buffer, bgl->file.length );
+			retro_spsc_write( &fs->backgroundResults, &bgl, sizeof( bgl ) );
 			continue;
 		}
-		// remove this from the list
-		fileSystemLocal.backgroundDownloads = bgl->next;
-		Sys_LeaveCriticalSection();
 
-		bgl->next = NULL;
-
-		if ( bgl->opcode == DLTYPE_FILE ) {
-			// use the low level read function, because fread may allocate memory
-				filestream_read( static_cast<idFile_Permanent*>(bgl->f)->GetFilePtr(), bgl->file.buffer, bgl->file.length );
-			bgl->completed = true;
-		} else {
-			// DLTYPE_URL: HTTP downloads are not supported by this core
-			// (the libcurl multiplayer pk4 download path was removed).
-			bgl->url.status = DL_FAILED;
-			bgl->completed = true;
+		// nothing queued: park until the main thread submits or shuts down
+		key = retro_eventcount_prepare_wait( &fs->backgroundWake );
+		if ( retro_atomic_load_acquire_int( &fs->backgroundThread_exit )
+				|| retro_spsc_read_avail( &fs->backgroundRequests ) >= sizeof( bgl ) ) {
+			retro_eventcount_cancel_wait( &fs->backgroundWake );
+			continue;
 		}
+		retro_eventcount_commit_wait( &fs->backgroundWake, key );
 	}
 	return 0;
 }
@@ -3616,39 +3654,80 @@ idFileSystemLocal::StartBackgroundReadThread
 =================
 */
 void idFileSystemLocal::StartBackgroundDownloadThread() {
-	if ( !backgroundThread.threadHandle ) {
-		Sys_CreateThread( BackgroundDownloadThread, &backgroundThread_exit, backgroundThread, "backgroundDownload" );
-	} else {
+	if ( backgroundThread.threadHandle ) {
 		common->Printf( "background thread already running\n" );
+		return;
 	}
+	if ( !backgroundReady ) {
+		if ( !retro_spsc_init( &backgroundRequests, MAX_BACKGROUND_READS * sizeof( backgroundDownload_t * ) ) ) {
+			return;
+		}
+		if ( !retro_spsc_init( &backgroundResults, MAX_BACKGROUND_READS * sizeof( backgroundDownload_t * ) ) ) {
+			retro_spsc_free( &backgroundRequests );
+			return;
+		}
+		if ( !retro_eventcount_init( &backgroundWake ) ) {
+			retro_eventcount_free( &backgroundWake );
+			retro_spsc_free( &backgroundResults );
+			retro_spsc_free( &backgroundRequests );
+			return;
+		}
+		backgroundReady = true;
+	}
+	// Without the thread (or the rings) BackgroundDownload reads in place.
+	Sys_CreateThread( BackgroundDownloadThread, this, backgroundThread, "backgroundDownload" );
 }
 
 /*
 =================
 idFileSystemLocal::BackgroundDownload
+
+Never blocks. A read the thread cannot take - no thread, a zipped file,
+or MAX_BACKGROUND_READS already in flight - is done here instead.
 =================
 */
 void idFileSystemLocal::BackgroundDownload( backgroundDownload_t *bgl ) {
-	if ( bgl->opcode == DLTYPE_FILE ) {
-		if ( dynamic_cast<idFile_Permanent *>(bgl->f) ) {
-			// add the bgl to the background download list
-			Sys_EnterCriticalSection();
-			bgl->next = backgroundDownloads;
-			backgroundDownloads = bgl;
-			Sys_TriggerEvent();
-			Sys_LeaveCriticalSection();
-		} else {
-			// read zipped file directly
-			bgl->f->Seek( bgl->file.position, FS_SEEK_SET );
-			bgl->f->Read( bgl->file.buffer, bgl->file.length );
-			bgl->completed = true;
-		}
-	} else {
-		Sys_EnterCriticalSection();
-		bgl->next = backgroundDownloads;
-		backgroundDownloads = bgl;
-		Sys_TriggerEvent();
-		Sys_LeaveCriticalSection();
+	if ( bgl->opcode != DLTYPE_FILE ) {
+		// DLTYPE_URL: HTTP downloads are not supported by this core
+		// (the libcurl multiplayer pk4 download path was removed).
+		bgl->url.status = DL_FAILED;
+		bgl->completed = true;
+		return;
+	}
+
+	if ( backgroundThread.threadHandle
+			&& backgroundInFlight < MAX_BACKGROUND_READS
+			&& dynamic_cast<idFile_Permanent *>(bgl->f) ) {
+		retro_spsc_write( &backgroundRequests, &bgl, sizeof( bgl ) );
+		backgroundInFlight++;
+		retro_eventcount_notify( &backgroundWake );
+		return;
+	}
+
+	bgl->f->Seek( bgl->file.position, FS_SEEK_SET );
+	bgl->f->Read( bgl->file.buffer, bgl->file.length );
+	bgl->completed = true;
+}
+
+/*
+=================
+idFileSystemLocal::CompleteBackgroundDownloads
+
+Marks the reads the thread has finished as completed. The completed flag
+is only ever written and read on the main thread; call this before
+looking at it.
+=================
+*/
+void idFileSystemLocal::CompleteBackgroundDownloads( void ) {
+	backgroundDownload_t *bgl;
+
+	if ( !backgroundInFlight ) {
+		return;
+	}
+	while ( retro_spsc_read_avail( &backgroundResults ) >= sizeof( bgl ) ) {
+		retro_spsc_read( &backgroundResults, &bgl, sizeof( bgl ) );
+		bgl->completed = true;
+		backgroundInFlight--;
 	}
 }
 
