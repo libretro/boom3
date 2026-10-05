@@ -376,6 +376,9 @@ public:
 	virtual void			BackgroundDownload( backgroundDownload_t *bgl );
 	virtual void			CompleteBackgroundDownloads( void );
 	virtual void			FlushBackgroundDownloads( void );
+	virtual bool			PrefetchFile( const char *relativePath );
+	virtual void			ClearPrefetches( void );
+	virtual int				GetPrefetchHits( void ) { return prefetchHits; }
 	virtual void			ResetReadCount( void ) { readCount = 0; }
 	virtual void			AddToReadCount( int c ) { readCount += c; }
 	virtual int				GetReadCount( void ) { return readCount; }
@@ -441,7 +444,7 @@ private:
 	// single-consumer ring and handed back over another, so nothing in it
 	// is ever touched by both threads at once and there is no lock. The
 	// reader parks on an eventcount; the main thread never waits for it.
-	enum { MAX_BACKGROUND_READS = 16 };		// in flight; a power of two
+	enum { MAX_BACKGROUND_READS = 32 };		// in flight; a power of two
 
 	// What crosses the rings. The main thread resolves the file to the
 	// handle the read needs, so the reader touches nothing of the engine's:
@@ -451,11 +454,37 @@ private:
 		backgroundDownload_t *	bgl;
 		RFILE *					osFile;		// one of these two
 		rzip_file_t *			zipFile;
+		retro_atomic_int_t *	cancel;		// optional: nonzero means skip the read
+		int *					result;		// optional: where the main thread wants bytes
 		int						bytes;		// read; set by whoever did the read
 	};
 	static void				BackgroundRead( backgroundRead_t &r );
 	void					BackgroundReadDone( const backgroundRead_t &r );
+	bool					QueueBackgroundRead( backgroundDownload_t *bgl, retro_atomic_int_t *cancel, int *result );
 	void					StopBackgroundDownloadThread( void );
+
+	// Prefetch: whole files being read in the background ahead of the
+	// ReadFile that will ask for them. ReadFile takes the buffer over if
+	// the read is back, so a hit costs this thread no open, no read and no
+	// copy; if it is not back, this thread reads the file as it always
+	// did and tells the reader not to bother.
+	struct prefetch_t {
+		char					name[256];			// empty: free, or given up on
+		int						hash;
+		idFile *				f;					// NULL: slot free
+		backgroundDownload_t	bgl;
+		ID_TIME_T				timestamp;
+		int						bytes;				// read, once completed
+		retro_atomic_int_t		cancel;				// this thread sets, the reader reads
+	};
+	enum { MAX_PREFETCH = 16, MAX_PREFETCH_BYTES = 32 * 1024 * 1024 };
+	prefetch_t				prefetches[MAX_PREFETCH];
+	int						prefetchCount;			// slots in use
+	int						prefetchBytes;
+	int						prefetchHits;
+	prefetch_t *			FindPrefetch( const char *relativePath );
+	void					FreePrefetch( prefetch_t &p );
+	void					ReclaimPrefetches( void );
 	retro_spsc_t			backgroundRequests;		// main -> reader
 	retro_spsc_t			backgroundResults;		// reader -> main
 	retro_eventcount_t		backgroundWake;			// reader parks here
@@ -548,6 +577,14 @@ idFileSystemLocal::idFileSystemLocal( void ) {
 	retro_atomic_int_init( &backgroundThread_exit, 0 );
 	backgroundInFlight = 0;
 	backgroundReady = false;
+	prefetchCount = 0;
+	prefetchBytes = 0;
+	prefetchHits = 0;
+	for ( int i = 0; i < MAX_PREFETCH; i++ ) {
+		prefetches[ i ].name[ 0 ] = 0;
+		prefetches[ i ].f = NULL;
+		retro_atomic_int_init( &prefetches[ i ].cancel, 0 );
+	}
 	addonPaks = NULL;
 }
 
@@ -1179,6 +1216,34 @@ int idFileSystemLocal::ReadFile( const char *relativePath, void **buffer, ID_TIM
 		isConfig = false;
 	}
 
+	// a file the background reader has already read costs nothing here
+	if ( buffer && prefetchCount ) {
+		prefetch_t *p = FindPrefetch( relativePath );
+		if ( p ) {
+			CompleteBackgroundDownloads();
+			if ( p->bgl.completed && p->bytes == p->bgl.file.length ) {
+				len = p->bgl.file.length;
+				buf = (byte *)p->bgl.file.buffer;
+				p->bgl.file.buffer = NULL;		// the caller's now
+				if ( timestamp ) {
+					*timestamp = p->timestamp;
+				}
+				FreePrefetch( *p );
+				prefetchHits++;
+				loadCount++;
+				loadStack++;
+				buf[len] = 0;
+				*buffer = buf;
+				return len;
+			}
+			// Not back yet, or short: read it here, the normal way, and
+			// let the reader skip it. The slot is reclaimed when it
+			// comes back.
+			retro_atomic_store_release_int( &p->cancel, 1 );
+			p->name[ 0 ] = 0;
+		}
+	}
+
 	// look for it in the filesystem or pack files
 	f = OpenFileRead( relativePath, ( buffer != NULL ) );
 	if ( f == NULL ) {
@@ -1201,7 +1266,8 @@ int idFileSystemLocal::ReadFile( const char *relativePath, void **buffer, ID_TIM
 	loadCount++;
 	loadStack++;
 
-	buf = (byte *)Mem_ClearedAlloc(len+1);
+	// not cleared: the read fills all of it or the buffer is thrown away
+	buf = (byte *)Mem_Alloc(len+1);
 	*buffer = buf;
 
 	/*
@@ -2912,6 +2978,7 @@ void idFileSystemLocal::Shutdown( bool reloading ) {
 	viewsOutstanding = 0;
 
 	// every read still in flight completes here, before its pak is closed
+	ClearPrefetches();
 	StopBackgroundDownloadThread();
 	if ( backgroundReady && !reloading ) {
 		retro_spsc_free( &backgroundRequests );
@@ -3138,6 +3205,16 @@ const void *idFileSystemLocal::GetFileView( const char *relativePath, int *len, 
 	}
 	if ( timestamp ) {
 		*timestamp = FILE_NOT_FOUND_TIMESTAMP;
+	}
+	if ( prefetchCount ) {
+		// only files that cannot be borrowed are prefetched: skip the open
+		prefetch_t *p = FindPrefetch( relativePath );
+		if ( p ) {
+			if ( timestamp ) {
+				*timestamp = p->timestamp;
+			}
+			return NULL;
+		}
 	}
 	idFile *f = OpenFileRead( relativePath );
 	if ( f == NULL ) {
@@ -3617,6 +3694,11 @@ the engine's heap and console, none of which the reader may touch.
 ===================
 */
 void idFileSystemLocal::BackgroundRead( backgroundRead_t &r ) {
+	if ( r.cancel && retro_atomic_load_acquire_int( r.cancel ) ) {
+		// the main thread has read the file itself in the meantime
+		r.bytes = -1;
+		return;
+	}
 	if ( r.zipFile ) {
 		r.bytes = rzip_file_read( r.zipFile, r.bgl->file.buffer, r.bgl->file.length );
 	} else {
@@ -3731,6 +3813,49 @@ void idFileSystemLocal::StopBackgroundDownloadThread( void ) {
 
 /*
 =================
+idFileSystemLocal::QueueBackgroundRead
+
+Hands a read to the reader thread. False, with nothing changed but the
+file's position, if it cannot take it.
+=================
+*/
+bool idFileSystemLocal::QueueBackgroundRead( backgroundDownload_t *bgl, retro_atomic_int_t *cancel, int *result ) {
+	backgroundRead_t r;
+
+	// a seek of an OS file does no I/O; a pak entry is opened at its
+	// start and pays for any other position here
+	if ( bgl->f->Tell() != bgl->file.position ) {
+		bgl->f->Seek( bgl->file.position, FS_SEEK_SET );
+	}
+
+	if ( !backgroundThread.threadHandle || backgroundInFlight >= MAX_BACKGROUND_READS ) {
+		return false;
+	}
+
+	idFile_InZip *zip = dynamic_cast<idFile_InZip *>(bgl->f);
+	idFile_Permanent *os = dynamic_cast<idFile_Permanent *>(bgl->f);
+
+	r.bgl = bgl;
+	r.osFile = os ? os->GetFilePtr() : NULL;
+	r.zipFile = zip ? (rzip_file_t *)zip->z : NULL;
+	r.cancel = cancel;
+	r.result = result;
+	r.bytes = 0;
+	if ( !r.osFile && !r.zipFile ) {
+		return false;
+	}
+	if ( r.zipFile ) {
+		// the reader must not reach the warning sink
+		rzip_file_set_quiet( r.zipFile, 1 );
+	}
+	retro_spsc_write( &backgroundRequests, &r, sizeof( r ) );
+	backgroundInFlight++;
+	retro_eventcount_notify( &backgroundWake );
+	return true;
+}
+
+/*
+=================
 idFileSystemLocal::BackgroundDownload
 
 Never blocks. A read the thread cannot take - no thread, or
@@ -3746,31 +3871,8 @@ void idFileSystemLocal::BackgroundDownload( backgroundDownload_t *bgl ) {
 		return;
 	}
 
-	// a seek of an OS file does no I/O; a pak entry is opened at its
-	// start and, like the read below, pays for any other position here
-	if ( bgl->f->Tell() != bgl->file.position ) {
-		bgl->f->Seek( bgl->file.position, FS_SEEK_SET );
-	}
-
-	if ( backgroundThread.threadHandle && backgroundInFlight < MAX_BACKGROUND_READS ) {
-		backgroundRead_t r;
-		idFile_InZip *zip = dynamic_cast<idFile_InZip *>(bgl->f);
-		idFile_Permanent *os = dynamic_cast<idFile_Permanent *>(bgl->f);
-
-		r.bgl = bgl;
-		r.osFile = os ? os->GetFilePtr() : NULL;
-		r.zipFile = zip ? (rzip_file_t *)zip->z : NULL;
-		r.bytes = 0;
-		if ( r.osFile || r.zipFile ) {
-			if ( r.zipFile ) {
-				// the reader must not reach the warning sink
-				rzip_file_set_quiet( r.zipFile, 1 );
-			}
-			retro_spsc_write( &backgroundRequests, &r, sizeof( r ) );
-			backgroundInFlight++;
-			retro_eventcount_notify( &backgroundWake );
-			return;
-		}
+	if ( QueueBackgroundRead( bgl, NULL, NULL ) ) {
+		return;
 	}
 
 	bgl->f->Read( bgl->file.buffer, bgl->file.length );
@@ -3796,6 +3898,9 @@ void idFileSystemLocal::BackgroundReadDone( const backgroundRead_t &r ) {
 	}
 	if ( r.bytes > 0 ) {
 		readCount += r.bytes;
+	}
+	if ( r.result ) {
+		*r.result = r.bytes;
 	}
 	r.bgl->completed = true;
 	backgroundInFlight--;
@@ -3839,6 +3944,165 @@ void idFileSystemLocal::FlushBackgroundDownloads( void ) {
 	StopBackgroundDownloadThread();
 	if ( running ) {
 		StartBackgroundDownloadThread();
+	}
+}
+
+/*
+=================
+idFileSystemLocal::FindPrefetch
+=================
+*/
+idFileSystemLocal::prefetch_t *idFileSystemLocal::FindPrefetch( const char *relativePath ) {
+	int hash = idStr::IHash( relativePath );
+
+	for ( int i = 0; i < MAX_PREFETCH; i++ ) {
+		prefetch_t &p = prefetches[ i ];
+		if ( p.f && p.name[ 0 ] && p.hash == hash && !idStr::Icmp( p.name, relativePath ) ) {
+			return &p;
+		}
+	}
+	return NULL;
+}
+
+/*
+=================
+idFileSystemLocal::FreePrefetch
+
+Only for a slot whose read is back.
+=================
+*/
+void idFileSystemLocal::FreePrefetch( prefetch_t &p ) {
+	CloseFile( p.f );
+	if ( p.bgl.file.buffer ) {
+		Mem_Free( p.bgl.file.buffer );
+	}
+	prefetchBytes -= p.bgl.file.length;
+	prefetchCount--;
+	p.bgl.file.buffer = NULL;
+	p.bgl.f = NULL;
+	p.f = NULL;
+	p.name[ 0 ] = 0;
+}
+
+/*
+=================
+idFileSystemLocal::ReclaimPrefetches
+
+Frees the slots ReadFile gave up on whose read has since come back.
+=================
+*/
+void idFileSystemLocal::ReclaimPrefetches( void ) {
+	if ( !prefetchCount ) {
+		return;
+	}
+	CompleteBackgroundDownloads();
+	for ( int i = 0; i < MAX_PREFETCH; i++ ) {
+		prefetch_t &p = prefetches[ i ];
+		if ( p.f && !p.name[ 0 ] && p.bgl.completed ) {
+			FreePrefetch( p );
+		}
+	}
+}
+
+/*
+=================
+idFileSystemLocal::PrefetchFile
+=================
+*/
+bool idFileSystemLocal::PrefetchFile( const char *relativePath ) {
+	if ( !backgroundThread.threadHandle || !searchPaths || !relativePath || !relativePath[0] ) {
+		return false;
+	}
+	ReclaimPrefetches();
+	if ( prefetchCount >= MAX_PREFETCH || backgroundInFlight >= MAX_BACKGROUND_READS ) {
+		return false;
+	}
+	int nameLen = strlen( relativePath );
+	if ( nameLen >= (int)sizeof( prefetches[ 0 ].name ) || ( nameLen > 4 && !idStr::Icmp( relativePath + nameLen - 4, ".cfg" ) ) ) {
+		// ReadFile journals config files
+		return false;
+	}
+	if ( FindPrefetch( relativePath ) ) {
+		return true;
+	}
+
+	// the open ReadFile would have done, done early
+	idFile *f = OpenFileRead( relativePath, true );
+	if ( !f ) {
+		return false;
+	}
+	int len = f->Length();
+	int viewLen = 0;
+	if ( len <= 0 || f->MapView( &viewLen ) != NULL
+			|| ( prefetchCount && prefetchBytes + len > MAX_PREFETCH_BYTES ) ) {
+		// nothing to read, borrowable in place, or over the byte bound
+		CloseFile( f );
+		return true;
+	}
+
+	for ( int i = 0; i < MAX_PREFETCH; i++ ) {
+		prefetch_t &p = prefetches[ i ];
+		if ( p.f ) {
+			continue;
+		}
+		idStr::Copynz( p.name, relativePath, sizeof( p.name ) );
+		p.hash = idStr::IHash( relativePath );
+		p.f = f;
+		p.timestamp = f->Timestamp();
+		p.bytes = 0;
+		retro_atomic_store_release_int( &p.cancel, 0 );
+		p.bgl.opcode = DLTYPE_FILE;
+		p.bgl.f = f;
+		p.bgl.file.position = 0;
+		p.bgl.file.length = len;
+		p.bgl.file.buffer = Mem_Alloc( len + 1 );	// + ReadFile's trailing 0
+		p.bgl.completed = false;
+		prefetchCount++;
+		prefetchBytes += len;
+		if ( !QueueBackgroundRead( &p.bgl, &p.cancel, &p.bytes ) ) {
+			p.bgl.completed = true;
+			FreePrefetch( p );
+		}
+		return true;
+	}
+	CloseFile( f );
+	return true;
+}
+
+/*
+=================
+idFileSystemLocal::ClearPrefetches
+
+Frees every prefetch no ReadFile came for. Normally there are none; if
+some are still with the reader, this takes them back first.
+=================
+*/
+void idFileSystemLocal::ClearPrefetches( void ) {
+	bool out = false;
+
+	if ( !prefetchCount ) {
+		return;
+	}
+	for ( int i = 0; i < MAX_PREFETCH; i++ ) {
+		prefetch_t &p = prefetches[ i ];
+		if ( p.f ) {
+			retro_atomic_store_release_int( &p.cancel, 1 );
+			p.name[ 0 ] = 0;
+		}
+	}
+	CompleteBackgroundDownloads();
+	for ( int i = 0; i < MAX_PREFETCH; i++ ) {
+		if ( prefetches[ i ].f && !prefetches[ i ].bgl.completed ) {
+			out = true;
+		}
+	}
+	if ( out ) {
+		FlushBackgroundDownloads();
+	}
+	for ( int i = 0; i < MAX_PREFETCH; i++ ) {
+		if ( prefetches[ i ].f ) {
+			FreePrefetch( prefetches[ i ] );
+		}
 	}
 }
 

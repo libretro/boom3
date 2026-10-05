@@ -259,6 +259,15 @@ public:
 							// completes every background read now, doing the ones the thread
 							// has not reached in place; for teardown, not for a frame
 	virtual void			FlushBackgroundDownloads( void ) = 0;
+							// Starts reading a whole file in the background, so that the
+							// ReadFile of it that is known to be coming finds it already
+							// read. A hint: returns at once and may do nothing. False if the
+							// file does not exist or nothing can be prefetched right now.
+	virtual bool			PrefetchFile( const char *relativePath ) = 0;
+							// drops the prefetches no ReadFile has asked for
+	virtual void			ClearPrefetches( void ) = 0;
+							// ReadFile calls served from a prefetch so far
+	virtual int				GetPrefetchHits( void ) = 0;
 							// resets the bytes read counter
 	virtual void			ResetReadCount( void ) = 0;
 							// retrieves the current read count
