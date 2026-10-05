@@ -1966,8 +1966,7 @@ void	idImage::ActuallyLoadImage( bool checkForPrecompressed, bool fromBackEnd ) 
 			}
 		}
 	} else {
-		// 2D image: split into decode (CPU/file) + upload (GL). Both run
-		// on the main thread here; the async pipeline reuses these halves.
+		// 2D image: split into decode (CPU/file) + upload (GL)
 		decodedImageData_t d;
 		if ( !DecodeImageData( checkForPrecompressed, d ) ) {
 			// decode handled the outcome itself (precompressed hit, or a
@@ -1989,8 +1988,7 @@ version, otherwise loads and decodes the image program into out.pic
 Returns true if there is decoded data in 'out' that still needs a GL
 upload (via UploadImageData). Returns false if the load was fully handled
 here - a precompressed image was uploaded directly, or the load failed and
-MakeDefault() was called. Contains no GL calls, so it is safe to run off
-the main thread.
+MakeDefault() was called.
 ===============
 */
 bool idImage::DecodeImageData( bool checkForPrecompressed, decodedImageData_t &out ) {
@@ -2012,11 +2010,9 @@ bool idImage::DecodeImageData( bool checkForPrecompressed, decodedImageData_t &o
 
 	if ( !DecodeImageDataWorker( out ) ) {
 		// genuine load failure (not a precompressed hit): substitute the
-		// default image. DecodeImageDataWorker() is GL-free and deliberately
-		// does NOT do this (so it can run on a worker thread); on the sync
-		// path we are on the main thread and must fall back here, otherwise
-		// the image is left unloaded and renders as garbage/white. The async
-		// pipeline handles this failure on the main thread in R_AsyncLoadImages.
+		// default image. DecodeImageDataWorker() does not do this itself, so
+		// fall back here, otherwise the image is left unloaded and renders
+		// as garbage/white.
 		common->Warning( "Couldn't load image: %s", imgName.c_str() );
 		MakeDefault();
 		return false;
@@ -2029,12 +2025,10 @@ bool idImage::DecodeImageData( bool checkForPrecompressed, decodedImageData_t &o
 ===============
 idImage::DecodeImageDataWorker
 
-The strictly worker-safe part of the decode: R_LoadImageProgram plus the
-dup-check hash, into out. Does NO GL work and does NOT call CheckPrecompressed
-or MakeDefault (both of which touch GL / image-manager state and must run on
-the main thread). Returns true if out holds decoded pixels; false if the
-decode failed (the caller handles the failure - MakeDefault - on the main
-thread).
+The pure decode: R_LoadImageProgram plus the dup-check hash, into out.
+Does no GL work and does not call CheckPrecompressed or MakeDefault.
+Returns true if out holds decoded pixels; false if the decode failed (the
+caller handles the failure with MakeDefault).
 ===============
 */
 bool idImage::DecodeImageDataWorker( decodedImageData_t &out ) {

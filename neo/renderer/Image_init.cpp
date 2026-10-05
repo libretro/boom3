@@ -64,7 +64,6 @@ idCVar idImageManager::image_useAllFormats( "image_useAllFormats", "1", CVAR_REN
 idCVar idImageManager::image_useNormalCompression( "image_useNormalCompression", "2", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "2 = use rxgb compression for normal maps, 1 = use 256 color compression for normal maps if available" );
 idCVar idImageManager::image_usePrecompressedTextures( "image_usePrecompressedTextures", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
 		"1 = use .dds files if present 2 = only use .dds files if they contain BPTC (BC7) textures (those have higher quality than S3TC/DXT) 0 = use uncompressed textures" );
-idCVar idImageManager::image_asyncLoad( "image_asyncLoad", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "overlap image decode (worker thread) with GL upload (main thread) during level load" );
 idCVar idImageManager::image_writePrecompressedTextures( "image_writePrecompressedTextures", "0", CVAR_RENDERER | CVAR_BOOL, "write .dds files if necessary" );
 idCVar idImageManager::image_writeNormalTGA( "image_writeNormalTGA", "0", CVAR_RENDERER | CVAR_BOOL, "write .tgas of the final normal maps for debugging" );
 idCVar idImageManager::image_writeNormalTGAPalletized( "image_writeNormalTGAPalletized", "0", CVAR_RENDERER | CVAR_BOOL, "write .tgas of the final palletized normal maps for debugging" );

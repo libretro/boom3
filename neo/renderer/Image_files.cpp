@@ -33,8 +33,7 @@ If you have questions concerning this license or the applicable additional terms
 
 // libretro-common image_transfer: include right after platform.h and before
 // the idlib/framework headers, so <formats/image.h>'s C declarations are seen
-// before idlib installs its string-function macros (see File.cpp / the
-// Image_async.cpp include-order fix).
+// before idlib installs its string-function macros (see File.cpp).
 #include <formats/image.h>
 
 #include "renderer/tr_local.h"

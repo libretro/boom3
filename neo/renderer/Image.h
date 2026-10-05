@@ -233,11 +233,10 @@ public:
 	void		UploadPrecompressedImage( byte *data, int len );
 	void		ActuallyLoadImage( bool checkForPrecompressed, bool fromBackEnd );
 
-	// Async-load seam: ActuallyLoadImage's 2D path is split into a decode
-	// half (DecodeImageData - CPU/file only, safe off the main thread) and
-	// an upload half (UploadImageData - GL, main thread only). The decoded
-	// pixels cross between them via decodedImageData_t. For now both run
-	// serially on the main thread; the worker pipeline uses the same seam.
+	// ActuallyLoadImage's 2D path is split into a decode half
+	// (DecodeImageData - CPU/file only) and an upload half
+	// (UploadImageData - GL). The decoded pixels cross between them via
+	// decodedImageData_t. Both run on the main thread.
 	struct decodedImageData_t {
 		byte *			pic;		// R_StaticAlloc'd decoded pixels (or NULL)
 		int				width;
@@ -246,7 +245,7 @@ public:
 		textureDepth_t	depth;
 	};
 	bool		DecodeImageData( bool checkForPrecompressed, decodedImageData_t &out );
-	bool		DecodeImageDataWorker( decodedImageData_t &out );	// pure decode, no GL / no MakeDefault - safe off-thread
+	bool		DecodeImageDataWorker( decodedImageData_t &out );	// pure decode, no GL / no MakeDefault
 	void		UploadImageData( decodedImageData_t &in );
 	void		StartBackgroundImageLoad();
 	int			BitsForInternalFormat( int internalFormat ) const;
@@ -419,7 +418,6 @@ public:
 	static idCVar		image_lodbias;				// change lod bias on mipmapped images
 	static idCVar		image_useAllFormats;		// allow alpha/intensity/luminance/luminance+alpha
 	static idCVar		image_usePrecompressedTextures;	// use .dds files if present
-	static idCVar		image_asyncLoad;			// 1 = overlap image decode (worker) with GL upload (main) during level load
 	static idCVar		image_writePrecompressedTextures; // write .dds files if necessary
 	static idCVar		image_writeNormalTGA;		// debug tool to write out .tgas of the final normal maps
 	static idCVar		image_writeNormalTGAPalletized;		// debug tool to write out palletized versions of the final normal maps
@@ -556,10 +554,6 @@ IMAGEPROGRAM
 
 void R_LoadImageProgram( const char *name, byte **pic, int *width, int *height, ID_TIME_T *timestamp, textureDepth_t *depth = NULL );
 
-// Async batch loader (renderer/Image_async.cpp): decodes 'list' on a worker
-// thread while uploading on the main thread. 'list' must contain only plain
-// 2D file images that need loading (no generator/partial/cube images).
-void R_AsyncLoadImages( idImage **list, int count );
 const char *R_ParsePastImageProgram( idLexer &src );
 
 #endif
