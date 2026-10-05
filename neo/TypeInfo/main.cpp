@@ -188,12 +188,6 @@ int				Sys_ListFiles( const char *directory, const char *extension, idStrList &l
 void			Sys_CreateThread( xthread_t function, void *parms, xthreadInfo &info, const char *name ) {}
 void			Sys_DestroyThread( xthreadInfo& info ) {}
 
-void			Sys_EnterCriticalSection( int index ) {}
-void			Sys_LeaveCriticalSection( int index ) {}
-
-void			Sys_WaitForEvent( int index ) {}
-void			Sys_TriggerEvent( int index ) {}
-
 /*
 ==============
 idSysLocal stub

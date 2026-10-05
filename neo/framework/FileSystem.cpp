@@ -403,7 +403,7 @@ public:
 	static void				TouchFileList_f( const idCmdArgs &args );
 
 private:
-	friend int				BackgroundDownloadThread( void *pexit );
+	friend void				BackgroundDownloadThread( void *parm );
 
 	searchpath_t *			searchPaths;
 	int						readCount;			// total bytes read
@@ -3617,7 +3617,7 @@ MAX_BACKGROUND_READS entries and the main thread never has more than that
 in flight.
 ===================
 */
-int BackgroundDownloadThread( void *parm ) {
+void BackgroundDownloadThread( void *parm ) {
 	idFileSystemLocal *fs = (idFileSystemLocal *)parm;
 
 	for ( ; ; ) {
@@ -3645,7 +3645,6 @@ int BackgroundDownloadThread( void *parm ) {
 		}
 		retro_eventcount_commit_wait( &fs->backgroundWake, key );
 	}
-	return 0;
 }
 
 /*

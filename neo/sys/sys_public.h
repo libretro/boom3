@@ -314,62 +314,18 @@ void			Sys_ShutdownNetworking( void );
 */
 
 
-typedef int (*xthread_t)( void * );
+typedef void (*xthread_t)( void * );
 
 typedef struct {
 	const char		*name;
-	// pthread_t on POSIX, a HANDLE on Windows. uintptr_t rather than
-	// unsigned long: the latter is 32 bit on Win64 (LLP64), so storing a
-	// HANDLE in it truncates the pointer.
-	uintptr_t		threadHandle;
-	uintptr_t		threadId;
+	uintptr_t		threadHandle;	// 0 while there is no thread
 } xthreadInfo;
 
+// There are no engine-wide locks or events: threads talk to the main thread
+// over libretro-common's lock-free queues (retro_spsc) and park on
+// retro_eventcount. See the background reader in framework/FileSystem.cpp.
 void				Sys_CreateThread( xthread_t function, void *parms, xthreadInfo &info, const char *name );
-void				Sys_DestroyThread( xthreadInfo& info ); // sets threadHandle back to 0
-
-// find the name of the calling thread
-// if index != NULL, set the index in threads array (use -1 for "main" thread)
-const char *		Sys_GetThreadName( int *index = 0 );
-
-extern void Sys_InitThreads();
-extern void Sys_ShutdownThreads();
-
-bool Sys_IsMainThread();
-
-const int MAX_CRITICAL_SECTIONS		= 5;
-
-enum {
-	CRITICAL_SECTION_ZERO = 0,
-	CRITICAL_SECTION_ONE,
-	CRITICAL_SECTION_TWO,
-	CRITICAL_SECTION_THREE,
-	CRITICAL_SECTION_SYS
-};
-
-void				Sys_EnterCriticalSection( int index = CRITICAL_SECTION_ZERO );
-void				Sys_LeaveCriticalSection( int index = CRITICAL_SECTION_ZERO );
-
-const int MAX_TRIGGER_EVENTS		= 4;
-
-enum {
-	TRIGGER_EVENT_ZERO = 0,
-	TRIGGER_EVENT_ONE,
-	TRIGGER_EVENT_TWO,
-	TRIGGER_EVENT_THREE,
-
-	// async image decode hand-off (renderer/Image_async.cpp). Aliases of the
-	// generic slots above, which nothing else uses; named so the two
-	// directions are not confused. ASYNC_MAIN wakes the main thread when the
-	// worker has produced a result or consumed a request; ASYNC_WORKER wakes
-	// the worker when main has submitted a request, freed a result slot, or
-	// asked it to stop.
-	TRIGGER_EVENT_ASYNC_MAIN   = TRIGGER_EVENT_TWO,
-	TRIGGER_EVENT_ASYNC_WORKER = TRIGGER_EVENT_THREE
-};
-
-void				Sys_WaitForEvent( int index = TRIGGER_EVENT_ZERO );
-void				Sys_TriggerEvent( int index = TRIGGER_EVENT_ZERO );
+void				Sys_DestroyThread( xthreadInfo& info ); // joins; sets threadHandle back to 0
 
 /*
 ==============================================================
