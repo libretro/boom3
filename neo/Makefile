@@ -59,6 +59,11 @@ ifneq (,$(findstring unix,$(platform)))
    fpic := -fPIC
    SHARED := -shared -Wl,--version-script=$(CORE_DIR)/link.T -Wl,--no-undefined
    LIBS := -ldl -lpthread
+   # libretro-common's memmap.c calls shm_open, which glibc before 2.34
+   # keeps in librt
+   ifneq (,$(findstring Linux,$(shell uname -s)))
+      LIBS += -lrt
+   endif
    ifeq ($(FORCE_GLES),1)
 	GLES = 1
 	GL_LIB := -lGLESv2
