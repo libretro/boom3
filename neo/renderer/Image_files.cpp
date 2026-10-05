@@ -75,6 +75,34 @@ static void R_FreeImageFile( byte *buf, bool borrowed ) {
 }
 
 /*
+=================
+R_PrefetchImage
+
+Starts the background read of the file R_LoadImage( cname ) will ask
+for, following the same naming: .tga by default, .jpg if there is no tga.
+=================
+*/
+void R_PrefetchImage( const char *cname ) {
+	idStr name = cname;
+
+	name.DefaultFileExtension( ".tga" );
+
+	if (name.Length()<5) {
+		return;
+	}
+
+	name.ToLower();
+	idStr ext;
+	name.ExtractFileExtension( ext );
+
+	if ( !fileSystem->PrefetchFile( name.c_str() ) && ext == "tga" ) {
+		name.StripFileExtension();
+		name.DefaultFileExtension( ".jpg" );
+		fileSystem->PrefetchFile( name.c_str() );
+	}
+}
+
+/*
 
 This file only has a single entry point:
 

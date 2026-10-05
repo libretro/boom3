@@ -2126,9 +2126,14 @@ the work across frames for the incremental map load).
 void idImageManager::EndLevelLoadStart() {
 	levelLoadStartMsec = Core_Milliseconds();
 
+	// left over from a load that was dropped part way
+	fileSystem->ClearPrefetches();
+
 	insideLevelLoad = false;
 	levelLoadPending.Clear();
 	levelLoadCursor = 0;
+	levelLoadPrefetched = 0;
+	levelLoadPrefetchHits = fileSystem->GetPrefetchHits();
 	levelLoadPurgeCount = 0;
 	levelLoadKeepCount = 0;
 
@@ -2178,6 +2183,18 @@ bool idImageManager::EndLevelLoadStep( int maxImages ) {
 	int loaded = 0;
 
 	while ( levelLoadCursor < levelLoadPending.Num() && loaded < maxImages ) {
+		// Keep the background reader a few images ahead. This thread never
+		// waits for it: a file that is not back when its image comes up is
+		// read here as before.
+		if ( levelLoadPrefetched <= levelLoadCursor ) {
+			levelLoadPrefetched = levelLoadCursor + 1;
+		}
+		while ( levelLoadPrefetched < levelLoadPending.Num()
+				&& levelLoadPrefetched <= levelLoadCursor + LEVEL_LOAD_PREFETCH ) {
+			levelLoadPending[ levelLoadPrefetched ]->PrefetchFiles();
+			levelLoadPrefetched++;
+		}
+
 		idImage *image = levelLoadPending[ levelLoadCursor ];
 		levelLoadCursor++;
 
@@ -2202,6 +2219,8 @@ bool idImageManager::EndLevelLoadStep( int maxImages ) {
 	common->Printf( "%5i purged from previous\n", levelLoadPurgeCount );
 	common->Printf( "%5i kept from previous\n", levelLoadKeepCount );
 	common->Printf( "%5i new loaded\n", levelLoadPending.Num() );
+	common->Printf( "%5i image files read in the background\n", fileSystem->GetPrefetchHits() - levelLoadPrefetchHits );
+	fileSystem->ClearPrefetches();
 	common->Printf( "all images loaded in %5.1f seconds\n", ( end - levelLoadStartMsec ) * 0.001 );
 	levelLoadPending.Clear();
 	levelLoadCursor = 0;

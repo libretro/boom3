@@ -369,6 +369,10 @@ If both pic and timestamps are NULL, it will just advance past it, which can be
 used to parse an image program from a text stream.
 ===================
 */
+// set for the length of R_PrefetchImageProgram's parse: the leaf images
+// are handed to R_PrefetchImage instead of being skipped
+static bool prefetchingImageProgram = false;
+
 static bool R_ParseImageProgram_r( idLexer &src, char *parseBuffer, byte **pic, int *width, int *height,
 								  ID_TIME_T *timestamps, textureDepth_t *depth ) {
 	idToken		token;
@@ -584,6 +588,9 @@ static bool R_ParseImageProgram_r( idLexer &src, char *parseBuffer, byte **pic, 
 	// if we are just parsing instead of loading or checking,
 	// don't do the R_LoadImage
 	if ( !timestamps && !pic ) {
+		if ( prefetchingImageProgram ) {
+			R_PrefetchImage( token.c_str() );
+		}
 		return true;
 	}
 
@@ -604,6 +611,29 @@ static bool R_ParseImageProgram_r( idLexer &src, char *parseBuffer, byte **pic, 
 	return true;
 }
 
+
+/*
+===================
+R_PrefetchImageProgram
+
+Asks the filesystem to start reading the image files this program will
+load, without loading anything.
+===================
+*/
+void R_PrefetchImageProgram( const char *name ) {
+	idLexer src;
+	char	parseBuffer[MAX_IMAGE_NAME];
+
+	src.LoadMemory( name, strlen(name), name );
+	src.SetFlags( LEXFL_NOFATALERRORS | LEXFL_NOSTRINGCONCAT | LEXFL_NOSTRINGESCAPECHARS | LEXFL_ALLOWPATHNAMES );
+
+	parseBuffer[0] = 0;
+	prefetchingImageProgram = true;
+	R_ParseImageProgram_r( src, parseBuffer, NULL, NULL, NULL, NULL, NULL );
+	prefetchingImageProgram = false;
+
+	src.FreeSource();
+}
 
 /*
 ===================

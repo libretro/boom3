@@ -1589,56 +1589,36 @@ bool idImage::CheckPrecompressedImage( bool fullLoad )
 {
 	ID_TIME_T precompTimestamp;
 	char filename[MAX_IMAGE_NAME];
-	if ( !glConfig.isInitialized || !glConfig.textureCompressionAvailable )
-		return false;
 
-	// if we are doing a copyFiles, make sure the 
-        // original images are referenced
-	if ( fileSystem->PerformingCopyFiles() )
-		return false;
-
-	if ( depth == TD_BUMP && globalImages->image_useNormalCompression.GetInteger() != 2 )
-		return false;
-
-	// god i love last minute hacks :-)
-	if ( com_machineSpec.GetInteger() >= 1 && imgName.Icmpn( "lights/", 7 ) == 0 )
+	if ( !WantsPrecompressedImage() )
 		return false;
 
 	ImageProgramStringToCompressedFileName( imgName, filename );
 
-	// get the file timestamp
-	fileSystem->ReadFile( filename, NULL, &precompTimestamp );
+	// One ReadFile for the timestamp and the data, where there used to be
+	// a timestamp query, an open and a read: it is the call a prefetch of
+	// this file answers, and it is one walk of the search paths, not two.
+	byte *data = NULL;
+	int len = fileSystem->ReadFile( filename, (void **)&data, &precompTimestamp );
 
-	if ( precompTimestamp == FILE_NOT_FOUND_TIMESTAMP )
+	if ( precompTimestamp == FILE_NOT_FOUND_TIMESTAMP || !data )
 		return false;
 
 	if ( !generatorFunction && timestamp != FILE_NOT_FOUND_TIMESTAMP )
 	{
 		// The image has changed after being precompressed
-		if ( precompTimestamp < timestamp )
+		if ( precompTimestamp < timestamp ) {
+			fileSystem->FreeFile( data );
 			return false;
+		}
 	}
 
 	timestamp = precompTimestamp;
 
-	// open it and just read the header
-	idFile *f;
-
-	f = fileSystem->OpenFileRead( filename );
-	if ( !f )
-		return false;
-
-	int	len = f->Length();
-	if ( len < sizeof( ddsFileHeader_t ) + 4 ) { // +4 for the magic 'DDS ' fourcc at the beginning
-		fileSystem->CloseFile( f );
+	if ( len < (int)( sizeof( ddsFileHeader_t ) + 4 ) ) { // +4 for the magic 'DDS ' fourcc at the beginning
+		fileSystem->FreeFile( data );
 		return false;
 	}
-
-	byte *data = (byte *)R_StaticAlloc( len );
-
-	f->Read( data, len );
-
-	fileSystem->CloseFile( f );
 
 #ifdef MSB_FIRST
 	unsigned int magic = D3_Swap32( *(unsigned int *)data );
@@ -1656,14 +1636,14 @@ bool idImage::CheckPrecompressedImage( bool fullLoad )
 
 	if ( magic != DDS_MAKEFOURCC('D', 'D', 'S', ' ')) {
 		common->Printf( "CheckPrecompressedImage( %s ): magic != 'DDS '\n", imgName.c_str() );
-		R_StaticFree( data );
+		fileSystem->FreeFile( data );
 		return false;
 	}
 
 	// if we don't support color index textures, we must load the full image
 	// should we just expand the 256 color image to 32 bit for upload?
 	if ( (ddspf_dwFlags & DDSF_ID_INDEXCOLOR) && !glConfig.sharedTexturePaletteAvailable ) {
-		R_StaticFree( data );
+		fileSystem->FreeFile( data );
 		return false;
 	}
 
@@ -1683,7 +1663,7 @@ bool idImage::CheckPrecompressedImage( bool fullLoad )
 		{
 			common->Warning( "Image file '%s' has unsupported dxgiFormat %d - dhewm3 only supports DXGI_FORMAT_BC7_UNORM (98)!",
 			                 filename, dxgiFormat);
-			R_StaticFree( data );
+			fileSystem->FreeFile( data );
 			return false;
 		}
 	} else if ( ddspf_dwFourCC == DDS_MAKEFOURCC( 'B', 'C', '7', '0' )
@@ -1692,7 +1672,7 @@ bool idImage::CheckPrecompressedImage( bool fullLoad )
 		isBC7 = true;
 	}
 	if ( isBC7 && !glConfig.bptcTextureCompressionAvailable ) {
-		R_StaticFree( data );
+		fileSystem->FreeFile( data );
 		return false;
 	}
 	if ( glConfig.bptcTextureCompressionAvailable
@@ -1701,7 +1681,7 @@ bool idImage::CheckPrecompressedImage( bool fullLoad )
 		// only high quality compressed textures, i.e. BC7 (BPTC), are welcome
 		// or uncompressed ones (that have no FOURCC flag set)
 		if ( !isBC7 && (ddspf_dwFlags & DDSF_FOURCC) != 0 ) {
-			R_StaticFree( data );
+			fileSystem->FreeFile( data );
 			return false;
 		}
 	}
@@ -1709,9 +1689,60 @@ bool idImage::CheckPrecompressedImage( bool fullLoad )
 	// upload all the levels
 	UploadPrecompressedImage( data, len );
 
-	R_StaticFree( data );
+	fileSystem->FreeFile( data );
 
 	return true;
+}
+
+/*
+================
+WantsPrecompressedImage
+
+The conditions on a precompressed load that need no file.
+================
+*/
+bool idImage::WantsPrecompressedImage() const
+{
+	if ( !glConfig.isInitialized || !glConfig.textureCompressionAvailable )
+		return false;
+
+	// if we are doing a copyFiles, make sure the
+	// original images are referenced
+	if ( fileSystem->PerformingCopyFiles() )
+		return false;
+
+	if ( depth == TD_BUMP && globalImages->image_useNormalCompression.GetInteger() != 2 )
+		return false;
+
+	// god i love last minute hacks :-)
+	if ( com_machineSpec.GetInteger() >= 1 && imgName.Icmpn( "lights/", 7 ) == 0 )
+		return false;
+
+	return true;
+}
+
+/*
+================
+PrefetchFiles
+
+Starts the background read of the files ActuallyLoadImage will ask for:
+the precompressed file if that is what it will load, the source images
+of the image program otherwise. Loads nothing.
+================
+*/
+void idImage::PrefetchFiles()
+{
+	if ( texnum != TEXTURE_NOT_LOADED || generatorFunction || isPartialImage || cubeFiles != CF_2D )
+		return;
+
+	if ( globalImages->image_usePrecompressedTextures.GetBool() && WantsPrecompressedImage() ) {
+		char filename[MAX_IMAGE_NAME];
+		ImageProgramStringToCompressedFileName( imgName, filename );
+		if ( fileSystem->PrefetchFile( filename ) )
+			return;
+	}
+
+	R_PrefetchImageProgram( imgName );
 }
 
 /*

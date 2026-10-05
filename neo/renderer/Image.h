@@ -230,6 +230,8 @@ public:
 	bool		ShouldImageBePartialCached();
 	void		WritePrecompressedImage();
 	bool		CheckPrecompressedImage( bool fullLoad );
+	bool		WantsPrecompressedImage() const;
+	void		PrefetchFiles();
 	void		UploadPrecompressedImage( byte *data, int len );
 	void		ActuallyLoadImage( bool checkForPrecompressed, bool fromBackEnd );
 
@@ -480,6 +482,11 @@ public:
 	// EndLevelLoadStart() and consumed by EndLevelLoadStep().
 	idList<idImage*>	levelLoadPending;
 	int					levelLoadCursor;
+	// the filesystem's background reader is kept this many images ahead
+	// of the one being loaded, reading the files they will ask for
+	enum { LEVEL_LOAD_PREFETCH = 4 };
+	int					levelLoadPrefetched;		// next image to prefetch for
+	int					levelLoadPrefetchHits;		// filesystem count at the start
 	int					levelLoadStartMsec;
 	int					levelLoadPurgeCount;
 	int					levelLoadKeepCount;
@@ -553,6 +560,8 @@ IMAGEPROGRAM
 */
 
 void R_LoadImageProgram( const char *name, byte **pic, int *width, int *height, ID_TIME_T *timestamp, textureDepth_t *depth = NULL );
+void R_PrefetchImageProgram( const char *name );
+void R_PrefetchImage( const char *name );
 
 const char *R_ParsePastImageProgram( idLexer &src );
 
