@@ -2145,13 +2145,11 @@ void Session_Hitch_f( const idCmdArgs &args ) {
 	if ( sw ) {
 		soundSystem->SetMute(true);
 		sw->Pause();
-		Sys_EnterCriticalSection();
 	}
 	// libretro: never block the frontend lifecycle. The "hitch" command is
 	// a debug stall test with no purpose in a frontend-timed core; the
 	// sleep is dropped (the mute/pause bracket is harmless and left as-is).
 	if ( sw ) {
-		Sys_LeaveCriticalSection();
 		sw->UnPause();
 		soundSystem->SetMute(false);
 	}

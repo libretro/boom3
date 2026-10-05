@@ -737,8 +737,6 @@ int idSoundEmitterLocal::StartSound( const idSoundShader *shader, const s_channe
 		}
 	}
 
-	Sys_EnterCriticalSection();
-
 	// kill any sound that is currently playing on this channel
 	if ( channel != SCHANNEL_ANY ) {
 		for( i = 0; i < SOUND_MAX_CHANNELS; i++ ) {
@@ -770,7 +768,6 @@ int idSoundEmitterLocal::StartSound( const idSoundShader *shader, const s_channe
 
 	if ( i == SOUND_MAX_CHANNELS ) {
 		// we couldn't find a channel for it
-		Sys_LeaveCriticalSection();
 		if ( idSoundSystemLocal::s_showStartSound.GetInteger() ) {
 			common->Printf( "no channels available\n" );
 		}
@@ -846,8 +843,6 @@ int idSoundEmitterLocal::StartSound( const idSoundShader *shader, const s_channe
 	   PRIMARYFREQ here made every computed duration 2.18x wrong at 96kHz. */
 	length *= 1000 / (float)snd_SampleRate();
 
-	Sys_LeaveCriticalSection();
-
 	return length;
 }
 
@@ -915,8 +910,6 @@ void idSoundEmitterLocal::StopSound( const s_channelType channel ) {
 		soundWorld->writeDemo->WriteInt( channel );
 	}
 
-	Sys_EnterCriticalSection();
-
 	for( i = 0; i < SOUND_MAX_CHANNELS; i++ ) {
 		idSoundChannel	*chan = &channels[i];
 
@@ -941,14 +934,10 @@ void idSoundEmitterLocal::StopSound( const s_channelType channel ) {
 		chan->leadinSample = NULL;
 		chan->soundShader = NULL;
 	}
-
-	Sys_LeaveCriticalSection();
 }
 
 // DG: mark channels paused when entering menu etc
 void idSoundEmitterLocal::PauseAll( void ) {
-
-	Sys_EnterCriticalSection();
 
 	for( int i = 0; i < SOUND_MAX_CHANNELS; i++ ) {
 		idSoundChannel	*chan = &channels[i];
@@ -959,15 +948,11 @@ void idSoundEmitterLocal::PauseAll( void ) {
 
 		chan->paused = true;
 	}
-
-	Sys_LeaveCriticalSection();
 }
 
 
 // DG: unmark paused channels when leaving menu etc
 void idSoundEmitterLocal::UnPauseAll( void ) {
-
-	Sys_EnterCriticalSection();
 
 	for( int i = 0; i < SOUND_MAX_CHANNELS; i++ ) {
 		idSoundChannel	*chan = &channels[i];
@@ -978,8 +963,6 @@ void idSoundEmitterLocal::UnPauseAll( void ) {
 
 		chan->paused = false;
 	}
-
-	Sys_LeaveCriticalSection();
 }
 
 /*

@@ -599,8 +599,6 @@ cinData_t idSoundSystemLocal::ImageForTime( const int milliseconds, const bool w
 		return ret;
 	}
 
-	Sys_EnterCriticalSection();
-
 	if ( !graph ) {
 		graph = (dword *)Mem_Alloc( 256*128 * 4);
 	}
@@ -729,8 +727,6 @@ cinData_t idSoundSystemLocal::ImageForTime( const int milliseconds, const bool w
 	ret.imageHeight = 128;
 	ret.imageWidth = 256;
 	ret.image = (unsigned char *)graph;
-
-	Sys_LeaveCriticalSection();
 
 	return ret;
 }

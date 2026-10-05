@@ -74,8 +74,6 @@ int idWaveFile::OpenOGG( const char* strFileName, waveformatex_t *pwfx ) {
 	if ( !mhmmio )
 		return -1;
 
-	Sys_EnterCriticalSection( CRITICAL_SECTION_ONE );
-
 	int fileSize = mhmmio->Length();
 	byte* oggFileData = (byte*)Mem_Alloc( fileSize );
 
@@ -85,7 +83,6 @@ int idWaveFile::OpenOGG( const char* strFileName, waveformatex_t *pwfx ) {
 	void *at = audio_transfer_new( AUDIO_TYPE_VORBIS );
 	if ( at == NULL ) {
 		Mem_Free( oggFileData );
-		Sys_LeaveCriticalSection( CRITICAL_SECTION_ONE );
 		common->Warning( "Opening OGG file '%s' with audio_transfer failed\n", strFileName );
 		fileSystem->CloseFile( mhmmio );
 		mhmmio = NULL;
@@ -96,7 +93,6 @@ int idWaveFile::OpenOGG( const char* strFileName, waveformatex_t *pwfx ) {
 			|| !audio_transfer_is_valid( at, AUDIO_TYPE_VORBIS ) ) {
 		audio_transfer_free( at, AUDIO_TYPE_VORBIS );
 		Mem_Free( oggFileData );
-		Sys_LeaveCriticalSection( CRITICAL_SECTION_ONE );
 		common->Warning( "Opening OGG file '%s' with audio_transfer failed\n", strFileName );
 		fileSystem->CloseFile( mhmmio );
 		mhmmio = NULL;
@@ -143,8 +139,6 @@ int idWaveFile::OpenOGG( const char* strFileName, waveformatex_t *pwfx ) {
 	}
 
 	memcpy( pwfx, &mpwfx, sizeof( waveformatex_t ) );
-
-	Sys_LeaveCriticalSection( CRITICAL_SECTION_ONE );
 
 	isOgg = true;
 
@@ -373,8 +367,6 @@ void idSampleDecoderLocal::ClearDecoder( void ) {
 	   the format before the pending state can apply. It is freed on
 	   decoder retirement (idSampleDecoder::Free) or on re-arm.
 	*/
-	Sys_EnterCriticalSection( CRITICAL_SECTION_ONE );
-
 	switch( lastFormat ) {
 		case WAVE_FORMAT_TAG_PCM: {
 			break;
@@ -396,8 +388,6 @@ void idSampleDecoderLocal::ClearDecoder( void ) {
 	}
 
 	Clear();
-
-	Sys_LeaveCriticalSection( CRITICAL_SECTION_ONE );
 }
 
 /*
@@ -508,9 +498,6 @@ void idSampleDecoderLocal::Decode( idSoundSample *sample, int outputOffset, int 
 		return;
 	}
 
-	// samples can be decoded both from the sound thread and the main thread for shakes
-	Sys_EnterCriticalSection( CRITICAL_SECTION_ONE );
-
 	switch( sample->objectInfo.wFormatTag ) {
 		case WAVE_FORMAT_TAG_PCM: {
 			readSamplesOut = DecodePCM( sample, outputOffset, outputCount, dest );
@@ -525,8 +512,6 @@ void idSampleDecoderLocal::Decode( idSoundSample *sample, int outputOffset, int 
 			break;
 		}
 	}
-
-	Sys_LeaveCriticalSection( CRITICAL_SECTION_ONE );
 
 	if ( readSamplesOut < outputCount )
 		memset( dest + readSamplesOut, 0, ( outputCount - readSamplesOut ) * sizeof( dest[0] ) );

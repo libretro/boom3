@@ -138,16 +138,11 @@ idSoundWorldLocal::ClearAllSoundEmitters
 void idSoundWorldLocal::ClearAllSoundEmitters() {
 	int i;
 
-	Sys_EnterCriticalSection();
-
-
 	for ( i = 0; i < emitters.Num(); i++ ) {
 		idSoundEmitterLocal *sound = emitters[i];
 		sound->Clear();
 	}
 	localSound = NULL;
-
-	Sys_LeaveCriticalSection();
 }
 
 /*
@@ -180,10 +175,7 @@ idSoundEmitterLocal *idSoundWorldLocal::AllocLocalSoundEmitter() {
 		// append a brand new one
 		def = new idSoundEmitterLocal;
 
-		// we need to protect this from the async thread
-		Sys_EnterCriticalSection();
 		index = emitters.Append( def );
-		Sys_LeaveCriticalSection();
 
 		if ( idSoundSystemLocal::s_showStartSound.GetInteger() ) {
 			common->Printf( "sound: appended new sound def %d\n", index );
@@ -271,12 +263,7 @@ void idSoundWorldLocal::ProcessDemoCommand( idDemoFile *readDemo ) {
 
 	switch( (soundDemoCommand_t)dc ) {
 	case SCMD_STATE:
-		// we need to protect this from the async thread
-		// other instances of calling idSoundWorldLocal::ReadFromSaveGame do this while the sound code is muted
-		// setting muted and going right in may not be good enough here, as we async thread may already be in an async tick (in which case we could still race to it)
-		Sys_EnterCriticalSection();
 		ReadFromSaveGame( readDemo );
-		Sys_LeaveCriticalSection();
 		UnPause();
 		break;
 	case SCMD_PLACE_LISTENER:
@@ -772,8 +759,6 @@ void idSoundWorldLocal::ForegroundUpdate( int currentSampleTime ) {
 		return;
 	}
 
-	Sys_EnterCriticalSection();
-
 	//
 	// check to see if each sound is visible or not
 	// speed up by checking maxdistance to origin
@@ -841,8 +826,6 @@ void idSoundWorldLocal::ForegroundUpdate( int currentSampleTime ) {
 			}
 		}
 	}
-
-	Sys_LeaveCriticalSection();
 }
 
 /*
