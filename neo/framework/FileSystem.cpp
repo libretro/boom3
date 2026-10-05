@@ -375,6 +375,7 @@ public:
 	virtual void			CloseFile( idFile *f );
 	virtual void			BackgroundDownload( backgroundDownload_t *bgl );
 	virtual void			CompleteBackgroundDownloads( void );
+	virtual void			FlushBackgroundDownloads( void );
 	virtual void			ResetReadCount( void ) { readCount = 0; }
 	virtual void			AddToReadCount( int c ) { readCount += c; }
 	virtual int				GetReadCount( void ) { return readCount; }
@@ -441,6 +442,20 @@ private:
 	// is ever touched by both threads at once and there is no lock. The
 	// reader parks on an eventcount; the main thread never waits for it.
 	enum { MAX_BACKGROUND_READS = 16 };		// in flight; a power of two
+
+	// What crosses the rings. The main thread resolves the file to the
+	// handle the read needs, so the reader touches nothing of the engine's:
+	// a pak entry's handle is its own inflate stream over the pak, and an
+	// OS file's is its own descriptor.
+	struct backgroundRead_t {
+		backgroundDownload_t *	bgl;
+		RFILE *					osFile;		// one of these two
+		rzip_file_t *			zipFile;
+		int						bytes;		// read; set by whoever did the read
+	};
+	static void				BackgroundRead( backgroundRead_t &r );
+	void					BackgroundReadDone( const backgroundRead_t &r );
+	void					StopBackgroundDownloadThread( void );
 	retro_spsc_t			backgroundRequests;		// main -> reader
 	retro_spsc_t			backgroundResults;		// reader -> main
 	retro_eventcount_t		backgroundWake;			// reader parks here
@@ -2896,20 +2911,12 @@ void idFileSystemLocal::Shutdown( bool reloading ) {
 	}
 	viewsOutstanding = 0;
 
-	if ( backgroundThread.threadHandle ) {
-		retro_atomic_store_release_int( &backgroundThread_exit, 1 );
-		retro_eventcount_notify( &backgroundWake );
-		Sys_DestroyThread( backgroundThread );
-		retro_atomic_store_release_int( &backgroundThread_exit, 0 );
-	}
+	// every read still in flight completes here, before its pak is closed
+	StopBackgroundDownloadThread();
 	if ( backgroundReady && !reloading ) {
-		// The reader is joined, so the rings are ours. Requests that were
-		// still queued die with the filesystem; across a restart they are
-		// kept and the next reader thread picks them up.
 		retro_spsc_free( &backgroundRequests );
 		retro_spsc_free( &backgroundResults );
 		retro_eventcount_free( &backgroundWake );
-		backgroundInFlight = 0;
 		backgroundReady = false;
 	}
 
@@ -3602,9 +3609,26 @@ back ground loading
 
 /*
 ===================
+idFileSystemLocal::BackgroundRead
+
+The read itself, on whichever thread does it. Uses the low level read
+functions: the idFile ones count bytes on the filesystem and can reach
+the engine's heap and console, none of which the reader may touch.
+===================
+*/
+void idFileSystemLocal::BackgroundRead( backgroundRead_t &r ) {
+	if ( r.zipFile ) {
+		r.bytes = rzip_file_read( r.zipFile, r.bgl->file.buffer, r.bgl->file.length );
+	} else {
+		r.bytes = (int)filestream_read( r.osFile, r.bgl->file.buffer, r.bgl->file.length );
+	}
+}
+
+/*
+===================
 BackgroundDownloadThread
 
-Reads part of a file from a background thread.
+Reads files, pak entries included, from a background thread.
 
 Takes requests off backgroundRequests, reads, and hands each one back on
 backgroundResults. The request belongs to this thread between those two
@@ -3621,25 +3645,24 @@ void BackgroundDownloadThread( void *parm ) {
 	idFileSystemLocal *fs = (idFileSystemLocal *)parm;
 
 	for ( ; ; ) {
-		backgroundDownload_t *bgl;
+		idFileSystemLocal::backgroundRead_t r;
 		int key;
 
 		if ( retro_atomic_load_acquire_int( &fs->backgroundThread_exit ) ) {
 			break;
 		}
 
-		if ( retro_spsc_read_avail( &fs->backgroundRequests ) >= sizeof( bgl ) ) {
-			retro_spsc_read( &fs->backgroundRequests, &bgl, sizeof( bgl ) );
-			// the low level read function, because the idFile one may allocate memory
-			filestream_read( static_cast<idFile_Permanent*>(bgl->f)->GetFilePtr(), bgl->file.buffer, bgl->file.length );
-			retro_spsc_write( &fs->backgroundResults, &bgl, sizeof( bgl ) );
+		if ( retro_spsc_read_avail( &fs->backgroundRequests ) >= sizeof( r ) ) {
+			retro_spsc_read( &fs->backgroundRequests, &r, sizeof( r ) );
+			idFileSystemLocal::BackgroundRead( r );
+			retro_spsc_write( &fs->backgroundResults, &r, sizeof( r ) );
 			continue;
 		}
 
 		// nothing queued: park until the main thread submits or shuts down
 		key = retro_eventcount_prepare_wait( &fs->backgroundWake );
 		if ( retro_atomic_load_acquire_int( &fs->backgroundThread_exit )
-				|| retro_spsc_read_avail( &fs->backgroundRequests ) >= sizeof( bgl ) ) {
+				|| retro_spsc_read_avail( &fs->backgroundRequests ) >= sizeof( r ) ) {
 			retro_eventcount_cancel_wait( &fs->backgroundWake );
 			continue;
 		}
@@ -3658,10 +3681,10 @@ void idFileSystemLocal::StartBackgroundDownloadThread() {
 		return;
 	}
 	if ( !backgroundReady ) {
-		if ( !retro_spsc_init( &backgroundRequests, MAX_BACKGROUND_READS * sizeof( backgroundDownload_t * ) ) ) {
+		if ( !retro_spsc_init( &backgroundRequests, MAX_BACKGROUND_READS * sizeof( backgroundRead_t ) ) ) {
 			return;
 		}
-		if ( !retro_spsc_init( &backgroundResults, MAX_BACKGROUND_READS * sizeof( backgroundDownload_t * ) ) ) {
+		if ( !retro_spsc_init( &backgroundResults, MAX_BACKGROUND_READS * sizeof( backgroundRead_t ) ) ) {
 			retro_spsc_free( &backgroundRequests );
 			return;
 		}
@@ -3679,10 +3702,39 @@ void idFileSystemLocal::StartBackgroundDownloadThread() {
 
 /*
 =================
+idFileSystemLocal::StopBackgroundDownloadThread
+
+Joins the reader, which returns after the read it is on, and then does
+the reads it had not reached in place. No request is in flight afterwards.
+=================
+*/
+void idFileSystemLocal::StopBackgroundDownloadThread( void ) {
+	backgroundRead_t r;
+
+	if ( backgroundThread.threadHandle ) {
+		retro_atomic_store_release_int( &backgroundThread_exit, 1 );
+		retro_eventcount_notify( &backgroundWake );
+		Sys_DestroyThread( backgroundThread );
+		retro_atomic_store_release_int( &backgroundThread_exit, 0 );
+	}
+	if ( !backgroundReady ) {
+		return;
+	}
+	// the reader is joined, so both ends of both rings are ours
+	while ( retro_spsc_read_avail( &backgroundRequests ) >= sizeof( r ) ) {
+		retro_spsc_read( &backgroundRequests, &r, sizeof( r ) );
+		BackgroundRead( r );
+		BackgroundReadDone( r );
+	}
+	CompleteBackgroundDownloads();
+}
+
+/*
+=================
 idFileSystemLocal::BackgroundDownload
 
-Never blocks. A read the thread cannot take - no thread, a zipped file,
-or MAX_BACKGROUND_READS already in flight - is done here instead.
+Never blocks. A read the thread cannot take - no thread, or
+MAX_BACKGROUND_READS already in flight - is done here instead.
 =================
 */
 void idFileSystemLocal::BackgroundDownload( backgroundDownload_t *bgl ) {
@@ -3694,18 +3746,59 @@ void idFileSystemLocal::BackgroundDownload( backgroundDownload_t *bgl ) {
 		return;
 	}
 
-	if ( backgroundThread.threadHandle
-			&& backgroundInFlight < MAX_BACKGROUND_READS
-			&& dynamic_cast<idFile_Permanent *>(bgl->f) ) {
-		retro_spsc_write( &backgroundRequests, &bgl, sizeof( bgl ) );
-		backgroundInFlight++;
-		retro_eventcount_notify( &backgroundWake );
-		return;
+	// a seek of an OS file does no I/O; a pak entry is opened at its
+	// start and, like the read below, pays for any other position here
+	if ( bgl->f->Tell() != bgl->file.position ) {
+		bgl->f->Seek( bgl->file.position, FS_SEEK_SET );
 	}
 
-	bgl->f->Seek( bgl->file.position, FS_SEEK_SET );
+	if ( backgroundThread.threadHandle && backgroundInFlight < MAX_BACKGROUND_READS ) {
+		backgroundRead_t r;
+		idFile_InZip *zip = dynamic_cast<idFile_InZip *>(bgl->f);
+		idFile_Permanent *os = dynamic_cast<idFile_Permanent *>(bgl->f);
+
+		r.bgl = bgl;
+		r.osFile = os ? os->GetFilePtr() : NULL;
+		r.zipFile = zip ? (rzip_file_t *)zip->z : NULL;
+		r.bytes = 0;
+		if ( r.osFile || r.zipFile ) {
+			if ( r.zipFile ) {
+				// the reader must not reach the warning sink
+				rzip_file_set_quiet( r.zipFile, 1 );
+			}
+			retro_spsc_write( &backgroundRequests, &r, sizeof( r ) );
+			backgroundInFlight++;
+			retro_eventcount_notify( &backgroundWake );
+			return;
+		}
+	}
+
 	bgl->f->Read( bgl->file.buffer, bgl->file.length );
 	bgl->completed = true;
+}
+
+/*
+=================
+idFileSystemLocal::BackgroundReadDone
+
+Takes a finished read back on the main thread: says what the reader
+could not, counts the bytes as idFile::Read would have, and marks the
+request completed.
+=================
+*/
+void idFileSystemLocal::BackgroundReadDone( const backgroundRead_t &r ) {
+	if ( r.zipFile ) {
+		int err = rzip_file_error( r.zipFile );
+		rzip_file_set_quiet( r.zipFile, 0 );
+		if ( err != RZIP_ERR_NONE ) {
+			common->Warning( "%s in '%s'", ( err == RZIP_ERR_CRC ) ? "CRC mismatch" : "inflate error", r.bgl->f->GetFullPath() );
+		}
+	}
+	if ( r.bytes > 0 ) {
+		readCount += r.bytes;
+	}
+	r.bgl->completed = true;
+	backgroundInFlight--;
 }
 
 /*
@@ -3718,15 +3811,34 @@ looking at it.
 =================
 */
 void idFileSystemLocal::CompleteBackgroundDownloads( void ) {
-	backgroundDownload_t *bgl;
+	backgroundRead_t r;
 
 	if ( !backgroundInFlight ) {
 		return;
 	}
-	while ( retro_spsc_read_avail( &backgroundResults ) >= sizeof( bgl ) ) {
-		retro_spsc_read( &backgroundResults, &bgl, sizeof( bgl ) );
-		bgl->completed = true;
-		backgroundInFlight--;
+	while ( retro_spsc_read_avail( &backgroundResults ) >= sizeof( r ) ) {
+		retro_spsc_read( &backgroundResults, &r, sizeof( r ) );
+		BackgroundReadDone( r );
+	}
+}
+
+/*
+=================
+idFileSystemLocal::FlushBackgroundDownloads
+
+Completes every read in flight before returning: waits for the one the
+reader is on and does the rest in place. For teardown - a caller about to
+free the buffers and close the files its requests name - not for a frame.
+=================
+*/
+void idFileSystemLocal::FlushBackgroundDownloads( void ) {
+	if ( !backgroundInFlight ) {
+		return;
+	}
+	bool running = backgroundThread.threadHandle != 0;
+	StopBackgroundDownloadThread();
+	if ( running ) {
+		StartBackgroundDownloadThread();
 	}
 }
 

@@ -42,6 +42,8 @@ struct rzip_file_s {
 	uint64_t            outPos;    /* uncompressed bytes handed out */
 	uint32_t            runCrc;
 	int                 crcChecked;
+	int                 quiet;     /* record a read error instead of warning */
+	int                 err;       /* RZIP_ERR_*, quiet handles only */
 	/* deflate state */
 	void               *inf;       /* rinflate stream, deflate entries only */
 	uint64_t            compPos;   /* compressed bytes fed (unmapped mode) */
@@ -379,6 +381,10 @@ static void rzip_file_check_crc( rzip_file_t *f ) {
 		return;
 	f->crcChecked = 1;
 	if ( f->runCrc != f->e->crc32 ) {
+		if ( f->quiet ) {
+			f->err = RZIP_ERR_CRC;
+			return;
+		}
 		WARN( "rzip: '%s': CRC mismatch on '%s' (directory %08x, data %08x)",
 				f->pak->path, f->e->name, f->e->crc32, f->runCrc );
 	}
@@ -431,7 +437,10 @@ int rzip_file_read( rzip_file_t *f, void *buf, int len ) {
 			if ( !f->pak->base ) f->inAvail -= rd;
 			done += (int)wr;
 			if ( ret == RDEFLATE_PROCESS_ERROR ) {
-				WARN( "rzip: '%s': inflate error in '%s'", f->pak->path, f->e->name );
+				if ( f->quiet )
+					f->err = RZIP_ERR_INFLATE;
+				else
+					WARN( "rzip: '%s': inflate error in '%s'", f->pak->path, f->e->name );
 				break;
 			}
 			if ( done >= len || ret == RDEFLATE_PROCESS_END )
@@ -450,6 +459,17 @@ int rzip_file_read( rzip_file_t *f, void *buf, int len ) {
 	}
 	rzip_file_check_crc( f );
 	return done;
+}
+
+void rzip_file_set_quiet( rzip_file_t *f, int quiet ) {
+	if ( !f )
+		return;
+	f->quiet = quiet;
+	f->err   = RZIP_ERR_NONE;
+}
+
+int rzip_file_error( const rzip_file_t *f ) {
+	return f ? f->err : RZIP_ERR_NONE;
 }
 
 int64_t rzip_file_tell( const rzip_file_t *f ) {

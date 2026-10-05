@@ -66,6 +66,15 @@ int                 rzip_file_rewind( rzip_file_t *f );   /* back to entry start
 int64_t             rzip_file_tell( const rzip_file_t *f );  /* uncompressed bytes handed out */
 void                rzip_file_close( rzip_file_t *f );
 
+/* A handle read off the main thread must not reach the warning sink.
+   With quiet set, a failed read records why instead of warning, and
+   rzip_file_error returns it until quiet is set again. */
+#define RZIP_ERR_NONE    0
+#define RZIP_ERR_INFLATE 1
+#define RZIP_ERR_CRC     2
+void                rzip_file_set_quiet( rzip_file_t *f, int quiet );
+int                 rzip_file_error( const rzip_file_t *f );
+
 /* Zero-copy borrow: for a STORED entry in a MAPPED pak, the entry's
    bytes ARE the file at a stable address for the pak's lifetime -
    return that pointer (and the length) instead of copying. NULL for

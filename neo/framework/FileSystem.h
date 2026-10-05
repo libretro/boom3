@@ -256,6 +256,9 @@ public:
 	virtual void			BackgroundDownload( backgroundDownload_t *bgl ) = 0;
 							// marks finished background reads as completed; main thread
 	virtual void			CompleteBackgroundDownloads( void ) = 0;
+							// completes every background read now, doing the ones the thread
+							// has not reached in place; for teardown, not for a frame
+	virtual void			FlushBackgroundDownloads( void ) = 0;
 							// resets the bytes read counter
 	virtual void			ResetReadCount( void ) = 0;
 							// retrieves the current read count
