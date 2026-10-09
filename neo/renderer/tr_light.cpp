@@ -37,6 +37,10 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "Model_local.h"
 
+#ifdef BOOM3_VR
+#include "vr.h"
+#endif
+
 
 static const float CHECK_BOUNDS_EPSILON = 1.0f;
 
@@ -1209,6 +1213,10 @@ void R_AddDrawSurf( const srfTriangles_t *tri, const viewEntity_t *space, const 
 		   so that was every 24-bit run.
 		*/
 		if ( hdr_output_active && hdr_particle_light_count_opt > 0 && shader != NULL
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+                && VR_Active()
+                && tr.viewDef->vrView != 2
+#endif
 				&& ( shader->Deform() == DFRM_PARTICLE || shader->Deform() == DFRM_PARTICLE2 ) ) {
 			R_ParticleLightCollect( tri, space );
 		}

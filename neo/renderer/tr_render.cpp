@@ -32,6 +32,10 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "renderer/tr_local.h"
 
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+#include "renderer/vr.h"
+#endif
+
 #ifdef HAVE_OPENGLES
 #include "renderer/gles_compat.h"
 #endif
@@ -975,6 +979,11 @@ void RB_DrawView( const void *data ) {
 	RB_ShowOverdraw();
 #endif
 
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+	if ( VR_Active() ) {
+		VR_BindTargetForView( backEnd.viewDef->vrView );
+	}
+#endif
 	// render the scene, jumping to the hardware specific interaction renderers
 	RB_STD_DrawView();
 

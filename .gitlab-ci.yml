@@ -83,7 +83,8 @@ libretro-build-windows-x64:
   extends:
     - .libretro-windows-x64-mingw-make-default
     - .core-defs
-
+  variables:
+    HAVE_VR: 1
 
 # Windows 32-bit
 libretro-build-windows-i686:
@@ -91,19 +92,21 @@ libretro-build-windows-i686:
     - .libretro-windows-i686-mingw-make-default
     - .core-defs
 
-
 # Linux 64-bit
 libretro-build-linux-x64:
   extends:
     - .libretro-linux-x64-make-default
     - .core-defs
+  variables:
+    HAVE_VR: 1
 
 # Linux ARM 64-bit
 libretro-build-linux-aarch64:
   extends:
     - .libretro-linux-aarch64-make-default
     - .core-defs
-    
+  variables:
+    HAVE_VR: 1
 
 # Linux 32-bit
 libretro-build-linux-i686:
@@ -116,13 +119,16 @@ libretro-build-osx-x64:
   extends:
     - .libretro-osx-x64-make-default
     - .core-defs
-
+  variables:
+    HAVE_VR: 1
 
 # MacOS ARM 64-bit
 libretro-build-osx-arm64:
   extends:
     - .libretro-osx-arm64-make-default
     - .core-defs
+  variables:
+    HAVE_VR: 1
 
 
 ################################### CELLULAR #################################
@@ -131,6 +137,8 @@ android-arm64-v8a:
   extends:
     - .libretro-android-make-arm64-v8a
     - .core-defs
+  variables:
+    HAVE_VR: 1
 
 # Android ARMv7a
 android-armeabi-v7a:
