@@ -456,6 +456,12 @@ typedef struct viewDef_s {
 	// crossing a closed door.  This is used to avoid drawing interactions
 	// when the light is behind a closed door.
 
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+	int		vrView;			// 0 = not an eye view, 1 = left, 2 = right
+	bool	vrProjection;	// build an asymmetric projection from vrFovTan
+	float	vrFovTan[4];	// left, right, up, down (positive tangents)
+#endif
+
 } viewDef_t;
 
 

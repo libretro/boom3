@@ -7,6 +7,7 @@
 .settings/
 *.o
 boom3_libretro.so
+boom3_libretro_android.so
 
 /dhewm*
 /*-releases/

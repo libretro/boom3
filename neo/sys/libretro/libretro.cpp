@@ -66,7 +66,31 @@ extern "C" {
 
 #include <glsm/glsm.h>
 
+#if defined(BOOM3_VR)
+#include "renderer/vr.h"
+bool vr_user_enable = false;
+bool vr_active = false;
+static unsigned vr_eye_w, vr_eye_h;
+#endif
 
+#ifndef GL_RGB10_A2
+#define GL_RGB10_A2 0x8059
+#endif
+#ifndef GL_UNSIGNED_INT_2_10_10_10_REV
+/* absent from GLES2 headers (it is a GLES3 enum) - the only place the
+   HDR module referenced a GL identifier its oldest target does not
+   define, which broke every GLES platform build while all desktop GL
+   targets passed. Runtime is unaffected either way: GLES2 has no
+   10-bit color-renderable format, so the scene FBO comes back
+   incomplete and the HDR pass disables itself with a log line. */
+#define GL_UNSIGNED_INT_2_10_10_10_REV 0x8368
+#endif
+#ifndef GL_DEPTH24_STENCIL8
+#define GL_DEPTH24_STENCIL8 0x88F0
+#endif
+#ifndef GL_DEPTH_STENCIL_ATTACHMENT
+#define GL_DEPTH_STENCIL_ATTACHMENT 0x821A
+#endif
 
 #define RETRO_AUDIO_BUFFER_SIZE 2048
 /* Output sample rate, chosen once at startup from the doom_sound_samplerate
@@ -651,6 +675,22 @@ static float mouse_sensitivity = 3.0f;
 
 extern void Char_Event(int c);
 
+#ifdef BOOM3_VR
+/* ============ VR ============ */
+static idCVar vr_scale( "vr_scale", "39.37", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_FLOAT, "Doom units per metre" );
+static idCVar vr_uiDistance( "vr_uiDistance", "1.5", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_FLOAT, "metres to the head-locked HUD/menu screen" );
+static idCVar vr_uiWidth( "vr_uiWidth", "1.5", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_FLOAT, "metres wide of the HUD/menu screen" );
+
+static struct retro_vr_eye_state vr_eye[2] = {
+	{ { -0.032f, 0, 0 }, { 0, 0, 0, 1 }, { 1, 1, 1, 1 } },
+	{ {  0.032f, 0, 0 }, { 0, 0, 0, 1 }, { 1, 1, 1, 1 } } };
+static bool   vr_recenter_req = true;
+static idVec3 vr_ref_pos;     /* Doom axes, metres */
+static float  vr_ref_yaw;
+static GLuint vr_fbo[3], vr_tex[3], vr_rbo;   /* 0 left, 1 right, 2 UI */
+static bool   vr_targets_bad;
+#endif
+
 gp_layout_t modern = {
    {
       { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT,  "D-Pad Left" },
@@ -792,6 +832,371 @@ static retro_hw_context_type get_hw_context_type(void)
    return RETRO_HW_CONTEXT_OPENGL;
 #endif
 }
+
+
+#ifdef BOOM3_VR
+/* ============ VR ============ */
+static GLuint hdr_compile( GLenum type, const char *src ); // forward declaration
+
+/* tracking (+X right, +Y up, -Z fwd) -> Doom (+X fwd, +Y left, +Z up) */
+static idVec3 vr_conv( float x, float y, float z ) {
+	return idVec3( -z, -x, y );
+}
+
+static idVec3 vr_rotz( const idVec3 &v, float c, float s ) {
+	return idVec3( v.x * c - v.y * s, v.x * s + v.y * c, v.z );
+}
+
+static void vr_eye_pose_doom( const retro_vr_eye_state &e, idVec3 &pos, idMat3 &axis ) {
+	const float x = e.orientation[0], y = e.orientation[1];
+	const float z = e.orientation[2], w = e.orientation[3];
+
+	const idVec3 right = vr_conv(
+		1 - 2 * ( y * y + z * z ),
+		2 * ( x * y + w * z ),
+		2 * ( x * z - w * y ) );
+
+	const idVec3 up = vr_conv(
+		2 * ( x * y - w * z ),
+		1 - 2 * ( x * x + z * z ),
+		2 * ( y * z + w * x ) );
+
+	const idVec3 back = vr_conv(
+		2 * ( x * z + w * y ),
+		2 * ( y * z - w * x ),
+		1 - 2 * ( x * x + y * y ) );
+
+	axis = idMat3( -back, -right, up ); /* forward, left, up */
+	pos  = vr_conv( e.position[0], e.position[1], e.position[2] );
+}
+
+static void vr_head_pose_doom( const retro_vr_head_pose &h, idVec3 &pos, idMat3 &axis ) {
+	const float x = h.orientation[0], y = h.orientation[1];
+	const float z = h.orientation[2], w = h.orientation[3];
+
+	const idVec3 right = vr_conv(
+		1 - 2 * ( y * y + z * z ),
+		2 * ( x * y + w * z ),
+		2 * ( x * z - w * y ) );
+
+	const idVec3 up = vr_conv(
+		2 * ( x * y - w * z ),
+		1 - 2 * ( x * x + z * z ),
+		2 * ( y * z + w * x ) );
+
+	const idVec3 back = vr_conv(
+		2 * ( x * z + w * y ),
+		2 * ( y * z - w * x ),
+		1 - 2 * ( x * x + y * y ) );
+
+	axis = idMat3( -back, -right, up ); /* forward, left, up */
+	pos  = vr_conv( h.position[0], h.position[1], h.position[2] );
+}
+
+static void vr_poll( void ) {
+	struct retro_vr_frame_state fs;
+	memset( &fs, 0, sizeof( fs ) );
+
+	if ( !environ_cb( RETRO_ENVIRONMENT_GET_VR_FRAME_STATE, &fs ) )
+		return; /* keep last pose */
+
+	memcpy( vr_eye, fs.eyes, sizeof( vr_eye ) );
+
+	/* normalize FOV tangents to be positive */
+	for ( int e = 0; e < 2; e++ )
+		for ( int k = 0; k < 4; k++ )
+			vr_eye[e].fov_tan[k] = fabsf( vr_eye[e].fov_tan[k] );
+
+	if ( fs.flags & RETRO_VR_FRAME_TARGET_RESIZED ) {
+		if ( log_cb )
+			log_cb( RETRO_LOG_WARN,
+				"[boom3] VR: eye size changed; not supported yet\n" );
+	}
+
+	retro_vr_head_pose head;
+	memset( &head, 0, sizeof( head ) );
+
+	if ( !environ_cb( RETRO_ENVIRONMENT_GET_VR_HEAD_POSE, &head ) )
+		return;
+
+	if ( ( fs.flags & RETRO_VR_FRAME_RECENTERED ) || vr_recenter_req ) {
+		idVec3 head_pos;
+		idMat3 head_axis;
+
+		vr_head_pose_doom( head, head_pos, head_axis );
+
+		if ( head.flags & RETRO_VR_HEAD_POSE_POSITION_VALID )
+			vr_ref_pos = head_pos;
+
+		if ( head.flags & RETRO_VR_HEAD_POSE_ORIENTATION_VALID )
+			vr_ref_yaw = atan2f( head_axis[0].y, head_axis[0].x );
+
+		vr_recenter_req = false;
+	}
+}
+
+static void Cmd_VRRecenter_f( const idCmdArgs &args ) { vr_recenter_req = true; }
+
+bool VR_Active( void ) { return vr_user_enable && vr_active; }
+
+/* The game's view supplies body position and yaw (mouse/stick turning).
+ * The head supplies everything else, relative to the recenter reference,
+ * rotated by (gameYaw - referenceYaw) so "forward at recenter" == game forward. */
+void VR_GetEyeRenderView( int eye, const renderView_t *game, renderView_t *out, float fovTan[4] ) {
+	idVec3 p; idMat3 a;
+	vr_eye_pose_doom( vr_eye[eye], p, a );
+	const float d = atan2f( game->viewaxis[0].y, game->viewaxis[0].x ) - vr_ref_yaw;
+	const float c = cosf( d ), s = sinf( d );
+	*out = *game;
+	out->vieworg  = game->vieworg + vr_rotz( ( p - vr_ref_pos ) * vr_scale.GetFloat(), c, s );
+	out->viewaxis = idMat3( vr_rotz( a[0], c, s ), vr_rotz( a[1], c, s ), vr_rotz( a[2], c, s ) );
+	memcpy( fovTan, vr_eye[eye].fov_tan, 4 * sizeof( float ) );
+	out->fov_x = RAD2DEG( 2.0f * atanf( Max( fovTan[0], fovTan[1] ) ) );   /* conservative cull cover */
+	out->fov_y = RAD2DEG( 2.0f * atanf( Max( fovTan[2], fovTan[3] ) ) );
+}
+
+static void vr_destroy_targets( void ) {
+	for ( int i = 0; i < 3; i++ ) {
+		if ( vr_fbo[i] ) glDeleteFramebuffers( 1, &vr_fbo[i] );
+		if ( vr_tex[i] ) glDeleteTextures( 1, &vr_tex[i] );
+		vr_fbo[i] = vr_tex[i] = 0;
+	}
+	if ( vr_rbo ) glDeleteRenderbuffers( 1, &vr_rbo );
+	vr_rbo = 0;
+}
+
+static void vr_clear_targets( void ) {
+	glDisable( GL_SCISSOR_TEST );
+	glColorMask( GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE );
+	for ( int i = 0; i < 3; i++ ) {
+		glBindFramebuffer( RARCH_GL_FRAMEBUFFER, vr_fbo[i] );
+		glClearColor( 0, 0, 0, i == 2 ? 0.0f : 1.0f );   /* UI starts transparent */
+		glClear( GL_COLOR_BUFFER_BIT );
+	}
+}
+
+static bool vr_ensure_targets( void ) {
+	if ( vr_fbo[0] ) return true;
+	if ( vr_targets_bad ) return false;
+	/* one depth/stencil shared by all three: every 3D view clears it first */
+	glGenRenderbuffers( 1, &vr_rbo );
+	glBindRenderbuffer( GL_RENDERBUFFER, vr_rbo );
+	glRenderbufferStorage( GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, vr_eye_w, vr_eye_h );
+	for ( int i = 0; i < 3; i++ ) {
+		glGenTextures( 1, &vr_tex[i] );
+		glBindTexture( GL_TEXTURE_2D, vr_tex[i] );
+#ifdef HAVE_OPENGLES
+		glTexImage2D( GL_TEXTURE_2D, 0, GL_RGBA,  vr_eye_w, vr_eye_h, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL );
+#else
+		glTexImage2D( GL_TEXTURE_2D, 0, GL_RGBA8, vr_eye_w, vr_eye_h, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL );
+#endif
+		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
+		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
+		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
+		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
+		glGenFramebuffers( 1, &vr_fbo[i] );
+		glBindFramebuffer( RARCH_GL_FRAMEBUFFER, vr_fbo[i] );
+		glFramebufferTexture2D( RARCH_GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, vr_tex[i], 0 );
+		glFramebufferRenderbuffer( RARCH_GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, vr_rbo );
+		if ( glCheckFramebufferStatus( RARCH_GL_FRAMEBUFFER ) != GL_FRAMEBUFFER_COMPLETE ) {
+			if ( log_cb ) log_cb( RETRO_LOG_ERROR, "[boom3] VR: eye target %d incomplete\n", i );
+			vr_destroy_targets();
+			vr_targets_bad = true;
+			return false;
+		}
+	}
+	vr_clear_targets();
+	return true;
+}
+
+void VR_BindTargetForView( int vrView ) {
+	if ( !vr_ensure_targets() ) return;
+	glBindFramebuffer( RARCH_GL_FRAMEBUFFER, vr_fbo[ vrView == 1 ? 0 : vrView == 2 ? 1 : 2 ] );
+}
+
+/* Pixel rect of the head-locked HUD/menu screen inside one eye. A point straight
+ * ahead at distance D is seen at +-(ipd/2)/D from each eye's forward axis. */
+static void vr_ui_rect( int eye, int *x, int *y, int *w, int *h ) {
+	const float *t = vr_eye[eye].fov_tan;
+	const float D  = Max( vr_uiDistance.GetFloat(), 0.2f );
+	const float hw = 0.5f * vr_uiWidth.GetFloat() / D;
+	const float hh = hw * (float)vr_eye_h / (float)vr_eye_w;
+	idVec3 p0, p1; idMat3 a;
+	vr_eye_pose_doom( vr_eye[0], p0, a );
+	vr_eye_pose_doom( vr_eye[1], p1, a );
+	const float cx = ( eye == 0 ? 0.5f : -0.5f ) * ( p1 - p0 ).Length() / D;
+	const float sx = (float)vr_eye_w / ( t[0] + t[1] ), sy = (float)vr_eye_h / ( t[2] + t[3] );
+	*x = (int)( ( cx - hw + t[0] ) * sx );   *w = (int)( 2.0f * hw * sx );
+	*y = (int)( ( -hh + t[3] ) * sy );       *h = (int)( 2.0f * hh * sy );
+}
+
+static void quad_draw( GLuint tex, bool blend )
+{
+	glDisable( GL_DEPTH_TEST );
+
+	if ( blend ) {
+		glEnable( GL_BLEND );
+		glBlendFunc( GL_ONE, GL_ONE_MINUS_SRC_ALPHA );
+	}
+	else {
+		glDisable( GL_BLEND );
+	}
+
+	glDisable( GL_CULL_FACE );
+
+#ifndef HAVE_OPENGLES
+	if ( qglBindProgramARB ) {
+		glDisable( GL_FRAGMENT_PROGRAM_ARB );
+		glDisable( GL_VERTEX_PROGRAM_ARB );
+	}
+
+	glActiveTexture( GL_TEXTURE1 );
+	glDisable( GL_TEXTURE_2D );
+	glActiveTexture( GL_TEXTURE0 );
+	glEnable( GL_TEXTURE_2D );
+	glBindTexture( GL_TEXTURE_2D, tex );
+	qglTexEnvi( GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE );
+
+	qglMatrixMode( GL_PROJECTION );
+	qglPushMatrix();
+	qglLoadIdentity();
+
+	qglMatrixMode( GL_MODELVIEW );
+	qglPushMatrix();
+	qglLoadIdentity();
+
+	qglColor4f( 1.f, 1.f, 1.f, 1.f );
+
+	qglBegin( GL_QUADS );
+	qglTexCoord2f( 0.f, 0.f ); qglVertex2f( -1.f, -1.f );
+	qglTexCoord2f( 1.f, 0.f ); qglVertex2f(  1.f, -1.f );
+	qglTexCoord2f( 1.f, 1.f ); qglVertex2f(  1.f,  1.f );
+	qglTexCoord2f( 0.f, 1.f ); qglVertex2f( -1.f,  1.f );
+	qglEnd();
+
+	qglMatrixMode( GL_PROJECTION );
+	qglPopMatrix();
+
+	qglMatrixMode( GL_MODELVIEW );
+	qglPopMatrix();
+
+	glDisable( GL_TEXTURE_2D );
+
+#else
+	if ( !ldr_prog ) {
+		static const char vs[] =
+			"attribute vec2 aPos;\n"
+			"varying vec2 vUV;\n"
+			"void main() {\n"
+			"  vUV = aPos * 0.5 + 0.5;\n"
+			"  gl_Position = vec4(aPos, 0.0, 1.0);\n"
+			"}\n";
+
+		static const char fs[] =
+			"precision mediump float;\n"
+			"varying vec2 vUV;\n"
+			"uniform sampler2D uTex;\n"
+			"void main() { gl_FragColor = texture2D(uTex, vUV); }\n";
+
+		GLuint v = hdr_compile( GL_VERTEX_SHADER, vs );
+		GLuint f = hdr_compile( GL_FRAGMENT_SHADER, fs );
+
+		if ( v && f ) {
+			ldr_prog = glCreateProgram();
+			glAttachShader( ldr_prog, v );
+			glAttachShader( ldr_prog, f );
+			glBindAttribLocation( ldr_prog, 0, "aPos" );
+			glLinkProgram( ldr_prog );
+			ldr_loc_tex = glGetUniformLocation( ldr_prog, "uTex" );
+		}
+
+		if ( v )
+			glDeleteShader( v );
+		if ( f )
+			glDeleteShader( f );
+	}
+
+	if ( ldr_prog ) {
+		static GLuint quadVbo = 0;
+		static const GLfloat quad[8] = { -1,-1,  1,-1,  -1,1,  1,1 };
+
+		if ( !quadVbo ) {
+			glGenBuffers( 1, &quadVbo );
+			glBindBuffer( GL_ARRAY_BUFFER, quadVbo );
+			glBufferData( GL_ARRAY_BUFFER, sizeof( quad ), quad, GL_STATIC_DRAW );
+		}
+
+		glUseProgram( ldr_prog );
+		glActiveTexture( GL_TEXTURE0 );
+		glBindTexture( GL_TEXTURE_2D, tex );
+		if ( ldr_loc_tex >= 0 )
+			glUniform1i( ldr_loc_tex, 0 );
+
+		glBindBuffer( GL_ARRAY_BUFFER, quadVbo );
+		glBindBuffer( GL_ELEMENT_ARRAY_BUFFER, 0 );
+		glEnableVertexAttribArray( 0 );
+		glVertexAttribPointer( 0, 2, GL_FLOAT, GL_FALSE, 0, (const void *)0 );
+		glDrawArrays( GL_TRIANGLE_STRIP, 0, 4 );
+		glDisableVertexAttribArray( 0 );
+		glBindBuffer( GL_ARRAY_BUFFER, 0 );
+		glUseProgram( 0 );
+	}
+#endif
+
+	glDisable( GL_BLEND );
+}
+
+static void vr_present( GLuint dstFbo ) {
+	int eye, x, y, w, h;
+	if ( !vr_ensure_targets() ) return;
+	glBindFramebuffer( RARCH_GL_FRAMEBUFFER, dstFbo );
+	glDisable( GL_STENCIL_TEST );
+	glDepthMask( GL_FALSE );
+	glDisable( GL_SCISSOR_TEST );
+	glColorMask( GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE );
+	glClearColor( 0, 0, 0, 1 );
+	glClear( GL_COLOR_BUFFER_BIT );                       /* alpha = 1 for the compositor */
+	glColorMask( GL_TRUE, GL_TRUE, GL_TRUE, GL_FALSE );   /* leave it at 1 */
+	for ( eye = 0; eye < 2; eye++ ) {
+		glViewport( eye * vr_eye_w, 0, vr_eye_w, vr_eye_h );
+		quad_draw( vr_tex[eye], false );
+	}
+	glEnable( GL_SCISSOR_TEST );
+	for ( eye = 0; eye < 2; eye++ ) {
+		vr_ui_rect( eye, &x, &y, &w, &h );
+		glScissor( eye * vr_eye_w, 0, vr_eye_w, vr_eye_h );
+		glViewport( eye * vr_eye_w + x, y, w, h );
+		quad_draw( vr_tex[2], true );
+	}
+	glDisable( GL_SCISSOR_TEST );
+	glColorMask( GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE );
+	glDepthMask( GL_TRUE );
+
+	vr_clear_targets();                                   /* next frame starts clean */
+}
+
+static void vr_send_views( void ) {
+	struct retro_video_views views;
+	struct retro_video_view view[2];
+
+	memset( &views, 0, sizeof( views ) );
+	memset( view, 0, sizeof( view ) );
+
+	view[0].x = 0;          view[0].y = 0;
+	view[0].width  = vr_eye_w;  view[0].height = vr_eye_h;
+	view[0].screen = 0;     view[0].eye = RETRO_VIDEO_VIEW_EYE_LEFT;
+
+	view[1].x = vr_eye_w;   view[1].y = 0;
+	view[1].width  = vr_eye_w;  view[1].height = vr_eye_h;
+	view[1].screen = 0;     view[1].eye = RETRO_VIDEO_VIEW_EYE_RIGHT;
+
+	views.views           = view;
+	views.num_views       = 2;
+	views.reference_space = RETRO_VR_REFERENCE_SPACE_LOCAL;
+
+	environ_cb( RETRO_ENVIRONMENT_SET_VIDEO_VIEWS, &views );
+}
+#endif
 
 /* Snap a host target rate to the nearest value the option advertises.
  * Same thresholds as tyrquake's backport of the prboom option. */
@@ -1385,6 +1790,16 @@ static void update_variables(bool startup)
 		}
 	}
 
+#if defined(BOOM3_VR)
+	var.key = "boom3_vr_enable";
+	var.value = NULL;
+
+	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+	{
+		vr_user_enable = strcmp(var.value, "enabled") == 0;
+	}
+#endif
+
 	/* the curve just parsed decides which of its options are shown */
 	(void)update_option_visibility();
 }
@@ -1467,6 +1882,11 @@ static void context_reset(void)
 #ifdef HAVE_OPENGLES
    ldr_prog = 0;
    ldr_loc_tex = -1;
+#endif
+#ifdef BOOM3_VR
+   vr_fbo[0] = vr_fbo[1] = vr_fbo[2] = vr_tex[0]= vr_tex[1] = vr_tex[2] = 0;
+   vr_rbo = 0;
+   vr_targets_bad = false;
 #endif
    /* The ACES 2.0 hue table is a GL object like the rest of these, and
     * was the one name this list did not clear.  A context reset
@@ -2361,6 +2781,61 @@ bool retro_load_game(const struct retro_game_info *info)
 
 	update_variables(true);
 
+#ifdef BOOM3_VR
+	{
+		struct retro_video_views views;
+		struct retro_video_view view[2];
+		memset( &views, 0, sizeof( views ) );
+		memset( view, 0, sizeof( view ) );
+
+		if (vr_user_enable)
+		{
+			vr_eye_w = vr_eye_w ? vr_eye_w : 1024;
+			vr_eye_h = vr_eye_h ? vr_eye_h : 1024;
+
+			view[0].width = vr_eye_w;
+			view[0].height = vr_eye_h;
+			view[0].eye = RETRO_VIDEO_VIEW_EYE_LEFT;
+			view[1].x = vr_eye_w;
+			view[1].width = vr_eye_w;
+			view[1].height = vr_eye_h;
+			view[1].eye = RETRO_VIDEO_VIEW_EYE_RIGHT;
+			views.views = view;
+			views.num_views = 2;
+			views.reference_space = RETRO_VR_REFERENCE_SPACE_LOCAL;
+
+			if ( environ_cb( RETRO_ENVIRONMENT_SET_VIDEO_VIEWS, &views )
+					&& views.recommended_view_width
+					&& views.recommended_view_height ) {
+				vr_active = true;
+				vr_eye_w = views.recommended_view_width;
+				vr_eye_h = views.recommended_view_height;
+				vr_recenter_req = true;
+				vr_targets_bad = false;
+				hdr_output_active = hdr_pq_output = hdr_fp16_scene = hdr_fp32_scene = false;
+				fmt = RETRO_PIXEL_FORMAT_XRGB8888;
+				environ_cb( RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &fmt );
+
+				vr_send_views();   /* resend with the real eye size */
+
+				if ( log_cb )
+					log_cb( RETRO_LOG_INFO, "[boom3] VR active: %ux%u per eye\n", vr_eye_w, vr_eye_h );
+			} else if ( log_cb ) {
+				log_cb( RETRO_LOG_INFO, "[boom3] VR not active\n" );
+			}
+		}
+	}
+
+	if ( vr_active )
+	{
+		scr_width = vr_eye_w;
+		scr_height = vr_eye_h;     /* the engine thinks "screen" = one eye */
+		glConfig.vidWidth = glConfig.winWidth  = scr_width;
+		glConfig.vidHeight = glConfig.winHeight = scr_height;
+		initial_resolution_set = true;
+	}
+#endif
+
 	// negotiate float audio output (RETRO_ENVIRONMENT_GET_AUDIO_SAMPLE_BATCH_FLOAT):
 	// decided once per loaded game. On success the whole pipeline runs the
 	// all-float mixer with [-1,1] output; otherwise the all-s16 integer mixer.
@@ -2527,6 +3002,14 @@ void retro_run(void)
     * fast-forward or frame stepping. */
    Core_AdvanceFrame();
 
+#ifdef BOOM3_VR
+   if ( vr_active )
+   {
+      vr_poll();
+	  vr_send_views();
+   }
+#endif
+
    if (!libretro_shared_context)
       glsm_ctl(GLSM_CTL_STATE_BIND, NULL);
 
@@ -2544,10 +3027,21 @@ void retro_run(void)
 		if (Com_InitIncremental( fake_argc, fake_argv )) {
 			if (!libretro_shared_context)
 				glsm_ctl(GLSM_CTL_STATE_UNBIND, NULL);
+#ifdef BOOM3_VR
+			video_cb( NULL, vr_active ? vr_eye_w * 2 : scr_width, vr_active ? vr_eye_h : scr_height, 0 );
+#else
 			video_cb(NULL, scr_width, scr_height, 0);
+#endif
 			return;
 		}
 		first_boot = false;
+
+#ifdef BOOM3_VR
+		if ( vr_active ) {
+			cmdSystem->AddCommand( "vr_recenter", Cmd_VRRecenter_f, CMD_FL_SYSTEM, "recentre the VR view" );
+			cvarSystem->SetCVarString( "r_clear", "0" );
+		}
+#endif
 		update_variables(false);
 		gp_layout_set_bind(pending_layout);
 	}
@@ -2631,26 +3125,6 @@ serve it, so one dialect covers every target.
 pre-existing XRGB8888 path byte for byte.
 ===========================================================================
 */
-
-
-#ifndef GL_RGB10_A2
-#define GL_RGB10_A2 0x8059
-#endif
-#ifndef GL_UNSIGNED_INT_2_10_10_10_REV
-/* absent from GLES2 headers (it is a GLES3 enum) - the only place the
-   HDR module referenced a GL identifier its oldest target does not
-   define, which broke every GLES platform build while all desktop GL
-   targets passed. Runtime is unaffected either way: GLES2 has no
-   10-bit color-renderable format, so the scene FBO comes back
-   incomplete and the HDR pass disables itself with a log line. */
-#define GL_UNSIGNED_INT_2_10_10_10_REV 0x8368
-#endif
-#ifndef GL_DEPTH24_STENCIL8
-#define GL_DEPTH24_STENCIL8 0x88F0
-#endif
-#ifndef GL_DEPTH_STENCIL_ATTACHMENT
-#define GL_DEPTH_STENCIL_ATTACHMENT 0x821A
-#endif
 
 #ifdef HAVE_OPENGLES
 static const char *hdr_vs_src =
@@ -5916,6 +6390,9 @@ static bool ldr_ensure_target( int w, int h ) {
  * the core option, or the in-game menu writing r_multiSamples. */
 bool ssaa_push_cvar = false;   /* declared above update_variables */
 static void ssaa_apply( int want ) {
+#ifdef BOOM3_VR
+	if ( vr_active ) want = 1;
+#endif
 	if ( want == hdr_ssaa )
 		return;
 	hdr_ssaa = want;
@@ -5952,6 +6429,9 @@ static void ssaa_reconcile( void ) {
 		return;
 	}
 	want = ( cv == 2 ) ? 2 : 1;
+#if defined(BOOM3_VR)
+	if ( vr_active ) want = 1;
+#endif
 	if ( want != hdr_ssaa ) {
 		/* the menu moved last; the state and the core option follow */
 		struct retro_variable var;
@@ -5976,6 +6456,10 @@ static void ldr_destroy_target( void ) {
 }
 
 static void hdr_bind_scene( void ) {
+#if defined(BOOM3_VR)
+	if ( vr_active ) { VR_BindTargetForView( 0 ); return; }
+#endif
+
 	if ( !hdr_output_active ) {
 		/* 24-bit supersampling renders into its own target; everything
 		 * else in 24-bit renders where the caller already bound */
@@ -5991,11 +6475,15 @@ static void hdr_bind_scene( void ) {
 
 /* the 24-bit downsample: one LINEAR tap per output pixel at the centre
  * of its 2x2, the exact box average */
-static void ldr_present( GLuint dstFbo ) {
+static void ldr_present( GLuint dstFbo )
+{
 	if ( hdr_output_active || hdr_ssaa != 2 || ldr_fbo == 0 )
 		return;
 	glBindFramebuffer( RARCH_GL_FRAMEBUFFER, dstFbo );
 	glViewport( 0, 0, scr_width, scr_height );
+#if defined(BOOM3_VR)
+	quad_draw( ldr_tex, false );
+#else
 	glDisable( GL_DEPTH_TEST );
 	glDisable( GL_BLEND );
 	glDisable( GL_CULL_FACE );
@@ -6055,8 +6543,11 @@ static void ldr_present( GLuint dstFbo ) {
 		if ( v ) glDeleteShader( v );
 		if ( f ) glDeleteShader( f );
 	}
+
 	if ( ldr_prog ) {
-		static const GLfloat quad[8] = { -1,-1, 1,-1, -1,1, 1,1 };
+		static const GLfloat quad[8] = {
+			-1,-1, 1,-1, -1,1, 1,1
+		};
 		glUseProgram( ldr_prog );
 		glActiveTexture( GL_TEXTURE0 );
 		glBindTexture( GL_TEXTURE_2D, ldr_tex );
@@ -6068,6 +6559,7 @@ static void ldr_present( GLuint dstFbo ) {
 		glDisableVertexAttribArray( 0 );
 		glUseProgram( 0 );
 	}
+#endif
 #endif
 }
 
@@ -7158,14 +7650,29 @@ void GLimp_SwapBuffers() {
    /* 30-bit HDR: convert the scene target into the frontend framebuffer
       before presentation; 24-bit mode skips straight past. */
    ssaa_reconcile();
-   hdr_present((GLuint)hw_render.get_current_framebuffer());
-   ldr_present((GLuint)hw_render.get_current_framebuffer());
+
+#ifdef BOOM3_VR
+   if ( vr_active )
+   {
+      vr_present( (GLuint)hw_render.get_current_framebuffer() );
+   } else
+#endif
+   {
+      hdr_present((GLuint)hw_render.get_current_framebuffer());
+      ldr_present((GLuint)hw_render.get_current_framebuffer());
+   }
 
    if (libretro_shared_context)
       glFlush();
    if (!libretro_shared_context)
       glsm_ctl(GLSM_CTL_STATE_UNBIND, NULL);
+
+#ifdef BOOM3_VR
+   video_cb( RETRO_HW_FRAME_BUFFER_VALID,
+      vr_active ? vr_eye_w * 2 : scr_width, vr_active ? vr_eye_h : scr_height, 0 );
+#else
 	video_cb(RETRO_HW_FRAME_BUFFER_VALID, scr_width, scr_height, 0);
+#endif
    if (!libretro_shared_context)
       glsm_ctl(GLSM_CTL_STATE_BIND, NULL);
 	glBindFramebuffer(RARCH_GL_FRAMEBUFFER, hw_render.get_current_framebuffer());
@@ -7257,6 +7764,10 @@ void retro_unload_game(void)
 	memset(&audio_float_cb, 0, sizeof(audio_float_cb));
 	first_boot = true;
 	initial_resolution_set = false;
+#ifdef BOOM3_VR
+	vr_active = false;
+	vr_recenter_req = true;
+#endif
 }
 
 unsigned retro_get_region(void)
@@ -7556,11 +8067,19 @@ void retro_get_system_av_info(struct retro_system_av_info *info)
    info->timing.fps            = framerate;
    info->timing.sample_rate    = SAMPLE_RATE;
 
+#ifdef BOOM3_VR
+   const unsigned w = vr_active ? vr_eye_w * 2 : scr_width;
+   const unsigned h = vr_active ? vr_eye_h : scr_height;
+   info->geometry.base_width  = info->geometry.max_width  = w;
+   info->geometry.base_height = info->geometry.max_height = h;
+   info->geometry.aspect_ratio = (float)w / (float)h;
+#else
    info->geometry.base_width   = scr_width;
    info->geometry.base_height  = scr_height;
    info->geometry.max_width    = scr_width;
    info->geometry.max_height   = scr_height;
    info->geometry.aspect_ratio = (scr_width * 1.0f) / (scr_height * 1.0f);
+#endif
 }
 
 void retro_set_environment(retro_environment_t cb)

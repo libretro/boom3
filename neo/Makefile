@@ -4,6 +4,7 @@ CORE           := -DCORE=ON
 DEBUG          := 0
 RELWITHDEBINFO := 0
 FORCE_GLES     := 0
+HAVE_VR        ?= 0
 
 ifneq ($(SANITIZER),)
    CFLAGS   := -fsanitize=$(SANITIZER) $(CFLAGS)
@@ -52,6 +53,9 @@ endif
 ifeq ($(STATIC_LINKING), 1)
 EXT := a
 endif
+
+CFLAGS += -DLIBRETRO
+CXXFLAGS += -DLIBRETRO
 
 ifneq (,$(findstring unix,$(platform)))
 	EXT ?= so
@@ -289,6 +293,11 @@ else ifneq (,$(findstring ios,$(platform)))
     D3_OSTYPE := ios
 else
     D3_OSTYPE := linux
+endif
+
+ifeq ($(HAVE_VR),1)
+   CFLAGS += -DBOOM3_VR
+   CXXFLAGS += -DBOOM3_VR
 endif
 
 CFLAGS += -DD3_OSTYPE=\"$(D3_OSTYPE)\" -DD3_SIZEOFPTR=$(D3_SIZEOFPTR) -DD3_ARCH=\"$(D3_ARCH)\"

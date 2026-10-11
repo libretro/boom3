@@ -1074,6 +1074,22 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       },
       "3.0"
    },
+#if defined(BOOM3_VR)
+   {
+      "boom3_vr_enable",
+      "Enable VR",
+      NULL,
+      "Enable or disable VR presentation. Has no effect on platforms without VR support.",
+      NULL,
+      NULL,
+      {
+         { "enabled",   "Enabled" },
+         { "disabled",  "Disabled" },
+         { NULL, NULL },
+      },
+      "enabled"
+   },
+#endif
    { NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL },
 };
 

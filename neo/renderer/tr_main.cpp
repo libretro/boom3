@@ -39,6 +39,10 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "renderer/tr_local.h"
 
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+#include "renderer/vr.h"
+#endif
+
 // set per frame by idPlayer::CalculateRenderView; 0 disables interpolation
 float tr_ticFraction = 0.0f;
 
@@ -154,6 +158,27 @@ R_ScreenRectFromViewFrustumBounds
 ======================
 */
 idScreenRect R_ScreenRectFromViewFrustumBounds( const idBounds &bounds ) {
+
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+	if ( VR_Active() && tr.viewDef->vrProjection ) {
+		const float *t = tr.viewDef->vrFovTan;
+		const float tx = Max( t[0], t[1] ), ty = Max( t[2], t[3] );
+		const float W = tr.viewDef->viewport.x2 - tr.viewDef->viewport.x1;
+		const float H = tr.viewDef->viewport.y2 - tr.viewDef->viewport.y1;
+		idScreenRect r;
+		r.x1 = idMath::FtoiFast( ( -bounds[1].y * tx + t[0] ) / ( t[0] + t[1] ) * W );
+		r.x2 = idMath::FtoiFast( ( -bounds[0].y * tx + t[0] ) / ( t[0] + t[1] ) * W );
+		r.y1 = idMath::FtoiFast( (  bounds[0].z * ty + t[3] ) / ( t[2] + t[3] ) * H );
+		r.y2 = idMath::FtoiFast( (  bounds[1].z * ty + t[3] ) / ( t[2] + t[3] ) * H );
+		r.zmin = 0.0f; r.zmax = 1.0f;
+		if ( r_useDepthBoundsTest.GetInteger() ) {
+			R_TransformEyeZToWin( -bounds[0].x, tr.viewDef->projectionMatrix, r.zmin );
+			R_TransformEyeZToWin( -bounds[1].x, tr.viewDef->projectionMatrix, r.zmax );
+		}
+		return r;
+	}
+#endif
+
 	idScreenRect screenRect;
 
 	screenRect.x1 = idMath::FtoiFast( 0.5f * ( 1.0f - bounds[1].y ) * ( tr.viewDef->viewport.x2 - tr.viewDef->viewport.x1 ) );
@@ -903,12 +928,21 @@ void R_SetupProjection( viewDef_t * viewDef ) {
 	if ( viewDef->renderView.cramZNear ) {
 		zNear *= 0.25;
 	}
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+	if ( VR_Active() && viewDef->vrProjection ) {
+		xmin = -zNear * viewDef->vrFovTan[0];
+		xmax =  zNear * viewDef->vrFovTan[1];
+		ymax =  zNear * viewDef->vrFovTan[2];
+		ymin = -zNear * viewDef->vrFovTan[3];
+	} else
+#endif
+	{
+		ymax = zNear * tan( viewDef->renderView.fov_y * idMath::PI / 360.0f );
+		ymin = -ymax;
 
-	ymax = zNear * tan( viewDef->renderView.fov_y * idMath::PI / 360.0f );
-	ymin = -ymax;
-
-	xmax = zNear * tan( viewDef->renderView.fov_x * idMath::PI / 360.0f );
-	xmin = -xmax;
+		xmax = zNear * tan( viewDef->renderView.fov_x * idMath::PI / 360.0f );
+		xmin = -xmax;
+	}
 
 	width = xmax - xmin;
 	height = ymax - ymin;
@@ -1080,11 +1114,67 @@ a mirror / remote location, or a 3D view on a gui surface.
 Parms will typically be allocated with R_FrameAlloc
 ================
 */
+void R_RenderViewInternal( viewDef_t *parms );
+
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+static bool R_IsPlayerViewForVR( const viewDef_t *parms ) {
+	return VR_Active()
+		&& tr.viewDef == NULL && !parms->isSubview
+		&& parms->renderView.viewID >= 0
+		&& parms->renderView.x == 0 && parms->renderView.y == 0
+		&& parms->renderView.width == SCREEN_WIDTH
+		&& parms->renderView.height == SCREEN_HEIGHT;
+}
+#endif
+
 void R_RenderView( viewDef_t *parms ) {
 	{
 		extern void R_ParticleLightSubmit( viewDef_t * );
 		R_ParticleLightSubmit( parms );
 	}
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+	if ( !R_IsPlayerViewForVR( parms ) )
+#endif
+	{
+		R_RenderViewInternal( parms );
+		return;
+	}
+
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+	if (VR_Active()) {
+		// eye 0 reuses the allocated viewDef, eye 1 is a copy with its own
+		// view state and draw surfaces allocated by R_AddModelSurfaces/R_AddDrawSurf.
+		viewDef_t *eyeParms[2];
+		eyeParms[0] = parms;
+		eyeParms[1] = (viewDef_t *)R_FrameAlloc( sizeof( viewDef_t ) );
+		*eyeParms[1] = *parms;
+
+		const renderView_t game = parms->renderView;
+		for ( int eye = 0; eye < 2; eye++ ) {
+			viewDef_t *vd = eyeParms[eye];
+			VR_GetEyeRenderView( eye, &game, &vd->renderView, vd->vrFovTan );
+			vd->vrView = eye + 1;
+			vd->vrProjection = true;
+			R_RenderViewInternal( vd );
+		}
+		tr.primaryView = eyeParms[0];	// the one RenderScene set up never gets drawn
+	}
+#endif
+}
+
+void R_RenderViewInternal( viewDef_t *parms ) {
+#if !defined(LIBRETRO) && !defined(BOOM3_VR)
+{
+    extern void R_ParticleLightSubmit(viewDef_t *);
+    R_ParticleLightSubmit(parms);
+}
+#elif defined(LIBRETRO) && defined(BOOM3_VR)
+if (!VR_Active())
+{
+    extern void R_ParticleLightSubmit(viewDef_t *);
+    R_ParticleLightSubmit(parms);
+}
+#endif
 	viewDef_t		*oldView;
 
 	if ( parms->renderView.width <= 0 || parms->renderView.height <= 0 ) {
