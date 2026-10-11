@@ -1079,7 +1079,10 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "boom3_vr_enable",
       "Enable VR",
       NULL,
-      "Enable or disable VR presentation. Has no effect on platforms without VR support.",
+      "Show the game head-tracked in a VR headset. VR starts when the frontend "
+      "reports a running headset and returns to the flat screen when it goes. "
+      "Needs Color Format set to 24-bit (Standard). Has no effect on platforms "
+      "without VR support.",
       NULL,
       NULL,
       {

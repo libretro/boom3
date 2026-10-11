@@ -688,6 +688,7 @@ static bool   vr_recenter_req = true;
 static idVec3 vr_ref_pos;     /* Doom axes, metres */
 static float  vr_ref_yaw;
 static GLuint vr_fbo[3], vr_tex[3], vr_rbo;   /* 0 left, 1 right, 2 UI */
+static unsigned vr_tgt_w, vr_tgt_h;           /* the eye size they were made at */
 static bool   vr_targets_bad;
 #endif
 
@@ -893,12 +894,13 @@ static void vr_head_pose_doom( const retro_vr_head_pose &h, idVec3 &pos, idMat3 
 	pos  = vr_conv( h.position[0], h.position[1], h.position[2] );
 }
 
-static void vr_poll( void ) {
+/* True when the frontend reports a new eye size. */
+static bool vr_poll( void ) {
 	struct retro_vr_frame_state fs;
 	memset( &fs, 0, sizeof( fs ) );
 
 	if ( !environ_cb( RETRO_ENVIRONMENT_GET_VR_FRAME_STATE, &fs ) )
-		return; /* keep last pose */
+		return false; /* keep last pose */
 
 	memcpy( vr_eye, fs.eyes, sizeof( vr_eye ) );
 
@@ -907,17 +909,13 @@ static void vr_poll( void ) {
 		for ( int k = 0; k < 4; k++ )
 			vr_eye[e].fov_tan[k] = fabsf( vr_eye[e].fov_tan[k] );
 
-	if ( fs.flags & RETRO_VR_FRAME_TARGET_RESIZED ) {
-		if ( log_cb )
-			log_cb( RETRO_LOG_WARN,
-				"[boom3] VR: eye size changed; not supported yet\n" );
-	}
+	const bool resized = ( fs.flags & RETRO_VR_FRAME_TARGET_RESIZED ) != 0;
 
 	retro_vr_head_pose head;
 	memset( &head, 0, sizeof( head ) );
 
 	if ( !environ_cb( RETRO_ENVIRONMENT_GET_VR_HEAD_POSE, &head ) )
-		return;
+		return resized;
 
 	if ( ( fs.flags & RETRO_VR_FRAME_RECENTERED ) || vr_recenter_req ) {
 		idVec3 head_pos;
@@ -933,11 +931,14 @@ static void vr_poll( void ) {
 
 		vr_recenter_req = false;
 	}
+	return resized;
 }
 
 static void Cmd_VRRecenter_f( const idCmdArgs &args ) { vr_recenter_req = true; }
 
-bool VR_Active( void ) { return vr_user_enable && vr_active; }
+/* Turning the option off leaves VR at the next frame; until then the
+ * renderer has to keep matching vr_present. */
+bool VR_Active( void ) { return vr_active; }
 
 /* The game's view supplies body position and yaw (mouse/stick turning).
  * The head supplies everything else, relative to the recenter reference,
@@ -976,7 +977,8 @@ static void vr_clear_targets( void ) {
 }
 
 static bool vr_ensure_targets( void ) {
-	if ( vr_fbo[0] ) return true;
+	if ( vr_fbo[0] && vr_tgt_w == vr_eye_w && vr_tgt_h == vr_eye_h ) return true;
+	vr_destroy_targets();   /* none yet, or made for another eye size */
 	if ( vr_targets_bad ) return false;
 	/* one depth/stencil shared by all three: every 3D view clears it first */
 	glGenRenderbuffers( 1, &vr_rbo );
@@ -1005,6 +1007,8 @@ static bool vr_ensure_targets( void ) {
 			return false;
 		}
 	}
+	vr_tgt_w = vr_eye_w;
+	vr_tgt_h = vr_eye_h;
 	vr_clear_targets();
 	return true;
 }
@@ -1175,7 +1179,7 @@ static void vr_present( GLuint dstFbo ) {
 	vr_clear_targets();                                   /* next frame starts clean */
 }
 
-static void vr_send_views( void ) {
+static bool vr_send_map( unsigned ew, unsigned eh, unsigned *rec_w, unsigned *rec_h ) {
 	struct retro_video_views views;
 	struct retro_video_view view[2];
 
@@ -1183,18 +1187,225 @@ static void vr_send_views( void ) {
 	memset( view, 0, sizeof( view ) );
 
 	view[0].x = 0;          view[0].y = 0;
-	view[0].width  = vr_eye_w;  view[0].height = vr_eye_h;
+	view[0].width  = ew;    view[0].height = eh;
 	view[0].screen = 0;     view[0].eye = RETRO_VIDEO_VIEW_EYE_LEFT;
 
-	view[1].x = vr_eye_w;   view[1].y = 0;
-	view[1].width  = vr_eye_w;  view[1].height = vr_eye_h;
+	view[1].x = ew;         view[1].y = 0;
+	view[1].width  = ew;    view[1].height = eh;
 	view[1].screen = 0;     view[1].eye = RETRO_VIDEO_VIEW_EYE_RIGHT;
 
 	views.views           = view;
 	views.num_views       = 2;
+	views.flags           = RETRO_VIDEO_VIEWS_FLAG_TRACKED;
 	views.reference_space = RETRO_VR_REFERENCE_SPACE_LOCAL;
 
+	if ( !environ_cb( RETRO_ENVIRONMENT_SET_VIDEO_VIEWS, &views ) )
+		return false;
+	*rec_w = views.recommended_view_width;
+	*rec_h = views.recommended_view_height;
+	return true;
+}
+
+/* Only a sent map returns the recommended eye size, so the last size is
+ * sent first and corrected. */
+static bool vr_request_session( void ) {
+	unsigned ew = vr_eye_w ? vr_eye_w : 1024;
+	unsigned eh = vr_eye_h ? vr_eye_h : 1024;
+	unsigned rw = 0, rh = 0;
+
+	if ( !vr_send_map( ew, eh, &rw, &rh ) )
+		return false;
+	if ( rw && rh && ( rw != ew || rh != eh ) ) {
+		ew = rw;
+		eh = rh;
+		if ( !vr_send_map( ew, eh, &rw, &rh ) )
+			return false;
+	}
+	vr_eye_w = ew;
+	vr_eye_h = eh;
+	return true;
+}
+
+static void vr_clear_map( void ) {
+	struct retro_video_views views;
+
+	memset( &views, 0, sizeof( views ) );
 	environ_cb( RETRO_ENVIRONMENT_SET_VIDEO_VIEWS, &views );
+}
+
+/* The frame is 2*eye_w x eye_h in VR.  A runtime AV info reinits video,
+ * which runs context_reset. */
+static void vr_send_av_info( void ) {
+	struct retro_system_av_info av;
+
+	memset( &av, 0, sizeof( av ) );
+	retro_get_system_av_info( &av );
+	environ_cb( RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO, &av );
+}
+
+/* The engine's "screen": one eye while VR is active. */
+static void vr_set_screen( int w, int h, int ssaa ) {
+	scr_width  = w;
+	scr_height = h;
+	glConfig.vidWidth  = glConfig.winWidth  = w * ssaa;
+	glConfig.vidHeight = glConfig.winHeight = h * ssaa;
+}
+
+static void vr_gl_begin( void ) {
+	if ( !libretro_shared_context )
+		glsm_ctl( GLSM_CTL_STATE_BIND, NULL );
+}
+
+static void vr_gl_end( void ) {
+	if ( !libretro_shared_context )
+		glsm_ctl( GLSM_CTL_STATE_UNBIND, NULL );
+}
+
+/* How long a lost headset is waited for before going flat.  A video reinit
+ * restarts the headset session, and leaving VR changes the geometry, which
+ * reinits again. */
+#define VR_HOLD_SECONDS 5
+
+struct vr_hold {
+	bool     active;
+	unsigned missing;   /* frames without HMD while active */
+};
+
+enum vr_hold_step {
+	VR_HOLD_FLAT = 0,
+	VR_HOLD_ENTER,
+	VR_HOLD_TRACK,
+	VR_HOLD_WAIT,       /* active, HMD missing: repeat the last frame */
+	VR_HOLD_LEAVE
+};
+
+static enum vr_hold_step vr_hold_update( struct vr_hold *h, bool want, bool hmd, unsigned limit ) {
+	if ( !h->active ) {
+		if ( !want || !hmd )
+			return VR_HOLD_FLAT;
+		h->active  = true;
+		h->missing = 0;
+		return VR_HOLD_ENTER;
+	}
+	if ( !want || ( !hmd && ++h->missing >= limit ) ) {
+		h->active = false;
+		return VR_HOLD_LEAVE;
+	}
+	if ( hmd )
+		h->missing = 0;
+	return hmd ? VR_HOLD_TRACK : VR_HOLD_WAIT;
+}
+
+static struct vr_hold vr_hold_state;
+static bool  vr_status_unsupported;
+static bool  vr_refused;          /* not retried until HMD or the option drops */
+static bool  vr_24bit;            /* loaded as XRGB8888, the eye targets' format */
+static bool  vr_blocked_logged;
+static int   vr_flat_w, vr_flat_h;
+static idStr vr_flat_clear;
+
+static void vr_enter( void ) {
+	vr_flat_w     = scr_width;
+	vr_flat_h     = scr_height;
+	vr_flat_clear = cvarSystem->GetCVarString( "r_clear" );
+	cvarSystem->SetCVarString( "r_clear", "0" );   /* the UI target stays transparent */
+	if ( hdr_ssaa == 2 ) {
+		/* the eyes render at 1x; the 2x target comes back with the flat screen */
+		vr_gl_begin();
+		ldr_destroy_target();
+		vr_gl_end();
+	}
+	vr_targets_bad = false;
+	vr_set_screen( vr_eye_w, vr_eye_h, 1 );
+	vr_active = true;
+	if ( log_cb )
+		log_cb( RETRO_LOG_INFO, "[boom3] VR active: %ux%u per eye\n", vr_eye_w, vr_eye_h );
+}
+
+static void vr_leave( void ) {
+	vr_active = false;
+	vr_clear_map();
+	vr_gl_begin();
+	vr_destroy_targets();
+	vr_gl_end();
+	cvarSystem->SetCVarString( "r_clear", vr_flat_clear );
+	vr_set_screen( vr_flat_w, vr_flat_h, hdr_ssaa );
+	vr_send_av_info();
+	if ( log_cb )
+		log_cb( RETRO_LOG_INFO, "[boom3] VR left: %dx%d\n", scr_width, scr_height );
+}
+
+/* Once a frame, before the clock advances.  A core learns about a headset
+ * only from HMD; *dupe asks for the last frame again while a lost one is
+ * waited for. */
+static void vr_update( bool *dupe ) {
+	unsigned status = 0;
+	unsigned ow, oh, rw = 0, rh = 0;
+	bool hmd;
+
+	*dupe = false;
+	/* Asked once on a frontend without the call: it logs every refusal. */
+	if ( !vr_status_unsupported
+			&& !environ_cb( RETRO_ENVIRONMENT_GET_VIDEO_VIEWS_STATUS, &status ) ) {
+		vr_status_unsupported = true;
+		status = 0;
+	}
+	hmd = ( status & RETRO_VIDEO_VIEWS_STATUS_HMD ) != 0;
+	if ( !hmd || !vr_user_enable )
+		vr_refused = false;
+	if ( hmd && vr_user_enable && !vr_24bit && !vr_blocked_logged ) {
+		vr_blocked_logged = true;
+		if ( log_cb )
+			log_cb( RETRO_LOG_WARN, "[boom3] VR: a headset is present, but VR needs "
+					"Color Format 24-bit (Standard)\n" );
+	}
+
+	switch ( vr_hold_update( &vr_hold_state,
+			vr_user_enable && vr_24bit && !first_boot && !vr_refused, hmd,
+			(unsigned)framerate * VR_HOLD_SECONDS ) ) {
+	case VR_HOLD_ENTER:
+		if ( !vr_request_session() ) {
+			vr_clear_map();   /* a first map may have been accepted */
+			vr_hold_state.active = false;
+			vr_refused = true;
+			if ( log_cb )
+				log_cb( RETRO_LOG_WARN, "[boom3] VR: the frontend refused the view map\n" );
+			return;
+		}
+		/* Pose first: the AV info reinits video, which restarts the session. */
+		vr_recenter_req = true;
+		if ( vr_poll() )
+			vr_request_session();
+		vr_enter();
+		vr_send_av_info();
+		return;
+	case VR_HOLD_TRACK:
+		break;
+	case VR_HOLD_WAIT:
+		*dupe = true;
+		return;
+	case VR_HOLD_LEAVE:
+		vr_leave();
+		return;
+	default:
+		return;
+	}
+
+	/* The map every frame: resending covers state loads and run-ahead.  A
+	 * new size, flagged or written back, is a resize. */
+	ow = vr_eye_w;
+	oh = vr_eye_h;
+	if ( vr_poll()
+			|| ( vr_send_map( vr_eye_w, vr_eye_h, &rw, &rh )
+				&& rw && rh && ( rw != vr_eye_w || rh != vr_eye_h ) ) )
+		vr_request_session();
+	if ( vr_eye_w != ow || vr_eye_h != oh ) {
+		vr_targets_bad = false;
+		vr_set_screen( vr_eye_w, vr_eye_h, 1 );   /* the targets follow at the next bind */
+		vr_send_av_info();
+		if ( log_cb )
+			log_cb( RETRO_LOG_INFO, "[boom3] VR resized: %ux%u per eye\n", vr_eye_w, vr_eye_h );
+	}
 }
 #endif
 
@@ -2782,58 +2993,14 @@ bool retro_load_game(const struct retro_game_info *info)
 	update_variables(true);
 
 #ifdef BOOM3_VR
-	{
-		struct retro_video_views views;
-		struct retro_video_view view[2];
-		memset( &views, 0, sizeof( views ) );
-		memset( view, 0, sizeof( view ) );
-
-		if (vr_user_enable)
-		{
-			vr_eye_w = vr_eye_w ? vr_eye_w : 1024;
-			vr_eye_h = vr_eye_h ? vr_eye_h : 1024;
-
-			view[0].width = vr_eye_w;
-			view[0].height = vr_eye_h;
-			view[0].eye = RETRO_VIDEO_VIEW_EYE_LEFT;
-			view[1].x = vr_eye_w;
-			view[1].width = vr_eye_w;
-			view[1].height = vr_eye_h;
-			view[1].eye = RETRO_VIDEO_VIEW_EYE_RIGHT;
-			views.views = view;
-			views.num_views = 2;
-			views.reference_space = RETRO_VR_REFERENCE_SPACE_LOCAL;
-
-			if ( environ_cb( RETRO_ENVIRONMENT_SET_VIDEO_VIEWS, &views )
-					&& views.recommended_view_width
-					&& views.recommended_view_height ) {
-				vr_active = true;
-				vr_eye_w = views.recommended_view_width;
-				vr_eye_h = views.recommended_view_height;
-				vr_recenter_req = true;
-				vr_targets_bad = false;
-				hdr_output_active = hdr_pq_output = hdr_fp16_scene = hdr_fp32_scene = false;
-				fmt = RETRO_PIXEL_FORMAT_XRGB8888;
-				environ_cb( RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &fmt );
-
-				vr_send_views();   /* resend with the real eye size */
-
-				if ( log_cb )
-					log_cb( RETRO_LOG_INFO, "[boom3] VR active: %ux%u per eye\n", vr_eye_w, vr_eye_h );
-			} else if ( log_cb ) {
-				log_cb( RETRO_LOG_INFO, "[boom3] VR not active\n" );
-			}
-		}
-	}
-
-	if ( vr_active )
-	{
-		scr_width = vr_eye_w;
-		scr_height = vr_eye_h;     /* the engine thinks "screen" = one eye */
-		glConfig.vidWidth = glConfig.winWidth  = scr_width;
-		glConfig.vidHeight = glConfig.winHeight = scr_height;
-		initial_resolution_set = true;
-	}
+	/* VR follows the headset from retro_run.  The eye targets are 8-bit, so
+	 * only a load that chose XRGB8888 can enter it. */
+	vr_24bit = fmt == RETRO_PIXEL_FORMAT_XRGB8888;
+	vr_active = false;
+	memset( &vr_hold_state, 0, sizeof( vr_hold_state ) );
+	vr_status_unsupported = false;
+	vr_refused            = false;
+	vr_blocked_logged     = false;
 #endif
 
 	// negotiate float audio output (RETRO_ENVIRONMENT_GET_AUDIO_SAMPLE_BATCH_FLOAT):
@@ -2994,6 +3161,21 @@ void retro_set_controller_port_device(unsigned port, unsigned device)
 
 void retro_run(void)
 {
+#ifdef BOOM3_VR
+   bool vr_dupe;
+
+   vr_update( &vr_dupe );
+   if ( vr_dupe )
+   {
+      /* the headset is away for now: show the last frame again, keep the
+       * frontend fed, and leave the clock where it is */
+      poll_cb();
+      video_cb( NULL, vr_eye_w * 2, vr_eye_h, 0 );
+      audio_upload_silence();
+      return;
+   }
+#endif
+
    /* Advance the deterministic clock by exactly one frame. All engine
     * timing (game tic schedule, com_frameTime, the render-side tic
     * fraction, sound sample time) derives from the frame COUNT - never
@@ -3001,14 +3183,6 @@ void retro_run(void)
     * retro_run() call count and polled input, independent of host speed,
     * fast-forward or frame stepping. */
    Core_AdvanceFrame();
-
-#ifdef BOOM3_VR
-   if ( vr_active )
-   {
-      vr_poll();
-	  vr_send_views();
-   }
-#endif
 
    if (!libretro_shared_context)
       glsm_ctl(GLSM_CTL_STATE_BIND, NULL);
@@ -3037,10 +3211,7 @@ void retro_run(void)
 		first_boot = false;
 
 #ifdef BOOM3_VR
-		if ( vr_active ) {
-			cmdSystem->AddCommand( "vr_recenter", Cmd_VRRecenter_f, CMD_FL_SYSTEM, "recentre the VR view" );
-			cvarSystem->SetCVarString( "r_clear", "0" );
-		}
+		cmdSystem->AddCommand( "vr_recenter", Cmd_VRRecenter_f, CMD_FL_SYSTEM, "recentre the VR view" );
 #endif
 		update_variables(false);
 		gp_layout_set_bind(pending_layout);
@@ -6390,14 +6561,16 @@ static bool ldr_ensure_target( int w, int h ) {
  * the core option, or the in-game menu writing r_multiSamples. */
 bool ssaa_push_cvar = false;   /* declared above update_variables */
 static void ssaa_apply( int want ) {
-#ifdef BOOM3_VR
-	if ( vr_active ) want = 1;
-#endif
 	if ( want == hdr_ssaa )
 		return;
 	hdr_ssaa = want;
 	if ( want == 1 )
 		ldr_destroy_target();   /* ~130MB at 4K; not worth holding */
+#ifdef BOOM3_VR
+	/* the eyes render at 1x whatever the choice; leaving VR applies it */
+	if ( vr_active )
+		return;
+#endif
 	/* the engine's render size follows; the scene target follows on the
 	 * next bind via its own size check */
 	glConfig.vidWidth  = scr_width * hdr_ssaa;
@@ -6429,9 +6602,6 @@ static void ssaa_reconcile( void ) {
 		return;
 	}
 	want = ( cv == 2 ) ? 2 : 1;
-#if defined(BOOM3_VR)
-	if ( vr_active ) want = 1;
-#endif
 	if ( want != hdr_ssaa ) {
 		/* the menu moved last; the state and the core option follow */
 		struct retro_variable var;
@@ -7765,6 +7935,9 @@ void retro_unload_game(void)
 	first_boot = true;
 	initial_resolution_set = false;
 #ifdef BOOM3_VR
+	if ( vr_hold_state.active )
+		vr_clear_map();
+	memset( &vr_hold_state, 0, sizeof( vr_hold_state ) );
 	vr_active = false;
 	vr_recenter_req = true;
 #endif
