@@ -1251,7 +1251,7 @@ void R_ListImages_f( const idCmdArgs &args ) {
 				case GL_COMPRESSED_RGB8_PUNCHTHROUGH_ALPHA1_ETC2:
 				case GL_COMPRESSED_R11_EAC:
 				case GL_COMPRESSED_RG11_EAC:
-					continue
+					continue;
 					break;
 			}
 #endif

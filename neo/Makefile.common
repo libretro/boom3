@@ -355,29 +355,40 @@ ifeq ($(HAVE_ARM_NEON_ASM_OPTIMIZATIONS),1)
 endif
 
 ifeq ($(GLES),1)
+ifeq ($(GLES_VER),3)
+	# GLES 3 multiview renderer, with the Doom3Quest multiview shaders
+	GLSL_DIR := $(CORE_DIR)/renderer/glsl_gles3
 	SRC_RENDERER += \
-		$(CORE_DIR)/renderer/glsl/cubeMapShaderFP.o \
-		$(CORE_DIR)/renderer/glsl/diffuseMapShaderVP.o \
-		$(CORE_DIR)/renderer/glsl/diffuseCubeShaderVP.o \
-		$(CORE_DIR)/renderer/glsl/diffuseMapShaderFP.o \
-		$(CORE_DIR)/renderer/glsl/fogShaderFP.o \
-		$(CORE_DIR)/renderer/glsl/fogShaderVP.o \
-		$(CORE_DIR)/renderer/glsl/blendLightShaderVP.o \
-		$(CORE_DIR)/renderer/glsl/interactionPhongShaderFP.o \
-		$(CORE_DIR)/renderer/glsl/interactionPhongShaderVP.o \
-		$(CORE_DIR)/renderer/glsl/interactionShaderFP.o \
-		$(CORE_DIR)/renderer/glsl/interactionShaderVP.o \
-		$(CORE_DIR)/renderer/glsl/reflectionCubeShaderVP.o \
-		$(CORE_DIR)/renderer/glsl/skyboxCubeShaderVP.o \
-		$(CORE_DIR)/renderer/glsl/stencilShadowShaderFP.o \
-		$(CORE_DIR)/renderer/glsl/stencilShadowShaderVP.o \
-		$(CORE_DIR)/renderer/glsl/zfillClipShaderFP.o \
-		$(CORE_DIR)/renderer/glsl/zfillClipShaderVP.o \
-		$(CORE_DIR)/renderer/glsl/zfillShaderFP.o \
-		$(CORE_DIR)/renderer/glsl/zfillShaderVP.o \
+		$(CORE_DIR)/renderer/draw_gles3_multiview.cpp
+	SRC_LIBRETRO += \
+		$(LIBRETRO_COMM_DIR)/glsym/glsym_es3.c
+else
+	GLSL_DIR := $(CORE_DIR)/renderer/glsl
+	SRC_RENDERER += \
 		$(CORE_DIR)/renderer/draw_gles2.cpp
 	SRC_LIBRETRO += \
 		$(LIBRETRO_COMM_DIR)/glsym/glsym_es2.c
+endif
+	SRC_RENDERER += \
+		$(GLSL_DIR)/cubeMapShaderFP.o \
+		$(GLSL_DIR)/diffuseMapShaderVP.o \
+		$(GLSL_DIR)/diffuseCubeShaderVP.o \
+		$(GLSL_DIR)/diffuseMapShaderFP.o \
+		$(GLSL_DIR)/fogShaderFP.o \
+		$(GLSL_DIR)/fogShaderVP.o \
+		$(GLSL_DIR)/blendLightShaderVP.o \
+		$(GLSL_DIR)/interactionPhongShaderFP.o \
+		$(GLSL_DIR)/interactionPhongShaderVP.o \
+		$(GLSL_DIR)/interactionShaderFP.o \
+		$(GLSL_DIR)/interactionShaderVP.o \
+		$(GLSL_DIR)/reflectionCubeShaderVP.o \
+		$(GLSL_DIR)/skyboxCubeShaderVP.o \
+		$(GLSL_DIR)/stencilShadowShaderFP.o \
+		$(GLSL_DIR)/stencilShadowShaderVP.o \
+		$(GLSL_DIR)/zfillClipShaderFP.o \
+		$(GLSL_DIR)/zfillClipShaderVP.o \
+		$(GLSL_DIR)/zfillShaderFP.o \
+		$(GLSL_DIR)/zfillShaderVP.o
 else
 	SRC_RENDERER += \
 		$(CORE_DIR)/renderer/tr_rendertools.cpp \

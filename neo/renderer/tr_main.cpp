@@ -1140,7 +1140,74 @@ void R_RenderView( viewDef_t *parms ) {
 		return;
 	}
 
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#ifdef BOOM3_VR_MULTIVIEW
+	if (VR_Active()) {
+		// One pass draws both eyes into a 2-layer target: cull and sort once
+		// from a view between the eyes whose frustum covers both of theirs.
+		renderView_t eyeView[2];
+		float eyeTan[2][4];
+		const renderView_t game = parms->renderView;
+		for ( int eye = 0; eye < 2; eye++ ) {
+			VR_GetEyeRenderView( eye, &game, &eyeView[eye], eyeTan[eye] );
+		}
+
+		renderView_t &center = parms->renderView;
+		center = eyeView[0];
+		center.vieworg = ( eyeView[0].vieworg + eyeView[1].vieworg ) * 0.5f;
+		// doom axes are forward, left, up
+		idVec3 fwd = eyeView[0].viewaxis[0] + eyeView[1].viewaxis[0];
+		fwd.Normalize();
+		idVec3 left = ( eyeView[0].viewaxis[2] + eyeView[1].viewaxis[2] ).Cross( fwd );
+		left.Normalize();
+		center.viewaxis = idMat3( fwd, left, fwd.Cross( left ) );
+
+		// tangents of every eye frustum corner, seen from the center axes
+		float *t = parms->vrFovTan;
+		t[0] = t[1] = t[2] = t[3] = 0.0f;
+		for ( int eye = 0; eye < 2; eye++ ) {
+			const idMat3 &a = eyeView[eye].viewaxis;
+			const float *et = eyeTan[eye];
+			for ( int c = 0; c < 4; c++ ) {
+				const idVec3 dir = a[0] + ( c & 1 ? -et[1] : et[0] ) * a[1] + ( c & 2 ? -et[3] : et[2] ) * a[2];
+				const float f = Max( dir * fwd, 0.01f );
+				const float h = ( dir * center.viewaxis[1] ) / f;
+				const float v = ( dir * center.viewaxis[2] ) / f;
+				t[0] = Max( t[0], h );  t[1] = Max( t[1], -h );
+				t[2] = Max( t[2], v );  t[3] = Max( t[3], -v );
+			}
+		}
+		// The eyes sit either side of the center, so up close each one sees a
+		// little past these angles; cover that from 4 * znear outward.
+		const float margin = 0.5f * ( eyeView[1].vieworg - eyeView[0].vieworg ).Length()
+			/ ( 4.0f * r_znear.GetFloat() );
+		for ( int k = 0; k < 4; k++ ) {
+			t[k] += margin;
+		}
+		center.fov_x = RAD2DEG( 2.0f * atanf( Max( t[0], t[1] ) ) );
+		center.fov_y = RAD2DEG( 2.0f * atanf( Max( t[2], t[3] ) ) );
+
+		for ( int eye = 0; eye < 2; eye++ ) {
+			// world to GL eye space, the same way R_SetViewMatrix builds it
+			viewDef_t eyeDef;
+			eyeDef.renderView = eyeView[eye];
+			R_SetViewMatrix( &eyeDef );
+			memcpy( parms->vrEyeViewMatrix[eye], eyeDef.worldSpace.modelViewMatrix, sizeof( parms->vrEyeViewMatrix[eye] ) );
+
+			// projectionMatrix is built from vrFovTan; this rescales its clip
+			// x and y onto the eye's own asymmetric frustum, ndc' = s * ndc + o
+			const float *et = eyeTan[eye];
+			float *clip = parms->vrEyeClip[eye];
+			clip[0] = ( t[0] + t[1] ) / ( et[0] + et[1] );
+			clip[1] = ( t[2] + t[3] ) / ( et[2] + et[3] );
+			clip[2] = ( t[1] - t[0] + et[0] - et[1] ) / ( et[0] + et[1] );
+			clip[3] = ( t[2] - t[3] + et[3] - et[2] ) / ( et[2] + et[3] );
+		}
+
+		parms->vrView = 3;
+		parms->vrProjection = true;
+		R_RenderViewInternal( parms );
+	}
+#elif defined(LIBRETRO) && defined(BOOM3_VR)
 	if (VR_Active()) {
 		// eye 0 reuses the allocated viewDef, eye 1 is a copy with its own
 		// view state and draw surfaces allocated by R_AddModelSurfaces/R_AddDrawSurf.

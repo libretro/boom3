@@ -32,6 +32,10 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "renderer/Image.h"
 
+#ifdef BOOM3_VR_MULTIVIEW
+#include "renderer/vr.h"
+#endif
+
 #ifdef HAVE_OPENGLES
 #include "renderer/gles_compat.h"
 #endif
@@ -2385,6 +2389,13 @@ void idImage::CopyFramebuffer( int x, int y, int imageWidth, int imageHeight, bo
 	}
 #endif
 
+#ifdef BOOM3_VR_MULTIVIEW
+	// both eyes share the copy: take the left one
+	if ( VR_Active() ) {
+		VR_BeginLayerRead( 0 );
+	}
+#endif
+
 	// only resize if the current dimensions can't hold it at all,
 	// otherwise subview renderings could thrash this
 	if ( ( useOversizedBuffer && ( uploadWidth < potWidth || uploadHeight < potHeight ) )
@@ -2434,6 +2445,12 @@ void idImage::CopyFramebuffer( int x, int y, int imageWidth, int imageHeight, bo
 	if ( imageHeight != potHeight ) {
 		qglCopyTexSubImage2D( GL_TEXTURE_2D, 0, 0, imageHeight, x, y+imageHeight-1, imageWidth, 1 );
 	}
+
+#ifdef BOOM3_VR_MULTIVIEW
+	if ( VR_Active() ) {
+		VR_EndLayerRead();
+	}
+#endif
 
 	qglTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
 	qglTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );

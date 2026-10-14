@@ -4,6 +4,7 @@ CORE           := -DCORE=ON
 DEBUG          := 0
 RELWITHDEBINFO := 0
 FORCE_GLES     := 0
+GLES_VER       ?= 2
 HAVE_VR        ?= 0
 
 ifneq ($(SANITIZER),)
@@ -69,10 +70,17 @@ ifneq (,$(findstring unix,$(platform)))
       LIBS += -lrt
    endif
    ifeq ($(FORCE_GLES),1)
-	GLES = 1
-	GL_LIB := -lGLESv2
-	CFLAGS += -DHAVE_OPENGLES -DHAVE_OPENGLES2
-	CXXFLAGS += -DHAVE_OPENGLES -DHAVE_OPENGLES2
+      GL_LIB := -lGLESv2
+      CFLAGS += -DHAVE_OPENGLES
+      CXXFLAGS += -DHAVE_OPENGLES
+      GLES = 1
+      ifeq ($(GLES_VER),3)
+         CFLAGS += -DHAVE_OPENGLES3
+         CXXFLAGS += -DHAVE_OPENGLES3
+      else
+         CFLAGS += -DHAVE_OPENGLES2
+         CXXFLAGS += -DHAVE_OPENGLES2
+      endif
    else
 	GL_LIB := -lGL
    endif
@@ -82,10 +90,17 @@ else ifeq ($(platform), linux-portable)
    SHARED := -shared -Wl,--version-script=$(CORE_DIR)/link.T
 	LIBM :=
    ifeq ($(FORCE_GLES),1)
-	GLES = 1
-	GL_LIB := -lGLESv2
-	CFLAGS += -DHAVE_OPENGLES -DHAVE_OPENGLES2
-	CXXFLAGS += -DHAVE_OPENGLES -DHAVE_OPENGLES2
+      GL_LIB := -lGLESv2
+      CFLAGS += -DHAVE_OPENGLES
+      CXXFLAGS += -DHAVE_OPENGLES
+      GLES = 1
+      ifeq ($(GLES_VER),3)
+         CFLAGS += -DHAVE_OPENGLES3
+         CXXFLAGS += -DHAVE_OPENGLES3
+      else
+         CFLAGS += -DHAVE_OPENGLES2
+         CXXFLAGS += -DHAVE_OPENGLES2
+      endif
    else
 	GL_LIB := -lGL
    endif
@@ -174,11 +189,19 @@ else ifneq (,$(findstring android,$(platform)))
    SHARED := -shared -Wl,--version-script=$(CORE_DIR)/link.T -Wl,--no-undefined
    LIBS := -ldl
    GL_LIB := -lGLESv2
-   CFLAGS += -DHAVE_OPENGLES -DHAVE_OPENGLES2
-   CXXFLAGS += -DHAVE_OPENGLES -DHAVE_OPENGLES2
+   CFLAGS += -DHAVE_OPENGLES
+   CXXFLAGS += -DHAVE_OPENGLES
+   GLES = 1
+   ifeq ($(GLES_VER),3)
+      CFLAGS += -DHAVE_OPENGLES3
+      CXXFLAGS += -DHAVE_OPENGLES3
+      GL_LIB := -lGLESv3
+   else
+      CFLAGS += -DHAVE_OPENGLES2
+      CXXFLAGS += -DHAVE_OPENGLES2
+   endif
    LDFLAGS += -static-libstdc++
    CORE =
-   GLES = 1
    ifeq ($(origin CC), default)
       ifneq ($(ANDROID_NDK_LLVM),)
         NDK_BIN := $(ANDROID_NDK_LLVM)/bin
@@ -413,7 +436,18 @@ CXXFLAGS +=     -I$(TOPDIR)/d3xp
 CFLAGS     += $(INCFLAGS)
 CXXFLAGS   += $(INCFLAGS)
 
+# Objects built with one set of flags (GLES_VER, HAVE_VR, platform, ...) can't
+# be linked with another, so every object depends on this record of the
+# compile command, rewritten only when the flags change.
+FLAGS_STAMP := $(CORE_DIR)/.build_flags
+BUILD_FLAGS := $(CC) | $(CXX) | $(CFLAGS) | $(CXXFLAGS) | $(fpic)
+ifneq ($(BUILD_FLAGS),$(file < $(FLAGS_STAMP)))
+$(file > $(FLAGS_STAMP),$(BUILD_FLAGS))
+endif
+
 all: $(TARGET)
+
+$(OBJECTS): $(FLAGS_STAMP)
 
 $(TARGET): $(OBJECTS)
 ifeq ($(STATIC_LINKING), 1)
@@ -429,7 +463,7 @@ endif
 	$(CC) $(CFLAGS) -std=gnu11 $(fpic) -c -o $@ $<
 
 clean:
-	rm -f $(OBJECTS) $(TARGET)
+	rm -f $(OBJECTS) $(TARGET) $(FLAGS_STAMP)
 
 .PHONY: clean
 
