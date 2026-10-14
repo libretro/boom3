@@ -975,6 +975,10 @@ void idActor::Restore( idRestoreGame *savefile ) {
 	headAnim.Restore( savefile );
 	torsoAnim.Restore( savefile );
 	legsAnim.Restore( savefile );
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+	rightHandAnim.Init( this, &animator, ANIMCHANNEL_RIGHTHAND );
+	leftHandAnim.Init( this, &animator, ANIMCHANNEL_LEFTHAND );
+#endif
 
 	savefile->ReadBool( allowPain );
 	savefile->ReadBool( allowEyeFocus );
@@ -1170,6 +1174,10 @@ void idActor::SetupBody( void ) {
 
 	torsoAnim.Init( this, &animator, ANIMCHANNEL_TORSO );
 	legsAnim.Init( this, &animator, ANIMCHANNEL_LEGS );
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+	rightHandAnim.Init( this, &animator, ANIMCHANNEL_RIGHTHAND );
+	leftHandAnim.Init( this, &animator, ANIMCHANNEL_LEFTHAND );
+#endif
 }
 
 /*
@@ -1239,6 +1247,10 @@ idActor::ShutdownThreads
 */
 void idActor::ShutdownThreads( void ) {
 	headAnim.Shutdown();
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+	rightHandAnim.Shutdown();
+	leftHandAnim.Shutdown();
+#endif
 	torsoAnim.Shutdown();
 	legsAnim.Shutdown();
 
@@ -1946,6 +1958,12 @@ void idActor::SetAnimState( int channel, const char *statename, int blendFrames 
 		allowEyeFocus = true;
 		break;
 
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+	case ANIMCHANNEL_RIGHTHAND :
+	case ANIMCHANNEL_LEFTHAND :
+		HandAnim( channel )->SetState( statename, blendFrames );
+		break;
+#endif
 	default:
 		gameLocal.Error( "idActor::SetAnimState: Unknown anim group" );
 		break;
@@ -1971,6 +1989,11 @@ const char *idActor::GetAnimState( int channel ) const {
 		return legsAnim.state;
 		break;
 
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+	case ANIMCHANNEL_RIGHTHAND :
+	case ANIMCHANNEL_LEFTHAND :
+		return HandAnim( channel )->state;
+#endif
 	default:
 		gameLocal.Error( "idActor::GetAnimState: Unknown anim group" );
 		return NULL;
@@ -2003,6 +2026,14 @@ bool idActor::InAnimState( int channel, const char *statename ) const {
 		}
 		break;
 
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+	case ANIMCHANNEL_RIGHTHAND :
+	case ANIMCHANNEL_LEFTHAND :
+		if ( HandAnim( channel )->state == statename ) {
+			return true;
+		}
+		break;
+#endif
 	default:
 		gameLocal.Error( "idActor::InAnimState: Unknown anim group" );
 		break;
@@ -2042,7 +2073,34 @@ void idActor::UpdateAnimState( void ) {
 	headAnim.UpdateState();
 	torsoAnim.UpdateState();
 	legsAnim.UpdateState();
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+	rightHandAnim.UpdateState();
+	leftHandAnim.UpdateState();
+#endif
 }
+
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+/*
+=====================
+idActor::HandAnim
+
+the state of a hand channel, or NULL for another channel
+=====================
+*/
+idAnimState *idActor::HandAnim( int channel ) {
+	switch( channel ) {
+	case ANIMCHANNEL_RIGHTHAND :
+		return &rightHandAnim;
+	case ANIMCHANNEL_LEFTHAND :
+		return &leftHandAnim;
+	}
+	return NULL;
+}
+
+const idAnimState *idActor::HandAnim( int channel ) const {
+	return const_cast<idActor *>( this )->HandAnim( channel );
+}
+#endif
 
 /*
 =====================
@@ -2594,6 +2652,12 @@ void idActor::Event_StopAnim( int channel, int frames ) {
 		legsAnim.StopAnim( frames );
 		break;
 
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+	case ANIMCHANNEL_RIGHTHAND :
+	case ANIMCHANNEL_LEFTHAND :
+		HandAnim( channel )->StopAnim( frames );
+		break;
+#endif
 	default:
 		gameLocal.Error( "Unknown anim group" );
 		break;
@@ -2673,6 +2737,13 @@ void idActor::Event_PlayAnim( int channel, const char *animname ) {
 		}
 		break;
 
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+	case ANIMCHANNEL_RIGHTHAND :
+	case ANIMCHANNEL_LEFTHAND :
+		HandAnim( channel )->idleAnim = false;
+		HandAnim( channel )->PlayAnim( anim );
+		break;
+#endif
 	default :
 		gameLocal.Error( "Unknown anim group" );
 		break;
@@ -2747,6 +2818,13 @@ void idActor::Event_PlayCycle( int channel, const char *animname ) {
 		}
 		break;
 
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+	case ANIMCHANNEL_RIGHTHAND :
+	case ANIMCHANNEL_LEFTHAND :
+		HandAnim( channel )->idleAnim = false;
+		HandAnim( channel )->CycleAnim( anim );
+		break;
+#endif
 	default:
 		gameLocal.Error( "Unknown anim group" );
 	}
@@ -2783,6 +2861,12 @@ void idActor::Event_IdleAnim( int channel, const char *animname ) {
 			legsAnim.BecomeIdle();
 			break;
 
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+		case ANIMCHANNEL_RIGHTHAND :
+		case ANIMCHANNEL_LEFTHAND :
+			HandAnim( channel )->BecomeIdle();
+			break;
+#endif
 		default:
 			gameLocal.Error( "Unknown anim group" );
 		}
@@ -2854,6 +2938,12 @@ void idActor::Event_IdleAnim( int channel, const char *animname ) {
 		}
 		break;
 
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+	case ANIMCHANNEL_RIGHTHAND :
+	case ANIMCHANNEL_LEFTHAND :
+		HandAnim( channel )->BecomeIdle();
+		break;
+#endif
 	default:
 		gameLocal.Error( "Unknown anim group" );
 	}
@@ -2905,6 +2995,12 @@ void idActor::Event_SetSyncedAnimWeight( int channel, int anim, float weight ) {
 		}
 		break;
 
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+	case ANIMCHANNEL_RIGHTHAND :
+	case ANIMCHANNEL_LEFTHAND :
+		animator.CurrentAnim( channel )->SetSyncedAnimWeight( anim, weight );
+		break;
+#endif
 	default:
 		gameLocal.Error( "Unknown anim group" );
 	}
@@ -2939,6 +3035,12 @@ void idActor::Event_OverrideAnim( int channel ) {
 		SyncAnimChannels( ANIMCHANNEL_LEGS, ANIMCHANNEL_TORSO, torsoAnim.lastAnimBlendFrames );
 		break;
 
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+	case ANIMCHANNEL_RIGHTHAND :
+	case ANIMCHANNEL_LEFTHAND :
+		HandAnim( channel )->Disable();
+		break;
+#endif
 	default:
 		gameLocal.Error( "Unknown anim group" );
 		break;
@@ -2964,6 +3066,12 @@ void idActor::Event_EnableAnim( int channel, int blendFrames ) {
 		legsAnim.Enable( blendFrames );
 		break;
 
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+	case ANIMCHANNEL_RIGHTHAND :
+	case ANIMCHANNEL_LEFTHAND :
+		HandAnim( channel )->Enable( blendFrames );
+		break;
+#endif
 	default:
 		gameLocal.Error( "Unknown anim group" );
 		break;
@@ -2992,6 +3100,13 @@ void idActor::Event_SetBlendFrames( int channel, int blendFrames ) {
 		legsAnim.lastAnimBlendFrames = blendFrames;
 		break;
 
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+	case ANIMCHANNEL_RIGHTHAND :
+	case ANIMCHANNEL_LEFTHAND :
+		HandAnim( channel )->animBlendFrames = blendFrames;
+		HandAnim( channel )->lastAnimBlendFrames = blendFrames;
+		break;
+#endif
 	default:
 		gameLocal.Error( "Unknown anim group" );
 		break;
@@ -3017,6 +3132,12 @@ void idActor::Event_GetBlendFrames( int channel ) {
 		idThread::ReturnInt( legsAnim.animBlendFrames );
 		break;
 
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+	case ANIMCHANNEL_RIGHTHAND :
+	case ANIMCHANNEL_LEFTHAND :
+		idThread::ReturnInt( HandAnim( channel )->animBlendFrames );
+		break;
+#endif
 	default:
 		gameLocal.Error( "Unknown anim group" );
 		break;
@@ -3091,6 +3212,12 @@ void idActor::Event_AnimDone( int channel, int blendFrames ) {
 		idThread::ReturnInt( result );
 		break;
 
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+	case ANIMCHANNEL_RIGHTHAND :
+	case ANIMCHANNEL_LEFTHAND :
+		idThread::ReturnInt( HandAnim( channel )->AnimDone( blendFrames ) );
+		break;
+#endif
 	default:
 		gameLocal.Error( "Unknown anim group" );
 	}

@@ -37,6 +37,9 @@ If you have questions concerning this license or the applicable additional terms
 #include "renderer/RenderWorld_local.h"
 
 #include "renderer/tr_local.h"
+#ifdef BOOM3_VR_MULTIVIEW
+#include "renderer/vr.h"
+#endif
 
 #ifdef HAVE_OPENGLES
 #include "renderer/gles_compat.h"
@@ -979,6 +982,33 @@ void idRenderSystemLocal::CaptureRenderToFile( const char *fileName, bool fixAlp
 
 	// include extra space for OpenGL padding to word boundaries
 	int	c = ( rc->width + 3 ) * rc->height;
+#ifdef HAVE_OPENGLES
+	// GLES reads only RGBA (GL_RGB fails, leaving the objective
+	// screenshots the camShot objectives make blank). Rows of RGBA bytes
+	// are always word aligned.
+	byte *data = (byte *)R_StaticAlloc( c * 4 );
+	byte *data2 = (byte *)R_StaticAlloc( c * 4 );
+#ifdef BOOM3_VR_MULTIVIEW
+	// the camera's view went to the eye target; the 2D since may have
+	// left the UI target bound
+	if ( VR_Active() ) {
+		VR_BeginSceneRead();
+	}
+#endif
+	memset( data, 0, c * 4 );
+	qglReadPixels( rc->x, rc->y, rc->width, rc->height, GL_RGBA, GL_UNSIGNED_BYTE, data );
+#ifdef BOOM3_VR_MULTIVIEW
+	if ( VR_Active() ) {
+		VR_EndLayerRead();
+	}
+#endif
+	for ( int i = 0 ; i < c ; i++ ) {
+		data2[ i * 4 ] = data[ i * 4 ];
+		data2[ i * 4 + 1 ] = data[ i * 4 + 1 ];
+		data2[ i * 4 + 2 ] = data[ i * 4 + 2 ];
+		data2[ i * 4 + 3 ] = 0xff;
+	}
+#else
 	byte *data = (byte *)R_StaticAlloc( c * 3 );
 
 	qglReadPixels( rc->x, rc->y, rc->width, rc->height, GL_RGB, GL_UNSIGNED_BYTE, data );
@@ -991,6 +1021,7 @@ void idRenderSystemLocal::CaptureRenderToFile( const char *fileName, bool fixAlp
 		data2[ i * 4 + 2 ] = data[ i * 3 + 2 ];
 		data2[ i * 4 + 3 ] = 0xff;
 	}
+#endif
 
 	R_WriteTGA( fileName, data2, rc->width, rc->height, true );
 

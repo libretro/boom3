@@ -42,6 +42,9 @@ If you have questions concerning this license or the applicable additional terms
 
 static const char *channelNames[ ANIM_NumAnimChannels ] = {
 	"all", "torso", "legs", "head", "eyelids"
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+	, "rightHand", "leftHand"
+#endif
 };
 
 /***********************************************************************
@@ -3199,7 +3202,7 @@ void idAnimator::Save( idSaveGame *savefile ) const {
 
 	savefile->WriteBool( removeOriginOffset );
 
-	for( i = ANIMCHANNEL_ALL; i < ANIM_NumAnimChannels; i++ ) {
+	for( i = ANIMCHANNEL_ALL; i < ANIM_NumSavedChannels; i++ ) {
 		for( j = 0; j < ANIM_MaxAnimsPerChannel; j++ ) {
 			channels[ i ][ j ].Save( savefile );
 		}
@@ -3280,7 +3283,7 @@ void idAnimator::Restore( idRestoreGame *savefile ) {
 
 	savefile->ReadBool( removeOriginOffset );
 
-	for( i = ANIMCHANNEL_ALL; i < ANIM_NumAnimChannels; i++ ) {
+	for( i = ANIMCHANNEL_ALL; i < ANIM_NumSavedChannels; i++ ) {
 		for( j = 0; j < ANIM_MaxAnimsPerChannel; j++ ) {
 			channels[ i ][ j ].Restore( savefile, modelDef );
 		}

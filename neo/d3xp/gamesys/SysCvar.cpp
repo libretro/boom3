@@ -328,6 +328,17 @@ idCVar g_showBrass(					"g_showBrass",				"1",			CVAR_GAME | CVAR_ARCHIVE | CVAR
 idCVar g_gun_x(						"g_gunX",					"0",			CVAR_GAME | CVAR_FLOAT, "" );
 idCVar g_gun_y(						"g_gunY",					"0",			CVAR_GAME | CVAR_FLOAT, "" );
 idCVar g_gun_z(						"g_gunZ",					"0",			CVAR_GAME | CVAR_FLOAT, "" );
+
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+idCVar vr_motionControls(			"vr_motionControls",		"1",			CVAR_GAME | CVAR_ARCHIVE | CVAR_BOOL, "in VR, the weapon is held and aimed by the controller, not the right stick" );
+idCVar vr_weaponHand(				"vr_weaponHand",			"0",			CVAR_GAME | CVAR_ARCHIVE | CVAR_INTEGER, "the hand holding the weapon: 0 right, 1 left", 0, 1 );
+idCVar vr_weaponPitch(				"vr_weaponPitch",			"0",			CVAR_GAME | CVAR_ARCHIVE | CVAR_FLOAT, "degrees added to the controller's pointing pitch, for the weapon and its shots" );
+// where the right hand holds a view model that has no hand joint (model units: forward, left, up)
+idCVar vr_weaponGripX(				"vr_weaponGripX",			"12",			CVAR_GAME | CVAR_ARCHIVE | CVAR_FLOAT, "" );
+idCVar vr_weaponGripY(				"vr_weaponGripY",			"-6",			CVAR_GAME | CVAR_ARCHIVE | CVAR_FLOAT, "" );
+idCVar vr_playerBodyMode(			"vr_playerBodyMode",		"1",			CVAR_GAME | CVAR_ARCHIVE | CVAR_INTEGER, "VR, with the VR pack: 0 the whole body, 1 just the hands, 2 just the weapons", 0, 2 );
+idCVar vr_weaponGripZ(				"vr_weaponGripZ",			"-10",			CVAR_GAME | CVAR_ARCHIVE | CVAR_FLOAT, "" );
+#endif
 idCVar g_viewNodalX(				"g_viewNodalX",				"0",			CVAR_GAME | CVAR_FLOAT, "" );
 idCVar g_viewNodalZ(				"g_viewNodalZ",				"0",			CVAR_GAME | CVAR_FLOAT, "" );
 idCVar g_fov(						"g_fov",					"90",			CVAR_GAME | CVAR_INTEGER | CVAR_NOCHEAT, "" );

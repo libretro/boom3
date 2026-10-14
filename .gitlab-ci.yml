@@ -139,6 +139,7 @@ android-arm64-v8a:
     - .core-defs
   variables:
     HAVE_VR: 1
+    GLES_VER: 3
 
 # Android ARMv7a
 android-armeabi-v7a:

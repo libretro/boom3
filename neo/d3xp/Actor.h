@@ -259,6 +259,13 @@ protected:
 	idAnimState				headAnim;
 	idAnimState				torsoAnim;
 	idAnimState				legsAnim;
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+	// the VR pack's player hands; not saved, set up again on restore
+	idAnimState				rightHandAnim;
+	idAnimState				leftHandAnim;
+	idAnimState *			HandAnim( int channel );
+	const idAnimState *		HandAnim( int channel ) const;
+#endif
 
 	bool					allowPain;
 	bool					allowEyeFocus;

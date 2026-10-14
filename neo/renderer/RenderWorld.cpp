@@ -224,6 +224,19 @@ void idRenderWorldLocal::UpdateEntityDef( qhandle_t entityHandle, const renderEn
 
 	idRenderEntityLocal	*def = entityDefs[entityHandle];
 	if ( def ) {
+		// framerate independence stage 2: remember the previous transform and
+		// the tics it changed on, for render-side interpolation. Ahead of
+		// every path that takes the new parms - it once sat only in the
+		// callback path for an unchanged transform, where it never fired,
+		// so no entity interpolated and anything moving with the player
+		// (view weapon, VR hands and body) stepped at the tic rate against
+		// the interpolated camera.
+		if ( def->parms.origin != re->origin || def->parms.axis != re->axis ) {
+			def->prevTransformOrigin = def->parms.origin;
+			def->prevTransformAxis   = def->parms.axis;
+			def->prevTransformTic    = def->curTransformTic;
+			def->curTransformTic     = com_ticNumber;
+		}
 
 		if ( !re->forceUpdate ) {
 
@@ -248,16 +261,7 @@ void idRenderWorldLocal::UpdateEntityDef( qhandle_t entityHandle, const renderEn
 					// only clear the dynamic model and interaction surfaces if they exist
 					c_callbackUpdate++;
 					R_ClearEntityDefDynamicModel( def );
-					// framerate independence stage 2: remember the previous transform and the
-	// tics it changed on, for render-side interpolation
-	if ( def->parms.origin != re->origin || def->parms.axis != re->axis ) {
-		def->prevTransformOrigin = def->parms.origin;
-		def->prevTransformAxis   = def->parms.axis;
-		def->prevTransformTic    = def->curTransformTic;
-		def->curTransformTic     = com_ticNumber;
-	}
-
-	def->parms = *re;
+					def->parms = *re;
 					return;
 				}
 			}

@@ -714,6 +714,21 @@ void RB_SubmittInteraction( drawInteraction_t *din, void (*DrawInteraction)(cons
 		|| ( ( din->specularColor[0] > 0 ||
 		din->specularColor[1] > 0 ||
 		din->specularColor[2] > 0 ) && din->specularImage != globalImages->blackImage ) ) {
+#ifdef HAVE_OPENGLES3
+		// Doom3Quest's overbright, which its GLES3 shaders are tuned for:
+		// r_brightness scales the diffuse light, 2*b - 1, never below 1.
+		// The GLES3 path has no other use for r_brightness. On a copy, as
+		// the interaction may be submitted again.
+		const float overbright = idMath::ClampFloat( 1.0f, 3.0f, r_brightness.GetFloat() * 2.0f - 1.0f );
+		if ( overbright != 1.0f ) {
+			drawInteraction_t bright = *din;
+			bright.diffuseColor[0] *= overbright;
+			bright.diffuseColor[1] *= overbright;
+			bright.diffuseColor[2] *= overbright;
+			DrawInteraction( &bright );
+			return;
+		}
+#endif
 		DrawInteraction( din );
 	}
 }

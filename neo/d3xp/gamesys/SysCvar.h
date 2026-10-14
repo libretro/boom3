@@ -209,6 +209,16 @@ extern idCVar	g_showBrass;
 extern idCVar	g_gun_x;
 extern idCVar	g_gun_y;
 extern idCVar	g_gun_z;
+
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+extern idCVar	vr_motionControls;
+extern idCVar	vr_weaponHand;
+extern idCVar	vr_weaponPitch;
+extern idCVar	vr_weaponGripX;
+extern idCVar	vr_weaponGripY;
+extern idCVar	vr_weaponGripZ;
+extern idCVar	vr_playerBodyMode;
+#endif
 extern idCVar	g_viewNodalX;
 extern idCVar	g_viewNodalZ;
 extern idCVar	g_fov;

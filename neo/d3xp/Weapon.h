@@ -117,6 +117,15 @@ public:
 
 	virtual void			SetModel( const char *modelname );
 	bool					GetGlobalJointTransform( bool viewModel, const jointHandle_t jointHandle, idVec3 &offset, idMat3 &axis );
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+	// where the view model's right hand is, in the model's axes: what a VR
+	// controller holds. False for a model with no hand joint.
+	bool					GetViewHandOffset( idVec3 &offset );
+	// the VR pack's models: the joint each hand of the player's body meets
+	// (0 right, 1 left), and where it rests in the model
+	jointHandle_t			weaponHandAttacher[2];
+	idVec3					weaponHandDefaultPos[2];
+#endif
 	void					SetPushVelocity( const idVec3 &pushVelocity );
 	bool					UpdateSkin( void );
 
@@ -291,6 +300,15 @@ private:
 	// zoom
 	int						zoomFov;			// variable zoom fov per weapon
 
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+	// the view model's right hand, measured once per model when it is first
+	// ready, so animations play around a hand that stays in the controller
+	const idRenderModel *	vrHandModel;
+	jointHandle_t			vrHandJoint;
+	idVec3					vrHandOffset;
+	bool					vrHandMeasured;
+#endif
+
 	// joints from models
 	jointHandle_t			barrelJointView;
 	jointHandle_t			flashJointView;
@@ -355,6 +373,10 @@ private:
 	void					Event_WeaponState( const char *statename, int blendFrames );
 	void					Event_SetWeaponStatus( float newStatus );
 	void					Event_WeaponReady( void );
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+	void					Event_IsMotionControlled( void );
+	void					Event_GetWeaponSkin( void );
+#endif
 	void					Event_WeaponOutOfAmmo( void );
 	void					Event_WeaponReloading( void );
 	void					Event_WeaponHolstered( void );
