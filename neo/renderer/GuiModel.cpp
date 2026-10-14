@@ -289,6 +289,15 @@ void idGuiModel::EmitFullScreen( void ) {
 	viewDef->worldSpace.modelViewMatrix[10] = 1.0f;
 	viewDef->worldSpace.modelViewMatrix[15] = 1.0f;
 
+#ifdef HAVE_OPENGLES3
+	// the GLES 3 shaders transform by model then view matrix separately,
+	// so the model matrix can't be left zeroed like the other paths allow
+	viewDef->worldSpace.modelMatrix[0] = 1.0f;
+	viewDef->worldSpace.modelMatrix[5] = 1.0f;
+	viewDef->worldSpace.modelMatrix[10] = 1.0f;
+	viewDef->worldSpace.modelMatrix[15] = 1.0f;
+#endif
+
 	viewDef->maxDrawSurfs = surfaces.Num();
 	viewDef->drawSurfs = (drawSurf_t **)R_FrameAlloc( viewDef->maxDrawSurfs * sizeof( viewDef->drawSurfs[0] ) );
 	viewDef->numDrawSurfs = 0;

@@ -770,4 +770,13 @@ static inline void qglDrawBuffer(GLenum) {}
 #define qglStencilOpSeparate     glStencilOpSeparate
 
 #endif // HAVE_OPENGLES
+
+#ifdef HAVE_OPENGLES3
+
+#ifndef GL_COMPRESSED_RGBA_ETC2_EAC
+#define GL_COMPRESSED_RGBA_ETC2_EAC 0x9278
+#endif
+
+#endif // HAVE_OPENGLES3
+
 #endif // __GLES_COMPAT_H__

@@ -956,6 +956,110 @@ void VR_GetEyeRenderView( int eye, const renderView_t *game, renderView_t *out, 
 	out->fov_y = RAD2DEG( 2.0f * atanf( Max( fovTan[2], fovTan[3] ) ) );
 }
 
+#ifdef HAVE_OPENGLES3
+/* GLES 3 draws both eyes in one pass with GL_OVR_multiview2: vr_tex[0] holds
+ * the eyes and vr_tex[2] the UI, each a 2-layer array (layer = eye), sharing
+ * the depth/stencil array vr_depth.  The renderer's programs are all 2-view,
+ * so the UI target has two layers as well; both get the same picture. */
+static GLuint vr_depth;
+static GLuint vr_read_fbo, vr_read_restore;   /* VR_BeginLayerRead */
+
+static void vr_destroy_targets( void ) {
+	for ( int i = 0; i < 3; i++ ) {
+		if ( vr_fbo[i] ) glDeleteFramebuffers( 1, &vr_fbo[i] );
+		if ( vr_tex[i] ) glDeleteTextures( 1, &vr_tex[i] );
+		vr_fbo[i] = vr_tex[i] = 0;
+	}
+	if ( vr_depth ) glDeleteTextures( 1, &vr_depth );
+	vr_depth = 0;
+	if ( vr_read_fbo ) glDeleteFramebuffers( 1, &vr_read_fbo );
+	vr_read_fbo = 0;
+}
+
+static void vr_clear_targets( void ) {
+	glDisable( GL_SCISSOR_TEST );
+	glColorMask( GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE );
+	for ( int i = 0; i < 3; i += 2 ) {
+		glBindFramebuffer( RARCH_GL_FRAMEBUFFER, vr_fbo[i] );   /* clears every view */
+		glClearColor( 0, 0, 0, i == 2 ? 0.0f : 1.0f );   /* UI starts transparent */
+		glClear( GL_COLOR_BUFFER_BIT );
+	}
+}
+
+static GLuint vr_make_array( GLenum format ) {
+	GLuint tex;
+	glGenTextures( 1, &tex );
+	glBindTexture( GL_TEXTURE_2D_ARRAY, tex );
+	glTexStorage3D( GL_TEXTURE_2D_ARRAY, 1, format, vr_eye_w, vr_eye_h, 2 );
+	glTexParameteri( GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
+	glTexParameteri( GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
+	glTexParameteri( GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
+	glTexParameteri( GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
+	glBindTexture( GL_TEXTURE_2D_ARRAY, 0 );
+	return tex;
+}
+
+static bool vr_ensure_targets( void ) {
+	if ( vr_fbo[0] && vr_tgt_w == vr_eye_w && vr_tgt_h == vr_eye_h ) return true;
+	vr_destroy_targets();   /* none yet, or made for another eye size */
+	if ( vr_targets_bad ) return false;
+	const char *ext = (const char *)glGetString( GL_EXTENSIONS );
+	if ( !glFramebufferTextureMultiviewOVR || !ext || !strstr( ext, "GL_OVR_multiview2" ) ) {
+		if ( log_cb ) log_cb( RETRO_LOG_ERROR, "[boom3] VR: GL_OVR_multiview2 is not available\n" );
+		vr_targets_bad = true;
+		return false;
+	}
+	vr_depth = vr_make_array( GL_DEPTH24_STENCIL8 );
+	for ( int i = 0; i < 3; i += 2 ) {
+		vr_tex[i] = vr_make_array( GL_RGBA8 );
+		glGenFramebuffers( 1, &vr_fbo[i] );
+		glBindFramebuffer( RARCH_GL_FRAMEBUFFER, vr_fbo[i] );
+		glFramebufferTextureMultiviewOVR( RARCH_GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, vr_tex[i], 0, 0, 2 );
+		glFramebufferTextureMultiviewOVR( RARCH_GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, vr_depth, 0, 0, 2 );
+		if ( glCheckFramebufferStatus( RARCH_GL_FRAMEBUFFER ) != GL_FRAMEBUFFER_COMPLETE ) {
+			if ( log_cb ) log_cb( RETRO_LOG_ERROR, "[boom3] VR: multiview target %d incomplete\n", i );
+			vr_destroy_targets();
+			vr_targets_bad = true;
+			return false;
+		}
+	}
+	vr_tgt_w = vr_eye_w;
+	vr_tgt_h = vr_eye_h;
+	vr_clear_targets();
+	return true;
+}
+
+void VR_BindTargetForView( int vrView ) {
+	if ( !vr_ensure_targets() ) return;
+	/* 3 is both eyes at once; 1 and 2 are not drawn separately here */
+	glBindFramebuffer( RARCH_GL_FRAMEBUFFER, vr_fbo[ vrView != 0 ? 0 : 2 ] );
+}
+
+/* Reads from a multiview framebuffer are errors, so point the read binding
+ * at one layer of whichever target is being drawn.  Not ours: left alone. */
+
+void VR_BeginLayerRead( int layer ) {
+	GLint draw = 0;
+	glGetIntegerv( GL_DRAW_FRAMEBUFFER_BINDING, &draw );
+	vr_read_restore = 0;
+	for ( int i = 0; i < 3; i += 2 ) {
+		if ( vr_fbo[i] && (GLuint)draw == vr_fbo[i] ) {
+			if ( !vr_read_fbo ) glGenFramebuffers( 1, &vr_read_fbo );
+			glBindFramebuffer( GL_READ_FRAMEBUFFER, vr_read_fbo );
+			glFramebufferTextureLayer( GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, vr_tex[i], 0, layer );
+			vr_read_restore = (GLuint)draw;
+			return;
+		}
+	}
+}
+
+void VR_EndLayerRead( void ) {
+	if ( vr_read_restore ) {
+		glBindFramebuffer( GL_READ_FRAMEBUFFER, vr_read_restore );
+		vr_read_restore = 0;
+	}
+}
+#else
 static void vr_destroy_targets( void ) {
 	for ( int i = 0; i < 3; i++ ) {
 		if ( vr_fbo[i] ) glDeleteFramebuffers( 1, &vr_fbo[i] );
@@ -1017,6 +1121,8 @@ void VR_BindTargetForView( int vrView ) {
 	if ( !vr_ensure_targets() ) return;
 	glBindFramebuffer( RARCH_GL_FRAMEBUFFER, vr_fbo[ vrView == 1 ? 0 : vrView == 2 ? 1 : 2 ] );
 }
+
+#endif
 
 /* Pixel rect of the head-locked HUD/menu screen inside one eye. A point straight
  * ahead at distance D is seen at +-(ipd/2)/D from each eye's forward axis. */
@@ -1150,6 +1256,123 @@ static void quad_draw( GLuint tex, bool blend )
 	glDisable( GL_BLEND );
 }
 
+#ifdef HAVE_OPENGLES3
+static GLuint vr_layer_prog = 0;
+static GLint  vr_layer_loc_tex = -1, vr_layer_loc_layer = -1;
+
+/* quad_draw for one layer of a 2D array texture */
+static void quad_draw_layer( GLuint tex, int layer, bool blend )
+{
+	glDisable( GL_DEPTH_TEST );
+	if ( blend ) {
+		glEnable( GL_BLEND );
+		glBlendFunc( GL_ONE, GL_ONE_MINUS_SRC_ALPHA );
+	}
+	else {
+		glDisable( GL_BLEND );
+	}
+	glDisable( GL_CULL_FACE );
+
+	if ( !vr_layer_prog ) {
+		static const char vs[] =
+			"#version 300 es\n"
+			"in vec2 aPos;\n"
+			"out vec2 vUV;\n"
+			"void main() {\n"
+			"  vUV = aPos * 0.5 + 0.5;\n"
+			"  gl_Position = vec4(aPos, 0.0, 1.0);\n"
+			"}\n";
+
+		static const char fs[] =
+			"#version 300 es\n"
+			"precision mediump float;\n"
+			"precision mediump sampler2DArray;\n"
+			"in vec2 vUV;\n"
+			"uniform sampler2DArray uTex;\n"
+			"uniform float uLayer;\n"
+			"out vec4 fragColor;\n"
+			"void main() { fragColor = texture(uTex, vec3(vUV, uLayer)); }\n";
+
+		GLuint v = hdr_compile( GL_VERTEX_SHADER, vs );
+		GLuint f = hdr_compile( GL_FRAGMENT_SHADER, fs );
+
+		if ( v && f ) {
+			vr_layer_prog = glCreateProgram();
+			glAttachShader( vr_layer_prog, v );
+			glAttachShader( vr_layer_prog, f );
+			glBindAttribLocation( vr_layer_prog, 0, "aPos" );
+			glLinkProgram( vr_layer_prog );
+			vr_layer_loc_tex   = glGetUniformLocation( vr_layer_prog, "uTex" );
+			vr_layer_loc_layer = glGetUniformLocation( vr_layer_prog, "uLayer" );
+		}
+
+		if ( v )
+			glDeleteShader( v );
+		if ( f )
+			glDeleteShader( f );
+	}
+
+	if ( vr_layer_prog ) {
+		static GLuint quadVbo = 0;
+		static const GLfloat quad[8] = { -1,-1,  1,-1,  -1,1,  1,1 };
+
+		if ( !quadVbo ) {
+			glGenBuffers( 1, &quadVbo );
+			glBindBuffer( GL_ARRAY_BUFFER, quadVbo );
+			glBufferData( GL_ARRAY_BUFFER, sizeof( quad ), quad, GL_STATIC_DRAW );
+		}
+
+		glUseProgram( vr_layer_prog );
+		glActiveTexture( GL_TEXTURE0 );
+		glBindTexture( GL_TEXTURE_2D_ARRAY, tex );
+		if ( vr_layer_loc_tex >= 0 )
+			glUniform1i( vr_layer_loc_tex, 0 );
+		if ( vr_layer_loc_layer >= 0 )
+			glUniform1f( vr_layer_loc_layer, (float)layer );
+
+		glBindBuffer( GL_ARRAY_BUFFER, quadVbo );
+		glBindBuffer( GL_ELEMENT_ARRAY_BUFFER, 0 );
+		glEnableVertexAttribArray( 0 );
+		glVertexAttribPointer( 0, 2, GL_FLOAT, GL_FALSE, 0, (const void *)0 );
+		glDrawArrays( GL_TRIANGLE_STRIP, 0, 4 );
+		glDisableVertexAttribArray( 0 );
+		glBindBuffer( GL_ARRAY_BUFFER, 0 );
+		glBindTexture( GL_TEXTURE_2D_ARRAY, 0 );
+		glUseProgram( 0 );
+	}
+
+	glDisable( GL_BLEND );
+}
+
+static void vr_present( GLuint dstFbo ) {
+	int eye, x, y, w, h;
+	if ( !vr_ensure_targets() ) return;
+	glBindFramebuffer( RARCH_GL_FRAMEBUFFER, dstFbo );
+	glDisable( GL_STENCIL_TEST );
+	glDepthMask( GL_FALSE );
+	glDisable( GL_SCISSOR_TEST );
+	glColorMask( GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE );
+	glClearColor( 0, 0, 0, 1 );
+	glClear( GL_COLOR_BUFFER_BIT );                       /* alpha = 1 for the compositor */
+	glColorMask( GL_TRUE, GL_TRUE, GL_TRUE, GL_FALSE );   /* leave it at 1 */
+	for ( eye = 0; eye < 2; eye++ ) {
+		glViewport( eye * vr_eye_w, 0, vr_eye_w, vr_eye_h );
+		quad_draw_layer( vr_tex[0], eye, false );
+	}
+	glEnable( GL_SCISSOR_TEST );
+	for ( eye = 0; eye < 2; eye++ ) {
+		vr_ui_rect( eye, &x, &y, &w, &h );
+		glScissor( eye * vr_eye_w, 0, vr_eye_w, vr_eye_h );
+		glViewport( eye * vr_eye_w + x, y, w, h );
+		quad_draw_layer( vr_tex[2], eye, true );
+	}
+	glDisable( GL_SCISSOR_TEST );
+	glColorMask( GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE );
+	glDepthMask( GL_TRUE );
+
+	vr_clear_targets();                                   /* next frame starts clean */
+}
+#else
 static void vr_present( GLuint dstFbo ) {
 	int eye, x, y, w, h;
 	if ( !vr_ensure_targets() ) return;
@@ -1178,6 +1401,8 @@ static void vr_present( GLuint dstFbo ) {
 
 	vr_clear_targets();                                   /* next frame starts clean */
 }
+
+#endif
 
 static bool vr_send_map( unsigned ew, unsigned eh, unsigned *rec_w, unsigned *rec_h ) {
 	struct retro_video_views views;
@@ -2098,6 +2323,12 @@ static void context_reset(void)
    vr_fbo[0] = vr_fbo[1] = vr_fbo[2] = vr_tex[0]= vr_tex[1] = vr_tex[2] = 0;
    vr_rbo = 0;
    vr_targets_bad = false;
+#ifdef HAVE_OPENGLES3
+   vr_depth = 0;
+   vr_read_fbo = vr_read_restore = 0;
+   vr_layer_prog = 0;
+   vr_layer_loc_tex = vr_layer_loc_layer = -1;
+#endif
 #endif
    /* The ACES 2.0 hue table is a GL object like the rest of these, and
     * was the one name this list did not clear.  A context reset

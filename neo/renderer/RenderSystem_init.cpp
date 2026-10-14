@@ -90,6 +90,11 @@ idCVar r_usePhong("r_usePhong", "1", CVAR_RENDERER | CVAR_BOOL, "use phong inste
 idCVar r_specularExponent("r_specularExponent", "3", CVAR_RENDERER | CVAR_FLOAT, "specular exponent, to be used in GLSL shaders" );
 #endif
 
+#ifdef HAVE_OPENGLES3
+idCVar r_usePBR("r_usePBR", "0", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARCHIVE, "0 = Phong shading, 1 = basic PBR shading, 2 = enhanced PBR shading" );
+idCVar r_specularExponentPBR("r_specularExponentPBR", "2", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE, "specular exponent, to be used in PBR shaders" );
+#endif
+
 idCVar r_useConstantMaterials( "r_useConstantMaterials", "1", CVAR_RENDERER | CVAR_BOOL, "use pre-calculated material registers if possible" );
 idCVar r_useSilRemap( "r_useSilRemap", "1", CVAR_RENDERER | CVAR_BOOL, "consider verts with the same XYZ, but different ST the same for shadows" );
 idCVar r_useNodeCommonChildren( "r_useNodeCommonChildren", "1", CVAR_RENDERER | CVAR_BOOL, "stop pushing reference bounds early when possible" );

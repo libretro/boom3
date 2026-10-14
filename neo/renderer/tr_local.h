@@ -393,6 +393,10 @@ typedef struct viewEntity_s {
 const int	MAX_CLIP_PLANES	= 1;				// we may expand this to six for some subview issues
 
 // viewDefs are allocated on the frame temporary stack memory
+#if defined(LIBRETRO) && defined(BOOM3_VR) && defined(HAVE_OPENGLES3)
+#define BOOM3_VR_MULTIVIEW	// both eyes in one pass, through GL_OVR_multiview2
+#endif
+
 typedef struct viewDef_s {
 	// specified in the call to DrawScene()
 	renderView_t		renderView;
@@ -457,9 +461,14 @@ typedef struct viewDef_s {
 	// when the light is behind a closed door.
 
 #if defined(LIBRETRO) && defined(BOOM3_VR)
-	int		vrView;			// 0 = not an eye view, 1 = left, 2 = right
+	int		vrView;			// 0 = not an eye view, 1 = left, 2 = right, 3 = both (multiview)
 	bool	vrProjection;	// build an asymmetric projection from vrFovTan
 	float	vrFovTan[4];	// left, right, up, down (positive tangents)
+#ifdef BOOM3_VR_MULTIVIEW
+	// vrView 3: projectionMatrix covers both eyes, these place each multiview layer
+	float	vrEyeViewMatrix[2][16];	// world to GL eye space
+	float	vrEyeClip[2][4];		// clip xy scale, then xy offset per unit w
+#endif
 #endif
 
 } viewDef_t;
@@ -892,6 +901,11 @@ extern idCVar r_checkBounds;			// compare all surface bounds with precalculated 
 #ifdef HAVE_OPENGLES
 extern idCVar r_usePhong;
 extern idCVar r_specularExponent;
+#endif
+
+#ifdef HAVE_OPENGLES3
+extern idCVar r_usePBR;
+extern idCVar r_specularExponentPBR;
 #endif
 
 extern idCVar r_useLightPortalFlow;		// 1 = do a more precise area reference determination
@@ -1471,13 +1485,19 @@ typedef struct shaderProgram_s {
 	GLint		alphaTest;
 	GLint		specularExponent;
 
+	GLint		modelMatrix;
+
+	//New for multiview - The view and projection matrix uniforms
+	GLuint		projectionMatrixBinding;
+	GLuint		viewMatricesBinding;
+
 	GLint		modelViewProjectionMatrix;
-  GLint		modelViewMatrix;
+  	GLint		modelViewMatrix;
 	GLint		textureMatrix;
 	GLint		localLightOrigin;
 	GLint		localViewOrigin;
 
-  GLint		lightProjection;
+  	GLint		lightProjection;
 
 	GLint		bumpMatrixS;
 	GLint		bumpMatrixT;
@@ -1493,7 +1513,7 @@ typedef struct shaderProgram_s {
 	GLint		hdrParms;	// x..z brightness, w = 1/gamma (negative selects the luminance-aware clamp)
 	GLint		fogColor;
 
-  GLint		fogMatrix;
+  	GLint		fogMatrix;
 
 	GLint		clipPlane;
 
