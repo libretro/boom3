@@ -187,7 +187,7 @@ else ifneq (,$(findstring android,$(platform)))
    TARGET := $(TARGET_NAME)_libretro_android.so
    fpic := -fPIC
    SHARED := -shared -Wl,--version-script=$(CORE_DIR)/link.T -Wl,--no-undefined
-   LIBS := -ldl
+   LIBS := -ldl -llog
    GL_LIB := -lGLESv2
    CFLAGS += -DHAVE_OPENGLES
    CXXFLAGS += -DHAVE_OPENGLES
@@ -438,16 +438,24 @@ CXXFLAGS   += $(INCFLAGS)
 
 # Objects built with one set of flags (GLES_VER, HAVE_VR, platform, ...) can't
 # be linked with another, so every object depends on this record of the
-# compile command, rewritten only when the flags change.
+# compile command - a checksum of it - rewritten only when the flags change.
+# Through $(shell), not $(file): macOS ships GNU make 3.81, which has no
+# $(file) and silently never wrote the stamp.
 FLAGS_STAMP := $(CORE_DIR)/.build_flags
 BUILD_FLAGS := $(CC) | $(CXX) | $(CFLAGS) | $(CXXFLAGS) | $(fpic)
-ifneq ($(BUILD_FLAGS),$(file < $(FLAGS_STAMP)))
-$(file > $(FLAGS_STAMP),$(BUILD_FLAGS))
+BUILD_FLAGS_SUM := $(shell printf '%s' '$(subst ','\'',$(BUILD_FLAGS))' | cksum)
+ifneq ($(BUILD_FLAGS_SUM),$(shell cat '$(FLAGS_STAMP)' 2>/dev/null))
+$(shell printf '%s\n' '$(BUILD_FLAGS_SUM)' > '$(FLAGS_STAMP)')
 endif
 
 all: $(TARGET)
 
 $(OBJECTS): $(FLAGS_STAMP)
+
+# Written above while the makefile is read; this only keeps a stamp that
+# could not be written from stopping the build.
+$(FLAGS_STAMP):
+	@printf '%s\n' '$(BUILD_FLAGS_SUM)' > '$@'
 
 $(TARGET): $(OBJECTS)
 ifeq ($(STATIC_LINKING), 1)
@@ -456,14 +464,19 @@ else
 	$(CXX) $(fpic) $(SHARED) -o $@ $(OBJECTS) $(LDFLAGS) $(GL_LIB) $(LIBS)
 endif
 
+# -MMD writes each object's headers to a .d beside it, so a header change
+# rebuilds every object that includes it: a class whose layout changes in a
+# header, with only some objects rebuilt, is memory corruption.
 %.o: $(CORE_DIR)/%.cpp
-	$(CXX) $(CFLAGS) $(CXXFLAGS) $(fpic) -c -o $@ $<
+	$(CXX) $(CFLAGS) $(CXXFLAGS) $(fpic) -MMD -MP -c -o $@ $<
 
 %.o: $(CORE_DIR)/%.c
-	$(CC) $(CFLAGS) -std=gnu11 $(fpic) -c -o $@ $<
+	$(CC) $(CFLAGS) -std=gnu11 $(fpic) -MMD -MP -c -o $@ $<
+
+-include $(OBJECTS:.o=.d)
 
 clean:
-	rm -f $(OBJECTS) $(TARGET) $(FLAGS_STAMP)
+	rm -f $(OBJECTS) $(OBJECTS:.o=.d) $(TARGET) $(FLAGS_STAMP)
 
 .PHONY: clean
 

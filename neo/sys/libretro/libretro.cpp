@@ -63,6 +63,9 @@ extern "C" {
 #include "libretro_core_options.h"
 
 #include <locale.h>
+#if defined(__ANDROID__)
+#include <android/log.h>
+#endif
 
 #include <glsm/glsm.h>
 
@@ -137,6 +140,10 @@ bool initial_resolution_set = false;
 static bool libretro_shared_context = false;
 
 int framerate = 60;
+/* doom_framerate "auto", and doom_unlocked_framerate "fixed" (the simulation
+ * tick is then the frame rate, which only a restart may move) */
+static bool framerate_auto = false;
+static bool framerate_fixed_tick = false;
 int scr_width = 1920, scr_height = 1080;
 
 char g_rom_dir[1024], g_pak_path[1024], g_save_dir[1024];
@@ -684,6 +691,11 @@ static idCVar vr_uiWidth( "vr_uiWidth", "1.5", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR
 static struct retro_vr_eye_state vr_eye[2] = {
 	{ { -0.032f, 0, 0 }, { 0, 0, 0, 1 }, { 1, 1, 1, 1 } },
 	{ {  0.032f, 0, 0 }, { 0, 0, 0, 1 }, { 1, 1, 1, 1 } } };
+static struct retro_vr_controller_poses vr_hands;   /* this frame's, cleared without */
+/* The menu or a loading screen is up: the frame is the UI alone, sent as a
+ * screen the frontend places in the world, not as the head-tracked eyes.
+ * Decided once a frame, before the map, so the map and the frame agree. */
+static bool   vr_screen_mode;
 static bool   vr_recenter_req = true;
 static idVec3 vr_ref_pos;     /* Doom axes, metres */
 static float  vr_ref_yaw;
@@ -817,6 +829,53 @@ gp_layout_t classic_alt = {
    },
 };
 
+#ifdef BOOM3_VR
+/* Doom3Quest's defaults, for the headset's controllers as RetroArch hands
+ * them over (Touch: right A/B are B/A, left X/Y are Y/X, grips L/R,
+ * triggers L2/R2). The right stick turns and changes weapon: vr_stick(). */
+gp_layout_t vr_quest = {
+   {
+      { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT,  "D-Pad Left" },
+      { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_UP,    "D-Pad Up" },
+      { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_DOWN,  "D-Pad Down" },
+      { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_RIGHT, "D-Pad Right" },
+      { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_B,     "Crouch" },
+      { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_A,     "Jump" },
+      { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_Y,     "PDA" },
+      { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_X,     "Artifact / Soul Cube" },
+      { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R,     "Reload" },
+      { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L2,    "Run" },
+      { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R2,    "Fire" },
+      { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L3,    "Flashlight" },
+      { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_SELECT,"Show Scores" },
+      { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_START, "Menu" },
+      { 0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_X, "Turn" },
+      { 0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_Y, "Previous / Next Weapon" },
+      { 0 },
+   },
+   {
+      { "JOY_DPAD_LEFT",     "_moveLeft"   },
+      { "JOY_DPAD_RIGHT",    "_moveRight"  },
+      { "JOY_DPAD_DOWN",     "_back"       },
+      { "JOY_DPAD_UP",       "_forward"    },
+      { "JOY_BTN_SOUTH",     "_moveDown"   },  // B (right A) = Crouch
+      { "JOY_BTN_EAST",      "_moveUp"     },  // A (right B) = Jump
+      { "JOY_BTN_NORTH",     "_impulse19"  },  // Y (left X) = PDA
+      { "JOY_BTN_WEST",      "_impulse42"  },  // X (left Y) = Artifact / Soul Cube
+      { "JOY_BTN_RSHOULDER", "_impulse13"  },  // R (right grip) = Reload
+      { "JOY_TRIGGER1",      "_speed"      },  // L2 = Run
+      { "JOY_TRIGGER2",      "_attack"     },  // R2 = Fire
+      { "JOY_BTN_LSTICK",    "_impulse41"  },  // L3 = Flashlight
+      { "JOY_BTN_BACK",      "_showscores" },
+      { "JOY_BTN_START",     "_escape"     },
+      { 0 },
+   },
+};
+
+static idCVar vr_turnmode( "vr_turnmode", "0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL, "VR right stick: 0 snap turn, 1 smooth turn" );
+static idCVar vr_turnangle( "vr_turnangle", "45", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_INTEGER, "VR snap turn in degrees; a smooth turn goes a ninth of it each frame" );
+#endif
+
 static retro_hw_context_type get_hw_context_type(void)
 {
 #ifdef HAVE_OPENGLES
@@ -871,6 +930,14 @@ static void vr_eye_pose_doom( const retro_vr_eye_state &e, idVec3 &pos, idMat3 &
 	pos  = vr_conv( e.position[0], e.position[1], e.position[2] );
 }
 
+/* An OpenXR pose (-Z forward, +Y up) in Doom axes, as an eye's. */
+static void vr_pose_doom( const struct retro_vr_pose &p, idVec3 &pos, idMat3 &axis ) {
+	struct retro_vr_eye_state e;
+	memcpy( e.position, p.position, sizeof( e.position ) );
+	memcpy( e.orientation, p.orientation, sizeof( e.orientation ) );
+	vr_eye_pose_doom( e, pos, axis );
+}
+
 static void vr_head_pose_doom( const retro_vr_head_pose &h, idVec3 &pos, idMat3 &axis ) {
 	const float x = h.orientation[0], y = h.orientation[1];
 	const float z = h.orientation[2], w = h.orientation[3];
@@ -910,6 +977,10 @@ static bool vr_poll( void ) {
 			vr_eye[e].fov_tan[k] = fabsf( vr_eye[e].fov_tan[k] );
 
 	const bool resized = ( fs.flags & RETRO_VR_FRAME_TARGET_RESIZED ) != 0;
+
+	/* the hands are sampled with the eyes; a frontend without them, none */
+	if ( !environ_cb( RETRO_ENVIRONMENT_GET_VR_CONTROLLER_POSES, &vr_hands ) )
+		memset( &vr_hands, 0, sizeof( vr_hands ) );
 
 	retro_vr_head_pose head;
 	memset( &head, 0, sizeof( head ) );
@@ -954,6 +1025,59 @@ void VR_GetEyeRenderView( int eye, const renderView_t *game, renderView_t *out, 
 	memcpy( fovTan, vr_eye[eye].fov_tan, 4 * sizeof( float ) );
 	out->fov_x = RAD2DEG( 2.0f * atanf( Max( fovTan[0], fovTan[1] ) ) );   /* conservative cull cover */
 	out->fov_y = RAD2DEG( 2.0f * atanf( Max( fovTan[2], fovTan[3] ) ) );
+}
+
+/* A hand: tracked by the headset, no controller. */
+static bool vr_hand_bare( const struct retro_vr_hand_state &h ) {
+	const uint32_t need = RETRO_VR_POSE_ORIENTATION_VALID | RETRO_VR_POSE_POSITION_VALID;
+	if ( !( h.flags & RETRO_VR_HAND_ACTIVE ) || !( h.flags & RETRO_VR_HAND_JOINTS ) )
+		return false;
+	return ( h.flags & RETRO_VR_HAND_JOINTS_OPTICAL ) || ( h.grip.flags & need ) != need;
+}
+
+/* A bare hand's grip. */
+static bool vr_hand_joint_grip( const struct retro_vr_hand_state &h, bool left, struct retro_vr_pose &out ) {
+	const uint32_t need = RETRO_VR_POSE_ORIENTATION_VALID | RETRO_VR_POSE_POSITION_VALID;
+	const struct retro_vr_pose &palm = h.joints[ RETRO_VR_HAND_JOINT_PALM ].pose;
+	if ( ( palm.flags & need ) != need )
+		return false;
+	/* q * r, r a quarter turn about the joint's Z: +90 degrees on the
+	 * right (new +X = +Y, new +Y = -X), -90 on the left (new +X = -Y,
+	 * new +Y = +X).  r = (0, 0, sin(t/2), cos(t/2)) as (x, y, z, w). */
+	const float x = palm.orientation[0], y = palm.orientation[1];
+	const float z = palm.orientation[2], w = palm.orientation[3];
+	const float k = 0.70710678f;
+	const float sz = left ? -k : k;
+	out = palm;
+	out.orientation[0] = k * x + sz * y;
+	out.orientation[1] = k * y - sz * x;
+	out.orientation[2] = k * z + sz * w;
+	out.orientation[3] = k * w - sz * z;
+	return true;
+}
+
+bool VR_GetHandPose( int hand, bool aim, const idVec3 &viewOrigin, const idMat3 &viewAxis,
+		idVec3 &origin, idMat3 &axis ) {
+	const uint32_t need = RETRO_VR_POSE_ORIENTATION_VALID | RETRO_VR_POSE_POSITION_VALID;
+	/* libretro numbers the hands left first */
+	const struct retro_vr_hand_state &h = vr_hands.hands[ hand ? RETRO_VR_HAND_LEFT : RETRO_VR_HAND_RIGHT ];
+	struct retro_vr_pose bare;
+	const struct retro_vr_pose *p = aim ? &h.aim : &h.grip;
+	if ( !vr_active || !( h.flags & RETRO_VR_HAND_ACTIVE ) )
+		return false;
+	if ( ( p->flags & need ) != need ) {
+		if ( !vr_hand_bare( h ) || !vr_hand_joint_grip( h, hand != 0, bare ) )
+			return false;
+		p = &bare;
+	}
+
+	idVec3 pos; idMat3 a;
+	vr_pose_doom( *p, pos, a );
+	const float d = atan2f( viewAxis[0].y, viewAxis[0].x ) - vr_ref_yaw;
+	const float c = cosf( d ), s = sinf( d );
+	origin = viewOrigin + vr_rotz( ( pos - vr_ref_pos ) * vr_scale.GetFloat(), c, s );
+	axis   = idMat3( vr_rotz( a[0], c, s ), vr_rotz( a[1], c, s ), vr_rotz( a[2], c, s ) );
+	return true;
 }
 
 #ifdef HAVE_OPENGLES3
@@ -1053,6 +1177,18 @@ void VR_BeginLayerRead( int layer ) {
 	}
 }
 
+void VR_BeginSceneRead( void ) {
+	GLint read = 0;
+	vr_read_restore = 0;
+	if ( !vr_fbo[0] || !vr_tex[0] )
+		return;
+	glGetIntegerv( GL_READ_FRAMEBUFFER_BINDING, &read );
+	if ( !vr_read_fbo ) glGenFramebuffers( 1, &vr_read_fbo );
+	glBindFramebuffer( GL_READ_FRAMEBUFFER, vr_read_fbo );
+	glFramebufferTextureLayer( GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, vr_tex[0], 0, 0 );
+	vr_read_restore = read ? (GLuint)read : vr_fbo[0];
+}
+
 void VR_EndLayerRead( void ) {
 	if ( vr_read_restore ) {
 		glBindFramebuffer( GL_READ_FRAMEBUFFER, vr_read_restore );
@@ -1140,11 +1276,48 @@ static void vr_ui_rect( int eye, int *x, int *y, int *w, int *h ) {
 	*y = (int)( ( -hh + t[3] ) * sy );       *h = (int)( 2.0f * hh * sy );
 }
 
-static void quad_draw( GLuint tex, bool blend )
+#ifdef BOOM3_VR
+/* The game's screen fade, for the eyes: VR_SetScreenFade. */
+static float vr_fade[4];
+
+void VR_SetScreenFade( const float rgba[4] ) {
+	for ( int i = 0; i < 4; i++ )
+		vr_fade[i] = rgba[i];
+	if ( vr_fade[3] > 1.0f ) vr_fade[3] = 1.0f;
+}
+
+/* Fills the eye with the fade's premultiplied colour and gives the share
+ * of the picture to keep; -1 with no fade. */
+static float vr_fade_eye( int eye ) {
+	const float a = vr_fade[3];
+	if ( a <= 0.0f )
+		return -1.0f;
+	glEnable( GL_SCISSOR_TEST );
+	glScissor( eye * vr_eye_w, 0, vr_eye_w, vr_eye_h );
+	glClearColor( vr_fade[0] * a, vr_fade[1] * a, vr_fade[2] * a, 1.0f );
+	glClear( GL_COLOR_BUFFER_BIT );
+	glDisable( GL_SCISSOR_TEST );
+	return 1.0f - a;
+}
+
+/* The game sets it again each frame it fades. */
+static void vr_fade_done( void ) {
+	vr_fade[3] = 0.0f;
+}
+#endif
+
+/* keep >= 0: the eyes under a screen fade - the target already holds the
+ * fade's premultiplied colour, and the picture adds in at keep (1 - alpha). */
+static void quad_draw( GLuint tex, bool blend, float keep = -1.0f )
 {
 	glDisable( GL_DEPTH_TEST );
 
-	if ( blend ) {
+	if ( keep >= 0.0f ) {
+		glEnable( GL_BLEND );
+		glBlendColor( 0, 0, 0, keep );
+		glBlendFunc( GL_CONSTANT_ALPHA, GL_ONE );
+	}
+	else if ( blend ) {
 		glEnable( GL_BLEND );
 		glBlendFunc( GL_ONE, GL_ONE_MINUS_SRC_ALPHA );
 	}
@@ -1261,10 +1434,15 @@ static GLuint vr_layer_prog = 0;
 static GLint  vr_layer_loc_tex = -1, vr_layer_loc_layer = -1;
 
 /* quad_draw for one layer of a 2D array texture */
-static void quad_draw_layer( GLuint tex, int layer, bool blend )
+static void quad_draw_layer( GLuint tex, int layer, bool blend, float keep = -1.0f )
 {
 	glDisable( GL_DEPTH_TEST );
-	if ( blend ) {
+	if ( keep >= 0.0f ) {
+		glEnable( GL_BLEND );
+		glBlendColor( 0, 0, 0, keep );
+		glBlendFunc( GL_CONSTANT_ALPHA, GL_ONE );
+	}
+	else if ( blend ) {
 		glEnable( GL_BLEND );
 		glBlendFunc( GL_ONE, GL_ONE_MINUS_SRC_ALPHA );
 	}
@@ -1355,10 +1533,20 @@ static void vr_present( GLuint dstFbo ) {
 	glClearColor( 0, 0, 0, 1 );
 	glClear( GL_COLOR_BUFFER_BIT );                       /* alpha = 1 for the compositor */
 	glColorMask( GL_TRUE, GL_TRUE, GL_TRUE, GL_FALSE );   /* leave it at 1 */
+	if ( vr_screen_mode ) {
+		/* the UI alone, the whole of the map's one view */
+		glViewport( 0, 0, vr_eye_w, vr_eye_h );
+		quad_draw_layer( vr_tex[2], 0, true );
+		glColorMask( GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE );
+		glDepthMask( GL_TRUE );
+		vr_clear_targets();
+		return;
+	}
 	for ( eye = 0; eye < 2; eye++ ) {
 		glViewport( eye * vr_eye_w, 0, vr_eye_w, vr_eye_h );
-		quad_draw_layer( vr_tex[0], eye, false );
+		quad_draw_layer( vr_tex[0], eye, false, vr_fade_eye( eye ) );
 	}
+	vr_fade_done();
 	glEnable( GL_SCISSOR_TEST );
 	for ( eye = 0; eye < 2; eye++ ) {
 		vr_ui_rect( eye, &x, &y, &w, &h );
@@ -1384,10 +1572,20 @@ static void vr_present( GLuint dstFbo ) {
 	glClearColor( 0, 0, 0, 1 );
 	glClear( GL_COLOR_BUFFER_BIT );                       /* alpha = 1 for the compositor */
 	glColorMask( GL_TRUE, GL_TRUE, GL_TRUE, GL_FALSE );   /* leave it at 1 */
+	if ( vr_screen_mode ) {
+		/* the UI alone, the whole of the map's one view */
+		glViewport( 0, 0, vr_eye_w, vr_eye_h );
+		quad_draw( vr_tex[2], true );
+		glColorMask( GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE );
+		glDepthMask( GL_TRUE );
+		vr_clear_targets();
+		return;
+	}
 	for ( eye = 0; eye < 2; eye++ ) {
 		glViewport( eye * vr_eye_w, 0, vr_eye_w, vr_eye_h );
-		quad_draw( vr_tex[eye], false );
+		quad_draw( vr_tex[eye], false, vr_fade_eye( eye ) );
 	}
+	vr_fade_done();
 	glEnable( GL_SCISSOR_TEST );
 	for ( eye = 0; eye < 2; eye++ ) {
 		vr_ui_rect( eye, &x, &y, &w, &h );
@@ -1422,6 +1620,15 @@ static bool vr_send_map( unsigned ew, unsigned eh, unsigned *rec_w, unsigned *re
 	views.views           = view;
 	views.num_views       = 2;
 	views.flags           = RETRO_VIDEO_VIEWS_FLAG_TRACKED;
+	if ( vr_screen_mode ) {
+		/* a screen, which the frontend puts in the world: the menu and the
+		 * loading screens stay put while the head moves.  The UI is drawn
+		 * in the 640x480 virtual space, so it is shown 4:3. */
+		view[0].eye          = RETRO_VIDEO_VIEW_EYE_NONE;
+		view[0].aspect_ratio = 4.0f / 3.0f;
+		views.num_views      = 1;
+		views.flags          = 0;
+	}
 	views.reference_space = RETRO_VR_REFERENCE_SPACE_LOCAL;
 
 	if ( !environ_cb( RETRO_ENVIRONMENT_SET_VIDEO_VIEWS, &views ) )
@@ -1529,6 +1736,42 @@ static bool  vr_blocked_logged;
 static int   vr_flat_w, vr_flat_h;
 static idStr vr_flat_clear;
 
+static void vr_controls_apply( void );
+
+/* An auto frame rate follows the rate the frontend targets.  A headset runs
+ * the core once a display frame at its own refresh, which is only known once
+ * its session runs, after the game loaded: a core at the flat screen's rate
+ * then makes too much audio a second, which crackles, and runs fast.  The
+ * output clock and the tic schedule both carry on through a change, so the
+ * rate moves with VR.  Asked only as VR starts and stops, never per frame:
+ * the timing sent with a change restarts the frontend's video and with it
+ * the headset's session, which reports no rate until it runs again - a
+ * per-frame follower bounces between the two rates, restarting each time.
+ * True when it changed: the caller sends the timing. */
+static bool framerate_follow_target( void ) {
+	float hz = 0.0f;
+	unsigned fps;
+
+	if ( !framerate_auto || framerate_fixed_tick )
+		return false;
+	if ( !environ_cb( RETRO_ENVIRONMENT_GET_TARGET_REFRESH_RATE, &hz ) || hz < 1.0f )
+		return false;
+	fps = (unsigned)( hz + 0.5f );
+	if ( fps < AUDIO_MIN_FRAMERATE )
+		fps = AUDIO_MIN_FRAMERATE;
+	else if ( fps > 240 )
+		fps = 240;
+	if ( fps == (unsigned)framerate )
+		return false;
+
+	if ( log_cb )
+		log_cb( RETRO_LOG_INFO, "[boom3] frame rate %d -> %u Hz, as the frontend targets\n", framerate, fps );
+	framerate = (int)fps;
+	Core_SetFramerate( framerate );
+	Com_SetFrameSchedule( framerate );
+	return true;
+}
+
 static void vr_enter( void ) {
 	vr_flat_w     = scr_width;
 	vr_flat_h     = scr_height;
@@ -1543,12 +1786,16 @@ static void vr_enter( void ) {
 	vr_targets_bad = false;
 	vr_set_screen( vr_eye_w, vr_eye_h, 1 );
 	vr_active = true;
+	vr_controls_apply();
+	framerate_follow_target();   /* the timing goes with the AV info that follows */
 	if ( log_cb )
 		log_cb( RETRO_LOG_INFO, "[boom3] VR active: %ux%u per eye\n", vr_eye_w, vr_eye_h );
 }
 
 static void vr_leave( void ) {
 	vr_active = false;
+	vr_controls_apply();
+	framerate_follow_target();   /* back to the flat screen's; vr_send_av_info below */
 	vr_clear_map();
 	vr_gl_begin();
 	vr_destroy_targets();
@@ -1569,6 +1816,9 @@ static void vr_update( bool *dupe ) {
 	bool hmd;
 
 	*dupe = false;
+	vr_screen_mode = sessLocal.mapLoadPhase != idSessionLocal::LOAD_IDLE
+		|| sessLocal.insideExecuteMapChange
+		|| ( sessLocal.guiActive != NULL && sessLocal.guiActive == sessLocal.guiMainMenu );
 	/* Asked once on a frontend without the call: it logs every refusal. */
 	if ( !vr_status_unsupported
 			&& !environ_cb( RETRO_ENVIRONMENT_GET_VIDEO_VIEWS_STATUS, &status ) ) {
@@ -1819,7 +2069,8 @@ static void update_variables(bool startup)
 	{
 		if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
 		{
-			if (!strcmp(var.value, "auto"))
+			framerate_auto = !strcmp(var.value, "auto");
+			if (framerate_auto)
 			{
 				float target_framerate = 0.0f;
 				if (!environ_cb(RETRO_ENVIRONMENT_GET_TARGET_REFRESH_RATE, &target_framerate))
@@ -1855,8 +2106,9 @@ static void update_variables(bool startup)
 		{
 			struct retro_variable uf = { "doom_unlocked_framerate", NULL };
 			int tick = CONTENT_AUTHORED_HZ;
-			if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &uf) && uf.value
-					&& !strcmp(uf.value, "fixed"))
+			framerate_fixed_tick = environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &uf) && uf.value
+					&& !strcmp(uf.value, "fixed");
+			if (framerate_fixed_tick)
 				tick = (int)framerate;
 			Usercmd_SetRate(tick);
 			if (log_cb)
@@ -2490,7 +2742,7 @@ main
  * fs_game: unset for Doom 3, "d3xp" for RoE. Selected automatically from
  * the content's directory name, overridable with the doom_game core option. */
 static int fake_argc = 0;
-static char *fake_argv[8] = { nullptr };
+static char *fake_argv[16] = { nullptr };
 
 static char game_base_arg[1024];
 
@@ -2519,6 +2771,16 @@ static void set_game_args(bool roe, const char *content_dir_name)
 		fake_argv[fake_argc++] = (char *)"fs_gamedirname";
 		fake_argv[fake_argc++] = game_base_arg;
 	}
+
+#if defined(BOOM3_VR)
+	/* The VR replacement pack (Doom3Quest's arms, weapons and their scripts)
+	 * mounts with the file system, so it follows the option at load. */
+	if (vr_user_enable) {
+		fake_argv[fake_argc++] = (char *)"+set";
+		fake_argv[fake_argc++] = (char *)"fs_vr";
+		fake_argv[fake_argc++] = (char *)"1";
+	}
+#endif
 
 	fake_argv[fake_argc] = nullptr;
 }
@@ -2894,6 +3156,107 @@ void Sys_SetKeys(){
 	}
 }
 
+#ifdef BOOM3_VR
+/* The right stick in VR, as Doom3Quest has it: sideways turns, by
+ * vr_turnangle at a flick or a ninth of it each frame held, and up or down
+ * flicks to the previous or next weapon. */
+static void vr_stick( int x, int y )
+{
+   static bool turned = false, switched = false;
+   static float carry = 0.0f;
+   const float fx = x / 32768.0f;
+   const float fy = -y / 32768.0f;   /* up positive */
+   float turn     = 0.0f;
+
+   if ( fx > 0.7f || fx < -0.7f ) {
+      const float side = fx > 0.0f ? 1.0f : -1.0f;
+      if ( vr_turnmode.GetBool() )
+         turn = side * vr_turnangle.GetFloat() / 9.0f;
+      else if ( !turned )
+         turn = side * vr_turnangle.GetFloat();
+      turned = true;
+   } else if ( fx < 0.2f && fx > -0.2f )
+      turned = false;
+
+   if ( turn != 0.0f ) {
+      /* as mouse counts: the user command turns m_yaw * sensitivity per count */
+      const float perCount = cvarSystem->GetCVarFloat( "m_yaw" ) * cvarSystem->GetCVarFloat( "sensitivity" );
+      if ( perCount > 0.0f ) {
+         const float invYaw = ( cvarSystem->GetCVarInteger( "m_invertLook" ) & 2 ) ? -1.0f : 1.0f;
+         const float counts = turn * invYaw / perCount + carry;
+         const int n = (int)counts;
+         carry = counts - n;
+         if ( n )
+            Mouse_Event( n, 0 );
+      }
+   }
+
+   if ( fx < 0.2f && fx > -0.2f && ( fy > 0.6f || fy < -0.6f ) ) {
+      if ( !switched ) {
+         const int key = fy > 0.0f ? K_AUX11 : K_AUX12;
+         Key_Event( key, 1 );
+         Key_Event( key, 0 );
+         switched = true;
+      }
+   } else if ( fy < 0.2f && fy > -0.2f )
+      switched = false;
+}
+#endif
+
+#ifdef BOOM3_VR
+static idCVar vr_fingerFire( "vr_fingerFire", "1", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL,
+	"VR: with no controller in the weapon hand, bending its index finger fires" );
+static idCVar vr_fingerFireOn( "vr_fingerFireOn", "70", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_FLOAT,
+	"VR finger trigger: degrees the index finger bends, summed over its three knuckles, to fire" );
+static idCVar vr_fingerFireOff( "vr_fingerFireOff", "45", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_FLOAT,
+	"VR finger trigger: degrees the index finger straightens back to, to let go" );
+
+/* The index finger's bend: the angles between its four bones, summed.
+ * Straight is near 0, a trigger squeeze around 90, a fist past 200.
+ * Negative when a joint is not tracked. */
+static float vr_index_bend( const struct retro_vr_hand_state &h ) {
+	static const int chain[5] = {
+		RETRO_VR_HAND_JOINT_INDEX_METACARPAL, RETRO_VR_HAND_JOINT_INDEX_PROXIMAL,
+		RETRO_VR_HAND_JOINT_INDEX_INTERMEDIATE, RETRO_VR_HAND_JOINT_INDEX_DISTAL,
+		RETRO_VR_HAND_JOINT_INDEX_TIP };
+	idVec3 pt[5], bone[4];
+	float bend = 0.0f;
+	for ( int i = 0; i < 5; i++ ) {
+		const struct retro_vr_pose &p = h.joints[ chain[i] ].pose;
+		if ( !( p.flags & RETRO_VR_POSE_POSITION_VALID ) )
+			return -1.0f;
+		pt[i].Set( p.position[0], p.position[1], p.position[2] );
+	}
+	for ( int i = 0; i < 4; i++ ) {
+		bone[i] = pt[i + 1] - pt[i];
+		if ( bone[i].Normalize() <= 0.0f )
+			return -1.0f;
+	}
+	for ( int i = 0; i < 3; i++ )
+		bend += RAD2DEG( idMath::ACos( idMath::ClampFloat( -1.0f, 1.0f, bone[i] * bone[i + 1] ) ) );
+	return bend;
+}
+
+/* index finger is the trigger when no controller in hands */
+static void vr_finger_fire( bool in_game ) {
+	static bool held = false;
+	bool fire = false;
+	if ( in_game && vr_fingerFire.GetBool() ) {
+		const int hand = cvarSystem->GetCVarInteger( "vr_weaponHand" );
+		const struct retro_vr_hand_state &h = vr_hands.hands[ hand ? RETRO_VR_HAND_LEFT : RETRO_VR_HAND_RIGHT ];
+		if ( vr_hand_bare( h ) ) {
+			const float bend = vr_index_bend( h );
+			if ( bend >= 0.0f )
+				fire = held ? bend > vr_fingerFireOff.GetFloat() : bend > vr_fingerFireOn.GetFloat();
+		}
+	}
+	if ( fire != held ) {
+		Key_Event( K_AUX13, fire ? 1 : 0 );
+		held = fire;
+	}
+}
+#endif
+
 void Sys_SetMouse() {
     int rsx, rsy;
     int slowdown = 1024 * (framerate / 60.0f);
@@ -2918,6 +3281,16 @@ void Sys_SetMouse() {
 
     if (doom_devices[0] == RETRO_DEVICE_KEYBOARD)
         return;
+
+#ifdef BOOM3_VR
+    vr_finger_fire(vr_active && sessLocal.guiActive == NULL);
+    /* in game; the menus keep the stick as their cursor */
+    if (vr_active && sessLocal.guiActive == NULL) {
+        vr_stick(input_cb(0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_X),
+                 input_cb(0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_Y));
+        return;
+    }
+#endif
 
     // Right stick look for gamepad modes
     rsx = input_cb(0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT,
@@ -3322,6 +3695,31 @@ bool retro_load_game(const struct retro_game_info *info)
 	extract_directory(g_rom_dir, g_rom_dir, sizeof(g_rom_dir));
 	BUILD_DATADIR = g_rom_dir;
 
+#if defined(BOOM3_VR)
+	/* VR's hands come from the pack beside the game data (fs_vr) */
+	if (vr_user_enable) {
+		char vr_pak[1024];
+		fill_pathname_join(vr_pak, g_rom_dir, "base_vr", sizeof(vr_pak));
+		fill_pathname_join(vr_pak, vr_pak, "pak399.pk4", sizeof(vr_pak));
+		if (!path_is_valid(vr_pak)) {
+			const char *text = "Additional required models for hands missing, download from https://github.com/libretro/boom3";
+			struct retro_message_ext message = {
+				text,
+				10000,
+				3, // priority
+				RETRO_LOG_WARN,
+				RETRO_MESSAGE_TARGET_ALL,
+				RETRO_MESSAGE_TYPE_NOTIFICATION,
+				-1 // progress
+			};
+
+			environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE_EXT, &message);
+			if (log_cb)
+				log_cb(RETRO_LOG_WARN, "[boom3] VR: %s not found. %s\n", vr_pak, text);
+		}
+	}
+#endif
+
 	return true;
 }
 
@@ -3348,7 +3746,38 @@ static void gp_layout_set_bind(const gp_layout_t *layout)
         if (keynum != -1)
             idKeyInput::SetBinding(keynum, layout->bind[i].com);
     }
+    /* The left stick moves through AUX7-10, keys only this core sends.
+     * Their binds are set at startup, but the game's one-time re-exec of
+     * default.cfg (g_xp_bind_run_once) unbinds everything, and the config
+     * saved afterwards keeps them unbound for good; bind them with every
+     * layout so the stick always moves. */
+    if (layout != &kb_mouse) {
+        idKeyInput::SetBinding(K_AUX7,  "_moveLeft");
+        idKeyInput::SetBinding(K_AUX8,  "_moveRight");
+        idKeyInput::SetBinding(K_AUX9,  "_forward");
+        idKeyInput::SetBinding(K_AUX10, "_back");
+    }
 }
+
+#ifdef BOOM3_VR
+/* The headset's controls while VR runs, the chosen layout otherwise; the
+ * keyboard and mouse mode keeps no joypad either way. */
+static void vr_controls_apply( void )
+{
+   const gp_layout_t *layout = pending_layout;
+   if ( vr_active && pending_layout != &kb_mouse )
+      layout = &vr_quest;
+   environ_cb( RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, (void *)layout->desc );
+   gp_layout_set_bind( layout );
+   if ( layout == &vr_quest ) {
+      /* the right stick's weapon flicks */
+      idKeyInput::SetBinding( K_AUX11, "_impulse15" );
+      idKeyInput::SetBinding( K_AUX12, "_impulse14" );
+      /* a bare weapon hand's index finger: vr_finger_fire */
+      idKeyInput::SetBinding( K_AUX13, "_attack" );
+   }
+}
+#endif
 
 void retro_set_controller_port_device(unsigned port, unsigned device)
 {
@@ -3384,7 +3813,11 @@ void retro_set_controller_port_device(unsigned port, unsigned device)
       }
 
       if (!first_boot)
+#ifdef BOOM3_VR
+            vr_controls_apply();
+#else
             gp_layout_set_bind(pending_layout);
+#endif
    }
 }
 
@@ -3445,7 +3878,11 @@ void retro_run(void)
 		cmdSystem->AddCommand( "vr_recenter", Cmd_VRRecenter_f, CMD_FL_SYSTEM, "recentre the VR view" );
 #endif
 		update_variables(false);
+#ifdef BOOM3_VR
+		vr_controls_apply();
+#else
 		gp_layout_set_bind(pending_layout);
+#endif
 	}
 	
 	bool updated = false;

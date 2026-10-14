@@ -40,11 +40,14 @@ extern retro_perf_get_time_usec_t perf_get_time_usec;
    is the property savestates and replays rely on.
 */
 static uint64_t core_frame_count = 0;
+/* Frames since the last rate change. */
+static uint64_t core_rate_frames = 0;
 static int64_t  core_base_us     = 16000;	/* folded elapsed time */
 static int      core_fps         = 60;
 
 void Core_AdvanceFrame( void ) {
 	core_frame_count++;
+	core_rate_frames++;
 }
 
 uint64_t Core_FrameCount( void ) {
@@ -56,14 +59,14 @@ void Core_SetFramerate( int fps ) {
 		fps = 60;
 	if ( fps != core_fps )
 	{
-		core_base_us    += (int64_t)core_frame_count * 1000000 / core_fps;
-		core_frame_count = 0;
+		core_base_us    += (int64_t)core_rate_frames * 1000000 / core_fps;
+		core_rate_frames = 0;
 		core_fps         = fps;
 	}
 }
 
 int64_t Core_MicrosecondsPrecise( void ) {
-	return core_base_us + (int64_t)core_frame_count * 1000000 / core_fps;
+	return core_base_us + (int64_t)core_rate_frames * 1000000 / core_fps;
 }
 
 double Core_MillisecondsPrecise( void ) {

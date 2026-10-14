@@ -38,6 +38,11 @@ If you have questions concerning this license or the applicable additional terms
 #include "WorldSpawn.h"
 #include "Player.h"
 
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+#include "renderer/vr.h"
+#include "idlib/geometry/JointTransform.h"
+#endif
+
 idCVar g_frameInterpolation( "g_frameInterpolation", "1", CVAR_GAME | CVAR_BOOL | CVAR_ARCHIVE, "render-side sub-tic time and mouse-look presentation at output rates above 60fps" );
 #include "Camera.h"
 #include "Fx.h"
@@ -81,6 +86,14 @@ const idEventDef EV_Player_StopFxFov( "stopFxFov" );
 const idEventDef EV_Player_EnableWeapon( "enableWeapon" );
 const idEventDef EV_Player_DisableWeapon( "disableWeapon" );
 const idEventDef EV_Player_GetCurrentWeapon( "getCurrentWeapon", NULL, 's' );
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+// the hands, for the VR replacement pack's player scripts
+const idEventDef EV_Player_GetWeaponHand( "getWeaponHand", NULL, 'd' );
+const idEventDef EV_Player_GetFlashHand( "getFlashHand", NULL, 'd' );
+const idEventDef EV_Player_GetWeaponHandState( "getWeaponHandState", NULL, 'd' );
+const idEventDef EV_Player_GetFlashHandState( "getFlashHandState", NULL, 'd' );
+const idEventDef EV_Player_GetFlashState( "getFlashState", NULL, 'd' );
+#endif
 const idEventDef EV_Player_GetPreviousWeapon( "getPreviousWeapon", NULL, 's' );
 const idEventDef EV_Player_SelectWeapon( "selectWeapon", "s" );
 const idEventDef EV_Player_GetWeaponEntity( "getWeaponEntity", NULL, 'e' );
@@ -110,6 +123,13 @@ CLASS_DECLARATION( idActor, idPlayer )
 	EVENT( EV_Player_EnableWeapon,			idPlayer::Event_EnableWeapon )
 	EVENT( EV_Player_DisableWeapon,			idPlayer::Event_DisableWeapon )
 	EVENT( EV_Player_GetCurrentWeapon,		idPlayer::Event_GetCurrentWeapon )
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+	EVENT( EV_Player_GetWeaponHand,			idPlayer::Event_GetWeaponHand )
+	EVENT( EV_Player_GetFlashHand,			idPlayer::Event_GetFlashHand )
+	EVENT( EV_Player_GetWeaponHandState,	idPlayer::Event_GetWeaponHandState )
+	EVENT( EV_Player_GetFlashHandState,		idPlayer::Event_GetFlashHandState )
+	EVENT( EV_Player_GetFlashState,			idPlayer::Event_GetFlashState )
+#endif
 	EVENT( EV_Player_GetPreviousWeapon,		idPlayer::Event_GetPreviousWeapon )
 	EVENT( EV_Player_SelectWeapon,			idPlayer::Event_SelectWeapon )
 	EVENT( EV_Player_GetWeaponEntity,		idPlayer::Event_GetWeaponEntity )
@@ -1173,6 +1193,11 @@ idPlayer::idPlayer
 idPlayer::idPlayer() {
 	memset( &usercmd, 0, sizeof( usercmd ) );
 
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+	vrBodyReady				= false;
+	vrBodyShown				= false;
+#endif
+
 	noclip					= false;
 	godmode					= false;
 
@@ -1912,6 +1937,10 @@ void idPlayer::Spawn( void ) {
 	bloomEnabled			= false;
 	bloomSpeed				= 1;
 	bloomIntensity			= -0.01f;
+
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+	VRInitBody();
+#endif
 }
 
 /*
@@ -2472,6 +2501,10 @@ void idPlayer::Restore( idRestoreGame *savefile ) {
 	if ( hud ) {
 		hud->SetStateString( "message", "" );
 	}
+
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+	VRInitBody();
+#endif
 }
 
 /*
@@ -3095,9 +3128,21 @@ void idPlayer::DrawHUD( idUserInterface *_hud ) {
 
 	_hud->Redraw( gameLocal.realClientTime );
 
+	bool showCrosshair = weapon.GetEntity()->ShowCrosshair();
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+	{
+		// the screen's centre is not where a held weapon points
+		idVec3 aimOrigin;
+		idMat3 aimAxis;
+		if ( GetVRHandPose( true, aimOrigin, aimAxis ) ) {
+			showCrosshair = false;
+		}
+	}
+#endif
+
 	// weapon targeting crosshair
 	if ( !GuiActive() ) {
-		if ( cursor && weapon.GetEntity()->ShowCrosshair() ) {
+		if ( cursor && showCrosshair ) {
 
 			bool wantScaleTo43 = true; // DG: for fixing scaling of grabber cursor
 			if ( weapon.GetEntity()->GetGrabberState() == 1 || weapon.GetEntity()->GetGrabberState() == 2 ) {
@@ -5145,6 +5190,17 @@ void idPlayer::UpdateFocus( void ) {
 
 	start = GetEyePosition();
 	end = start + viewAngles.ToForward() * 80.0f;
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+	{
+		// GUIs are pointed at with the controller
+		idVec3 aimOrigin;
+		idMat3 aimAxis;
+		if ( GetVRHandPose( true, aimOrigin, aimAxis ) ) {
+			start = aimOrigin;
+			end = start + aimAxis[0] * 80.0f;
+		}
+	}
+#endif
 
 	// player identification -> names to the hud
 	if ( gameLocal.isMultiplayer && entityNumber == gameLocal.localClientNum ) {
@@ -6533,6 +6589,27 @@ void idPlayer::PerformImpulse( int impulse ) {
 			}
 			break;
 		}
+		case IMPULSE_42: {
+			/* The artifact if carried, or else the soul cube; a second
+			 * press goes back to the weapon that was in hand.  Looked up
+			 * by name, as the flashlight is. */
+			int slot = SlotForWeapon( "weapon_bloodstone_passive" );
+			if ( slot < 0 || !( inventory.weapons & ( 1 << slot ) ) ) {
+				slot = SlotForWeapon( "weapon_soulcube" );
+			}
+			if ( slot >= 0 && ( inventory.weapons & ( 1 << slot ) ) ) {
+				if ( currentWeapon == slot ) {
+					if ( previousWeapon >= 0 ) {
+						SelectWeapon( previousWeapon, false );
+					} else {
+						NextBestWeapon();
+					}
+				} else {
+					SelectWeapon( slot, false );
+				}
+			}
+			break;
+		}
 		 //Hack so the chainsaw will work in MP
 		case IMPULSE_27: {
 			SelectWeapon(18, false);
@@ -7326,6 +7403,9 @@ void idPlayer::Think( void ) {
 	}
 
 	if ( !g_stopTime.GetBool() ) {
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+		VRUpdateBody();
+#endif
 		UpdateAnimation();
 
 		Present();
@@ -8217,6 +8297,31 @@ void idPlayer::CalculateViewWeaponPos( idVec3 &origin, idMat3 &axis ) {
 	idAngles	angles;
 	int			delta;
 
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+	// in VR the controller holds the weapon: the model turns with where it
+	// points, and its right hand sits in the controller's grip
+	{
+		idVec3 grip;
+		idMat3 gripAxis;
+		if (	weapon.GetEntity()
+				&& GetVRHandPose( true, origin, axis )
+				&& GetVRHandPose( false, grip, gripAxis ) ) {
+			idVec3 hand;
+			const int h = vr_weaponHand.GetInteger();
+			idWeapon *w = weapon.GetEntity();
+			if ( w->weaponHandAttacher[h] != INVALID_JOINT ) {
+				// the VR pack's models: their attacher joint, where the body's
+				// hand meets them, in the grip (Doom3Quest's placement)
+				hand = w->weaponHandDefaultPos[h] - VRHandAttacherToDefault( h );
+			} else if ( !w->GetViewHandOffset( hand ) ) {
+				hand.Set( vr_weaponGripX.GetFloat(), vr_weaponGripY.GetFloat(), vr_weaponGripZ.GetFloat() );
+			}
+			origin = grip - hand * axis;
+			return;
+		}
+	}
+#endif
+
 	// CalculateRenderView must have been called first
 	const idVec3 &viewOrigin = firstPersonViewOrigin;
 	const idMat3 &viewAxis = firstPersonViewAxis;
@@ -8268,6 +8373,266 @@ void idPlayer::CalculateViewWeaponPos( idVec3 &origin, idMat3 &axis ) {
 
 	axis = angles.ToMat3() * viewAxis;
 }
+
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+/*
+==================
+idPlayer::Event_GetWeaponHand
+
+0 right, 1 left
+==================
+*/
+void idPlayer::Event_GetWeaponHand( void ) {
+	idThread::ReturnInt( vr_weaponHand.GetInteger() );
+}
+
+/*
+==================
+idPlayer::Event_GetFlashHand
+==================
+*/
+void idPlayer::Event_GetFlashHand( void ) {
+	idThread::ReturnInt( 1 - vr_weaponHand.GetInteger() );
+}
+
+/*
+==================
+idPlayer::Event_GetWeaponHandState
+
+0 no weapon, 1 holding one, 2 pointing at a GUI
+==================
+*/
+void idPlayer::Event_GetWeaponHandState( void ) {
+	int state = 0;
+	if ( focusGUIent || objectiveSystemOpen ) {
+		state = 2;
+	} else if ( !spectating && weaponEnabled && !hiddenWeapon && !gameLocal.world->spawnArgs.GetBool( "no_Weapons" ) ) {
+		state = 1;
+	}
+	idThread::ReturnInt( state );
+}
+
+/*
+==================
+idPlayer::Event_GetFlashHandState
+
+The other hand holds nothing here: the flashlight is a weapon.
+==================
+*/
+void idPlayer::Event_GetFlashHandState( void ) {
+	idThread::ReturnInt( 0 );
+}
+
+/*
+==================
+idPlayer::Event_GetFlashState
+==================
+*/
+void idPlayer::Event_GetFlashState( void ) {
+	const int flashlight = SlotForWeapon( "weapon_flashlight" );
+	idThread::ReturnInt( flashlight >= 0 && currentWeapon == flashlight ? 1 : 0 );
+}
+
+/*
+==============
+idPlayer::VRInitBody
+
+The VR pack's player body: its arm IK, and for each weapon, how its hand
+pose sits on the weapon (from "<weapon>_idle"), as Doom3Quest measures them.
+==============
+*/
+void idPlayer::VRInitBody( void ) {
+	static const char * const handWeap[2] = { "RhandWeap", "LhandWeap" };
+	int h, w;
+
+	vrBodyReady = false;
+	vrBodyShown = false;
+	if ( gameLocal.isMultiplayer || spawnArgs.GetInt( "ik_numArms", "0" ) < 2 ) {
+		gameLocal.Printf( "VR body: '%s' has no arms for IK\n", GetEntityDefName() );
+		return;
+	}
+	if ( !armIK.Init( this, IK_ANIM, modelOffset ) || !armIK.IsInitialized() ) {
+		gameLocal.Printf( "VR body: no arm IK on '%s'\n", GetEntityDefName() );
+		return;
+	}
+
+	const int defaultAnim = animator.GetAnim( "default" );
+	if ( !defaultAnim ) {
+		gameLocal.Printf( "VR body: '%s' has no default animation\n", GetEntityDefName() );
+		return;
+	}
+	const int numJoints = animator.NumJoints();
+	idJointMat *joints = ( idJointMat * )_alloca16( numJoints * sizeof( joints[0] ) );
+	const idVec3 offset = animator.ModelDef()->GetVisualOffset() + modelOffset;
+
+	for ( h = 0; h < 2; h++ ) {
+		vrHandAttacher[h] = animator.GetJointHandle( handWeap[h] );
+		if ( vrHandAttacher[h] == INVALID_JOINT ) {
+			vrHandAttacher[h] = armIK.HandJoint( h );
+		}
+	}
+
+	// the default pose: where the attachers rest from the hands
+	gameEdit->ANIM_CreateAnimFrame( animator.ModelHandle(), animator.GetAnim( defaultAnim )->MD5Anim( 0 ), numJoints, joints, 1, offset, animator.RemoveOrigin() );
+	idVec3 defaultOffset[2];
+	idMat3 defaultAxis[2];
+	for ( h = 0; h < 2; h++ ) {
+		defaultOffset[h] = joints[ vrHandAttacher[h] ].ToVec3() - joints[ armIK.HandJoint( h ) ].ToVec3();
+		defaultAxis[h] = joints[ armIK.HandJoint( h ) ].ToMat3();
+	}
+
+	for ( w = 0; w < MAX_WEAPONS; w++ ) {
+		idStr animName = spawnArgs.GetString( va( "def_weapon%d", w ) );
+		animName.StripLeadingOnce( "weapon_" );
+		animName += "_idle";
+		const int anim = animName.Length() > 5 ? animator.GetAnim( animName.c_str() ) : 0;
+		if ( anim ) {
+			gameEdit->ANIM_CreateAnimFrame( animator.ModelHandle(), animator.GetAnim( anim )->MD5Anim( 0 ), numJoints, joints, 1, offset, animator.RemoveOrigin() );
+		}
+		for ( h = 0; h < 2; h++ ) {
+			if ( anim ) {
+				vrHandCorrectAxis[h][w] = joints[ armIK.HandJoint( h ) ].ToMat3();
+				vrHandAttacherToWrist[h][w] = joints[ vrHandAttacher[h] ].ToVec3() - joints[ armIK.HandJoint( h ) ].ToVec3();
+			} else {
+				vrHandCorrectAxis[h][w] = defaultAxis[h];
+				vrHandAttacherToWrist[h][w] = defaultOffset[h];
+			}
+			vrHandAttacherToDefault[h][w] = vrHandAttacherToWrist[h][w] - defaultOffset[h];
+		}
+	}
+
+	vrBodyReady = true;
+	gameLocal.Printf( "VR body: ready on '%s'\n", GetEntityDefName() );
+}
+
+/*
+==============
+idPlayer::VRHandAttacherToDefault
+==============
+*/
+idVec3 idPlayer::VRHandAttacherToDefault( int hand ) const {
+	if ( !vrBodyReady || currentWeapon < 0 || currentWeapon >= MAX_WEAPONS ) {
+		return vec3_origin;
+	}
+	return vrHandAttacherToDefault[hand][currentWeapon];
+}
+
+/*
+==============
+idPlayer::VRSetHandIK
+
+Puts a hand of the body where it holds the weapon, or where the controller
+is (Doom3Quest's SetHandIKPos): handOrigin is the world point the weapon's
+attacher joint is held at, handAxis the weapon's (or the controller's) axis.
+==============
+*/
+void idPlayer::VRSetHandIK( int hand, idVec3 handOrigin, const idMat3 &handAxis, idWeapon *weapon, int weap ) {
+	idVec3 attachDelta = vec3_origin;
+	idMat3 attachAxis = mat3_identity;
+
+	if ( weap < 0 || weap >= MAX_WEAPONS ) {
+		weap = 0;
+	}
+	// the weapon's animation moves its attacher, and the hand with it
+	if ( weapon && weapon->weaponHandAttacher[hand] != INVALID_JOINT ) {
+		idVec3 pos;
+		weapon->GetAnimator()->GetJointTransform( weapon->weaponHandAttacher[hand], gameLocal.time, pos, attachAxis );
+		attachDelta = pos - weapon->weaponHandDefaultPos[hand];
+	}
+
+	handOrigin += vrHandAttacherToDefault[hand][weap] * handAxis;
+	const idVec3 global = handOrigin + attachDelta * handAxis;
+
+	idVec3 local = ( global - renderEntity.origin ) * renderEntity.axis.Transpose();
+	const idMat3 rotation = handAxis * renderEntity.axis.Transpose();	// in the body's space
+	idMat3 handmat = attachAxis * rotation;
+	local -= vrHandAttacherToWrist[hand][weap] * handmat;
+	handmat = vrHandCorrectAxis[hand][weap] * handmat;
+
+	animator.SetJointPos( armIK.HandJoint( hand ), JOINTMOD_WORLD_OVERRIDE, local );
+	animator.SetJointAxis( armIK.HandJoint( hand ), JOINTMOD_WORLD_OVERRIDE, handmat );
+	armIK.controllerAxis[hand] = rotation;
+	armIK.handRoll[hand] = rotation.ToAngles().roll;
+}
+
+/*
+==============
+idPlayer::VRUpdateBody
+
+Once a frame, after the weapon is placed and before the animation: the
+body shown to the player and its hands put on the weapon and the other
+controller, or hidden again when the controllers do not drive it.
+==============
+*/
+void idPlayer::VRUpdateBody( void ) {
+	idVec3 grip, aimOrigin;
+	idMat3 gripAxis, aimAxis;
+	const int weaponHand = vr_weaponHand.GetInteger();
+	const bool show = vrBodyReady && vr_playerBodyMode.GetInteger() < 2 && health > 0 && !spectating
+		&& !gameLocal.inCinematic && GetVRHandPose( true, aimOrigin, aimAxis ) && GetVRHandPose( false, grip, gripAxis );
+
+	if ( !show ) {
+		if ( vrBodyShown ) {
+			armIK.ClearJointMods();
+			renderEntity.suppressSurfaceInViewID = entityNumber + 1;
+			if ( !powerUpSkin ) {
+				renderEntity.customSkin = skin;
+			}
+			vrBodyShown = false;
+		}
+		return;
+	}
+
+	// the body, or just its hands, to the player as well
+	renderEntity.suppressSurfaceInViewID = 0;
+	if ( !powerUpSkin ) {
+		const idDeclSkin *vrSkin = declManager->FindSkin( vr_playerBodyMode.GetInteger() == 0
+			? "skins/characters/player/greenmarine_arm2/vrBody"
+			: "skins/characters/player/greenmarine_arm2/vrHandsOnly", false );
+		if ( vrSkin ) {
+			renderEntity.customSkin = vrSkin;
+		}
+	}
+	vrBodyShown = true;
+
+	// the weapon hand holds the weapon by its attacher, which sits in the grip
+	idWeapon *w = weapon.GetEntity();
+	VRSetHandIK( weaponHand, grip, aimAxis, ( w && !w->IsHidden() ) ? w : NULL, currentWeapon );
+
+	// the other hand follows its controller, empty
+	idVec3 otherGrip, otherAim;
+	idMat3 otherGripAxis, otherAimAxis;
+	if ( GetVRHandPose( false, otherGrip, otherGripAxis, 1 - weaponHand ) && GetVRHandPose( true, otherAim, otherAimAxis, 1 - weaponHand ) ) {
+		VRSetHandIK( 1 - weaponHand, otherGrip, otherAimAxis, NULL, SlotForWeapon( "weapon_fists" ) );
+	}
+
+	armIK.Evaluate();
+}
+
+/*
+==============
+idPlayer::GetVRHandPose
+==============
+*/
+bool idPlayer::GetVRHandPose( bool aim, idVec3 &origin, idMat3 &axis, int hand ) const {
+	if (	!vr_motionControls.GetBool() || !VR_Active()
+			|| gameLocal.isMultiplayer || entityNumber != gameLocal.localClientNum ) {
+		return false;
+	}
+	// placed against the view the eyes are drawn from
+	if ( hand < 0 ) {
+		hand = vr_weaponHand.GetInteger();
+	}
+	if ( !VR_GetHandPose( hand, aim, firstPersonViewOrigin, firstPersonViewAxis, origin, axis ) ) {
+		return false;
+	}
+	// a positive pitch tips the weapon, and its shots, down
+	if ( aim && vr_weaponPitch.GetFloat() != 0.0f ) {
+		axis = idAngles( vr_weaponPitch.GetFloat(), 0.0f, 0.0f ).ToMat3() * axis;
+	}
+	return true;
+}
+#endif
 
 /*
 ===============

@@ -38,7 +38,15 @@ If you have questions concerning this license or the applicable additional terms
 //
 // animation channels
 // these can be changed by modmakers and licensees to be whatever they need.
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+// the VR pack's player poses each hand on a channel of its own
+const int ANIM_NumAnimChannels		= 7;
+#else
 const int ANIM_NumAnimChannels		= 5;
+#endif
+// saved games keep the original channels, so saves load in every build;
+// the hand channels are posed again by the player script
+const int ANIM_NumSavedChannels		= 5;
 const int ANIM_MaxAnimsPerChannel	= 3;
 const int ANIM_MaxSyncedAnims		= 3;
 
@@ -50,6 +58,10 @@ const int ANIMCHANNEL_TORSO			= 1;
 const int ANIMCHANNEL_LEGS			= 2;
 const int ANIMCHANNEL_HEAD			= 3;
 const int ANIMCHANNEL_EYELIDS		= 4;
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+const int ANIMCHANNEL_RIGHTHAND		= 5;
+const int ANIMCHANNEL_LEFTHAND		= 6;
+#endif
 
 // for converting from 24 frames per second to milliseconds
 ID_INLINE int FRAME2MS( int framenum ) {

@@ -35,6 +35,9 @@ If you have questions concerning this license or the applicable additional terms
 #include "Player.h"
 
 #include "PlayerView.h"
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+#include "renderer/vr.h"
+#endif
 
 static int MakePowerOfTwo( int num )
 {
@@ -653,6 +656,12 @@ void idPlayerView::ScreenFade() {
 	}
 
 	if ( fadeColor[ 3 ] != 0.0f ) {
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+		if ( VR_Active() ) {
+			VR_SetScreenFade( fadeColor.ToFloatPtr() );
+			return;
+		}
+#endif
 		renderSystem->SetColor4( fadeColor[ 0 ], fadeColor[ 1 ], fadeColor[ 2 ], fadeColor[ 3 ] );
 		renderSystem->DrawStretchPic( 0, 0, 640, 480, 0, 0, 1, 1, declManager->FindMaterial( "_white" ) );
 	}

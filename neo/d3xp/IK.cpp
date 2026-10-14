@@ -209,6 +209,46 @@ bool idIK::SolveTwoBones( const idVec3 &startPos, const idVec3 &endPos, const id
 	return true;
 }
 
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+/*
+================
+idIK::SolveTwoArmBones
+
+As SolveTwoBones, but an arm reaching past its length is laid straight
+toward the hand rather than bent at the midpoint (Doom3Quest's).
+================
+*/
+bool idIK::SolveTwoArmBones( idVec3 &startPos, idVec3 &endPos, const idVec3 &dir, float len0, float len1, idVec3 &jointPos ) {
+	float length, lengthSqr, lengthInv, x, y;
+	idVec3 vec0, vec1;
+
+	vec0 = endPos - startPos;
+	lengthSqr = vec0.LengthSqr();
+	lengthInv = idMath::InvSqrt( lengthSqr );
+	length = lengthInv * lengthSqr;
+
+	if ( length > len0 + len1 ) {
+		vec0.Normalize();
+		jointPos = endPos - len1 * vec0;
+		return false;
+	} else if ( length < idMath::Fabs( len0 - len1 ) ) {
+		jointPos = startPos + ( 0.5f * vec0 );
+		return false;
+	}
+
+	vec0 *= lengthInv;
+	vec1 = dir - vec0 * dir * vec0;
+	vec1.Normalize();
+
+	x = ( length * length + len0 * len0 - len1 * len1 ) * ( 0.5f * lengthInv );
+	y = idMath::Sqrt( len0 * len0 - x * x );
+
+	jointPos = startPos + x * vec0 + y * vec1;
+
+	return true;
+}
+#endif
+
 /*
 ================
 idIK::GetBoneAxis
@@ -949,6 +989,236 @@ void idIK_Reach::Restore( idRestoreGame *savefile ) {
 		savefile->ReadMat3( lowerArmToElbowJoint[i] );
 }
 
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+/*
+================
+idIK_Reach::Init
+
+The VR player's arms, as Doom3Quest sets them up.
+================
+*/
+bool idIK_Reach::Init( idEntity *self, const char *anim, const idVec3 &modelOffset ) {
+	int i;
+	const char *jointName;
+	idVec3 dir, handOrigin, elbowOrigin, shoulderOrigin;
+	idMat3 axis, handAxis, elbowAxis, shoulderAxis;
+
+	if ( !self ) {
+		return false;
+	}
+
+	numArms = Min( self->spawnArgs.GetInt( "ik_numArms", "0" ), MAX_ARMS );
+	if ( numArms == 0 ) {
+		return true;
+	}
+
+	if ( !idIK::Init( self, anim, modelOffset ) ) {
+		return false;
+	}
+
+	int numJoints = animator->NumJoints();
+	idJointMat *joints = ( idJointMat * )_alloca16( numJoints * sizeof( joints[0] ) );
+
+	// create the animation frame used to setup the IK
+	gameEdit->ANIM_CreateAnimFrame( animator->ModelHandle(), animator->GetAnim( modifiedAnim )->MD5Anim( 0 ), numJoints, joints, 1, animator->ModelDef()->GetVisualOffset() + modelOffset, animator->RemoveOrigin() );
+
+	enabledArms = 0;
+
+	// get all the joints
+	for ( i = 0; i < numArms; i++ ) {
+		controllerAxis[i].Identity();
+		handRoll[i] = 0.0f;
+
+		jointName = self->spawnArgs.GetString( va( "ik_hand%d", i+1 ) );
+		handJoints[i] = animator->GetJointHandle( jointName );
+		if ( handJoints[i] == INVALID_JOINT ) {
+			jointName = i ? "Lhand1" : "Rhand1";
+			handJoints[i] = animator->GetJointHandle( jointName );
+			if ( handJoints[i] == INVALID_JOINT ) {
+				gameLocal.Warning( "idIK_Reach::Init: invalid hand joint '%s'", jointName );
+				return false;
+			}
+		}
+
+		jointName = self->spawnArgs.GetString( va( "ik_elbow%d", i+1 ) );
+		elbowJoints[i] = animator->GetJointHandle( jointName );
+		jointName = self->spawnArgs.GetString( va( "ik_shoulder%d", i+1 ) );
+		shoulderJoints[i] = animator->GetJointHandle( jointName );
+		jointName = self->spawnArgs.GetString( va( "ik_wrist%d", i+1 ) );
+		wristJoints[i] = animator->GetJointHandle( jointName );
+		if ( elbowJoints[i] == INVALID_JOINT || shoulderJoints[i] == INVALID_JOINT || wristJoints[i] == INVALID_JOINT ) {
+			gameLocal.Warning( "idIK_Reach::Init: arm %d lacks an elbow, shoulder or wrist joint", i+1 );
+			return false;
+		}
+
+		dirJoints[i] = INVALID_JOINT;
+		enabledArms |= 1 << i;
+	}
+
+	// get the arm bone lengths and rotation matrices
+	for ( i = 0; i < numArms; i++ ) {
+		handAxis = joints[ handJoints[ i ] ].ToMat3();
+		handOrigin = joints[ handJoints[ i ] ].ToVec3();
+
+		elbowAxis = joints[ elbowJoints[ i ] ].ToMat3();
+		elbowOrigin = joints[ elbowJoints[ i ] ].ToVec3();
+
+		shoulderAxis = joints[ shoulderJoints[ i ] ].ToMat3();
+		shoulderOrigin = joints[ shoulderJoints[ i ] ].ToVec3();
+
+		// the elbows bend back and out
+		dir.Set( -0.5f, 0.2f * i, 0.0f );
+
+		shoulderForward[i] = dir * shoulderAxis.Transpose();
+		elbowForward[i] = dir * elbowAxis.Transpose();
+
+		// conversion from upper arm bone axis to should joint axis
+		upperArmLength[i] = GetBoneAxis( shoulderOrigin, elbowOrigin, dir, axis );
+		upperArmToShoulderJoint[i] = shoulderAxis * axis.Transpose();
+
+		// conversion from lower arm bone axis to elbow joint axis
+		lowerArmLength[i] = GetBoneAxis( elbowOrigin, handOrigin, dir, axis );
+		lowerArmToElbowJoint[i] = elbowAxis * axis.Transpose();
+	}
+
+	initialized = true;
+
+	return true;
+}
+
+/*
+================
+idIK_Reach::Evaluate
+
+Bends each arm to the hand joint the player placed, and rolls the wrist
+toward the controller's (Doom3Quest's arm IK).
+================
+*/
+void idIK_Reach::Evaluate( void ) {
+	int i;
+	idVec3 modelOrigin, shoulderOrigin, elbowOrigin, handOrigin, shoulderDir, elbowDir, handDir;
+	idMat3 modelAxis, axis;
+	idMat3 shoulderAxis[MAX_ARMS], elbowAxis[MAX_ARMS], wristMod[MAX_ARMS];
+	idVec3 elbowPos[MAX_ARMS], handPos[MAX_ARMS], shoulderPos[MAX_ARMS];
+
+	modelOrigin = self->GetRenderEntity()->origin;
+	modelAxis = self->GetRenderEntity()->axis;
+
+	for ( i = 0; i < numArms; i++ ) {
+		// the shoulder in world space
+		animator->GetJointTransform( shoulderJoints[i], gameLocal.time, shoulderOrigin, axis );
+		shoulderOrigin = modelOrigin + shoulderOrigin * modelAxis;
+		shoulderDir = shoulderForward[i] * axis * modelAxis;
+
+		// the hand in world space
+		animator->GetJointTransform( handJoints[i], gameLocal.time, handOrigin, axis );
+		handOrigin = modelOrigin + handOrigin * modelAxis;
+		idVec3 localHandDir = shoulderForward[i] * axis;
+		localHandDir.Normalize();
+		handDir = localHandDir * modelAxis;
+
+		shoulderPos[i] = ( shoulderOrigin - modelOrigin ) * modelAxis.Transpose();
+		handPos[i] = ( handOrigin - modelOrigin ) * modelAxis.Transpose();
+
+		// a hand pointing across the body, or reaching over the shoulder,
+		// lets the elbow bend its way (x = forward, y = left, z = up)
+		bool elbowCanMatchHand = ( i == 1 ) ? localHandDir.y < 0 : localHandDir.y > 0;
+		elbowCanMatchHand = elbowCanMatchHand || ( handPos[i].z >= shoulderPos[i].z && localHandDir.x < -0.4f );
+
+		// the IK bend direction
+		animator->GetJointTransform( elbowJoints[i], gameLocal.time, elbowOrigin, axis );
+		elbowDir = elbowForward[i] * axis * modelAxis;
+		if ( elbowCanMatchHand ) {
+			elbowDir.SLerp( elbowDir, -handDir, 0.8f );
+		}
+
+		SolveTwoArmBones( shoulderOrigin, handOrigin, elbowDir, upperArmLength[i], lowerArmLength[i], elbowOrigin );
+		elbowPos[i] = ( elbowOrigin - modelOrigin ) * modelAxis.Transpose();
+
+		if ( ik_debug.GetBool() ) {
+			gameRenderWorld->DebugLine( colorCyan, shoulderOrigin, elbowOrigin );
+			gameRenderWorld->DebugLine( colorRed, elbowOrigin, handOrigin );
+			gameRenderWorld->DebugArrow( colorYellow, elbowOrigin, elbowOrigin + elbowDir * 8.0f, 1 );
+		}
+
+		// the shoulder joint, rolled a little with the hand
+		GetBoneAxis( shoulderOrigin, elbowOrigin, shoulderDir, axis );
+		const idMat3 roll = idAngles( 0.0f, 0.0f, -handRoll[i] * 0.1f + ( i == 0 ? -50.0f : 50.0f ) ).ToMat3();
+		shoulderAxis[i] = upperArmToShoulderJoint[i] * ( ( roll * axis ) * modelAxis.Transpose() );
+
+		// the elbow joint
+		GetBoneAxis( elbowOrigin, handOrigin, elbowDir, axis );
+		elbowAxis[i] = lowerArmToElbowJoint[i] * ( axis * modelAxis.Transpose() );
+
+		// an elbow that flipped over is turned back
+		idMat3 discard;
+		idVec3 shoulderLocal;
+		animator->GetJointTransform( shoulderJoints[i], gameLocal.time, shoulderLocal, discard );
+		idVec3 shoulderToHand = handPos[i] - shoulderLocal;
+		shoulderToHand.Normalize();
+		const idVec3 shoulderToGround( 0.0f, 0.0f, 1.0f );
+		const float crossDiff = shoulderToHand.Cross( shoulderToGround ) * elbowAxis[i][2];
+		if ( ( i == 1 ) ? crossDiff > 0.0f : crossDiff < 0.0f ) {
+			elbowAxis[i] = idAngles( 180.0f, 1.0f, 4.0f ).ToMat3() * elbowAxis[i];
+		}
+
+		// roll the forearm toward the controller's roll: two thirds at the
+		// wrist, the rest at the elbow
+		const idVec3 n = elbowAxis[i][1];
+		idVec3 np = controllerAxis[i][2] - ( controllerAxis[i][2] * n ) * n;
+		np.Normalize();
+		float angle1 = RAD2DEG( idMath::ACos( idMath::ClampFloat( -1.0f, 1.0f, np * -elbowAxis[i][2] ) ) );
+		const idVec3 side = ( i == 1 ) ? elbowAxis[i][0] : -elbowAxis[i][0];
+		if ( RAD2DEG( idMath::ACos( idMath::ClampFloat( -1.0f, 1.0f, np * side ) ) ) > 90.0f ) {
+			angle1 = -angle1;
+		}
+		angle1 = idMath::ClampFloat( -66.0f, 66.0f, angle1 - ( i == 1 ? 30.0f : 20.0f ) );
+		const float angle2 = angle1 * 0.3f;
+		angle1 -= angle2;
+		if ( i == 1 ) {
+			wristMod[i] = idAngles( angle1, 0.0f, 0.0f ).ToMat3();
+			elbowAxis[i] = idAngles( -angle2, 0.0f, 0.0f ).ToMat3() * elbowAxis[i];
+		} else {
+			wristMod[i] = idAngles( -angle1, 0.0f, 0.0f ).ToMat3();
+			elbowAxis[i] = idAngles( angle2, 0.0f, 0.0f ).ToMat3() * elbowAxis[i];
+		}
+	}
+
+	for ( i = 0; i < numArms; i++ ) {
+		animator->SetJointAxis( elbowJoints[i], JOINTMOD_WORLD_OVERRIDE, elbowAxis[i] );
+		animator->SetJointAxis( shoulderJoints[i], JOINTMOD_WORLD_OVERRIDE, shoulderAxis[i] );
+		animator->SetJointPos( elbowJoints[i], JOINTMOD_WORLD_OVERRIDE, elbowPos[i] );
+		animator->SetJointPos( handJoints[i], JOINTMOD_WORLD_OVERRIDE, handPos[i] );
+		animator->SetJointAxis( wristJoints[i], JOINTMOD_LOCAL, wristMod[i] );
+	}
+
+	ik_activate = true;
+}
+
+/*
+================
+idIK_Reach::ClearJointMods
+================
+*/
+void idIK_Reach::ClearJointMods( void ) {
+	int i;
+
+	if ( !self || !ik_activate ) {
+		return;
+	}
+
+	for ( i = 0; i < numArms; i++ ) {
+		animator->SetJointAxis( shoulderJoints[i], JOINTMOD_NONE, mat3_identity );
+		animator->SetJointAxis( elbowJoints[i], JOINTMOD_NONE, mat3_identity );
+		animator->SetJointAxis( handJoints[i], JOINTMOD_NONE, mat3_identity );
+		animator->SetJointAxis( wristJoints[i], JOINTMOD_NONE, mat3_identity );
+		animator->SetJointPos( elbowJoints[i], JOINTMOD_NONE, vec3_origin );
+		animator->SetJointPos( handJoints[i], JOINTMOD_NONE, vec3_origin );
+	}
+
+	ik_activate = false;
+}
+#else
 /*
 ================
 idIK_Reach::Init
@@ -1128,3 +1398,4 @@ void idIK_Reach::ClearJointMods( void ) {
 
 	ik_activate = false;
 }
+#endif

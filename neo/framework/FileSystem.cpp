@@ -434,6 +434,9 @@ private:
 	static idCVar			fs_game;
 	static idCVar			fs_game_base;
 	static idCVar			fs_gamedirname;
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+	static idCVar			fs_vr;
+#endif
 	static idCVar			fs_caseSensitiveOS;
 	static idCVar			fs_searchAddons;
 	// DG: additional directory to search for game DLLs
@@ -545,6 +548,9 @@ idCVar	idFileSystemLocal::fs_cdpath( "fs_cdpath", "", CVAR_SYSTEM | CVAR_INIT, "
 idCVar	idFileSystemLocal::fs_devpath( "fs_devpath", "", CVAR_SYSTEM | CVAR_INIT, "" );
 idCVar	idFileSystemLocal::fs_game( "fs_game", "", CVAR_SYSTEM | CVAR_INIT | CVAR_SERVERINFO, "mod path" );
 idCVar  idFileSystemLocal::fs_gamedirname( "fs_gamedirname", "", CVAR_SYSTEM | CVAR_INIT, "name of the directory holding the game data when it is not \"base\"" );
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+idCVar  idFileSystemLocal::fs_vr( "fs_vr", "0", CVAR_SYSTEM | CVAR_INIT | CVAR_BOOL, "mount the VR replacement packs: base_vr over base, d3xp_vr over d3xp" );
+#endif
 idCVar  idFileSystemLocal::fs_game_base( "fs_game_base", "", CVAR_SYSTEM | CVAR_INIT | CVAR_SERVERINFO, "alternate mod path, searched after the main fs_game path, before the basedir" );
 #if defined(__AROS__) || defined(WIN32)
 idCVar	idFileSystemLocal::fs_caseSensitiveOS( "fs_caseSensitiveOS", "0", CVAR_SYSTEM | CVAR_BOOL, "" );
@@ -2424,6 +2430,16 @@ void idFileSystemLocal::Startup( void ) {
 	}
 
 	SetupGameDirectories( BASE_GAMEDIR );
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+	// The VR pack replaces weapons, their scripts and the player's: over
+	// the base game, under a mod or the expansion, as it ships for Doom3Quest.
+	if ( fs_vr.GetBool() ) {
+		// read from, never written to: configs and saves stay with the game
+		const idStr writeFolder = gameFolder;
+		SetupGameDirectories( "base_vr" );
+		gameFolder = writeFolder;
+	}
+#endif
 
 	// fs_game_base override
 	if ( fs_game_base.GetString()[0] &&
@@ -2437,6 +2453,15 @@ void idFileSystemLocal::Startup( void ) {
 		 idStr::Icmp( fs_game.GetString(), fs_game_base.GetString() ) ) {
 		SetupGameDirectories( fs_game.GetString() );
 	}
+
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+	// and the expansion's own part of it, over the expansion
+	if ( fs_vr.GetBool() && !idStr::Icmp( fs_game.GetString(), "d3xp" ) ) {
+		const idStr writeFolder = gameFolder;
+		SetupGameDirectories( "d3xp_vr" );
+		gameFolder = writeFolder;
+	}
+#endif
 
 	// currently all addons are in the search list - deal with filtering out and dependencies now
 	// scan through and deal with dependencies
@@ -2865,6 +2890,9 @@ void idFileSystemLocal::Init( void ) {
 	common->StartupVariable( "fs_game", false );
 	common->StartupVariable( "fs_game_base", false );
 	common->StartupVariable( "fs_gamedirname", false );
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+	common->StartupVariable( "fs_vr", false );
+#endif
 	common->StartupVariable( "fs_copyfiles", false );
 	common->StartupVariable( "fs_restrict", false );
 	common->StartupVariable( "fs_searchAddons", false );

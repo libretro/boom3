@@ -222,6 +222,19 @@ loop with byte-exact audio capture of full game runs.
 Pure `make`/GCC; autodetects Linux/MinGW/macOS. **Header changes require a
 clean build** — the Makefile has no dependency tracking.
 
+## VR mode
+
+VR mode requires pak399.pk4 (https://github.com/Team-Beef-Studios/Doom3Quest).
+
+They can be found here: https://github.com/libretro/boom3/tools/vr_paks/compiled
+and must be installed relative to your base pk4s:
+
+```
+e.g. base/
+     base_vr/pak399.pk4
+     demo/
+```
+
 ## Testing
 
 `tools/retro_host/` is a headless libretro frontend used to verify this

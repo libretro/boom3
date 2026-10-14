@@ -61,6 +61,10 @@ const idEventDef EV_Weapon_TotalAmmoCount( "totalAmmoCount", NULL, 'f' );
 const idEventDef EV_Weapon_ClipSize( "clipSize", NULL, 'f' );
 const idEventDef EV_Weapon_WeaponOutOfAmmo( "weaponOutOfAmmo" );
 const idEventDef EV_Weapon_WeaponReady( "weaponReady" );
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+const idEventDef EV_Weapon_IsMotionControlled( "isMotionControlled", NULL, 'd' );
+const idEventDef EV_Weapon_GetWeaponSkin( "getWeaponSkin", NULL, 's' );
+#endif
 const idEventDef EV_Weapon_WeaponReloading( "weaponReloading" );
 const idEventDef EV_Weapon_WeaponHolstered( "weaponHolstered" );
 const idEventDef EV_Weapon_WeaponRising( "weaponRising" );
@@ -96,6 +100,10 @@ CLASS_DECLARATION( idAnimatedEntity, idWeapon )
 	EVENT( EV_Weapon_GetOwner,					idWeapon::Event_GetOwner )
 	EVENT( EV_Weapon_State,						idWeapon::Event_WeaponState )
 	EVENT( EV_Weapon_WeaponReady,				idWeapon::Event_WeaponReady )
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+	EVENT( EV_Weapon_IsMotionControlled,		idWeapon::Event_IsMotionControlled )
+	EVENT( EV_Weapon_GetWeaponSkin,				idWeapon::Event_GetWeaponSkin )
+#endif
 	EVENT( EV_Weapon_WeaponOutOfAmmo,			idWeapon::Event_WeaponOutOfAmmo )
 	EVENT( EV_Weapon_WeaponReloading,			idWeapon::Event_WeaponReloading )
 	EVENT( EV_Weapon_WeaponHolstered,			idWeapon::Event_WeaponHolstered )
@@ -157,6 +165,16 @@ idWeapon::idWeapon() {
 	worldModel				= NULL;
 	weaponDef				= NULL;
 	thread					= NULL;
+
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+	vrHandModel				= NULL;
+	vrHandJoint				= INVALID_JOINT;
+	vrHandOffset.Zero();
+	vrHandMeasured			= false;
+	weaponHandAttacher[0]	= weaponHandAttacher[1] = INVALID_JOINT;
+	weaponHandDefaultPos[0].Zero();
+	weaponHandDefaultPos[1].Zero();
+#endif
 
 	memset( &guiLight, 0, sizeof( guiLight ) );
 	memset( &muzzleFlash, 0, sizeof( muzzleFlash ) );
@@ -645,6 +663,21 @@ void idWeapon::Restore( idRestoreGame *savefile ) {
 		}
 		weaponLights.Set(newLight.name, newLight);
 	}
+
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+	// not in the save: looked up again on the restored model
+	{
+		static const char * const attachers[2] = { "RhandAttacher", "LhandAttacher" };
+		for ( int h = 0; h < 2; h++ ) {
+			idMat3 axis;
+			weaponHandDefaultPos[h].Zero();
+			weaponHandAttacher[h] = animator.GetJointHandle( attachers[h] );
+			if ( weaponHandAttacher[h] != INVALID_JOINT ) {
+				animator.GetJointTransform( weaponHandAttacher[h], gameLocal.time, weaponHandDefaultPos[h], axis );
+			}
+		}
+	}
+#endif
 }
 
 /***********************************************************************
@@ -660,6 +693,13 @@ idWeapon::Clear
 */
 void idWeapon::Clear( void ) {
 	CancelEvents( &EV_Weapon_Clear );
+
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+	vrHandModel				= NULL;
+	vrHandJoint				= INVALID_JOINT;
+	vrHandMeasured			= false;
+	weaponHandAttacher[0]	= weaponHandAttacher[1] = INVALID_JOINT;
+#endif
 
 	DeconstructScriptObject();
 	scriptObject.Free();
@@ -989,6 +1029,19 @@ void idWeapon::GetWeaponDef( const char *objectname, int ammoinclip ) {
 	ejectJointView = animator.GetJointHandle( "eject" );
 	guiLightJointView = animator.GetJointHandle( "guiLight" );
 	ventLightJointView = animator.GetJointHandle( "ventLight" );
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+	{
+		static const char * const attachers[2] = { "RhandAttacher", "LhandAttacher" };
+		for ( int h = 0; h < 2; h++ ) {
+			idMat3 axis;
+			weaponHandDefaultPos[h].Zero();
+			weaponHandAttacher[h] = animator.GetJointHandle( attachers[h] );
+			if ( weaponHandAttacher[h] != INVALID_JOINT ) {
+				animator.GetJointTransform( weaponHandAttacher[h], gameLocal.time, weaponHandDefaultPos[h], axis );
+			}
+		}
+	}
+#endif
 
 	idStr smokeJoint = weaponDef->dict.GetString("smoke_joint");
 	if(smokeJoint.Length() > 0)
@@ -2099,6 +2152,77 @@ void idWeapon::AlertMonsters( void ) {
 	}
 }
 
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+/*
+================
+idWeapon::Event_IsMotionControlled
+
+whether a VR controller holds the weapon
+================
+*/
+void idWeapon::Event_IsMotionControlled( void ) {
+	idVec3 origin;
+	idMat3 axis;
+	idThread::ReturnInt( owner && owner->GetVRHandPose( true, origin, axis ) ? 1 : 0 );
+}
+
+/*
+================
+idWeapon::Event_GetWeaponSkin
+
+The suffix the VR pack's weapon scripts add to a skin name: its flashlight
+has skins with the hand, the other weapons none.
+================
+*/
+void idWeapon::Event_GetWeaponSkin( void ) {
+	if ( weaponDef && !idStr::Cmp( weaponDef->GetName(), "weapon_flashlight" ) ) {
+		idThread::ReturnString( "vr/flashhands/0h" );
+	} else {
+		idThread::ReturnString( "" );
+	}
+}
+
+/*
+================
+idWeapon::GetViewHandOffset
+================
+*/
+bool idWeapon::GetViewHandOffset( idVec3 &offset ) {
+	// the arms' joints are not named alike in every view model
+	static const char * const handJoints[] = {
+		"Rhand", "Rhand1", "RHand", "rhand", "R_hand", "Rwrist", "Rwrist1"
+	};
+	idMat3 axis;
+
+	if ( vrHandModel != renderEntity.hModel ) {
+		vrHandModel		= renderEntity.hModel;
+		vrHandJoint		= INVALID_JOINT;
+		vrHandMeasured	= false;
+		for ( int i = 0; i < (int)( sizeof( handJoints ) / sizeof( handJoints[0] ) ) && vrHandJoint == INVALID_JOINT; i++ ) {
+			vrHandJoint = animator.GetJointHandle( handJoints[i] );
+		}
+		if ( vrHandModel ) {
+			gameLocal.DPrintf( "VR: %s is held by %s\n", vrHandModel->Name(),
+				vrHandJoint != INVALID_JOINT ? animator.GetJointName( vrHandJoint ) : "vr_weaponGrip" );
+		}
+	}
+	if ( vrHandJoint == INVALID_JOINT ) {
+		return false;
+	}
+	if ( vrHandMeasured ) {
+		offset = vrHandOffset;
+		return true;
+	}
+	// until the weapon is first ready the hand follows its raise
+	animator.GetJointTransform( vrHandJoint, gameLocal.time, offset, axis );
+	if ( status == WP_READY ) {
+		vrHandOffset	= offset;
+		vrHandMeasured	= true;
+	}
+	return true;
+}
+#endif
+
 /*
 ================
 idWeapon::PresentWeapon
@@ -2107,6 +2231,18 @@ idWeapon::PresentWeapon
 void idWeapon::PresentWeapon( bool showViewModel ) {
 	playerViewOrigin = owner->firstPersonViewOrigin;
 	playerViewAxis = owner->firstPersonViewAxis;
+
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+	// shots, melee and the flashlight go where the controller points
+	{
+		idVec3 aimOrigin;
+		idMat3 aimAxis;
+		if ( owner->GetVRHandPose( true, aimOrigin, aimAxis ) ) {
+			playerViewOrigin = aimOrigin;
+			playerViewAxis = aimAxis;
+		}
+	}
+#endif
 
 	// calculate weapon position based on player movement bobbing
 	owner->CalculateViewWeaponPos( viewWeaponOrigin, viewWeaponAxis );

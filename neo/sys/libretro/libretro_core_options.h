@@ -69,7 +69,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "doom_framerate",
       "Frame rate (Restart Required)",
       NULL,
-      "Choose the desired frame rate.",
+      "Choose the desired frame rate. Auto follows the rate the frontend targets, including a VR headset's refresh once its session runs, so the sound and game speed match it.",
       NULL,
       NULL,
       {
@@ -1082,7 +1082,9 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "Show the game head-tracked in a VR headset. VR starts when the frontend "
       "reports a running headset and returns to the flat screen when it goes. "
       "Needs Color Format set to 24-bit (Standard). Has no effect on platforms "
-      "without VR support.",
+      "without VR support. Also loads the VR weapons and arms pack (pak399.pk4 "
+      "in base_vr, pak399roe.pk4 in d3xp_vr, beside the game data) when the "
+      "game is loaded.",
       NULL,
       NULL,
       {

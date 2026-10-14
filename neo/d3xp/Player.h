@@ -455,6 +455,14 @@ public:
 	float					DefaultFov( void ) const;
 	float					CalcFov( bool honorZoom );
 	void					CalculateViewWeaponPos( idVec3 &origin, idMat3 &axis );
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+	// in VR, the weapon hand's pointing (aim) or holding pose in the world;
+	// false while the controllers do not drive the weapon
+	bool					GetVRHandPose( bool aim, idVec3 &origin, idMat3 &axis, int hand = -1 ) const;
+	// where the weapon's hand-attacher joint sits for the VR pack's body;
+	// zero without the body
+	idVec3					VRHandAttacherToDefault( int hand ) const;
+#endif
 	idVec3					GetEyePosition( void ) const;
 	void					GetViewPos( idVec3 &origin, idMat3 &axis ) const;
 	void					OffsetThirdPersonView( float angle, float range, float height, bool clip );
@@ -764,6 +772,28 @@ private:
 	void				Event_EnableWeapon( void );
 	void				Event_DisableWeapon( void );
 	void				Event_GetCurrentWeapon( void );
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+	// The VR pack's body (Doom3Quest's): drawn in first person, its arms bent
+	// to put the hands on the weapon and the other controller. Not saved;
+	// set up again on restore.
+	idIK_Reach				armIK;
+	bool					vrBodyReady;
+	bool					vrBodyShown;
+	jointHandle_t			vrHandAttacher[2];				// the body's joint a weapon's attacher meets
+	idMat3					vrHandCorrectAxis[2][MAX_WEAPONS];
+	idVec3					vrHandAttacherToWrist[2][MAX_WEAPONS];
+	idVec3					vrHandAttacherToDefault[2][MAX_WEAPONS];
+	void					VRInitBody( void );
+	void					VRUpdateBody( void );
+	void					VRSetHandIK( int hand, idVec3 handOrigin, const idMat3 &handAxis, idWeapon *weapon, int weap );
+#endif
+#if defined(LIBRETRO) && defined(BOOM3_VR)
+	void				Event_GetWeaponHand( void );
+	void				Event_GetFlashHand( void );
+	void				Event_GetWeaponHandState( void );
+	void				Event_GetFlashHandState( void );
+	void				Event_GetFlashState( void );
+#endif
 	void				Event_GetPreviousWeapon( void );
 	void				Event_SelectWeapon( const char *weaponName );
 	void				Event_GetWeaponEntity( void );

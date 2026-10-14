@@ -18,3 +18,4 @@ boom3_libretro_android.so
 
 /neo/CMakeSettings.json
 /neo/.build_flags
+*.d
