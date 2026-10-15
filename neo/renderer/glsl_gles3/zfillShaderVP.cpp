@@ -17,6 +17,8 @@
 
 #include "glsl_shaders.h"
 
+namespace glsl_es3 {
+
 const char * const zfillShaderVP = R"(
 #version 300 es
 
@@ -64,3 +66,5 @@ void main()
   gl_Position.z += u_depthHack * worldPos.w;
 }
 )";
+
+}

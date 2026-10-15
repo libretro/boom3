@@ -289,13 +289,15 @@ void idGuiModel::EmitFullScreen( void ) {
 	viewDef->worldSpace.modelViewMatrix[10] = 1.0f;
 	viewDef->worldSpace.modelViewMatrix[15] = 1.0f;
 
-#ifdef HAVE_OPENGLES3
+#ifdef BOOM3_GLSL_ES3_RENDERER
 	// the GLES 3 shaders transform by model then view matrix separately,
 	// so the model matrix can't be left zeroed like the other paths allow
-	viewDef->worldSpace.modelMatrix[0] = 1.0f;
-	viewDef->worldSpace.modelMatrix[5] = 1.0f;
-	viewDef->worldSpace.modelMatrix[10] = 1.0f;
-	viewDef->worldSpace.modelMatrix[15] = 1.0f;
+	if ( glConfig.renderer == R_RENDERER_ES3 || glConfig.renderer == R_RENDERER_ES31 ) {
+		viewDef->worldSpace.modelMatrix[0] = 1.0f;
+		viewDef->worldSpace.modelMatrix[5] = 1.0f;
+		viewDef->worldSpace.modelMatrix[10] = 1.0f;
+		viewDef->worldSpace.modelMatrix[15] = 1.0f;
+	}
 #endif
 
 	viewDef->maxDrawSurfs = surfaces.Num();

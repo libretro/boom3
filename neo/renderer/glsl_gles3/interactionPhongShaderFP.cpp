@@ -17,6 +17,8 @@
 
 #include "glsl_shaders.h"
 
+namespace glsl_es3 {
+
 const char * const interactionPhongShaderFP = R"(
 #version 300 es
 precision mediump float;
@@ -104,3 +106,5 @@ void main(void)
   fragColor = vec4(dhewm3Epilogue(color), 1.0) * var_Color;
 }
 )";
+
+}

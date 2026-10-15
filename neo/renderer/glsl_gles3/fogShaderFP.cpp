@@ -17,6 +17,8 @@
 
 #include "glsl_shaders.h"
 
+namespace glsl_es3 {
+
 const char * const fogShaderFP = R"(
 #version 300 es
 precision mediump float;
@@ -38,3 +40,5 @@ void main()
   fragColor = texture( u_fragmentMap0, var_TexFog ) * texture( u_fragmentMap1, var_TexFogEnter ) * vec4(u_fogColor.rgb, 1.0);
 }
 )";
+
+}

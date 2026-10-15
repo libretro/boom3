@@ -18,6 +18,9 @@
 #ifndef D3WASM_GLSL_SHADERS_H
 #define D3WASM_GLSL_SHADERS_H
 
+// One namespace per set, so both sets can be in one core
+namespace glsl_es2 {
+
 // Main Light Interaction
   // gouraud
 extern const char* const interactionShaderVP;
@@ -49,5 +52,7 @@ extern const char* const cubeMapShaderFP;
 // Shadows
 extern const char* const stencilShadowShaderVP;
 extern const char* const stencilShadowShaderFP;
+
+}
 
 #endif //D3WASM_GLSL_SHADERS_H

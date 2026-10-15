@@ -25,7 +25,19 @@
 
 #ifdef HAVE_OPENGLES
 #include "renderer/gles_compat.h"
+#else
+#include "renderer/glsl_desktop.h"
 #endif
+
+extern bool  hdr_luma_clamp;
+extern bool  hdr_output_active;
+extern float hdr_emissive_gain;
+extern float hdr_particle_gain;
+
+// the ES 2 renderer, beside the others in a desktop core
+namespace gles2 {
+
+using namespace glsl_es2;
 
 shaderProgram_t interactionShader;
 shaderProgram_t interactionPhongShader;
@@ -46,12 +58,6 @@ shaderProgram_t stencilShadowShader;
 #define ATTR_NORMAL     3
 #define ATTR_TANGENT    4
 #define ATTR_BITANGENT  5
-
-// GLES: ARB programs unsupported.
-// Return non-zero dummy handle so material stages remain valid.
-int R_FindARBProgram( GLenum target, const char *program ) {
-  return 1;
-}
 
 /*
 ====================
@@ -137,10 +143,14 @@ R_LoadGLSLShader
 loads GLSL vertex or fragment shaders
 =================
 */
-static void R_LoadGLSLShader(const char* buffer, shaderProgram_t* shaderProgram, GLenum type) {
+static void R_LoadGLSLShader(const char* text, shaderProgram_t* shaderProgram, GLenum type) {
   if ( !glConfig.isInitialized ) {
     return;
   }
+
+  idStr source( text );
+  R_GLSLSourceForContext( source, type );
+  const char* buffer = source.c_str();
 
   switch ( type ) {
     case GL_VERTEX_SHADER:
@@ -654,7 +664,6 @@ static void RB_GLSL_DrawInteraction(const drawInteraction_t* din) {
   const shaderProgram_t * const curProg =
       (const shaderProgram_t *)backEnd.glState.currentProgram;
   if ( curProg != NULL && curProg->hdrParms >= 0 ) {
-    extern bool  hdr_luma_clamp;
     float hp[4];
     hp[0] = hp[1] = hp[2] = r_gammaInShader.GetBool() ? RB_HDRGammaBrightness( false ) : 1.0f;
     hp[3] = r_gammaInShader.GetBool() ? 1.0f / r_gamma.GetFloat() : 1.0f;
@@ -2116,9 +2125,6 @@ void RB_GLSL_T_RenderShaderPasses(const drawSurf_t* surf, const float mvp[16]) {
       float emissive[4];
       const float *stageColor = color;
       {
-        extern bool  hdr_output_active;
-        extern float hdr_emissive_gain;
-        extern float hdr_particle_gain;
         const int blend = pStage->drawStateBits
             & ( GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS );
         /* particles take their own gain, as in draw_common.cpp */
@@ -2617,3 +2623,5 @@ void RB_GLSL_PrepareShaders(void) {
   GL_DisableVertexAttribArray(ATTR_TANGENT);
   GL_DisableVertexAttribArray(ATTR_BITANGENT);
 }
+
+} // namespace gles2

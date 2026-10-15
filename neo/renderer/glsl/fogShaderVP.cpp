@@ -17,6 +17,8 @@
 
 #include "glsl_shaders.h"
 
+namespace glsl_es2 {
+
 const char * const fogShaderVP = R"(
 #version 100
 precision mediump float;
@@ -49,3 +51,5 @@ void main(void)
   var_TexFogEnter = vec2(dot(u_fogMatrix[2], attr_Vertex),dot(u_fogMatrix[3], attr_Vertex));
 }
 )";
+
+}

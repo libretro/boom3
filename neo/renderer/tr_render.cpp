@@ -87,7 +87,7 @@ Triangles from count indexes, offset by the base vertex the backend's
 attribute pointers were set up with (the ES 3.1 renderer's shared buffers).
 ================
 */
-#ifdef HAVE_OPENGLES
+#ifdef BOOM3_GLSL_RENDERERS
 static void RB_DrawIndexes( int count, GLenum type, const void *indexes ) {
 	if ( backEnd.glState.baseVertex > 0 ) {
 		glCaps.DrawElementsBaseVertex( GL_TRIANGLES, count, type, indexes, backEnd.glState.baseVertex );
@@ -117,16 +117,20 @@ void RB_DrawElementsWithCounters( const srfTriangles_t *tri ) {
 		}
 	}
 
-#ifdef HAVE_OPENGLES
-    if ( tri->indexCache ) {
-        RB_DrawIndexes( tri->numIndexes, vertexCache.IndexType( tri->indexCache ),
-                        vertexCache.Position( tri->indexCache ) );
-        backEnd.pc.c_vboIndexes += tri->numIndexes;
-    } else {
-        vertexCache.UnbindIndex();
-        RB_DrawIndexes( tri->numIndexes, GL_INDEX_TYPE, tri->indexes );
-    }
-#else
+#ifdef BOOM3_GLSL_RENDERERS
+	if ( R_GLSLRenderer() ) {
+		if ( tri->indexCache ) {
+			RB_DrawIndexes( tri->numIndexes, vertexCache.IndexType( tri->indexCache ),
+							vertexCache.Position( tri->indexCache ) );
+			backEnd.pc.c_vboIndexes += tri->numIndexes;
+		} else {
+			vertexCache.UnbindIndex();
+			RB_DrawIndexes( tri->numIndexes, GL_INDEX_TYPE, tri->indexes );
+		}
+		return;
+	}
+#endif
+#ifdef BOOM3_ARB2_RENDERER
 	if ( tri->indexCache && r_useIndexBuffers.GetBool() ) {
 		qglDrawElements( GL_TRIANGLES,
 						r_singleTriangle.GetBool() ? 3 : tri->numIndexes,
@@ -155,19 +159,23 @@ void RB_DrawShadowElementsWithCounters( const srfTriangles_t *tri, int numIndexe
 	backEnd.pc.c_shadowIndexes += numIndexes;
 	backEnd.pc.c_shadowVertexes += tri->numVerts;
 
-#ifdef HAVE_OPENGLES
-    if ( tri->indexCache ) {
-        RB_DrawIndexes( numIndexes, vertexCache.IndexType( tri->indexCache ),
-                        vertexCache.Position( tri->indexCache ) );
-        backEnd.pc.c_vboIndexes += numIndexes;
-    } else {
-        static bool bOnce = true;
-        if ( bOnce ) {
-            common->Warning( "Attempting to draw without index caching. This is a bug.\n" );
-            bOnce = false;
-        }
-    }
-#else
+#ifdef BOOM3_GLSL_RENDERERS
+	if ( R_GLSLRenderer() ) {
+		if ( tri->indexCache ) {
+			RB_DrawIndexes( numIndexes, vertexCache.IndexType( tri->indexCache ),
+							vertexCache.Position( tri->indexCache ) );
+			backEnd.pc.c_vboIndexes += numIndexes;
+		} else {
+			static bool bOnce = true;
+			if ( bOnce ) {
+				common->Warning( "Attempting to draw without index caching. This is a bug.\n" );
+				bOnce = false;
+			}
+		}
+		return;
+	}
+#endif
+#ifdef BOOM3_ARB2_RENDERER
 	if ( tri->indexCache && r_useIndexBuffers.GetBool() ) {
 		qglDrawElements( GL_TRIANGLES,
 						r_singleTriangle.GetBool() ? 3 : numIndexes,
@@ -604,11 +612,13 @@ void RB_BeginDrawingView (void) {
 
 	const viewDef_t* viewDef = backEnd.viewDef;
 
-#ifndef HAVE_OPENGLES
+#ifdef BOOM3_ARB2_RENDERER
 	// set the modelview matrix for the viewer
-	qglMatrixMode(GL_PROJECTION);
-	qglLoadMatrixf( viewDef->projectionMatrix );
-	qglMatrixMode(GL_MODELVIEW);
+	if ( !R_GLSLRenderer() ) {
+		qglMatrixMode(GL_PROJECTION);
+		qglLoadMatrixf( viewDef->projectionMatrix );
+		qglMatrixMode(GL_MODELVIEW);
+	}
 #endif
 
 	// set the window clipping
@@ -739,7 +749,7 @@ This can be used by different draw_* backends to decompose a complex light / sur
 interaction into primitive interactions
 =============
 */
-#ifndef HAVE_OPENGLES
+#ifdef BOOM3_ARB2_RENDERER
 void RB_CreateSingleDrawInteractions( const drawSurf_t *surf, void (*DrawInteraction)(const drawInteraction_t *) ) {
 	const idMaterial	*surfaceShader = surf->material;
 	const float			*surfaceRegs = surf->shaderRegisters;
@@ -815,11 +825,11 @@ void RB_CreateSingleDrawInteractions( const drawSurf_t *surf, void (*DrawInterac
 
 		inter.lightImage = lightStage->texture.image;
 
-		memcpy( inter.lightProjection, lightProject, sizeof( inter.lightProjection ) );
+		memcpy( inter.lightProjection.ToFloatPtr(), lightProject, sizeof( inter.lightProjection ) );
 		// now multiply the texgen by the light texture matrix
 		if ( lightStage->texture.hasMatrix ) {
 			RB_GetShaderTextureMatrix( lightRegs, &lightStage->texture, backEnd.lightTextureMatrix );
-			RB_BakeTextureMatrixIntoTexgen( reinterpret_cast<class idPlane *>(inter.lightProjection), backEnd.lightTextureMatrix );
+			RB_BakeTextureMatrixIntoTexgen( inter.lightProjection, backEnd.lightTextureMatrix );
 		}
 
 		inter.bumpImage = NULL;
@@ -916,7 +926,7 @@ void RB_CreateSingleDrawInteractions( const drawSurf_t *surf, void (*DrawInterac
 RB_SetDrawInteractions
 ==================
 */
-#ifdef HAVE_OPENGLES
+#ifdef BOOM3_GLSL_RENDERERS
 void RB_SetDrawInteraction( const shaderStage_t *surfaceStage, const float *surfaceRegs,
                            idImage **image, idVec4 matrix[2], float color[4] ) {
   R_SetDrawInteraction( surfaceStage, surfaceRegs, image, matrix, color );
@@ -933,7 +943,7 @@ void RB_DrawView( const void *data ) {
 
 	cmd = (const drawSurfsCommand_t *)data;
 
-#ifndef HAVE_OPENGLES
+#ifdef BOOM3_ARB2_RENDERER
 	// with r_lockSurfaces enabled, we set the locked render view
 	// for the primary viewDef for all the "what should be drawn" calculations.
 	// now it must be reverted to the real render view so the scene gets rendered
@@ -971,7 +981,7 @@ void RB_DrawView( const void *data ) {
 		return;
 	}
 
-#ifndef HAVE_OPENGLES
+#ifdef BOOM3_ARB2_RENDERER
 	// skip render bypasses everything that has models, assuming
 	// them to be 3D views, but leaves 2D rendering visible
 	if ( r_skipRender.GetBool() && backEnd.viewDef->viewEntitys ) {
@@ -988,8 +998,10 @@ void RB_DrawView( const void *data ) {
 
 	backEnd.pc.c_surfaces += backEnd.viewDef->numDrawSurfs;
 
-#ifndef HAVE_OPENGLES
-	RB_ShowOverdraw();
+#ifdef BOOM3_ARB2_RENDERER
+	if ( !R_GLSLRenderer() ) {
+		RB_ShowOverdraw();
+	}
 #endif
 
 #if defined(LIBRETRO) && defined(BOOM3_VR)
@@ -1000,14 +1012,14 @@ void RB_DrawView( const void *data ) {
 	// render the scene, jumping to the hardware specific interaction renderers
 	RB_STD_DrawView();
 
-#if defined(LIBRETRO) && defined(HAVE_OPENGLES)
+#if defined(LIBRETRO) && defined(BOOM3_GLSL_RENDERERS)
 	// a tiled GPU need not write this view's depth and stencil back
-	if ( backEnd.viewDef->viewEntitys ) {
+	if ( R_GLSLRenderer() && backEnd.viewDef->viewEntitys ) {
 		GLimp_EndView3D();
 	}
 #endif
 
-#ifndef HAVE_OPENGLES
+#ifdef BOOM3_ARB2_RENDERER
 	// restore the context for 2D drawing if we were stubbing it out
 	if ( r_skipRenderContext.GetBool() && backEnd.viewDef->viewEntitys ) {
 		GLimp_ActivateContext();

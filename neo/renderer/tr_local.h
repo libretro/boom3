@@ -123,7 +123,7 @@ typedef struct drawSurf_s {
 	struct vertCache_s		*dynamicTexCoords;	// float * in vertex cache memory
 	// specular directions for non vertex program cards, skybox texcoords, etc
 	float					particle_radius;	// The radius of individual quads for soft particles #3878
-#ifdef HAVE_OPENGLES
+#ifdef BOOM3_GLSL_RENDERERS
 	float  wobbleTransform[16];
 #endif
 } drawSurf_t;
@@ -495,11 +495,7 @@ typedef struct {
 	// these are loaded into the vertex program
 	idVec4				localLightOrigin;
 	idVec4				localViewOrigin;
-#ifdef HAVE_OPENGLES
-	idMat4				lightProjection;
-#else
-	idVec4				lightProjection[4];	// in local coordinates, possibly with a texture matrix baked in
-#endif
+	idMat4				lightProjection;	// in local coordinates, possibly with a texture matrix baked in
 	idVec4				bumpMatrix[2];
 	idVec4				diffuseMatrix[2];
 	idVec4				specularMatrix[2];
@@ -653,7 +649,7 @@ typedef struct {
 	int			faceCulling;
 	int			glStateBits;
 	bool		forceGlState;		// the next GL_State will ignore glStateBits and set everything
-#ifdef HAVE_OPENGLES
+#ifdef BOOM3_GLSL_RENDERERS
 	int     	currentTexture;
 	struct shaderProgram_s	*currentProgram;
 #endif
@@ -725,7 +721,7 @@ const int MAX_GUI_SURFACES	= 1024;		// default size of the drawSurfs list for gu
 typedef enum {
 	BE_ARB2,
 	BE_BAD,
-#ifdef HAVE_OPENGLES
+#ifdef BOOM3_GLSL_RENDERERS
     BE_GLSL,
 #endif
 } backEndName_t;
@@ -901,12 +897,12 @@ extern idCVar r_renderer;				// arb2, etc
 
 extern idCVar r_checkBounds;			// compare all surface bounds with precalculated ones
 
-#ifdef HAVE_OPENGLES
+#ifdef BOOM3_GLSL_RENDERERS
 extern idCVar r_usePhong;
 extern idCVar r_specularExponent;
 #endif
 
-#ifdef HAVE_OPENGLES3
+#ifdef BOOM3_GLSL_ES3_RENDERER
 extern idCVar r_usePBR;
 extern idCVar r_specularExponentPBR;
 #endif
@@ -1340,7 +1336,7 @@ void RB_DetermineLightScale( void );
 void RB_STD_LightScale( void );
 void RB_BeginDrawingView (void);
 
-#ifdef HAVE_OPENGLES
+#ifdef BOOM3_GLSL_RENDERERS
 void RB_SubmittInteraction( drawInteraction_t *din, void (*DrawInteraction)(const drawInteraction_t *) );
 void RB_SetDrawInteraction( const shaderStage_t *surfaceStage, const float *surfaceRegs, idImage **image, idVec4 matrix[2], float color[4] );
 #endif
@@ -1362,11 +1358,8 @@ void RB_FinishStageTexture( const textureStage_t *texture, const drawSurf_t *sur
 void RB_StencilShadowPass( const drawSurf_t *drawSurfs );
 void RB_STD_DrawView( void );
 void RB_STD_FogAllLights( void );
-#ifdef HAVE_OPENGLES
 void RB_BakeTextureMatrixIntoTexgen( idMat4 & lightProject, const float* textureMatrix);
-#else
 void RB_BakeTextureMatrixIntoTexgen( idPlane lightProject[3], const float textureMatrix[16] );
-#endif
 
 /*
 ============================================================
@@ -1472,7 +1465,7 @@ typedef enum {
 	PP_HDR_SCENE_FOLD = 25,
 } programParameter_t;
 
-#ifdef HAVE_OPENGLES
+#ifdef BOOM3_GLSL_RENDERERS
 
 /*
 ============================================================
@@ -1545,20 +1538,46 @@ typedef struct shaderProgram_s {
  * then records; true for anything it does not cache. */
 bool GL_UniformChanged( shaderProgram_t *program, int locationOffset, const float *value, int count );
 
-#ifdef HAVE_OPENGLES3
-void RB_GLSL_EndFrame( void );
-#endif
-#if defined(LIBRETRO) && defined(HAVE_OPENGLES)
+#if defined(LIBRETRO)
 void GLimp_EndView3D( void );
 #endif
 
-void R_ReloadGLSLPrograms_f(const idCmdArgs &args);
+// the source a GLSL renderer compiles on this context: unchanged on GLES,
+// the desktop GLSL of the same program on a desktop context
+void R_GLSLSourceForContext( idStr &source, GLenum type );
+// the GLSL that context compiles (glsl_translate.h's GLSL_TARGET_*)
+int R_GLSLTarget( void );
 
+// the running GLSL renderer's (draw_common.cpp hands each to it)
+void R_ReloadGLSLPrograms_f(const idCmdArgs &args);
 void RB_GLSL_PrepareShaders(void);
 void RB_GLSL_FillDepthBuffer(drawSurf_t **drawSurfs, int numDrawSurfs);
 void RB_GLSL_DrawInteractions(void);
 int  RB_GLSL_DrawShaderPasses(drawSurf_t **drawSurfs, int numDrawSurfs);
 void RB_GLSL_FogAllLights(void);
+void RB_GLSL_EndFrame( void );
+
+#ifdef BOOM3_GLSL_ES2_RENDERER
+namespace gles2 {
+void R_ReloadGLSLPrograms_f(const idCmdArgs &args);
+void RB_GLSL_PrepareShaders(void);
+void RB_GLSL_FillDepthBuffer(drawSurf_t **drawSurfs, int numDrawSurfs);
+void RB_GLSL_DrawInteractions(void);
+int  RB_GLSL_DrawShaderPasses(drawSurf_t **drawSurfs, int numDrawSurfs);
+void RB_GLSL_FogAllLights(void);
+}
+#endif
+#ifdef BOOM3_GLSL_ES3_RENDERER
+namespace gles3 {
+void R_ReloadGLSLPrograms_f(const idCmdArgs &args);
+void RB_GLSL_PrepareShaders(void);
+void RB_GLSL_FillDepthBuffer(drawSurf_t **drawSurfs, int numDrawSurfs);
+void RB_GLSL_DrawInteractions(void);
+int  RB_GLSL_DrawShaderPasses(drawSurf_t **drawSurfs, int numDrawSurfs);
+void RB_GLSL_FogAllLights(void);
+void RB_GLSL_EndFrame( void );
+}
+#endif
 
 #endif
 

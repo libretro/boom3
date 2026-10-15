@@ -32,12 +32,14 @@
 #include <GLES3/gl3.h>
 
 #include "glsl_blocks.h"
+#include "glsl_translate.h"
 
 #ifndef EGL_PLATFORM_SURFACELESS_MESA
 #define EGL_PLATFORM_SURFACELESS_MESA 0x31DD
 #endif
 
 static const char *renderer_dir;
+static int glsl_target = GLSL_TARGET_ES;  /* what compile() translates to */
 static int failures;
 static int programs_checked;
 static int have_multiview;
@@ -161,9 +163,23 @@ static GLuint compile(GLenum type, const char *src, const char *what)
    GLuint sh;
    GLint ok = 0;
    char log[4096];
+   char *translated = NULL;
 
    while (*src == '\n')
       src++;
+   /* what R_GLSLSourceForContext hands a desktop context */
+   if (glsl_target != GLSL_TARGET_ES)
+   {
+      translated = glsl_translate(src, type == GL_VERTEX_SHADER ? GLSL_STAGE_VERTEX : GLSL_STAGE_FRAGMENT,
+            glsl_target);
+      if (!translated)
+      {
+         fprintf(stderr, "FAIL %s: no desktop form\n", what);
+         failures++;
+         return 0;
+      }
+      src = translated;
+   }
    sh = glCreateShader(type);
    glShaderSource(sh, 1, &src, NULL);
    glCompileShader(sh);
@@ -171,12 +187,14 @@ static GLuint compile(GLenum type, const char *src, const char *what)
    if (!ok)
    {
       glGetShaderInfoLog(sh, sizeof(log), NULL, log);
-      fprintf(stderr, "FAIL %s (%s shader) does not compile:\n%s\n", what,
-            type == GL_VERTEX_SHADER ? "vertex" : "fragment", log);
+      fprintf(stderr, "FAIL %s (%s shader) does not compile:\n%s\n%s\n", what,
+            type == GL_VERTEX_SHADER ? "vertex" : "fragment", log, translated ? translated : "");
       failures++;
       glDeleteShader(sh);
+      free(translated);
       return 0;
    }
+   free(translated);
    return sh;
 }
 
@@ -457,6 +475,51 @@ static void check_set(const char *subdir, const struct pairing *set, int gles3)
 
 /* ---- context ---- */
 
+#ifndef EGL_CONTEXT_MAJOR_VERSION
+#define EGL_CONTEXT_MAJOR_VERSION 0x3098
+#define EGL_CONTEXT_MINOR_VERSION 0x30FB
+#define EGL_CONTEXT_OPENGL_PROFILE_MASK 0x30FD
+#define EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT 0x00000001
+#define EGL_CONTEXT_OPENGL_COMPATIBILITY_PROFILE_BIT 0x00000002
+#endif
+
+/* A desktop GL context of the version and profile (core when core), made
+ * current on the display the GLES one used; 0 where EGL offers none. */
+static EGLDisplay egl_dpy = EGL_NO_DISPLAY;
+
+static int make_desktop_context(int major, int minor, int core)
+{
+   EGLConfig cfg;
+   EGLint n = 0;
+   EGLContext ctx;
+   EGLSurface surf;
+   static const EGLint cfg_attrs[] = {
+      EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT, EGL_SURFACE_TYPE, EGL_PBUFFER_BIT, EGL_NONE };
+   static const EGLint pb_attrs[] = { EGL_WIDTH, 1, EGL_HEIGHT, 1, EGL_NONE };
+   EGLint ctx_attrs[7];
+
+   ctx_attrs[0] = EGL_CONTEXT_MAJOR_VERSION;
+   ctx_attrs[1] = major;
+   ctx_attrs[2] = EGL_CONTEXT_MINOR_VERSION;
+   ctx_attrs[3] = minor;
+   ctx_attrs[4] = EGL_CONTEXT_OPENGL_PROFILE_MASK;
+   ctx_attrs[5] = core ? EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT : EGL_CONTEXT_OPENGL_COMPATIBILITY_PROFILE_BIT;
+   ctx_attrs[6] = EGL_NONE;
+   if (!eglBindAPI(EGL_OPENGL_API)
+         || !eglChooseConfig(egl_dpy, cfg_attrs, &cfg, 1, &n) || n < 1)
+      return 0;
+   ctx = eglCreateContext(egl_dpy, cfg, EGL_NO_CONTEXT, ctx_attrs);
+   if (ctx == EGL_NO_CONTEXT)
+      return 0;
+   surf = eglCreatePbufferSurface(egl_dpy, cfg, pb_attrs);
+   if (!eglMakeCurrent(egl_dpy, surf, surf, ctx))
+      return 0;
+   have_multiview = 0;
+   printf("%s, %s (%s)\n", (const char*)glGetString(GL_RENDERER),
+         (const char*)glGetString(GL_VERSION), core ? "core" : "compatibility");
+   return 1;
+}
+
 static int make_context(void)
 {
    EGLDisplay dpy = EGL_NO_DISPLAY;
@@ -488,6 +551,7 @@ static int make_context(void)
       fprintf(stderr, "FAIL no EGL display\n");
       return 0;
    }
+   egl_dpy = dpy;
    eglBindAPI(EGL_OPENGL_ES_API);
    if (!eglChooseConfig(dpy, cfg_attrs, &cfg, 1, &n) || n < 1)
    {
@@ -528,6 +592,24 @@ int main(int argc, char **argv)
       return 1;
    check_set("glsl", gles2_programs, 0);
    check_set("glsl_gles3", gles3_programs, 1);
+
+   /* the desktop cores run the same renderers on desktop contexts: the
+    * ES 2 one on GL 2.1 compatibility, both on GL 3.3 core */
+   if (make_desktop_context(2, 1, 0))
+   {
+      glsl_target = GLSL_TARGET_COMPAT;
+      check_set("glsl", gles2_programs, 0);
+   }
+   else
+      printf("no desktop GL 2.1 context: its checks skipped\n");
+   if (make_desktop_context(3, 3, 1))
+   {
+      glsl_target = GLSL_TARGET_CORE;
+      check_set("glsl", gles2_programs, 0);
+      check_set("glsl_gles3", gles3_programs, 1);
+   }
+   else
+      printf("no desktop GL 3.3 core context: its checks skipped\n");
    if (failures)
    {
       printf("FAIL gles_shader_check: %d failure(s) in %d programs\n", failures, programs_checked);

@@ -17,6 +17,8 @@
 
 #include "glsl_shaders.h"
 
+namespace glsl_es2 {
+
 const char * const diffuseMapShaderFP = R"(
 #version 100
 precision mediump float;
@@ -37,3 +39,5 @@ void main(void)
   gl_FragColor = texture2D(u_fragmentMap0, var_TexCoord) * u_glColor * var_Color;
 }
 )";
+
+}

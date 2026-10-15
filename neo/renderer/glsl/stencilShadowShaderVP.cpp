@@ -17,6 +17,8 @@
 
 #include "glsl_shaders.h"
 
+namespace glsl_es2 {
+
 const char * const stencilShadowShaderVP = R"(
 #version 100
 precision mediump float;
@@ -36,3 +38,5 @@ void main(void)
   gl_Position = u_modelViewProjectionMatrix * (attr_Vertex.w * u_lightOrigin + attr_Vertex - u_lightOrigin);
 }
 )";
+
+}

@@ -62,8 +62,74 @@ extern "C" {
 #include "sound/snd_local.h"
 
 #include "libretro_core_options.h"
+#include "renderer/gl_caps.h"
+#include "renderer/glsl_translate.h"
 
 #include <locale.h>
+
+/*
+The HDR, supersample and VR present passes come in two forms: GLSL, which
+the GLES builds and a desktop core running a GLSL renderer draw with, and
+ARB programs with fixed function, which the ARB2 renderer's context draws
+with.  A desktop core with the GLSL renderers has both and picks by the
+renderer running.
+*/
+#if defined(HAVE_OPENGLES)
+#define LR_GLSL_PASSES
+#elif defined(BOOM3_GLSL_RENDERERS)
+#define LR_GLSL_PASSES
+#define LR_ARB_PASSES
+#else
+#define LR_ARB_PASSES
+#endif
+#if defined(LR_GLSL_PASSES) && defined(LR_ARB_PASSES)
+#define LR_GLSL()	R_GLSLRenderer()
+#elif defined(LR_GLSL_PASSES)
+#define LR_GLSL()	true
+#else
+#define LR_GLSL()	false
+#endif
+
+/* The present passes' geometry, in a buffer of this context's: a core
+ * profile draws from buffers only.  A full-screen triangle at 0, the quad
+ * strip after it.  Zeroed with the context. */
+static GLuint lr_present_vbo;
+static void lr_present_geometry( bool quad ) {
+	static const GLfloat verts[14] = {
+		-1.0f, -1.0f,  3.0f, -1.0f,  -1.0f, 3.0f,
+		-1.0f, -1.0f,  1.0f, -1.0f,  -1.0f, 1.0f,  1.0f, 1.0f
+	};
+	if ( !lr_present_vbo ) {
+		glGenBuffers( 1, &lr_present_vbo );
+		glBindBuffer( GL_ARRAY_BUFFER, lr_present_vbo );
+		glBufferData( GL_ARRAY_BUFFER, sizeof( verts ), verts, GL_STATIC_DRAW );
+	} else {
+		glBindBuffer( GL_ARRAY_BUFFER, lr_present_vbo );
+	}
+	glEnableVertexAttribArray( 0 );
+	glVertexAttribPointer( 0, 2, GL_FLOAT, GL_FALSE, 0, (const void *)( quad ? 6 * sizeof( GLfloat ) : 0 ) );
+}
+
+#ifndef HAVE_OPENGLES
+#ifndef GL_TEXTURE_SWIZZLE_R
+#define GL_TEXTURE_SWIZZLE_R	0x8E42
+#define GL_TEXTURE_SWIZZLE_G	0x8E43
+#define GL_TEXTURE_SWIZZLE_B	0x8E44
+#define GL_TEXTURE_SWIZZLE_A	0x8E45
+#endif
+#ifndef GL_R16
+#define GL_R16					0x822A
+#endif
+/* A one-channel lookup table on a core profile, which has no luminance
+ * format: sixteen bits in red, read back on every channel. */
+static void lr_lut_r16( GLsizei w, const unsigned short *v ) {
+	glTexImage2D( GL_TEXTURE_2D, 0, GL_R16, w, 1, 0, GL_RED, GL_UNSIGNED_SHORT, v );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_R, GL_RED );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_G, GL_RED );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_B, GL_RED );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_A, GL_ONE );
+}
+#endif
 
 #include <glsm/glsm.h>
 
@@ -348,8 +414,12 @@ static bool hdr_filmic_build( void ) {
 	while ( glGetError() != GL_NO_ERROR ) {
 	}
 #ifndef HAVE_OPENGLES
-	glTexImage2D( GL_TEXTURE_2D, 0, GL_LUMINANCE16, 256, 1, 0,
-				  GL_LUMINANCE, GL_UNSIGNED_SHORT, lut16 );
+	if ( glCaps.core ) {
+		lr_lut_r16( 256, lut16 );
+	} else {
+		glTexImage2D( GL_TEXTURE_2D, 0, GL_LUMINANCE16, 256, 1, 0,
+					  GL_LUMINANCE, GL_UNSIGNED_SHORT, lut16 );
+	}
 	if ( glGetError() != GL_NO_ERROR )
 #endif
 	{
@@ -417,7 +487,7 @@ static float hdr_filmiclog_norm( void ) {
 	return t[1];
 }
 
-#ifdef HAVE_OPENGLES
+#ifdef LR_GLSL_PASSES
 static void hdr_aces2_set_uniforms( void ) {
 	const aces2Params_t *p = hdr_aces2_params;
 	float m[9];
@@ -564,7 +634,7 @@ static volatile float hdr_ssaa_env_override = -1.0f;
  * mean, which is a problem 24-bit content cannot have. */
 static GLuint ldr_fbo = 0, ldr_tex = 0, ldr_rbo = 0;
 static int    ldr_w = 0, ldr_h = 0;
-#ifdef HAVE_OPENGLES
+#ifdef LR_GLSL_PASSES
 static GLuint ldr_prog = 0;
 static GLint  ldr_loc_tex = -1;
 #endif
@@ -579,7 +649,7 @@ static GLuint hdr_bloom_fbo[4], hdr_bloom_tex[4];   /* [0,1]=1/4 A/B, [2,3]=1/16
 static GLuint hdr_conv_fbo[HDR_CONV_MAX], hdr_conv_tex[HDR_CONV_MAX];
 static GLuint hdr_prog_down, hdr_prog_down_karis, hdr_prog_up;
 static GLint  hdr_down_k_loc_texel = -1;
-#ifndef HAVE_OPENGLES
+#ifdef LR_ARB_PASSES
 static GLuint hdr_arb_vp, hdr_arb_down, hdr_arb_down_karis, hdr_arb_up;
 static GLuint hdr_arb_bright, hdr_arb_blur;
 static GLuint hdr_arb_comp1, hdr_arb_comp2;
@@ -926,6 +996,11 @@ static idCVar vr_turnmode( "vr_turnmode", "0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR
 static idCVar vr_turnangle( "vr_turnangle", "45", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_INTEGER, "VR snap turn in degrees; a smooth turn goes eight times it a second (a ninth of it a frame at 72 Hz)" );
 #endif
 
+/* The renderer the doom_renderer option names, as this build runs it.  It
+ * decides the context asked for, so it is read before that and kept for
+ * the session: changing it needs a restart. */
+static rendererKind_t libretro_renderer = R_RENDERER_ARB2;
+
 static retro_hw_context_type get_hw_context_type(void)
 {
 #ifdef HAVE_OPENGLES
@@ -939,14 +1014,33 @@ static retro_hw_context_type get_hw_context_type(void)
    return RETRO_HW_CONTEXT_OPENGLES2;
 #endif
 #else
+   /* the ES 3 renderers on the core profile of their GL version, ARB2 and
+    * the ES 2 renderer on a compatibility one */
+   if (libretro_renderer == R_RENDERER_ES3 || libretro_renderer == R_RENDERER_ES31)
+      return RETRO_HW_CONTEXT_OPENGL_CORE;
    return RETRO_HW_CONTEXT_OPENGL;
 #endif
 }
 
+#ifndef HAVE_OPENGLES
+/* The desktop GL version a GLSL renderer's GLES version corresponds to;
+ * 0.0 for ARB2, which takes what the frontend gives. */
+static void renderer_gl_version(unsigned *major, unsigned *minor)
+{
+   switch (libretro_renderer)
+   {
+   case R_RENDERER_ES2:  *major = 2; *minor = 1; break;
+   case R_RENDERER_ES3:  *major = 3; *minor = 3; break;
+   case R_RENDERER_ES31: *major = 4; *minor = 3; break;
+   default:              *major = 0; *minor = 0; break;
+   }
+}
+#endif
+
 
 #ifdef BOOM3_VR
 /* ============ VR ============ */
-#ifdef HAVE_OPENGLES
+#ifdef LR_GLSL_PASSES
 static GLuint hdr_compile( GLenum type, const char *src ); // forward declaration
 #endif
 
@@ -1443,7 +1537,60 @@ static void quad_draw( GLuint tex, bool blend, float keep = -1.0f )
 
 	glDisable( GL_CULL_FACE );
 
-#ifndef HAVE_OPENGLES
+#ifdef LR_GLSL_PASSES
+	if ( LR_GLSL() ) {
+	if ( !ldr_prog ) {
+		static const char vs[] =
+			"attribute vec2 aPos;\n"
+			"varying vec2 vUV;\n"
+			"void main() {\n"
+			"  vUV = aPos * 0.5 + 0.5;\n"
+			"  gl_Position = vec4(aPos, 0.0, 1.0);\n"
+			"}\n";
+
+		static const char fs[] =
+			"precision mediump float;\n"
+			"varying vec2 vUV;\n"
+			"uniform sampler2D uTex;\n"
+			"void main() { gl_FragColor = texture2D(uTex, vUV); }\n";
+
+		GLuint v = hdr_compile( GL_VERTEX_SHADER, vs );
+		GLuint f = hdr_compile( GL_FRAGMENT_SHADER, fs );
+
+		if ( v && f ) {
+			ldr_prog = glCreateProgram();
+			glAttachShader( ldr_prog, v );
+			glAttachShader( ldr_prog, f );
+			glBindAttribLocation( ldr_prog, 0, "aPos" );
+			glLinkProgram( ldr_prog );
+			ldr_loc_tex = glGetUniformLocation( ldr_prog, "uTex" );
+		}
+
+		if ( v )
+			glDeleteShader( v );
+		if ( f )
+			glDeleteShader( f );
+	}
+
+	if ( ldr_prog ) {
+
+		glUseProgram( ldr_prog );
+		glActiveTexture( GL_TEXTURE0 );
+		glBindTexture( GL_TEXTURE_2D, tex );
+		if ( ldr_loc_tex >= 0 )
+			glUniform1i( ldr_loc_tex, 0 );
+
+		lr_present_geometry( true );
+		glBindBuffer( GL_ELEMENT_ARRAY_BUFFER, 0 );
+		glDrawArrays( GL_TRIANGLE_STRIP, 0, 4 );
+		glDisableVertexAttribArray( 0 );
+		glBindBuffer( GL_ARRAY_BUFFER, 0 );
+		glUseProgram( 0 );
+	}
+	} else
+#endif
+	{
+#ifdef LR_ARB_PASSES
 	if ( qglBindProgramARB ) {
 		glDisable( GL_FRAGMENT_PROGRAM_ARB );
 		glDisable( GL_VERTEX_PROGRAM_ARB );
@@ -1481,66 +1628,8 @@ static void quad_draw( GLuint tex, bool blend, float keep = -1.0f )
 
 	glDisable( GL_TEXTURE_2D );
 
-#else
-	if ( !ldr_prog ) {
-		static const char vs[] =
-			"attribute vec2 aPos;\n"
-			"varying vec2 vUV;\n"
-			"void main() {\n"
-			"  vUV = aPos * 0.5 + 0.5;\n"
-			"  gl_Position = vec4(aPos, 0.0, 1.0);\n"
-			"}\n";
-
-		static const char fs[] =
-			"precision mediump float;\n"
-			"varying vec2 vUV;\n"
-			"uniform sampler2D uTex;\n"
-			"void main() { gl_FragColor = texture2D(uTex, vUV); }\n";
-
-		GLuint v = hdr_compile( GL_VERTEX_SHADER, vs );
-		GLuint f = hdr_compile( GL_FRAGMENT_SHADER, fs );
-
-		if ( v && f ) {
-			ldr_prog = glCreateProgram();
-			glAttachShader( ldr_prog, v );
-			glAttachShader( ldr_prog, f );
-			glBindAttribLocation( ldr_prog, 0, "aPos" );
-			glLinkProgram( ldr_prog );
-			ldr_loc_tex = glGetUniformLocation( ldr_prog, "uTex" );
-		}
-
-		if ( v )
-			glDeleteShader( v );
-		if ( f )
-			glDeleteShader( f );
-	}
-
-	if ( ldr_prog ) {
-		static GLuint quadVbo = 0;
-		static const GLfloat quad[8] = { -1,-1,  1,-1,  -1,1,  1,1 };
-
-		if ( !quadVbo ) {
-			glGenBuffers( 1, &quadVbo );
-			glBindBuffer( GL_ARRAY_BUFFER, quadVbo );
-			glBufferData( GL_ARRAY_BUFFER, sizeof( quad ), quad, GL_STATIC_DRAW );
-		}
-
-		glUseProgram( ldr_prog );
-		glActiveTexture( GL_TEXTURE0 );
-		glBindTexture( GL_TEXTURE_2D, tex );
-		if ( ldr_loc_tex >= 0 )
-			glUniform1i( ldr_loc_tex, 0 );
-
-		glBindBuffer( GL_ARRAY_BUFFER, quadVbo );
-		glBindBuffer( GL_ELEMENT_ARRAY_BUFFER, 0 );
-		glEnableVertexAttribArray( 0 );
-		glVertexAttribPointer( 0, 2, GL_FLOAT, GL_FALSE, 0, (const void *)0 );
-		glDrawArrays( GL_TRIANGLE_STRIP, 0, 4 );
-		glDisableVertexAttribArray( 0 );
-		glBindBuffer( GL_ARRAY_BUFFER, 0 );
-		glUseProgram( 0 );
-	}
 #endif
+	}
 
 	glDisable( GL_BLEND );
 }
@@ -1607,14 +1696,6 @@ static void quad_draw_layer( GLuint tex, int layer, bool blend, float keep = -1.
 	}
 
 	if ( vr_layer_prog ) {
-		static GLuint quadVbo = 0;
-		static const GLfloat quad[8] = { -1,-1,  1,-1,  -1,1,  1,1 };
-
-		if ( !quadVbo ) {
-			glGenBuffers( 1, &quadVbo );
-			glBindBuffer( GL_ARRAY_BUFFER, quadVbo );
-			glBufferData( GL_ARRAY_BUFFER, sizeof( quad ), quad, GL_STATIC_DRAW );
-		}
 
 		glUseProgram( vr_layer_prog );
 		glActiveTexture( GL_TEXTURE0 );
@@ -1624,10 +1705,8 @@ static void quad_draw_layer( GLuint tex, int layer, bool blend, float keep = -1.
 		if ( vr_layer_loc_layer >= 0 )
 			glUniform1f( vr_layer_loc_layer, (float)layer );
 
-		glBindBuffer( GL_ARRAY_BUFFER, quadVbo );
+		lr_present_geometry( true );
 		glBindBuffer( GL_ELEMENT_ARRAY_BUFFER, 0 );
-		glEnableVertexAttribArray( 0 );
-		glVertexAttribPointer( 0, 2, GL_FLOAT, GL_FALSE, 0, (const void *)0 );
 		glDrawArrays( GL_TRIANGLE_STRIP, 0, 4 );
 		glDisableVertexAttribArray( 0 );
 		glBindBuffer( GL_ARRAY_BUFFER, 0 );
@@ -2705,7 +2784,7 @@ static void context_reset(void)
    hdr_bloom_prog_bad = hdr_bloom_tex_bad = false;
    hdr_prog_down = hdr_prog_down_karis = hdr_prog_up = 0;
    hdr_down_k_loc_texel = -1;
-#ifndef HAVE_OPENGLES
+#ifdef LR_ARB_PASSES
    hdr_arb_vp = hdr_arb_down = hdr_arb_down_karis = hdr_arb_up = 0;
    hdr_arb_bright = hdr_arb_blur = 0;
    hdr_arb_comp1 = hdr_arb_comp2 = 0;
@@ -2744,7 +2823,8 @@ static void context_reset(void)
     * above - the objects are already gone with the context */
    ldr_fbo = ldr_tex = ldr_rbo = 0;
    ldr_w = ldr_h = 0;
-#ifdef HAVE_OPENGLES
+   lr_present_vbo = 0;
+#ifdef LR_GLSL_PASSES
    ldr_prog = 0;
    ldr_loc_tex = -1;
 #endif
@@ -2801,7 +2881,20 @@ static void context_reset(void)
    glsm_ctl(GLSM_CTL_STATE_CONTEXT_RESET, NULL);
 
    if (libretro_shared_context)
+   {
+      /* A core profile draws nothing without a vertex array object, and
+       * in a context of its own nobody else binds one; glsm binds its
+       * own in a context it shares with the frontend. */
+#ifndef HAVE_OPENGLES
+      if (hw_render.context_type == RETRO_HW_CONTEXT_OPENGL_CORE)
+      {
+         GLuint vao = 0;
+         glGenVertexArrays(1, &vao);
+         glBindVertexArray(vao);
+      }
+#endif
       return;
+   }
 
    if (!glsm_ctl(GLSM_CTL_STATE_SETUP, NULL))
       return;
@@ -3603,11 +3696,6 @@ static bool context_framebuffer_lock(void *data)
     return false;
 }
 
-/* The renderer the doom_renderer option names, as this build runs it.  It
- * decides the context asked for, so it is read before that and kept for
- * the session: changing it needs a restart. */
-static rendererKind_t libretro_renderer = R_RENDERER_ARB2;
-
 static rendererKind_t renderer_option(void)
 {
 #if defined(HAVE_OPENGLES3)
@@ -3620,6 +3708,20 @@ static rendererKind_t renderer_option(void)
    return R_RENDERER_ES3;
 #elif defined(HAVE_OPENGLES)
    return R_RENDERER_ES2;
+#elif defined(BOOM3_GLSL_RENDERERS)
+   struct retro_variable var;
+   var.key   = "doom_renderer";
+   var.value = NULL;
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   {
+      if (!strcmp(var.value, "es2"))
+         return R_RENDERER_ES2;
+      if (!strcmp(var.value, "es3"))
+         return R_RENDERER_ES3;
+      if (!strcmp(var.value, "es31"))
+         return R_RENDERER_ES31;
+   }
+   return R_RENDERER_ARB2;
 #else
    return R_RENDERER_ARB2;
 #endif
@@ -3660,6 +3762,9 @@ static bool initialize_opengl(void)
 #endif
 
    params.context_type 	   = get_hw_context_type();
+#ifndef HAVE_OPENGLES
+   renderer_gl_version(&params.major, &params.minor);
+#endif
    params.context_reset    = context_reset;
    params.context_destroy  = context_destroy;
    params.environ_cb       = environ_cb;
@@ -3805,6 +3910,8 @@ bool retro_load_game(const struct retro_game_info *info)
 #elif defined(HAVE_OPENGLES3)
    hw_render.version_major = 3;
    hw_render.version_minor = 0;
+#elif !defined(HAVE_OPENGLES)
+   renderer_gl_version(&hw_render.version_major, &hw_render.version_minor);
 #endif
 
 	if (!initialize_opengl())
@@ -4196,7 +4303,7 @@ pre-existing XRGB8888 path byte for byte.
 ===========================================================================
 */
 
-#ifdef HAVE_OPENGLES
+#ifdef LR_GLSL_PASSES
 static const char *hdr_vs_src =
 	"attribute vec2 aPos;\n"
 	"varying vec2 vUV;\n"
@@ -4206,7 +4313,7 @@ static const char *hdr_vs_src =
 	"}\n";
 #endif /* HAVE_OPENGLES */
 
-#ifdef HAVE_OPENGLES
+#ifdef LR_GLSL_PASSES
 static const char *hdr_fs_src =
 	"#ifdef GL_ES\nprecision highp float;\n#endif\n"
 	"varying vec2 vUV;\n"
@@ -4829,7 +4936,7 @@ static const char *hdr_fs_src =
    plasma, and the engine's own additive glare quads extract; lit
    walls do not.
 */
-#ifndef HAVE_OPENGLES
+#ifdef LR_ARB_PASSES
 /* The first-mip downsample with the Karis weight on every tap: the
  * same 13-tap footprint and the same group weights, but each tap is
  * additionally weighted 1/(1+maxRGB) and the sum renormalised.  A
@@ -6239,7 +6346,7 @@ static const char *hdr_arb_blur_fs_src =
 	"END\n";
 #endif /* !HAVE_OPENGLES */
 
-#ifdef HAVE_OPENGLES
+#ifdef LR_GLSL_PASSES
 static const char *hdr_bright_fs_src =
 	"#ifdef GL_ES\nprecision highp float;\n#endif\n"
 	"varying vec2 vUV;\n"
@@ -6343,7 +6450,7 @@ static const char *hdr_bright_fs_src =
    uTexel is the SOURCE texel size, so the offsets are in source texels
    while the viewport is the half-size destination.
 */
-#ifdef HAVE_OPENGLES
+#ifdef LR_GLSL_PASSES
 /* the GLES twin of the first-mip weighted downsample */
 static const char *hdr_down_karis_fs_src =
 	"#ifdef GL_ES\nprecision highp float;\n#endif\n"
@@ -6422,7 +6529,7 @@ static const char *hdr_down_fs_src =
    uRadius scales the tent in source texels. Above 1.0 the levels
    overlap more and the glow spreads wider and softer.
 */
-#ifdef HAVE_OPENGLES
+#ifdef LR_GLSL_PASSES
 static const char *hdr_up_fs_src =
 	"#ifdef GL_ES\nprecision highp float;\n#endif\n"
 	"varying vec2 vUV;\n"
@@ -6444,7 +6551,7 @@ static const char *hdr_up_fs_src =
 	"}\n";
 #endif /* HAVE_OPENGLES */
 
-#ifdef HAVE_OPENGLES
+#ifdef LR_GLSL_PASSES
 static const char *hdr_blur_fs_src =
 	"#ifdef GL_ES\nprecision highp float;\n#endif\n"
 	"varying vec2 vUV;\n"
@@ -6491,10 +6598,23 @@ static const char *hdr_blur_fs_src =
 	"}\n";
 #endif /* HAVE_OPENGLES */
 
-#ifdef HAVE_OPENGLES
+#ifdef LR_GLSL_PASSES
 static GLuint hdr_compile( GLenum type, const char *src ) {
+#ifndef HAVE_OPENGLES
+	/* a desktop context compiles the desktop GLSL of the same pass */
+	char *desktop = glsl_translate( src, type == GL_VERTEX_SHADER ? GLSL_STAGE_VERTEX : GLSL_STAGE_FRAGMENT,
+			R_GLSLTarget() );
+	if ( !desktop ) {
+		if ( log_cb ) log_cb( RETRO_LOG_ERROR, "[boom3] HDR shader: no form for this context\n" );
+		return 0;
+	}
+	src = desktop;
+#endif
 	GLuint sh = glCreateShader( type );
 	glShaderSource( sh, 1, &src, NULL );
+#ifndef HAVE_OPENGLES
+	free( desktop );
+#endif
 	glCompileShader( sh );
 	GLint ok = 0;
 	glGetShaderiv( sh, GL_COMPILE_STATUS, &ok );
@@ -6536,7 +6656,7 @@ static void hdr_fail( const char *why ) {
 	hdr_pq_output = false;
 }
 
-#ifndef HAVE_OPENGLES
+#ifdef LR_ARB_PASSES
 /*
 ===========================================================================
 ARB program loading for the HDR chain.
@@ -6683,8 +6803,12 @@ static bool hdr_aces2_build( float peakLuminance ) {
 		while ( glGetError() != GL_NO_ERROR ) {
 		}
 #ifndef HAVE_OPENGLES
-		glTexImage2D( GL_TEXTURE_2D, 0, GL_LUMINANCE16, ACES2_GUI_LUT_SIZE, 1, 0,
-					  GL_LUMINANCE, GL_UNSIGNED_SHORT, g16 );
+		if ( glCaps.core ) {
+			lr_lut_r16( ACES2_GUI_LUT_SIZE, g16 );
+		} else {
+			glTexImage2D( GL_TEXTURE_2D, 0, GL_LUMINANCE16, ACES2_GUI_LUT_SIZE, 1, 0,
+						  GL_LUMINANCE, GL_UNSIGNED_SHORT, g16 );
+		}
 		if ( glGetError() != GL_NO_ERROR )
 #endif
 		{
@@ -6762,7 +6886,7 @@ static bool hdr_aces2_build( float peakLuminance ) {
 	hdr_aces2_peak = peakLuminance;
 	return true;
 }
-#ifndef HAVE_OPENGLES
+#ifdef LR_ARB_PASSES
 
 /* The appearance matrices are applied on the CPU as row-vector times
  * matrix, so DP3 wants their COLUMNS; the AP0 to AP1 pair are applied
@@ -7017,7 +7141,8 @@ static int hdr_conv_levels( int w, int h ) {
 /* (re)create GL objects for the current context and size; safe to call
    per frame, does work only on change. Context loss zeroes the ids. */
 static bool hdr_ensure_target( int w, int h ) {
-#ifndef HAVE_OPENGLES
+#ifdef LR_ARB_PASSES
+	if ( !LR_GLSL() ) {
 	if ( hdr_rolloff_mode == HDR_ROLLOFF_ACES2FULL ) {
 		/* Peak luminance the transform is solved for.  If the tables or
 		 * the 16-bit texture cannot be built - GLES has no normalised
@@ -7066,8 +7191,10 @@ static bool hdr_ensure_target( int w, int h ) {
 	if ( !hdr_arb_ready() ) {
 		return false;
 	}
+	}
 #endif
-#ifdef HAVE_OPENGLES
+#ifdef LR_GLSL_PASSES
+	if ( LR_GLSL() ) {
 	if ( hdr_prog == 0 ) {
 		GLuint vs = hdr_compile( GL_VERTEX_SHADER, hdr_vs_src );
 		GLuint fs = hdr_compile( GL_FRAGMENT_SHADER, hdr_fs_src );
@@ -7125,8 +7252,10 @@ static bool hdr_ensure_target( int w, int h ) {
 		hdr_loc_frame   = glGetUniformLocation( hdr_prog, "uFrame" );
 		hdr_loc_expand  = glGetUniformLocation( hdr_prog, "uExpand" );
 	}
-#endif /* HAVE_OPENGLES */
-#ifdef HAVE_OPENGLES
+	}
+#endif
+#ifdef LR_GLSL_PASSES
+	if ( LR_GLSL() ) {
 	if ( hdr_prog_bright == 0 && !hdr_bloom_prog_bad ) {
 		GLuint vs = hdr_compile( GL_VERTEX_SHADER, hdr_vs_src );
 		GLuint fs = hdr_compile( GL_FRAGMENT_SHADER, hdr_bright_fs_src );
@@ -7231,7 +7360,8 @@ static bool hdr_ensure_target( int w, int h ) {
 		if ( fsd ) glDeleteShader( fsd );
 		if ( fsu ) glDeleteShader( fsu );
 	}
-#endif /* HAVE_OPENGLES */
+	}
+#endif
 
 	/* Everything from here down builds framebuffers and textures, which
 	   both backends need.  It ended up inside the GLES-only region when
@@ -7520,7 +7650,7 @@ static void ldr_destroy_target( void ) {
 	if ( ldr_rbo ) glDeleteRenderbuffers( 1, &ldr_rbo );
 	ldr_fbo = ldr_tex = ldr_rbo = 0;
 	ldr_w = ldr_h = 0;
-#ifdef HAVE_OPENGLES
+#ifdef LR_GLSL_PASSES
 	if ( ldr_prog ) glDeleteProgram( ldr_prog );
 	ldr_prog = 0;
 	ldr_loc_tex = -1;
@@ -7580,36 +7710,8 @@ static void ldr_present( GLuint dstFbo )
 	glDisable( GL_DEPTH_TEST );
 	glDisable( GL_BLEND );
 	glDisable( GL_CULL_FACE );
-#ifndef HAVE_OPENGLES
-	if ( qglBindProgramARB ) {
-		glDisable( GL_FRAGMENT_PROGRAM_ARB );
-		glDisable( GL_VERTEX_PROGRAM_ARB );
-	}
-	glActiveTexture( GL_TEXTURE1 );
-	glDisable( GL_TEXTURE_2D );
-	glActiveTexture( GL_TEXTURE0 );
-	glEnable( GL_TEXTURE_2D );
-	glBindTexture( GL_TEXTURE_2D, ldr_tex );
-	qglTexEnvi( GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE );
-	qglMatrixMode( GL_PROJECTION );
-	qglPushMatrix();
-	qglLoadIdentity();
-	qglMatrixMode( GL_MODELVIEW );
-	qglPushMatrix();
-	qglLoadIdentity();
-	qglColor4f( 1.f, 1.f, 1.f, 1.f );
-	qglBegin( GL_QUADS );
-	qglTexCoord2f( 0.f, 0.f ); qglVertex2f( -1.f, -1.f );
-	qglTexCoord2f( 1.f, 0.f ); qglVertex2f(  1.f, -1.f );
-	qglTexCoord2f( 1.f, 1.f ); qglVertex2f(  1.f,  1.f );
-	qglTexCoord2f( 0.f, 1.f ); qglVertex2f( -1.f,  1.f );
-	qglEnd();
-	qglMatrixMode( GL_PROJECTION );
-	qglPopMatrix();
-	qglMatrixMode( GL_MODELVIEW );
-	qglPopMatrix();
-	glDisable( GL_TEXTURE_2D );
-#else
+#ifdef LR_GLSL_PASSES
+	if ( LR_GLSL() ) {
 	if ( !ldr_prog ) {
 		static const char vs[] =
 			"attribute vec2 aPos;\n"
@@ -7638,21 +7740,50 @@ static void ldr_present( GLuint dstFbo )
 	}
 
 	if ( ldr_prog ) {
-		static const GLfloat quad[8] = {
-			-1,-1, 1,-1, -1,1, 1,1
-		};
 		glUseProgram( ldr_prog );
 		glActiveTexture( GL_TEXTURE0 );
 		glBindTexture( GL_TEXTURE_2D, ldr_tex );
 		if ( ldr_loc_tex >= 0 )
 			glUniform1i( ldr_loc_tex, 0 );
-		glEnableVertexAttribArray( 0 );
-		glVertexAttribPointer( 0, 2, GL_FLOAT, GL_FALSE, 0, quad );
+		lr_present_geometry( true );
 		glDrawArrays( GL_TRIANGLE_STRIP, 0, 4 );
 		glDisableVertexAttribArray( 0 );
 		glUseProgram( 0 );
 	}
+	} else
 #endif
+	{
+#ifdef LR_ARB_PASSES
+	if ( qglBindProgramARB ) {
+		glDisable( GL_FRAGMENT_PROGRAM_ARB );
+		glDisable( GL_VERTEX_PROGRAM_ARB );
+	}
+	glActiveTexture( GL_TEXTURE1 );
+	glDisable( GL_TEXTURE_2D );
+	glActiveTexture( GL_TEXTURE0 );
+	glEnable( GL_TEXTURE_2D );
+	glBindTexture( GL_TEXTURE_2D, ldr_tex );
+	qglTexEnvi( GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE );
+	qglMatrixMode( GL_PROJECTION );
+	qglPushMatrix();
+	qglLoadIdentity();
+	qglMatrixMode( GL_MODELVIEW );
+	qglPushMatrix();
+	qglLoadIdentity();
+	qglColor4f( 1.f, 1.f, 1.f, 1.f );
+	qglBegin( GL_QUADS );
+	qglTexCoord2f( 0.f, 0.f ); qglVertex2f( -1.f, -1.f );
+	qglTexCoord2f( 1.f, 0.f ); qglVertex2f(  1.f, -1.f );
+	qglTexCoord2f( 1.f, 1.f ); qglVertex2f(  1.f,  1.f );
+	qglTexCoord2f( 0.f, 1.f ); qglVertex2f( -1.f,  1.f );
+	qglEnd();
+	qglMatrixMode( GL_PROJECTION );
+	qglPopMatrix();
+	qglMatrixMode( GL_MODELVIEW );
+	qglPopMatrix();
+	glDisable( GL_TEXTURE_2D );
+#endif
+	}
 #endif
 }
 
@@ -8051,13 +8182,22 @@ static void hdr_shoulder_params( int mode, float H, float *A, float *slopeOut ) 
  * the composite guard below refused every frame and the screen went
  * black with nothing logged - the pass was not failing, it was never
  * running.  Name the programs per build instead. */
-#ifdef HAVE_OPENGLES
-#define HDR_COMPOSITE_READY	( hdr_prog != 0 )
-#define HDR_BLOOM_READY		( hdr_prog_bright != 0 && hdr_prog_blur != 0 )
+#define HDR_GLSL_COMPOSITE_READY	( hdr_prog != 0 )
+#define HDR_GLSL_BLOOM_READY		( hdr_prog_bright != 0 && hdr_prog_blur != 0 )
+#ifdef LR_ARB_PASSES
+#define HDR_ARB_COMPOSITE_READY		( hdr_arb_vp != 0 && hdr_arb_comp1 != 0 && hdr_arb_comp2 != 0 )
+#define HDR_ARB_BLOOM_READY			( hdr_arb_bright != 0 && hdr_arb_blur != 0 \
+									  && hdr_arb_down != 0 && hdr_arb_up != 0 )
+#endif
+#if defined(LR_GLSL_PASSES) && defined(LR_ARB_PASSES)
+#define HDR_COMPOSITE_READY	( LR_GLSL() ? HDR_GLSL_COMPOSITE_READY : HDR_ARB_COMPOSITE_READY )
+#define HDR_BLOOM_READY		( LR_GLSL() ? HDR_GLSL_BLOOM_READY : HDR_ARB_BLOOM_READY )
+#elif defined(LR_GLSL_PASSES)
+#define HDR_COMPOSITE_READY	HDR_GLSL_COMPOSITE_READY
+#define HDR_BLOOM_READY		HDR_GLSL_BLOOM_READY
 #else
-#define HDR_COMPOSITE_READY	( hdr_arb_vp != 0 && hdr_arb_comp1 != 0 && hdr_arb_comp2 != 0 )
-#define HDR_BLOOM_READY		( hdr_arb_bright != 0 && hdr_arb_blur != 0 \
-				  && hdr_arb_down != 0 && hdr_arb_up != 0 )
+#define HDR_COMPOSITE_READY	HDR_ARB_COMPOSITE_READY
+#define HDR_BLOOM_READY		HDR_ARB_BLOOM_READY
 #endif
 
 /* run the conversion pass from the scene target into dstFbo */
@@ -8177,10 +8317,7 @@ static void hdr_present( GLuint dstFbo ) {
 	glDisable( GL_SCISSOR_TEST );
 	glColorMask( GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE );
 
-	static const float triV[6] = { -1.0f, -1.0f, 3.0f, -1.0f, -1.0f, 3.0f };
-	glBindBuffer( GL_ARRAY_BUFFER, 0 );
-	glEnableVertexAttribArray( 0 );
-	glVertexAttribPointer( 0, 2, GL_FLOAT, GL_FALSE, 0, triV );
+	lr_present_geometry( false );
 
 	int haveBloom = ( hdr_bloom_amount > 0.0f
 			&& !hdr_bloom_prog_bad && !hdr_bloom_tex_bad
@@ -8190,7 +8327,8 @@ static void hdr_present( GLuint dstFbo ) {
 	   the composite's band weight is derived from it. */
 	int convN = hdr_bloom_convolution ? hdr_conv_levels( hdr_w, hdr_h ) : 0;
 	float bandW0, bandW1;
-#ifndef HAVE_OPENGLES
+#ifdef LR_ARB_PASSES
+	if ( !LR_GLSL() ) {
 	/* Unbind whatever program object is in use before enabling the ARB
 	   targets.  This is not tidying: a program object in use overrides
 	   the ARB program enables entirely, so with one bound - and the
@@ -8209,6 +8347,7 @@ static void hdr_present( GLuint dstFbo ) {
 	qglEnable( GL_VERTEX_PROGRAM_ARB );
 	qglEnable( GL_FRAGMENT_PROGRAM_ARB );
 	qglBindProgramARB( GL_VERTEX_PROGRAM_ARB, hdr_arb_vp );
+	}
 #endif
 
 	if ( haveBloom ) {
@@ -8218,11 +8357,16 @@ static void hdr_present( GLuint dstFbo ) {
 		/* bright pass: scene -> tight A, or pyramid level 0 (both 1/4 res) */
 		glBindFramebuffer( RARCH_GL_FRAMEBUFFER, convN ? hdr_conv_fbo[0] : hdr_bloom_fbo[0] );
 		glViewport( 0, 0, qw, qh );
-#ifdef HAVE_OPENGLES
+#ifdef LR_GLSL_PASSES
+	if ( LR_GLSL() ) {
 		glUseProgram( hdr_prog_bright );
-#else
+	} else
+#endif
+	{
+#ifdef LR_ARB_PASSES
 		qglBindProgramARB( GL_FRAGMENT_PROGRAM_ARB, hdr_arb_bright );
 #endif
+	}
 		glBindTexture( GL_TEXTURE_2D, hdr_tex );
 		/* Threshold and knee are tuned together: the knee lets
 		   sub-threshold content contribute, so holding the knee fixed
@@ -8232,14 +8376,18 @@ static void hdr_present( GLuint dstFbo ) {
 		   cutting frame-to-frame energy swing by 1.4x to 2.4x.
 		   (0.6021 itself came from matching gamma code 0.8095 across
 		   the inverse-sRGB to gamma-2.4 decode change.) */
-#ifdef HAVE_OPENGLES
+#ifdef LR_GLSL_PASSES
+	if ( LR_GLSL() ) {
 		glUniform1f( hdr_bright_loc_thresh, hdr_bright_threshold() );
 		glUniform1f( hdr_bright_loc_knee, 0.25f );
 		if ( hdr_bright_loc_ffknee >= 0 ) {
 			glUniform1f( hdr_bright_loc_ffknee, hdr_bloom_firefly_knee );
 		}
 		glUniform1f( hdr_bright_loc_enc, 1.0f / hdr_scene_encode_scale );
-#else
+	} else
+#endif
+	{
+#ifdef LR_ARB_PASSES
 		{
 			/* 1/(1-thresh) and 1/(4*knee) are pass constants; computing
 			   them here keeps two RCPs out of every fragment. */
@@ -8257,14 +8405,20 @@ static void hdr_present( GLuint dstFbo ) {
 			qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 1, q );
 		}
 #endif
-#ifdef HAVE_OPENGLES
+	}
+#ifdef LR_GLSL_PASSES
+	if ( LR_GLSL() ) {
 		glUniform2f( hdr_bright_loc_texel, 1.0f / (float)hdr_w, 1.0f / (float)hdr_h );
-#else
+	} else
+#endif
+	{
+#ifdef LR_ARB_PASSES
 		{
 			const float texel[4] = { 1.0f / (float)hdr_w, 1.0f / (float)hdr_h, 0.0f, 0.0f };
 			qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 2, texel );
 		}
 #endif
+	}
 		glDrawArrays( GL_TRIANGLES, 0, 3 );
 
 		if ( convN ) {
@@ -8278,17 +8432,24 @@ static void hdr_present( GLuint dstFbo ) {
 			   far past its source instead of stopping at a visible edge.
 			*/
 			int i;
-#ifdef HAVE_OPENGLES
+#ifdef LR_GLSL_PASSES
+	if ( LR_GLSL() ) {
 			glUseProgram( hdr_prog_down );
-#else
+	} else
+#endif
+	{
+#ifdef LR_ARB_PASSES
 			qglBindProgramARB( GL_FRAGMENT_PROGRAM_ARB, hdr_arb_down );
 #endif
+	}
 			for ( i = 1; i < convN; i++ ) {
-#ifndef HAVE_OPENGLES
+#ifdef LR_ARB_PASSES
+	if ( !LR_GLSL() ) {
 				/* the first level reads the bright output, where fireflies
 				 * live; every deeper level is already band-limited */
 				qglBindProgramARB( GL_FRAGMENT_PROGRAM_ARB,
 						i == 1 ? hdr_arb_down_karis : hdr_arb_down );
+	}
 #endif
 
 				int pw = ( hdr_w / 4 ) >> ( i - 1 ), ph = ( hdr_h / 4 ) >> ( i - 1 );
@@ -8297,9 +8458,9 @@ static void hdr_present( GLuint dstFbo ) {
 				glBindFramebuffer( RARCH_GL_FRAMEBUFFER, hdr_conv_fbo[i] );
 				glViewport( 0, 0, pw > 1 ? pw / 2 : 1, ph > 1 ? ph / 2 : 1 );
 				glBindTexture( GL_TEXTURE_2D, hdr_conv_tex[i - 1] );
-#ifdef HAVE_OPENGLES
+#ifdef LR_GLSL_PASSES
+	if ( LR_GLSL() ) {
 				{
-#ifdef HAVE_OPENGLES
 				/* level one gets the tone-weighted program */
 				if ( i == 1 && hdr_prog_down_karis ) {
 					glUseProgram( hdr_prog_down_karis );
@@ -8308,30 +8469,38 @@ static void hdr_present( GLuint dstFbo ) {
 					glUseProgram( hdr_prog_down );
 					glUniform2f( hdr_down_loc_texel, 1.0f / (float)pw, 1.0f / (float)ph );
 				}
-#else
-				glUniform2f( hdr_down_loc_texel, 1.0f / (float)pw, 1.0f / (float)ph );
-#endif
 			}
-#else
+	} else
+#endif
+	{
+#ifdef LR_ARB_PASSES
 				{
 					const float texel[4] = { 1.0f / (float)pw, 1.0f / (float)ph, 0.0f, 0.0f };
 					qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 0, texel );
 				}
 #endif
+	}
 				glDrawArrays( GL_TRIANGLES, 0, 3 );
 			}
 			/* additive accumulation upward. Blend rather than ping-pong so
 			   each level needs only one buffer; hdr_present disabled blend
 			   on entry, so turn it off again afterwards. */
-#ifdef HAVE_OPENGLES
+#ifdef LR_GLSL_PASSES
+	if ( LR_GLSL() ) {
 			glUseProgram( hdr_prog_up );
-#else
+	} else
+#endif
+	{
+#ifdef LR_ARB_PASSES
 			qglBindProgramARB( GL_FRAGMENT_PROGRAM_ARB, hdr_arb_up );
 #endif
+	}
 			glEnable( GL_BLEND );
 			glBlendFunc( GL_ONE, GL_ONE );
-#ifdef HAVE_OPENGLES
+#ifdef LR_GLSL_PASSES
+	if ( LR_GLSL() ) {
 			glUniform1f( hdr_up_loc_radius, 1.0f );
+	}
 #endif
 			/* radius is 1.0 here, so env[0].xy is just the texel size:
 			   the ARB pass takes the already-scaled offset rather than
@@ -8346,20 +8515,26 @@ static void hdr_present( GLuint dstFbo ) {
 				glBindFramebuffer( RARCH_GL_FRAMEBUFFER, hdr_conv_fbo[i - 1] );
 				glViewport( 0, 0, dw, dh );
 				glBindTexture( GL_TEXTURE_2D, hdr_conv_tex[i] );
-#ifdef HAVE_OPENGLES
+#ifdef LR_GLSL_PASSES
+	if ( LR_GLSL() ) {
 				glUniform2f( hdr_up_loc_texel, 1.0f / (float)pw, 1.0f / (float)ph );
-#else
+	} else
+#endif
+	{
+#ifdef LR_ARB_PASSES
 				{
 					const float texel[4] = { 1.0f / (float)pw, 1.0f / (float)ph, 0.0f, 0.0f };
 					qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 0, texel );
 				}
 #endif
+	}
 				glDrawArrays( GL_TRIANGLES, 0, 3 );
 			}
 			glDisable( GL_BLEND );
 		} else {
 		/* tight band blur: A -> B (H), B -> A (V) */
-#ifdef HAVE_OPENGLES
+#ifdef LR_GLSL_PASSES
+	if ( LR_GLSL() ) {
 		glUseProgram( hdr_prog_blur );
 		glBindFramebuffer( RARCH_GL_FRAMEBUFFER, hdr_bloom_fbo[1] );
 		glBindTexture( GL_TEXTURE_2D, hdr_bloom_tex[0] );
@@ -8369,7 +8544,10 @@ static void hdr_present( GLuint dstFbo ) {
 		glBindTexture( GL_TEXTURE_2D, hdr_bloom_tex[1] );
 		glUniform2f( hdr_blur_loc_dir, 0.0f, 1.0f / qh );
 		glDrawArrays( GL_TRIANGLES, 0, 3 );
-#else
+	} else
+#endif
+	{
+#ifdef LR_ARB_PASSES
 		{
 			const float dh[4] = { 1.0f / qw, 0.0f, 0.0f, 0.0f };
 			const float dv[4] = { 0.0f, 1.0f / qh, 0.0f, 0.0f };
@@ -8384,6 +8562,7 @@ static void hdr_present( GLuint dstFbo ) {
 			glDrawArrays( GL_TRIANGLES, 0, 3 );
 		}
 #endif
+	}
 		/* wide band: the horizontal pass runs at 1/16 sampling the
 		   already-blurred 1/4 band, so the 4x downsample rides along
 		   with it. The previous seed was a dedicated draw through the
@@ -8395,25 +8574,35 @@ static void hdr_present( GLuint dstFbo ) {
 		glBindFramebuffer( RARCH_GL_FRAMEBUFFER, hdr_bloom_fbo[3] );
 		glViewport( 0, 0, sw, sh );
 		glBindTexture( GL_TEXTURE_2D, hdr_bloom_tex[0] );
-#ifdef HAVE_OPENGLES
+#ifdef LR_GLSL_PASSES
+	if ( LR_GLSL() ) {
 		glUniform2f( hdr_blur_loc_dir, 1.0f / sw, 0.0f );
-#else
+	} else
+#endif
+	{
+#ifdef LR_ARB_PASSES
 		{
 			const float dh[4] = { 1.0f / sw, 0.0f, 0.0f, 0.0f };
 			qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 0, dh );
 		}
 #endif
+	}
 		glDrawArrays( GL_TRIANGLES, 0, 3 );
 		glBindFramebuffer( RARCH_GL_FRAMEBUFFER, hdr_bloom_fbo[2] );
 		glBindTexture( GL_TEXTURE_2D, hdr_bloom_tex[3] );
-#ifdef HAVE_OPENGLES
+#ifdef LR_GLSL_PASSES
+	if ( LR_GLSL() ) {
 		glUniform2f( hdr_blur_loc_dir, 0.0f, 1.0f / sh );
-#else
+	} else
+#endif
+	{
+#ifdef LR_ARB_PASSES
 		{
 			const float dv[4] = { 0.0f, 1.0f / sh, 0.0f, 0.0f };
 			qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 0, dv );
 		}
 #endif
+	}
 		glDrawArrays( GL_TRIANGLES, 0, 3 );
 		}
 	}
@@ -8434,8 +8623,10 @@ static void hdr_present( GLuint dstFbo ) {
 	 * off-centre marker whose output position is asserted instead. */
 	glViewport( 0, 0, scr_width, scr_height );
 
-#ifdef HAVE_OPENGLES
+#ifdef LR_GLSL_PASSES
+	if ( LR_GLSL() ) {
 	glUseProgram( hdr_prog );
+	}
 #endif
 
 	/*
@@ -8464,7 +8655,8 @@ static void hdr_present( GLuint dstFbo ) {
 	/* wraps every 64 frames; the pattern only has to keep moving */
 	const float frameN = (float)( hdr_frame_counter++ & 63u );
 
-#ifdef HAVE_OPENGLES
+#ifdef LR_GLSL_PASSES
+	if ( LR_GLSL() ) {
 	glUniform1i( hdr_loc_tex, 0 );
 	glUniform1i( hdr_loc_bloomT, 1 );
 	if ( hdr_rolloff_mode == HDR_ROLLOFF_ACES2FULL && hdr_aces2_lut != 0
@@ -8562,9 +8754,11 @@ static void hdr_present( GLuint dstFbo ) {
 					(float)( 1.0 - S1 ), (float)C2 );
 		}
 	}
+	}
 #endif
 
-#ifndef HAVE_OPENGLES
+#ifdef LR_ARB_PASSES
+	if ( !LR_GLSL() ) {
 	{
 		/* The band-weight branch the GLSL took on a uniform is a choice
 		   of program here, so the second bloom fetch is still skipped
@@ -8712,16 +8906,19 @@ static void hdr_present( GLuint dstFbo ) {
 			}
 		}
 	}
+	}
 #endif
 
 	glDrawArrays( GL_TRIANGLES, 0, 3 );
 
-#ifndef HAVE_OPENGLES
+#ifdef LR_ARB_PASSES
+	if ( !LR_GLSL() ) {
 	/* Hand the pipeline back: while an ARB target is enabled it
 	   overrides any bound program object, so leaving it on would take
 	   the game's own rendering next frame with it. */
 	qglDisable( GL_FRAGMENT_PROGRAM_ARB );
 	qglDisable( GL_VERTEX_PROGRAM_ARB );
+	}
 #endif
 	glDisableVertexAttribArray( 0 );
 	glActiveTexture( GL_TEXTURE1 );
@@ -8759,8 +8956,9 @@ void GLimp_SwapBuffers() {
       ldr_present((GLuint)hw_render.get_current_framebuffer());
    }
 
-#ifdef HAVE_OPENGLES3
-   RB_GLSL_EndFrame();   /* the uniform buffer binding points, untracked by glsm */
+#ifdef BOOM3_GLSL_RENDERERS
+   if ( R_GLSLRenderer() )
+      RB_GLSL_EndFrame();   /* the uniform buffer binding points, untracked by glsm */
 #endif
    if (libretro_shared_context)
       glFlush();

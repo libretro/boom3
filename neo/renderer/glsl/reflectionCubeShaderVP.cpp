@@ -17,6 +17,8 @@
 
 #include "glsl_shaders.h"
 
+namespace glsl_es2 {
+
 const char * const reflectionCubeShaderVP = R"(
 #version 100
 precision mediump float;
@@ -54,3 +56,5 @@ void main(void)
   gl_Position = u_modelViewProjectionMatrix * attr_Vertex;
 }
 )";
+
+}

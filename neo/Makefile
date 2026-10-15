@@ -6,6 +6,8 @@ RELWITHDEBINFO := 0
 FORCE_GLES     := 0
 GLES_VER       ?= 2
 HAVE_VR        ?= 0
+# the GLSL renderers (ES 2, ES 3, ES 3.1) in desktop cores, beside ARB2
+HAVE_GLSL_RENDERERS ?= 1
 
 ifneq ($(SANITIZER),)
    CFLAGS   := -fsanitize=$(SANITIZER) $(CFLAGS)
@@ -321,6 +323,16 @@ endif
 ifeq ($(HAVE_VR),1)
    CFLAGS += -DBOOM3_VR
    CXXFLAGS += -DBOOM3_VR
+endif
+
+ifeq ($(platform), libnx)
+   HAVE_GLSL_RENDERERS := 0
+endif
+ifneq ($(GLES),1)
+ifeq ($(HAVE_GLSL_RENDERERS),1)
+   CFLAGS += -DHAVE_GLSL_RENDERERS
+   CXXFLAGS += -DHAVE_GLSL_RENDERERS
+endif
 endif
 
 CFLAGS += -DD3_OSTYPE=\"$(D3_OSTYPE)\" -DD3_SIZEOFPTR=$(D3_SIZEOFPTR) -DD3_ARCH=\"$(D3_ARCH)\"

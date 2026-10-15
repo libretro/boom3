@@ -17,6 +17,8 @@
 
 #include "glsl_shaders.h"
 
+namespace glsl_es2 {
+
 const char * const blendLightShaderVP = R"(
 #version 100
 precision mediump float;
@@ -55,3 +57,5 @@ void main(void)
   var_TexFogEnter = vec2( dot( u_fogMatrix[3], attr_Vertex ), 0.5 );
 }
 )";
+
+}

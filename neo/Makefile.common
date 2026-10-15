@@ -354,47 +354,39 @@ ifeq ($(HAVE_ARM_NEON_ASM_OPTIMIZATIONS),1)
 	CFLAGS  += -DHAVE_ARM_NEON_ASM_OPTIMIZATIONS
 endif
 
+# the GLSL shader sources, one set per GLSL renderer
+GLSL_SHADERS := cubeMapShaderFP diffuseMapShaderVP diffuseCubeShaderVP diffuseMapShaderFP \
+	fogShaderFP fogShaderVP blendLightShaderVP interactionPhongShaderFP \
+	interactionPhongShaderVP interactionShaderFP interactionShaderVP \
+	reflectionCubeShaderVP skyboxCubeShaderVP stencilShadowShaderFP \
+	stencilShadowShaderVP zfillClipShaderFP zfillClipShaderVP zfillShaderFP \
+	zfillShaderVP
+GLSL_ES2_RENDERER := $(CORE_DIR)/renderer/draw_gles2.cpp \
+	$(addprefix $(CORE_DIR)/renderer/glsl/,$(addsuffix .o,$(GLSL_SHADERS)))
+GLSL_ES3_RENDERER := $(CORE_DIR)/renderer/draw_gles3_multiview.cpp \
+	$(addprefix $(CORE_DIR)/renderer/glsl_gles3/,$(addsuffix .o,$(GLSL_SHADERS)))
+
 ifeq ($(GLES),1)
 ifeq ($(GLES_VER),3)
 	# GLES 3 multiview renderer, with the Doom3Quest multiview shaders
-	GLSL_DIR := $(CORE_DIR)/renderer/glsl_gles3
-	SRC_RENDERER += \
-		$(CORE_DIR)/renderer/draw_gles3_multiview.cpp
+	SRC_RENDERER += $(GLSL_ES3_RENDERER)
 	SRC_LIBRETRO += \
 		$(LIBRETRO_COMM_DIR)/glsym/glsym_es3.c
 else
-	GLSL_DIR := $(CORE_DIR)/renderer/glsl
-	SRC_RENDERER += \
-		$(CORE_DIR)/renderer/draw_gles2.cpp
+	SRC_RENDERER += $(GLSL_ES2_RENDERER)
 	SRC_LIBRETRO += \
 		$(LIBRETRO_COMM_DIR)/glsym/glsym_es2.c
 endif
-	SRC_RENDERER += \
-		$(GLSL_DIR)/cubeMapShaderFP.o \
-		$(GLSL_DIR)/diffuseMapShaderVP.o \
-		$(GLSL_DIR)/diffuseCubeShaderVP.o \
-		$(GLSL_DIR)/diffuseMapShaderFP.o \
-		$(GLSL_DIR)/fogShaderFP.o \
-		$(GLSL_DIR)/fogShaderVP.o \
-		$(GLSL_DIR)/blendLightShaderVP.o \
-		$(GLSL_DIR)/interactionPhongShaderFP.o \
-		$(GLSL_DIR)/interactionPhongShaderVP.o \
-		$(GLSL_DIR)/interactionShaderFP.o \
-		$(GLSL_DIR)/interactionShaderVP.o \
-		$(GLSL_DIR)/reflectionCubeShaderVP.o \
-		$(GLSL_DIR)/skyboxCubeShaderVP.o \
-		$(GLSL_DIR)/stencilShadowShaderFP.o \
-		$(GLSL_DIR)/stencilShadowShaderVP.o \
-		$(GLSL_DIR)/zfillClipShaderFP.o \
-		$(GLSL_DIR)/zfillClipShaderVP.o \
-		$(GLSL_DIR)/zfillShaderFP.o \
-		$(GLSL_DIR)/zfillShaderVP.o
 else
 	SRC_RENDERER += \
 		$(CORE_DIR)/renderer/tr_rendertools.cpp \
 		$(CORE_DIR)/renderer/draw_arb2.cpp
 	SRC_LIBRETRO += \
 		$(LIBRETRO_COMM_DIR)/glsym/glsym_gl.c
+ifeq ($(HAVE_GLSL_RENDERERS),1)
+	# the GLSL renderers on desktop GL contexts, chosen at load
+	SRC_RENDERER += $(GLSL_ES2_RENDERER) $(GLSL_ES3_RENDERER)
+endif
 endif
 
 SOURCES_DIR =
@@ -422,6 +414,7 @@ SOURCES_CXX	:=\
 SOURCES_C	:=\
 	$(CORE_DIR)/renderer/gl_caps.c \
 	$(CORE_DIR)/renderer/glsl_blocks.c \
+	$(CORE_DIR)/renderer/glsl_translate.c \
 	$(CORE_DIR)/renderer/range_alloc.c \
 	$(LIBRETRO_COMM_DIR)/formats/data_transfer.c \
 	$(LIBRETRO_COMM_DIR)/memmap/memmap.c \

@@ -21,8 +21,9 @@ endif
 
 all: $(TARGET)
 
-$(TARGET): check.c ../../neo/renderer/glsl_blocks.c ../../neo/renderer/glsl_blocks.h
-	$(CC) $(CFLAGS) -o $@ check.c ../../neo/renderer/glsl_blocks.c $(LIBS)
+$(TARGET): check.c ../../neo/renderer/glsl_blocks.c ../../neo/renderer/glsl_blocks.h \
+		../../neo/renderer/glsl_translate.c ../../neo/renderer/glsl_translate.h
+	$(CC) $(CFLAGS) -o $@ check.c ../../neo/renderer/glsl_blocks.c ../../neo/renderer/glsl_translate.c $(LIBS)
 
 check: $(TARGET)
 	./$(TARGET) ../../neo/renderer

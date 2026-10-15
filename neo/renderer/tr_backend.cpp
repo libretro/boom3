@@ -85,7 +85,7 @@ void RB_SetDefaultGLState( void ) {
 		qglScissor( 0, 0, glConfig.vidWidth, glConfig.vidHeight );
 	}
 
-#ifdef HAVE_OPENGLES
+#ifdef BOOM3_GLSL_RENDERERS
 	backEnd.glState.currentTexture = -1;  // Force texture unit to be reset
 #endif
 
@@ -116,7 +116,7 @@ void RB_SetDefaultGLState( void ) {
 
 
 
-#ifdef HAVE_OPENGLES
+#ifdef BOOM3_GLSL_RENDERERS
 /*
 ====================
 GL_UniformChanged
@@ -383,8 +383,13 @@ void GL_State( int stateBits ) {
 		qglColorMask( r, g, b, a );
 	}
 
-	// fill/line mode
-#ifndef HAVE_OPENGLES
+	// fill/line mode, and the fixed-function alpha test the GLSL
+	// renderers do in their shaders
+#ifdef BOOM3_ARB2_RENDERER
+	if ( R_GLSLRenderer() ) {
+		backEnd.glState.glStateBits = stateBits;
+		return;
+	}
 	if ( diff & GLS_POLYMODE_LINE ) {
 		if ( stateBits & GLS_POLYMODE_LINE ) {
 			qglPolygonMode( GL_FRONT_AND_BACK, GL_LINE );
@@ -477,8 +482,10 @@ static void	RB_SetBuffer( const void *data ) {
 	cmd = (const setBufferCommand_t *)data;
 
 	backEnd.frameCount = cmd->frameCount;
-#ifndef HAVE_OPENGLES
-	qglDrawBuffer( cmd->buffer );
+#ifdef BOOM3_ARB2_RENDERER
+	if ( !R_GLSLRenderer() ) {
+		qglDrawBuffer( cmd->buffer );
+	}
 #endif
 	// clear screen for debugging
 	// automatically enable this with several other debug tools

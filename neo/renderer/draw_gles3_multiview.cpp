@@ -15,7 +15,6 @@
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
 */
 
-#include <GLES3/gl3.h>
 #include "sys/platform.h"
 #include "renderer/VertexCache.h"
 
@@ -27,11 +26,23 @@
 
 #ifdef HAVE_OPENGLES
 #include "renderer/gles_compat.h"
+#else
+#include "renderer/glsl_desktop.h"
 #endif
 
 #if defined(LIBRETRO) && defined(BOOM3_VR)
 #include "renderer/vr.h"
 #endif
+
+extern bool  hdr_luma_clamp;
+extern bool  hdr_output_active;
+extern float hdr_emissive_gain;
+extern float hdr_particle_gain;
+
+// the ES 3 and ES 3.1 renderers, beside the others in a desktop core
+namespace gles3 {
+
+using namespace glsl_es3;
 
 shaderProgram_t interactionShader;
 shaderProgram_t interactionBlinnShader;
@@ -159,12 +170,6 @@ static const byte* RB_GLSL_VertexBase(vertCache_t* cache, int stride) {
 #define ATTR_NORMAL     3
 #define ATTR_TANGENT    4
 #define ATTR_BITANGENT  5
-
-// GLES: ARB programs unsupported.
-// Return non-zero dummy handle so material stages remain valid.
-int R_FindARBProgram( GLenum target, const char *program ) {
-	return 1;
-}
 
 /*
 ====================
@@ -450,6 +455,7 @@ static void R_LoadGLSLShader(const char* buffer, shaderProgram_t* shaderProgram,
 		const int eol = source.Find('\n', source.Find("#version"));
 		source.Insert("#define BOOM3_MULTIVIEW\n", eol + 1);
 	}
+	R_GLSLSourceForContext( source, type );
 	if ( R_ProgramBinariesActive() && ( type == GL_VERTEX_SHADER || type == GL_FRAGMENT_SHADER ) ) {
 		// compiled at link, and only when no binary of the program is kept
 		pendingSource[type == GL_VERTEX_SHADER ? 0 : 1] = source;
@@ -1035,7 +1041,6 @@ w 1/gamma, negative w for the luminance-aware clamp.
 ==================
 */
 static void RB_GLSL_HDRParms(float hp[4]) {
-	extern bool  hdr_luma_clamp;
 	hp[0] = hp[1] = hp[2] = r_gammaInShader.GetBool() ? RB_HDRGammaBrightness( false ) : 1.0f;
 	hp[3] = r_gammaInShader.GetBool() ? 1.0f / r_gamma.GetFloat() : 1.0f;
 	if ( hdr_luma_clamp ) {
@@ -2696,9 +2701,6 @@ void RB_GLSL_T_RenderShaderPasses(const drawSurf_t* surf) {
 			float emissive[4];
 			const float *stageColor = color;
 			{
-				extern bool  hdr_output_active;
-				extern float hdr_emissive_gain;
-				extern float hdr_particle_gain;
 				const int blend = pStage->drawStateBits & ( GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS );
 				const deform_t dfm = surf->material->Deform();
 				const float gain = ( dfm == DFRM_PARTICLE || dfm == DFRM_PARTICLE2 )
@@ -3211,7 +3213,7 @@ void RB_GLSL_PrepareShaders(void) {
 	RB_GLSL_ForgetAttribPointers();
 	backEnd.glState.baseVertex = 0;
 
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#ifdef BOOM3_VR_MULTIVIEW
 	// in VR every view draws into 2-layer targets, which only multiview programs can
 	if ( VR_Active() != glslMultiview ) {
 		glslMultiview = VR_Active();
@@ -3273,3 +3275,5 @@ void RB_GLSL_EndFrame(void) {
 	}
 	glBindBuffer(GL_UNIFORM_BUFFER, 0);
 }
+
+} // namespace gles3

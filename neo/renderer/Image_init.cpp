@@ -1980,17 +1980,22 @@ void idImageManager::BindNull() {
 
 	tmu = &backEnd.glState.tmu[backEnd.glState.currenttmu];
 
-#ifdef HAVE_OPENGLES
-	if ( tmu->textureType == TT_CUBIC ) {
-		glBindTexture( GL_TEXTURE_CUBE_MAP, 0 );
-#ifdef HAVE_OPENGLES3
-	} else if ( tmu->textureType == TT_3D ) {
-		glBindTexture(GL_TEXTURE_3D, 0);
+#ifdef BOOM3_GLSL_RENDERERS
+	if ( R_GLSLRenderer() ) {
+		if ( tmu->textureType == TT_CUBIC ) {
+			qglBindTexture( GL_TEXTURE_CUBE_MAP_EXT, 0 );
+#ifndef HAVE_OPENGLES2
+		} else if ( tmu->textureType == TT_3D ) {
+			qglBindTexture( GL_TEXTURE_3D, 0 );
 #endif
-	} else if ( tmu->textureType == TT_2D ) {
-		glBindTexture( GL_TEXTURE_2D, 0 );
+		} else if ( tmu->textureType == TT_2D ) {
+			qglBindTexture( GL_TEXTURE_2D, 0 );
+		}
+		tmu->textureType = TT_DISABLED;
+		return;
 	}
-#else
+#endif
+#ifdef BOOM3_ARB2_RENDERER
 	if ( tmu->textureType == TT_CUBIC ) {
 		qglDisable( GL_TEXTURE_CUBE_MAP_EXT );
 	} else if ( tmu->textureType == TT_3D ) {

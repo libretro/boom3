@@ -44,6 +44,35 @@ If you have questions concerning this license or the applicable additional terms
 
 // Contains variables specific to the OpenGL configuration being run right now.
 // These are constant once the OpenGL subsystem is initialized.
+/*
+The renderers a build has.  A GLES build has its own GLSL renderer; a
+desktop build has the ARB2 one and, with HAVE_GLSL_RENDERERS, the GLSL ones
+as well, run on the desktop GL contexts that match their GLES versions.
+*/
+#if defined(HAVE_OPENGLES3)
+#define BOOM3_GLSL_ES3_RENDERER
+#elif defined(HAVE_OPENGLES)
+#define BOOM3_GLSL_ES2_RENDERER
+#else
+#define BOOM3_ARB2_RENDERER
+#if defined(HAVE_GLSL_RENDERERS)
+#define BOOM3_GLSL_ES2_RENDERER
+#define BOOM3_GLSL_ES3_RENDERER
+#endif
+#endif
+#if defined(BOOM3_GLSL_ES2_RENDERER) || defined(BOOM3_GLSL_ES3_RENDERER)
+#define BOOM3_GLSL_RENDERERS
+#endif
+
+// whether the renderer running is a GLSL one
+#if !defined(BOOM3_ARB2_RENDERER)
+#define R_GLSLRenderer()	true
+#elif defined(BOOM3_GLSL_RENDERERS)
+#define R_GLSLRenderer()	( glConfig.renderer != R_RENDERER_ARB2 )
+#else
+#define R_GLSLRenderer()	false
+#endif
+
 // the renderer a context runs: the ARB2 path, or one of the GLSL ones
 typedef enum {
 	R_RENDERER_ARB2,

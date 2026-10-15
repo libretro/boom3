@@ -39,10 +39,118 @@ If you have questions concerning this license or the applicable additional terms
 #ifdef HAVE_OPENGLES
 #include "renderer/gles_compat.h"
 #endif
+#include "renderer/gl_caps.h"
+
+#ifndef GL_TEXTURE_SWIZZLE_R
+#define GL_TEXTURE_SWIZZLE_R	0x8E42
+#define GL_TEXTURE_SWIZZLE_G	0x8E43
+#define GL_TEXTURE_SWIZZLE_B	0x8E44
+#define GL_TEXTURE_SWIZZLE_A	0x8E45
+#endif
+#ifndef GL_RED
+#define GL_RED					0x1903
+#endif
+#ifndef GL_RG
+#define GL_RG					0x8227
+#endif
+#ifndef GL_R8
+#define GL_R8					0x8229
+#define GL_RG8					0x822B
+#endif
+#ifndef GL_R16
+#define GL_R16					0x822A
+#define GL_RG16					0x822C
+#endif
 
 /*
 PROBLEM: compressed textures may break the zero clamp rule!
 */
+
+#ifndef HAVE_OPENGLES
+/*
+================
+Core-profile uploads
+
+A desktop core profile has none of the alpha, luminance and intensity
+formats.  Their channels go into R8 or RG8 instead, with a swizzle that
+reads them back on every channel as the format did: the same texels, the
+same filtering, at the same size.
+================
+*/
+static bool R_CoreSwizzled( GLenum internalFormat, GLenum *coreFormat, GLint swizzle[4] ) {
+	if ( !glCaps.core ) {
+		return false;
+	}
+	switch ( internalFormat ) {
+	case GL_INTENSITY8:
+		*coreFormat = GL_R8;
+		swizzle[0] = swizzle[1] = swizzle[2] = swizzle[3] = GL_RED;
+		return true;
+	case GL_LUMINANCE8:
+		*coreFormat = GL_R8;
+		swizzle[0] = swizzle[1] = swizzle[2] = GL_RED;
+		swizzle[3] = GL_ONE;
+		return true;
+	case GL_ALPHA8:
+		*coreFormat = GL_R8;
+		swizzle[0] = swizzle[1] = swizzle[2] = GL_ZERO;
+		swizzle[3] = GL_RED;
+		return true;
+	case GL_LUMINANCE8_ALPHA8:
+		*coreFormat = GL_RG8;
+		swizzle[0] = swizzle[1] = swizzle[2] = GL_RED;
+		swizzle[3] = GL_GREEN;
+		return true;
+	}
+	return false;
+}
+
+/*
+================
+R_TexImageRGBA
+
+One level of a texture from RGBA bytes, as qglTexImage2D takes them with
+format GL_RGBA, on core profiles in the swizzled form.
+================
+*/
+static void R_TexImageRGBA( GLenum target, int level, GLenum internalFormat, int width, int height, const byte *rgba ) {
+	GLenum coreFormat;
+	GLint swizzle[4];
+	if ( !R_CoreSwizzled( internalFormat, &coreFormat, swizzle ) ) {
+		qglTexImage2D( target, level, internalFormat, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba );
+		return;
+	}
+	// the channels the format kept: luminance or intensity from red,
+	// alpha from alpha
+	const int count = width * height;
+	const int channels = coreFormat == GL_RG8 ? 2 : 1;
+	byte *packed = (byte *)R_StaticAlloc( count * channels );
+	int i;
+	for ( i = 0; i < count; i++ ) {
+		if ( internalFormat == GL_ALPHA8 ) {
+			packed[i] = rgba[i * 4 + 3];
+		} else if ( channels == 2 ) {
+			packed[i * 2] = rgba[i * 4];
+			packed[i * 2 + 1] = rgba[i * 4 + 3];
+		} else {
+			packed[i] = rgba[i * 4];
+		}
+	}
+	GLint alignment = 4;
+	qglGetIntegerv( GL_UNPACK_ALIGNMENT, &alignment );
+	qglPixelStorei( GL_UNPACK_ALIGNMENT, 1 );
+	qglTexImage2D( target, level, coreFormat, width, height, 0, channels == 2 ? GL_RG : GL_RED, GL_UNSIGNED_BYTE, packed );
+	qglPixelStorei( GL_UNPACK_ALIGNMENT, alignment );
+	R_StaticFree( packed );
+	if ( level == 0 ) {
+		const GLenum bindTarget = target == GL_TEXTURE_2D ? GL_TEXTURE_2D : GL_TEXTURE_CUBE_MAP_EXT;
+		qglTexParameteri( bindTarget, GL_TEXTURE_SWIZZLE_R, swizzle[0] );
+		qglTexParameteri( bindTarget, GL_TEXTURE_SWIZZLE_G, swizzle[1] );
+		qglTexParameteri( bindTarget, GL_TEXTURE_SWIZZLE_B, swizzle[2] );
+		qglTexParameteri( bindTarget, GL_TEXTURE_SWIZZLE_A, swizzle[3] );
+	}
+}
+#endif
 
 static bool FormatIsDXT(int internalFormat) {
 #ifdef HAVE_OPENGLES
@@ -654,6 +762,18 @@ bool idImage::GenerateRampImage16( const unsigned short *pic, int width, int hei
 	while ( qglGetError() != GL_NO_ERROR ) {
 	}
 
+#ifndef HAVE_OPENGLES
+	if ( glCaps.core ) {
+		// the same channels in R16 / RG16, read back as the formats did
+		const GLint l = GL_RED, a = luminanceAlpha ? GL_GREEN : GL_RED;
+		qglTexImage2D( GL_TEXTURE_2D, 0, luminanceAlpha ? GL_RG16 : GL_R16, width, height, 0,
+					   luminanceAlpha ? GL_RG : GL_RED, GL_UNSIGNED_SHORT, pic );
+		qglTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_R, l );
+		qglTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_G, l );
+		qglTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_B, l );
+		qglTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_A, a );
+	} else
+#endif
 	qglTexImage2D( GL_TEXTURE_2D, 0, internalFormat, width, height, 0,
 				   luminanceAlpha ? GL_LUMINANCE_ALPHA : GL_LUMINANCE,
 				   GL_UNSIGNED_SHORT, pic );
@@ -841,7 +961,11 @@ void idImage::GenerateImage( const byte *pic, int width, int height,
 		*/
 		UploadCompressedNormalMap( scaled_width, scaled_height, scaledBuffer, 0 );
 	} else {
+#ifdef HAVE_OPENGLES
 		qglTexImage2D( GL_TEXTURE_2D, 0, internalFormat, scaled_width, scaled_height, 0, GL_RGBA, GL_UNSIGNED_BYTE, scaledBuffer );
+#else
+		R_TexImageRGBA( GL_TEXTURE_2D, 0, internalFormat, scaled_width, scaled_height, scaledBuffer );
+#endif
 	}
 
 	// create and upload the mip map levels, which we do in all cases, even if we don't think they are needed
@@ -880,8 +1004,7 @@ void idImage::GenerateImage( const byte *pic, int width, int height,
 			qglTexImage2D( GL_TEXTURE_2D, miplevel, GLES2_INTERNAL_FMT(internalFormat), scaled_width, scaled_height,
 				0, GL_RGBA, GL_UNSIGNED_BYTE, scaledBuffer );
 #else
-			qglTexImage2D( GL_TEXTURE_2D, miplevel, internalFormat, scaled_width, scaled_height,
-				0, GL_RGBA, GL_UNSIGNED_BYTE, scaledBuffer );
+			R_TexImageRGBA( GL_TEXTURE_2D, miplevel, internalFormat, scaled_width, scaled_height, scaledBuffer );
 #endif
 		}
 	}
@@ -1115,8 +1238,12 @@ void idImage::GenerateCubeImage( const byte *pic[6], int size,
 	// upload the base level
 	// FIXME: support GL_COLOR_INDEX8_EXT?
 	for ( i = 0 ; i < 6 ; i++ ) {
+#ifdef HAVE_OPENGLES
 		qglTexImage2D( GL_TEXTURE_CUBE_MAP_POSITIVE_X_EXT+i, 0, internalFormat, scaled_width, scaled_height, 0,
 			GL_RGBA, GL_UNSIGNED_BYTE, pic[i] );
+#else
+		R_TexImageRGBA( GL_TEXTURE_CUBE_MAP_POSITIVE_X_EXT+i, 0, internalFormat, scaled_width, scaled_height, pic[i] );
+#endif
 	}
 
 
@@ -1133,9 +1260,14 @@ void idImage::GenerateCubeImage( const byte *pic[6], int size,
 		for ( i = 0 ; i < 6 ; i++ ) {
 			byte	*shrunken;
 
+#ifdef HAVE_OPENGLES
 			qglTexImage2D( GL_TEXTURE_CUBE_MAP_POSITIVE_X_EXT+i, miplevel, internalFormat,
 				scaled_width / 2, scaled_height / 2, 0,
 				GL_RGBA, GL_UNSIGNED_BYTE, shrunk[i] );
+#else
+			R_TexImageRGBA( GL_TEXTURE_CUBE_MAP_POSITIVE_X_EXT+i, miplevel, internalFormat,
+				scaled_width / 2, scaled_height / 2, shrunk[i] );
+#endif
 
 			if ( scaled_width > 2 ) {
 				shrunken = R_MipMap( shrunk[i], scaled_width/2, scaled_height/2, false );
@@ -1914,7 +2046,20 @@ void idImage::UploadPrecompressedImage( byte *data, int len ) {
 #ifdef HAVE_OPENGLES
 				qglTexImage2D( GL_TEXTURE_2D, i - skipMip, GLES2_INTERNAL_FMT(internalFormat), uw, uh, 0, GLES2_INTERNAL_FMT(externalFormat), GL_UNSIGNED_BYTE, imagedata );
 #else
-				qglTexImage2D( GL_TEXTURE_2D, i - skipMip, internalFormat, uw, uh, 0, externalFormat, GL_UNSIGNED_BYTE, imagedata );
+				if ( glCaps.core && internalFormat == GL_ALPHA8 ) {
+					// one byte a texel, read back as alpha
+					GLint alignment = 4;
+					qglGetIntegerv( GL_UNPACK_ALIGNMENT, &alignment );
+					qglPixelStorei( GL_UNPACK_ALIGNMENT, 1 );
+					qglTexImage2D( GL_TEXTURE_2D, i - skipMip, GL_R8, uw, uh, 0, GL_RED, GL_UNSIGNED_BYTE, imagedata );
+					qglPixelStorei( GL_UNPACK_ALIGNMENT, alignment );
+					qglTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_R, GL_ZERO );
+					qglTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_G, GL_ZERO );
+					qglTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_B, GL_ZERO );
+					qglTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_A, GL_RED );
+				} else {
+					qglTexImage2D( GL_TEXTURE_2D, i - skipMip, internalFormat, uw, uh, 0, externalFormat, GL_UNSIGNED_BYTE, imagedata );
+				}
 #endif
 			}
 		}
@@ -2176,17 +2321,21 @@ void idImage::Bind() {
 
 	// enable or disable apropriate texture modes
 	if ( tmu->textureType != type && ( backEnd.glState.currenttmu <	glConfig.maxTextureUnits ) ) {
-#ifdef HAVE_OPENGLES
-		if ( tmu->textureType == TT_CUBIC )
-			glBindTexture( GL_TEXTURE_CUBE_MAP_EXT, 0 );
-		else if ( tmu->textureType == TT_2D )
-			glBindTexture( GL_TEXTURE_2D, 0 );
-#ifdef HAVE_OPENGLES3
-		else if ( tmu->textureType == TT_3D )
-			glBindTexture( GL_TEXTURE_3D, 0 );
+#ifdef BOOM3_GLSL_RENDERERS
+		if ( R_GLSLRenderer() ) {
+			if ( tmu->textureType == TT_CUBIC )
+				qglBindTexture( GL_TEXTURE_CUBE_MAP_EXT, 0 );
+			else if ( tmu->textureType == TT_2D )
+				qglBindTexture( GL_TEXTURE_2D, 0 );
+#ifndef HAVE_OPENGLES2
+			else if ( tmu->textureType == TT_3D )
+				qglBindTexture( GL_TEXTURE_3D, 0 );
 #endif
-#else
-		if ( tmu->textureType == TT_CUBIC ) {
+		}
+#endif
+#ifdef BOOM3_ARB2_RENDERER
+		if ( R_GLSLRenderer() ) {
+		} else if ( tmu->textureType == TT_CUBIC ) {
 			qglDisable( GL_TEXTURE_CUBE_MAP_EXT );
 		} else if ( tmu->textureType == TT_3D ) {
 			qglDisable( GL_TEXTURE_3D );
@@ -2194,7 +2343,8 @@ void idImage::Bind() {
 			qglDisable( GL_TEXTURE_2D );
 		}
 
-		if ( type == TT_CUBIC ) {
+		if ( R_GLSLRenderer() ) {
+		} else if ( type == TT_CUBIC ) {
 			qglEnable( GL_TEXTURE_CUBE_MAP_EXT );
 		} else if ( type == TT_3D ) {
 			qglEnable( GL_TEXTURE_3D );

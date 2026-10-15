@@ -85,12 +85,12 @@ idCVar r_customHeight( "r_customHeight", "486", CVAR_RENDERER | CVAR_ARCHIVE | C
 idCVar r_singleTriangle( "r_singleTriangle", "0", CVAR_RENDERER | CVAR_BOOL, "only draw a single triangle per primitive" );
 idCVar r_checkBounds( "r_checkBounds", "0", CVAR_RENDERER | CVAR_BOOL, "compare all surface bounds with precalculated ones" );
 
-#ifdef HAVE_OPENGLES
+#ifdef BOOM3_GLSL_RENDERERS
 idCVar r_usePhong("r_usePhong", "1", CVAR_RENDERER | CVAR_BOOL, "use phong instead of blinn-phong shader for interactions" );
 idCVar r_specularExponent("r_specularExponent", "3", CVAR_RENDERER | CVAR_FLOAT, "specular exponent, to be used in GLSL shaders" );
 #endif
 
-#ifdef HAVE_OPENGLES3
+#ifdef BOOM3_GLSL_ES3_RENDERER
 idCVar r_usePBR("r_usePBR", "0", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARCHIVE, "0 = Phong shading, 1 = basic PBR shading, 2 = enhanced PBR shading" );
 idCVar r_specularExponentPBR("r_specularExponentPBR", "2", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE, "specular exponent, to be used in PBR shaders" );
 #endif
@@ -282,6 +282,43 @@ idCVar r_glDebugContext( "r_glDebugContext", "0", CVAR_RENDERER | CVAR_BOOL, "En
 #define QGLPROC(name, rettype, args) rettype (APIENTRYP q##name) args;
 #include "renderer/qgl_proc.h"
 
+#ifdef BOOM3_GLSL_RENDERERS
+/*
+The GL 1.x entry points a core profile does not have.  The GLSL renderers
+never call them; code they share with the ARB2 renderer still does, and a
+GLES build compiles those calls to nothing (gles_compat.h).  A desktop
+core running a GLSL renderer points them at the no-ops below, so that code
+does what it does on GLES whatever the profile resolves them to.
+*/
+#define QGLPROC(name, rettype, args) static rettype APIENTRY R_GLNoOp_##name args { return (rettype)0; }
+#include "renderer/qgl_proc.h"
+
+// the qgl_proc.h entries a core profile keeps
+static const char * const r_coreGLProcs[] = {
+	"glBindTexture", "glBlendFunc", "glBlendEquation", "glClear", "glClearColor", "glClearDepth",
+	"glClearStencil", "glColorMask", "glCopyTexImage1D", "glCopyTexImage2D", "glCopyTexSubImage1D",
+	"glCopyTexSubImage2D", "glCullFace", "glDeleteTextures", "glDepthFunc", "glDepthMask", "glDepthRange",
+	"glDisable", "glDrawArrays", "glDrawBuffer", "glDrawElements", "glEnable", "glFrontFace",
+	"glGenTextures", "glGetBooleanv", "glGetDoublev", "glGetError", "glGetFloatv", "glGetIntegerv",
+	"glGetString", "glGetTexImage", "glGetTexLevelParameterfv", "glGetTexLevelParameteriv",
+	"glGetTexParameterfv", "glGetTexParameteriv", "glHint", "glIsEnabled", "glIsTexture", "glLineWidth",
+	"glLogicOp", "glPixelStoref", "glPixelStorei", "glPointSize", "glPolygonMode", "glPolygonOffset",
+	"glReadPixels", "glScissor", "glStencilFunc", "glStencilMask", "glStencilOp", "glTexImage1D",
+	"glTexImage2D", "glTexParameterf", "glTexParameterfv", "glTexParameteri", "glTexParameteriv",
+	"glTexSubImage1D", "glTexSubImage2D", "glViewport", NULL
+};
+
+static bool R_IsCoreGLProc( const char *name ) {
+	int i;
+	for ( i = 0; r_coreGLProcs[i]; i++ ) {
+		if ( !strcmp( r_coreGLProcs[i], name ) ) {
+			return true;
+		}
+	}
+	return false;
+}
+#endif
+
 void ( APIENTRY * qglMultiTexCoord2fARB )( GLenum texture, GLfloat s, GLfloat t );
 void ( APIENTRY * qglMultiTexCoord2fvARB )( GLenum texture, GLfloat *st );
 void ( APIENTRY * qglActiveTextureARB )( GLenum texture );
@@ -346,7 +383,8 @@ R_CheckExtension
 =================
 */
 bool R_CheckExtension( const char *name ) {
-	if ( !strstr( glConfig.extensions_string, name ) ) {
+	// by index on the contexts that only list them that way
+	if ( !gl_caps_has_extension( name ) ) {
 		common->Printf( "X..%s not found\n", name );
 		return false;
 	}
@@ -354,6 +392,104 @@ bool R_CheckExtension( const char *name ) {
 	common->Printf( "...using %s\n", name );
 	return true;
 }
+
+#if !defined(HAVE_OPENGLES) && defined(BOOM3_GLSL_RENDERERS)
+static void APIENTRY R_GLNoOpTexture( GLenum ) { }
+static void APIENTRY R_GLNoOpMultiTexCoord2f( GLenum, GLfloat, GLfloat ) { }
+static void APIENTRY R_GLNoOpMultiTexCoord2fv( GLenum, GLfloat * ) { }
+static void APIENTRY R_GLNoOpColorTable( int, int, int, int, int, const void * ) { }
+static void APIENTRY R_GLNoOpProgramString( GLenum, GLenum, GLsizei, const void * ) { }
+static void APIENTRY R_GLNoOpBindProgram( GLenum, GLuint ) { }
+static void APIENTRY R_GLNoOpGenPrograms( GLsizei, GLuint * ) { }
+static void APIENTRY R_GLNoOpProgramParameter( GLenum, GLuint, const GLfloat * ) { }
+static void APIENTRY R_GLNoOpDepthBounds( GLclampd, GLclampd ) { }
+
+/*
+==================
+R_CheckGLSLDesktopExtensions
+
+A GLSL renderer on a desktop context: the ARB-named entry points the shared
+code calls are pointed at their core names, the fixed-function and ARB
+program ones at no-ops, as on GLES.
+==================
+*/
+static void R_CheckGLSLDesktopExtensions( void ) {
+	glConfig.multitextureAvailable          = true;
+	glConfig.cubeMapAvailable               = true;
+	glConfig.textureNonPowerOfTwoAvailable  = true;
+	glConfig.ARBVertexBufferObjectAvailable = true;
+	glConfig.textureEnvCombineAvailable     = false;
+	glConfig.envDot3Available               = false;
+	glConfig.textureEnvAddAvailable         = false;
+	glConfig.sharedTexturePaletteAvailable  = false;
+	glConfig.texture3DAvailable             = false;
+	glConfig.ARBVertexProgramAvailable      = false;
+	glConfig.ARBFragmentProgramAvailable    = false;
+	glConfig.twoSidedStencilAvailable       = false;
+	glConfig.depthBoundsTestAvailable       = false;
+	glConfig.glDebugOutputAvailable         = false;
+	glConfig.textureLODBiasAvailable        = true;
+
+	qglGetIntegerv( GL_MAX_TEXTURE_IMAGE_UNITS, (GLint *)&glConfig.maxTextureImageUnits );
+	glConfig.maxTextureUnits = glConfig.maxTextureImageUnits;
+	if ( glConfig.maxTextureUnits > MAX_MULTITEXTURE_UNITS ) {
+		glConfig.maxTextureUnits = MAX_MULTITEXTURE_UNITS;
+	}
+	glConfig.maxTextureCoords = glConfig.maxTextureUnits;
+
+	qglActiveTextureARB = (void(APIENTRY *)(GLenum))GLimp_ExtensionPointer( "glActiveTexture" );
+	qglClientActiveTextureARB = R_GLNoOpTexture;
+	qglMultiTexCoord2fARB = R_GLNoOpMultiTexCoord2f;
+	qglMultiTexCoord2fvARB = R_GLNoOpMultiTexCoord2fv;
+
+	qglBindBufferARB = (PFNGLBINDBUFFERARBPROC)GLimp_ExtensionPointer( "glBindBuffer" );
+	qglDeleteBuffersARB = (PFNGLDELETEBUFFERSARBPROC)GLimp_ExtensionPointer( "glDeleteBuffers" );
+	qglGenBuffersARB = (PFNGLGENBUFFERSARBPROC)GLimp_ExtensionPointer( "glGenBuffers" );
+	qglIsBufferARB = (PFNGLISBUFFERARBPROC)GLimp_ExtensionPointer( "glIsBuffer" );
+	qglBufferDataARB = (PFNGLBUFFERDATAARBPROC)GLimp_ExtensionPointer( "glBufferData" );
+	qglBufferSubDataARB = (PFNGLBUFFERSUBDATAARBPROC)GLimp_ExtensionPointer( "glBufferSubData" );
+	qglGetBufferSubDataARB = (PFNGLGETBUFFERSUBDATAARBPROC)GLimp_ExtensionPointer( "glGetBufferSubData" );
+	qglMapBufferARB = (PFNGLMAPBUFFERARBPROC)GLimp_ExtensionPointer( "glMapBuffer" );
+	qglUnmapBufferARB = (PFNGLUNMAPBUFFERARBPROC)GLimp_ExtensionPointer( "glUnmapBuffer" );
+	qglGetBufferParameterivARB = (PFNGLGETBUFFERPARAMETERIVARBPROC)GLimp_ExtensionPointer( "glGetBufferParameteriv" );
+	qglGetBufferPointervARB = (PFNGLGETBUFFERPOINTERVARBPROC)GLimp_ExtensionPointer( "glGetBufferPointerv" );
+
+	qglVertexAttribPointerARB = (PFNGLVERTEXATTRIBPOINTERARBPROC)GLimp_ExtensionPointer( "glVertexAttribPointer" );
+	qglEnableVertexAttribArrayARB = (PFNGLENABLEVERTEXATTRIBARRAYARBPROC)GLimp_ExtensionPointer( "glEnableVertexAttribArray" );
+	qglDisableVertexAttribArrayARB = (PFNGLDISABLEVERTEXATTRIBARRAYARBPROC)GLimp_ExtensionPointer( "glDisableVertexAttribArray" );
+	qglProgramStringARB = (PFNGLPROGRAMSTRINGARBPROC)R_GLNoOpProgramString;
+	qglBindProgramARB = (PFNGLBINDPROGRAMARBPROC)R_GLNoOpBindProgram;
+	qglGenProgramsARB = (PFNGLGENPROGRAMSARBPROC)R_GLNoOpGenPrograms;
+	qglProgramEnvParameter4fvARB = (PFNGLPROGRAMENVPARAMETER4FVARBPROC)R_GLNoOpProgramParameter;
+	qglProgramLocalParameter4fvARB = (PFNGLPROGRAMLOCALPARAMETER4FVARBPROC)R_GLNoOpProgramParameter;
+
+	qglColorTableEXT = R_GLNoOpColorTable;
+	qglActiveStencilFaceEXT = (PFNGLACTIVESTENCILFACEEXTPROC)R_GLNoOpTexture;
+	qglDepthBoundsEXT = (PFNGLDEPTHBOUNDSEXTPROC)R_GLNoOpDepthBounds;
+	qglStencilOpSeparate = (PFNGLSTENCILOPSEPARATEPROC)GLimp_ExtensionPointer( "glStencilOpSeparate" );
+	qglTexImage3D = (void (APIENTRY *)(GLenum, GLint, GLint, GLsizei, GLsizei, GLsizei, GLint, GLenum, GLenum, const GLvoid *))
+		GLimp_ExtensionPointer( "glTexImage3D" );
+
+	// S3TC and BC7 stay: the desktop texture path uploads them as on ARB2
+	glConfig.textureCompressionAvailable = R_CheckExtension( "GL_EXT_texture_compression_s3tc" );
+	glConfig.bptcTextureCompressionAvailable = glConfig.textureCompressionAvailable
+		&& ( glCaps.major > 4 || ( glCaps.major == 4 && glCaps.minor >= 2 )
+			|| R_CheckExtension( "GL_ARB_texture_compression_bptc" ) );
+	qglCompressedTexImage2DARB = (PFNGLCOMPRESSEDTEXIMAGE2DARBPROC)GLimp_ExtensionPointer( "glCompressedTexImage2D" );
+	qglGetCompressedTexImageARB = (PFNGLGETCOMPRESSEDTEXIMAGEARBPROC)GLimp_ExtensionPointer( "glGetCompressedTexImage" );
+
+	glConfig.anisotropicAvailable = R_CheckExtension( "GL_EXT_texture_filter_anisotropic" )
+		|| R_CheckExtension( "GL_ARB_texture_filter_anisotropic" );
+	if ( glConfig.anisotropicAvailable ) {
+		qglGetFloatv( GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &glConfig.maxTextureAnisotropy );
+	} else {
+		glConfig.maxTextureAnisotropy = 1;
+	}
+
+	tr.stencilIncr = GL_INCR_WRAP;
+	tr.stencilDecr = GL_DECR_WRAP;
+}
+#endif
 
 /*
 ==================
@@ -368,6 +504,15 @@ static void R_CheckPortableExtensions( void ) {
 	// and from that the renderer it runs
 	gl_caps_init( (gl_caps_loader_t)GLimp_ExtensionPointer );
 	glConfig.renderer = GLimp_RequestedRenderer();
+#ifndef HAVE_OPENGLES
+	// a frontend that answered the ES 3 renderers' core request with an
+	// older context gets the ES 2 renderer, which that context runs
+	if ( ( glConfig.renderer == R_RENDERER_ES3 || glConfig.renderer == R_RENDERER_ES31 )
+			&& ( glCaps.major < 3 || ( glCaps.major == 3 && glCaps.minor < 3 ) ) ) {
+		common->Warning( "The ES 3 renderers need OpenGL 3.3; using the ES 2 renderer" );
+		glConfig.renderer = R_RENDERER_ES2;
+	}
+#endif
 	if ( glConfig.renderer == R_RENDERER_ES31 ) {
 		const char *missing = gl_caps_es31_missing();
 		if ( missing ) {
@@ -513,6 +658,12 @@ static void R_CheckPortableExtensions( void ) {
 		glConfig.maxTextureAnisotropy = 1;
 	}
 #else
+#ifdef BOOM3_GLSL_RENDERERS
+	if ( R_GLSLRenderer() ) {
+		R_CheckGLSLDesktopExtensions();
+		return;
+	}
+#endif
 	// GL_ARB_multitexture
 	glConfig.multitextureAvailable = R_CheckExtension( "GL_ARB_multitexture" );
 	if ( glConfig.multitextureAvailable ) {
@@ -683,7 +834,7 @@ static void R_CheckPortableExtensions( void ) {
 	glConfig.glDebugOutputAvailable = false;
 	if ( glConfig.haveDebugContext ) {
 	} else {
-		if ( strstr( glConfig.extensions_string, "GL_ARB_debug_output" ) ) {
+		if ( R_CheckExtension( "GL_ARB_debug_output" ) ) {
 			if ( r_glDebugContext.GetBool() ) {
 				common->Printf( "...found GL_ARB_debug_output, but not using it (no debug context)\n" );
 			} else {
@@ -927,11 +1078,21 @@ void R_InitOpenGL( void ) {
 	}
 
 #ifndef HAVE_OPENGLES
+#ifdef BOOM3_GLSL_RENDERERS
+	// a GLSL renderer's shared code calls no GL 1.x
+	const bool glslProcs = GLimp_RequestedRenderer() != R_RENDERER_ARB2;
+#define QGLPROC(name, rettype, args) \
+	q##name = glslProcs && !R_IsCoreGLProc( #name ) ? R_GLNoOp_##name \
+		: (rettype(APIENTRYP)args)GLimp_ExtensionPointer(#name); \
+	if (!q##name) \
+		common->FatalError("Unable to initialize OpenGL (%s)", #name);
+#else
 // load qgl function pointers
 #define QGLPROC(name, rettype, args) \
 	q##name = (rettype(APIENTRYP)args)GLimp_ExtensionPointer(#name); \
 	if (!q##name) \
 		common->FatalError("Unable to initialize OpenGL (%s)", #name);
+#endif
 
 #include "renderer/qgl_proc.h"
 #endif
@@ -964,16 +1125,21 @@ void R_InitOpenGL( void ) {
 	// recheck all the extensions (FIXME: this might be dangerous)
 	R_CheckPortableExtensions();
 
-#ifndef HAVE_OPENGLES
-	// parse our vertex and fragment programs, possibly disably support for
-	// one of the paths if there was an error
-	R_ARB2_Init();
+#ifdef BOOM3_GLSL_RENDERERS
+	if ( R_GLSLRenderer() ) {
+		cmdSystem->AddCommand( "reloadGLSLprograms", R_ReloadGLSLPrograms_f, CMD_FL_RENDERER, "reloads GLSL programs" );
+		R_ReloadGLSLPrograms_f( idCmdArgs() );
+	}
+#endif
+#ifdef BOOM3_ARB2_RENDERER
+	if ( !R_GLSLRenderer() ) {
+		// parse our vertex and fragment programs, possibly disably support for
+		// one of the paths if there was an error
+		R_ARB2_Init();
 
-	cmdSystem->AddCommand( "reloadARBprograms", R_ReloadARBPrograms_f, CMD_FL_RENDERER, "reloads ARB programs" );
-	R_ReloadARBPrograms_f( idCmdArgs() );
-#else
-    cmdSystem->AddCommand( "reloadGLSLprograms", R_ReloadGLSLPrograms_f, CMD_FL_RENDERER, "reloads GLSL programs" );
-    R_ReloadGLSLPrograms_f( idCmdArgs() );
+		cmdSystem->AddCommand( "reloadARBprograms", R_ReloadARBPrograms_f, CMD_FL_RENDERER, "reloads ARB programs" );
+		R_ReloadARBPrograms_f( idCmdArgs() );
+	}
 #endif
 
 	// allocate the vertex array range or vertex objects
@@ -1017,11 +1183,16 @@ void R_ReinitOpenGL( void ) {
     glConfig.isInitialized = true;
 
     R_CheckPortableExtensions();
-#ifndef HAVE_OPENGLES
-    R_ARB2_Init();
-	R_ReloadARBPrograms_f( idCmdArgs() );
-#else
-	R_ReloadGLSLPrograms_f( idCmdArgs() );
+#ifdef BOOM3_GLSL_RENDERERS
+	if ( R_GLSLRenderer() ) {
+		R_ReloadGLSLPrograms_f( idCmdArgs() );
+	}
+#endif
+#ifdef BOOM3_ARB2_RENDERER
+	if ( !R_GLSLRenderer() ) {
+		R_ARB2_Init();
+		R_ReloadARBPrograms_f( idCmdArgs() );
+	}
 #endif
 
 	vertexCache.PurgeAll();

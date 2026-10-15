@@ -17,6 +17,8 @@
 
 #include "glsl_shaders.h"
 
+namespace glsl_es3 {
+
 const char * const zfillShaderFP = R"(
 #version 300 es
 precision mediump float;
@@ -61,3 +63,5 @@ void main()
   fragColor = u_glColor;
 }
 )";
+
+}

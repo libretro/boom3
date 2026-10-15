@@ -252,7 +252,7 @@ static void R_CheckCvars( void ) {
 		r_gamma.ClearModified();
 		r_brightness.ClearModified();
 		R_SetColorMappings();
-#ifndef HAVE_OPENGLES
+#ifdef BOOM3_ARB2_RENDERER
 		/*
 		   The injected gamma epilogue has a unity-gamma variant that
 		   drops the three per-fragment POW instructions, since at
@@ -264,14 +264,14 @@ static void R_CheckCvars( void ) {
 		   POWs in place forever.
 		*/
 		extern bool arbProgramsUnityGamma;
-		if ( r_gammaInShader.GetBool()
+		if ( !R_GLSLRenderer() && r_gammaInShader.GetBool()
 				&& arbProgramsUnityGamma != ( r_gamma.GetFloat() == 1.0f ) ) {
 			R_ReloadARBPrograms_f( idCmdArgs() );
 		}
 #endif
 	}
 
-#ifndef HAVE_OPENGLES
+#ifdef BOOM3_ARB2_RENDERER
 	/*
 	   Same boundary, different switch: whether the epilogue carries the
 	   luminance-aware clamp is decided at program load, and the option
@@ -282,7 +282,7 @@ static void R_CheckCvars( void ) {
 	{
 		extern bool arbProgramsLumaClamp;
 		extern bool hdr_luma_clamp;
-		if ( r_gammaInShader.GetBool() && arbProgramsLumaClamp != hdr_luma_clamp ) {
+		if ( !R_GLSLRenderer() && r_gammaInShader.GetBool() && arbProgramsLumaClamp != hdr_luma_clamp ) {
 			R_ReloadARBPrograms_f( idCmdArgs() );
 		}
 	}
@@ -290,9 +290,11 @@ static void R_CheckCvars( void ) {
 
 	if ( r_gammaInShader.IsModified() ) {
 		r_gammaInShader.ClearModified();
-#ifndef HAVE_OPENGLES
+#ifdef BOOM3_ARB2_RENDERER
 		// reload shaders so they either add or remove the code for setting gamma/brightness in shader
-		R_ReloadARBPrograms_f( idCmdArgs() );
+		if ( !R_GLSLRenderer() ) {
+			R_ReloadARBPrograms_f( idCmdArgs() );
+		}
 #endif
 		if ( r_gammaInShader.GetBool() ) {
 			common->Printf( "Will apply r_gamma and r_brightness in shaders\n" );
@@ -561,15 +563,16 @@ void idRenderSystemLocal::SetBackEndRenderer() {
 
 	backEndRenderer = BE_BAD;
 
-#ifdef HAVE_OPENGLES
-    backEndRenderer = BE_GLSL;
-#else
+#ifdef BOOM3_GLSL_RENDERERS
+	if ( R_GLSLRenderer() ) {
+		backEndRenderer = BE_GLSL;
+	} else
+#endif
 	if ( idStr::Icmp( r_renderer.GetString(), "arb2" ) == 0 ) {
 		if ( glConfig.allowARB2Path ) {
 			backEndRenderer = BE_ARB2;
 		}
 	}
-#endif
 	// fallback
 	if ( backEndRenderer == BE_BAD ) {
 		// choose the best
@@ -587,7 +590,7 @@ void idRenderSystemLocal::SetBackEndRenderer() {
 		backEndRendererHasVertexPrograms = true;
 		backEndRendererMaxLight = 999;
 		break;
-#ifdef HAVE_OPENGLES
+#ifdef BOOM3_GLSL_RENDERERS
     case BE_GLSL:
         common->Printf( "using GLSL renderSystem\n" );
         backEndRendererHasVertexPrograms = true;
@@ -976,13 +979,14 @@ void idRenderSystemLocal::CaptureRenderToFile( const char *fileName, bool fixAlp
 	guiModel->Clear();
 	R_IssueRenderCommands();
 
-#ifndef HAVE_OPENGLES
-	qglReadBuffer( GL_BACK );
+#ifdef BOOM3_ARB2_RENDERER
+	if ( !R_GLSLRenderer() ) {
+		qglReadBuffer( GL_BACK );
+	}
 #endif
 
 	// include extra space for OpenGL padding to word boundaries
 	int	c = ( rc->width + 3 ) * rc->height;
-#ifdef HAVE_OPENGLES
 	// GLES reads only RGBA (GL_RGB fails, leaving the objective
 	// screenshots the camShot objectives make blank). Rows of RGBA bytes
 	// are always word aligned.
@@ -1008,20 +1012,6 @@ void idRenderSystemLocal::CaptureRenderToFile( const char *fileName, bool fixAlp
 		data2[ i * 4 + 2 ] = data[ i * 4 + 2 ];
 		data2[ i * 4 + 3 ] = 0xff;
 	}
-#else
-	byte *data = (byte *)R_StaticAlloc( c * 3 );
-
-	qglReadPixels( rc->x, rc->y, rc->width, rc->height, GL_RGB, GL_UNSIGNED_BYTE, data );
-
-	byte *data2 = (byte *)R_StaticAlloc( c * 4 );
-
-	for ( int i = 0 ; i < c ; i++ ) {
-		data2[ i * 4 ] = data[ i * 3 ];
-		data2[ i * 4 + 1 ] = data[ i * 3 + 1 ];
-		data2[ i * 4 + 2 ] = data[ i * 3 + 2 ];
-		data2[ i * 4 + 3 ] = 0xff;
-	}
-#endif
 
 	R_WriteTGA( fileName, data2, rc->width, rc->height, true );
 

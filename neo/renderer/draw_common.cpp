@@ -37,17 +37,15 @@ extern idCVar r_useStencilOpSeparate;
 #ifdef HAVE_OPENGLES
 #include "renderer/gles_compat.h"
 #endif
+#include "renderer/gl_caps.h"
+#include "renderer/glsl_translate.h"
 
 /*
 =====================
 RB_BakeTextureMatrixIntoTexgen
 =====================
 */
-#ifdef HAVE_OPENGLES
-void RB_BakeTextureMatrixIntoTexgen( idMat4 & lightProject, const float *textureMatrix ) {
-#else
 void RB_BakeTextureMatrixIntoTexgen( idPlane lightProject[3], const float *textureMatrix ) {
-#endif
 	float	genMatrix[16];
 	float	final[16];
 
@@ -71,7 +69,7 @@ void RB_BakeTextureMatrixIntoTexgen( idPlane lightProject[3], const float *textu
 	genMatrix[11] = lightProject[2][2];
 	genMatrix[15] = lightProject[2][3];
 
-	myGlMultMatrix( genMatrix, backEnd.lightTextureMatrix, final );
+	myGlMultMatrix( genMatrix, textureMatrix, final );
 
 	lightProject[0][0] = final[0];
 	lightProject[0][1] = final[4];
@@ -82,6 +80,11 @@ void RB_BakeTextureMatrixIntoTexgen( idPlane lightProject[3], const float *textu
 	lightProject[1][1] = final[5];
 	lightProject[1][2] = final[9];
 	lightProject[1][3] = final[13];
+}
+
+// the same on the rows of a matrix, which are laid out as planes are
+void RB_BakeTextureMatrixIntoTexgen( idMat4 &lightProject, const float *textureMatrix ) {
+	RB_BakeTextureMatrixIntoTexgen( reinterpret_cast<idPlane *>( lightProject.ToFloatPtr() ), textureMatrix );
 }
 
 /*
@@ -207,7 +210,7 @@ float RB_HDRGammaBrightness( bool filterBlend ) {
 	return b * memoPow;
 }
 
-#ifndef HAVE_OPENGLES
+#ifdef BOOM3_ARB2_RENDERER
 
 /*
 ================
@@ -2349,6 +2352,151 @@ void RB_STD_LightScale( void ) {
 
 #endif
 
+#ifdef BOOM3_ARB2_RENDERER
+/*
+=============
+RB_ARB2_DrawView
+=============
+*/
+static void RB_ARB2_DrawView( drawSurf_t **drawSurfs, int numDrawSurfs ) {
+	// fill the depth buffer and clear color buffer to black except on
+	// subviews
+	RB_STD_FillDepthBuffer( drawSurfs, numDrawSurfs );
+
+	// main light renderer
+	RB_ARB2_DrawInteractions();
+
+	// disable stencil shadow test
+	qglStencilFunc( GL_ALWAYS, 128, 255 );
+
+	// uplight the entire screen to crutch up not having better blending range
+	RB_STD_LightScale();
+
+	// now draw any non-light dependent shading passes
+	int	processed = RB_STD_DrawShaderPasses( drawSurfs, numDrawSurfs );
+
+	// fob and blend lights
+	RB_STD_FogAllLights();
+
+	// now draw any post-processing effects using _currentRender
+	if ( processed < numDrawSurfs ) {
+		RB_STD_DrawShaderPasses( drawSurfs+processed, numDrawSurfs-processed );
+	}
+
+	RB_RenderDebugTools( drawSurfs, numDrawSurfs );
+}
+#endif
+
+#ifdef BOOM3_GLSL_RENDERERS
+/*
+=============
+GLSL renderer dispatch
+
+The GLSL renderers each live in their own namespace; these hand each call
+to the one the context runs.
+=============
+*/
+#if defined(BOOM3_GLSL_ES2_RENDERER) && defined(BOOM3_GLSL_ES3_RENDERER)
+#define RB_GLSL_CALL( call )	( glConfig.renderer == R_RENDERER_ES2 ? gles2::call : gles3::call )
+#elif defined(BOOM3_GLSL_ES2_RENDERER)
+#define RB_GLSL_CALL( call )	( gles2::call )
+#else
+#define RB_GLSL_CALL( call )	( gles3::call )
+#endif
+
+void R_ReloadGLSLPrograms_f( const idCmdArgs &args ) {
+	RB_GLSL_CALL( R_ReloadGLSLPrograms_f( args ) );
+}
+
+int R_GLSLTarget( void ) {
+#ifdef HAVE_OPENGLES
+	return GLSL_TARGET_ES;
+#else
+	// GLSL 3.30 wherever the context has it, except that the ES 2
+	// renderer keeps to GLSL 1.20 on a compatibility profile
+	const bool glsl330 = glCaps.major > 3 || ( glCaps.major == 3 && glCaps.minor >= 3 );
+	if ( glCaps.core || ( glsl330 && glConfig.renderer != R_RENDERER_ES2 ) ) {
+		return GLSL_TARGET_CORE;
+	}
+	return GLSL_TARGET_COMPAT;
+#endif
+}
+
+void R_GLSLSourceForContext( idStr &source, GLenum type ) {
+#ifndef HAVE_OPENGLES
+	char *desktop = glsl_translate( source.c_str(),
+		type == GL_VERTEX_SHADER ? GLSL_STAGE_VERTEX : GLSL_STAGE_FRAGMENT,
+		R_GLSLTarget() );
+	if ( !desktop ) {
+		common->FatalError( "R_GLSLSourceForContext: this shader has no form for this context" );
+	}
+	source = desktop;
+	free( desktop );
+#endif
+}
+
+void RB_GLSL_PrepareShaders( void ) {
+	RB_GLSL_CALL( RB_GLSL_PrepareShaders() );
+}
+
+void RB_GLSL_FillDepthBuffer( drawSurf_t **drawSurfs, int numDrawSurfs ) {
+	RB_GLSL_CALL( RB_GLSL_FillDepthBuffer( drawSurfs, numDrawSurfs ) );
+}
+
+void RB_GLSL_DrawInteractions( void ) {
+	RB_GLSL_CALL( RB_GLSL_DrawInteractions() );
+}
+
+int RB_GLSL_DrawShaderPasses( drawSurf_t **drawSurfs, int numDrawSurfs ) {
+	return RB_GLSL_CALL( RB_GLSL_DrawShaderPasses( drawSurfs, numDrawSurfs ) );
+}
+
+void RB_GLSL_FogAllLights( void ) {
+	RB_GLSL_CALL( RB_GLSL_FogAllLights() );
+}
+
+// the uniform buffer binding points, which only the ES 3 renderers use
+void RB_GLSL_EndFrame( void ) {
+#ifdef BOOM3_GLSL_ES3_RENDERER
+	if ( glConfig.renderer != R_RENDERER_ES2 ) {
+		gles3::RB_GLSL_EndFrame();
+	}
+#endif
+}
+
+#ifndef BOOM3_ARB2_RENDERER
+// no ARB programs without the ARB2 renderer: a non-zero handle keeps the
+// material stages that name them valid
+int R_FindARBProgram( GLenum target, const char *program ) {
+	return 1;
+}
+#endif
+
+/*
+=============
+RB_GLSL_DrawView
+=============
+*/
+static void RB_GLSL_DrawView( drawSurf_t **drawSurfs, int numDrawSurfs ) {
+	// fill the depth buffer and clear color buffer to black except on
+	// subviews
+	RB_GLSL_FillDepthBuffer( drawSurfs, numDrawSurfs );
+
+	// main light renderer
+	RB_GLSL_DrawInteractions();
+
+	// now draw any non-light dependent shading passes
+	const int processed = RB_GLSL_DrawShaderPasses( drawSurfs, numDrawSurfs );
+
+	RB_GLSL_FogAllLights();
+
+	// now draw any post-processing effects using _currentRender
+	if ( processed < numDrawSurfs ) {
+		RB_GLSL_DrawShaderPasses( drawSurfs + processed, numDrawSurfs - processed );
+	}
+}
+#endif
+
 /*
 =============
 RB_STD_DrawView
@@ -2367,68 +2515,23 @@ void	RB_STD_DrawView( void ) {
 	// clear the z buffer, set the projection matrix, etc
 	RB_BeginDrawingView();
 
-#ifdef HAVE_OPENGLES
-	// Setup GLSL shader state
-	RB_GLSL_PrepareShaders();
+#ifdef BOOM3_GLSL_RENDERERS
+	if ( R_GLSLRenderer() ) {
+		// Setup GLSL shader state
+		RB_GLSL_PrepareShaders();
+
+		// decide how much overbrighting we are going to do
+		RB_DetermineLightScale();
+
+		RB_GLSL_DrawView( drawSurfs, numDrawSurfs );
+		return;
+	}
 #endif
 
+#ifdef BOOM3_ARB2_RENDERER
 	// decide how much overbrighting we are going to do
 	RB_DetermineLightScale();
 
-	// fill the depth buffer and clear color buffer to black except on
-	// subviews
-#ifndef HAVE_OPENGLES
-	RB_STD_FillDepthBuffer( drawSurfs, numDrawSurfs );
-#else
-	RB_GLSL_FillDepthBuffer( drawSurfs, numDrawSurfs );
-#endif
-
-	// main light renderer
-	switch( tr.backEndRenderer ) {
-#ifndef HAVE_OPENGLES
-	case BE_ARB2:
-		RB_ARB2_DrawInteractions();
-		break;
-#endif
-#ifdef HAVE_OPENGLES
-	case BE_GLSL:
-		RB_GLSL_DrawInteractions();
-		break;
-#endif
-	}
-
-#ifndef HAVE_OPENGLES
-	// disable stencil shadow test
-	qglStencilFunc( GL_ALWAYS, 128, 255 );
-
-	// uplight the entire screen to crutch up not having better blending range
-	RB_STD_LightScale();
-#endif
-
-	// now draw any non-light dependent shading passes
-#ifndef HAVE_OPENGLES
-	int	processed = RB_STD_DrawShaderPasses( drawSurfs, numDrawSurfs );
-#else
-	const int processed = RB_GLSL_DrawShaderPasses(drawSurfs, numDrawSurfs);
-#endif
-
-#ifndef HAVE_OPENGLES
-	// fob and blend lights
-	RB_STD_FogAllLights();
-#else
-	RB_GLSL_FogAllLights();
-#endif
-
-	// now draw any post-processing effects using _currentRender
-	if ( processed < numDrawSurfs ) {
-#ifndef HAVE_OPENGLES
-		RB_STD_DrawShaderPasses( drawSurfs+processed, numDrawSurfs-processed );
-#else
-		RB_GLSL_DrawShaderPasses(drawSurfs + processed, numDrawSurfs - processed);
-#endif
-	}
-
-#ifndef HAVE_OPENGLES
-	RB_RenderDebugTools( drawSurfs, numDrawSurfs );
+	RB_ARB2_DrawView( drawSurfs, numDrawSurfs );
 #endif
 }

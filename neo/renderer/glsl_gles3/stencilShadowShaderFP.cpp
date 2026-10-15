@@ -17,6 +17,8 @@
 
 #include "glsl_shaders.h"
 
+namespace glsl_es3 {
+
 const char * const stencilShadowShaderFP = R"(
 #version 300 es
 precision lowp float;
@@ -29,3 +31,5 @@ void main()
   fragColor = vec4(0,0,0,1.0);
 }
 )";
+
+}
