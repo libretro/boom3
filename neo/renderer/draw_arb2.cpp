@@ -419,13 +419,19 @@ void RB_ARB2_DrawInteractions( void ) {
 		}
 
 		if ( r_useShadowVertexProgram.GetBool() ) {
-			qglEnable( GL_VERTEX_PROGRAM_ARB );
-			qglBindProgramARB( GL_VERTEX_PROGRAM_ARB, VPROG_STENCIL_SHADOW );
-			RB_StencilShadowPass( vLight->globalShadows );
+			// the shadow program only for a list there is to draw: an empty
+			// pass draws nothing, and each interaction pass binds its own
+			if ( vLight->globalShadows ) {
+				qglEnable( GL_VERTEX_PROGRAM_ARB );
+				qglBindProgramARB( GL_VERTEX_PROGRAM_ARB, VPROG_STENCIL_SHADOW );
+				RB_StencilShadowPass( vLight->globalShadows );
+			}
 			RB_ARB2_CreateDrawInteractions( vLight->localInteractions );
-			qglEnable( GL_VERTEX_PROGRAM_ARB );
-			qglBindProgramARB( GL_VERTEX_PROGRAM_ARB, VPROG_STENCIL_SHADOW );
-			RB_StencilShadowPass( vLight->localShadows );
+			if ( vLight->localShadows ) {
+				qglEnable( GL_VERTEX_PROGRAM_ARB );
+				qglBindProgramARB( GL_VERTEX_PROGRAM_ARB, VPROG_STENCIL_SHADOW );
+				RB_StencilShadowPass( vLight->localShadows );
+			}
 			RB_ARB2_CreateDrawInteractions( vLight->globalInteractions );
 			qglDisable( GL_VERTEX_PROGRAM_ARB );	// if there weren't any globalInteractions, it would have stayed on
 		} else {
