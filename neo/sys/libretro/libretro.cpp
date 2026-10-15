@@ -290,54 +290,57 @@ static bool hdr_filmic_build( void ) {
 		lut8[i]  = (unsigned char)( v * 255.0 + 0.5 );
 	}
 
-	/* The desaturation atlas: the cube's blue slices side by side, so
-	 * this needs no 3D texture and works on GLES2 as well.  Built with
-	 * the curve because neither is useful without the other. */
-	glGenTextures( 1, &hdr_filmic_desat );
-	glActiveTexture( GL_TEXTURE4 );
-	glBindTexture( GL_TEXTURE_2D, hdr_filmic_desat );
-	/* A row of this atlas is 1089 texels of RGB - 6534 bytes at sixteen
-	 * bits, 3267 at eight - and neither is a multiple of four, which is
-	 * what GL_UNPACK_ALIGNMENT defaults to.  Left at four, every row
-	 * after the first is read two or three bytes off, so the cube
-	 * arrives sheared and returns arbitrary colours.  The curve texture
-	 * never hit this: its rows are 512 and 256 bytes. */
-	glPixelStorei( GL_UNPACK_ALIGNMENT, 1 );
-	while ( glGetError() != GL_NO_ERROR ) {
-	}
-#ifndef HAVE_OPENGLES
-	glTexImage2D( GL_TEXTURE_2D, 0, GL_RGB16, FILMIC_DESAT_W, FILMIC_DESAT_H, 0,
-				  GL_RGB, GL_UNSIGNED_SHORT, filmic_desat );
-	if ( glGetError() != GL_NO_ERROR )
-#endif
-	{
-		/* eight bits where sixteen is unavailable; the cube's own step is
-		 * 1/32, so a byte still resolves it comfortably */
-		static unsigned char desat8[FILMIC_DESAT_W * FILMIC_DESAT_H * 3];
-		int k;
-		for ( k = 0; k < FILMIC_DESAT_W * FILMIC_DESAT_H * 3; k++ ) {
-			desat8[k] = (unsigned char)( filmic_desat[k] >> 8 );
-		}
+	/* The desaturation atlas: the cube's blue slices side by side, so this
+	 * needs no 3D texture and works on GLES2 as well.  It does not depend
+	 * on the contrast, so a contrast change, which rebuilds the curve,
+	 * keeps the atlas already made. */
+	if ( !hdr_filmic_desat ) {
+		glGenTextures( 1, &hdr_filmic_desat );
+		glActiveTexture( GL_TEXTURE4 );
+		glBindTexture( GL_TEXTURE_2D, hdr_filmic_desat );
+		/* A row of this atlas is 1089 texels of RGB - 6534 bytes at sixteen
+		 * bits, 3267 at eight - and neither is a multiple of four, which is
+		 * what GL_UNPACK_ALIGNMENT defaults to.  Left at four, every row
+		 * after the first is read two or three bytes off, so the cube
+		 * arrives sheared and returns arbitrary colours.  The curve texture
+		 * never hit this: its rows are 512 and 256 bytes. */
+		glPixelStorei( GL_UNPACK_ALIGNMENT, 1 );
 		while ( glGetError() != GL_NO_ERROR ) {
 		}
-		glTexImage2D( GL_TEXTURE_2D, 0, GL_RGB, FILMIC_DESAT_W, FILMIC_DESAT_H, 0,
-					  GL_RGB, GL_UNSIGNED_BYTE, desat8 );
-		if ( glGetError() != GL_NO_ERROR ) {
-			glDeleteTextures( 1, &hdr_filmic_desat );
-			hdr_filmic_desat = 0;
-			glPixelStorei( GL_UNPACK_ALIGNMENT, 4 );
-			glActiveTexture( GL_TEXTURE0 );
-			return false;
+	#ifndef HAVE_OPENGLES
+		glTexImage2D( GL_TEXTURE_2D, 0, GL_RGB16, FILMIC_DESAT_W, FILMIC_DESAT_H, 0,
+					  GL_RGB, GL_UNSIGNED_SHORT, filmic_desat );
+		if ( glGetError() != GL_NO_ERROR )
+	#endif
+		{
+			/* eight bits where sixteen is unavailable; the cube's own step is
+			 * 1/32, so a byte still resolves it comfortably */
+			static unsigned char desat8[FILMIC_DESAT_W * FILMIC_DESAT_H * 3];
+			int k;
+			for ( k = 0; k < FILMIC_DESAT_W * FILMIC_DESAT_H * 3; k++ ) {
+				desat8[k] = (unsigned char)( filmic_desat[k] >> 8 );
+			}
+			while ( glGetError() != GL_NO_ERROR ) {
+			}
+			glTexImage2D( GL_TEXTURE_2D, 0, GL_RGB, FILMIC_DESAT_W, FILMIC_DESAT_H, 0,
+						  GL_RGB, GL_UNSIGNED_BYTE, desat8 );
+			if ( glGetError() != GL_NO_ERROR ) {
+				glDeleteTextures( 1, &hdr_filmic_desat );
+				hdr_filmic_desat = 0;
+				glPixelStorei( GL_UNPACK_ALIGNMENT, 4 );
+				glActiveTexture( GL_TEXTURE0 );
+				return false;
+			}
 		}
+		/* linear across red and green, and the blue mix is done in the
+		 * shader - clamping stops a slice bleeding into its neighbour */
+		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
+		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
+		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
+		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
+		glPixelStorei( GL_UNPACK_ALIGNMENT, 4 );
+		glActiveTexture( GL_TEXTURE0 );
 	}
-	/* linear across red and green, and the blue mix is done in the
-	 * shader - clamping stops a slice bleeding into its neighbour */
-	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
-	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
-	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
-	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
-	glPixelStorei( GL_UNPACK_ALIGNMENT, 4 );
-	glActiveTexture( GL_TEXTURE0 );
 
 	glGenTextures( 1, &hdr_filmic_lut );
 	glActiveTexture( GL_TEXTURE3 );
@@ -6054,29 +6057,32 @@ static const char *hdr_arb_composite_src( int mode, bool twoBand ) {
 				memcpy( at, fetch, fetchLen );
 			}
 		}
-		/* With chromatic aberration off, its gather is no longer the
-		 * identity it is against a single-tap fetch: overwriting red
-		 * and blue with centre single taps would undo the resolve on
-		 * two of three channels and colour every edge.  Remove the
-		 * gather and its debug exit outright; the radius prologue that
-		 * remains is dead arithmetic. */
 		if ( getenv( "HDR_DUMP_PROG" ) ) {
 			FILE *df = fopen( getenv( "HDR_DUMP_PROG" ), "ab" );
 			if ( df ) { fwrite( p, 1, strlen( p ), df ); fwrite( "\n=SPLICED=\n", 1, 11, df ); fclose( df ); }
 		}
-		if ( hdr_chroma_ab == 0 ) {
-			static const char *cut[][2] = {
-				{ "TEX u, v, texture[0], 2D;\n", "MOV s.b, u.b;\n" },
-				{ "SUB t.xy, fragment.texcoord[0], 0.5;\n", "LRP s, kCa.w, t, s;\n" },
-			};
-			int c;
-			for ( c = 0; c < 2; c++ ) {
-				char *from = strstr( p, cut[c][0] );
-				char *last = from ? strstr( from, cut[c][1] ) : NULL;
-				if ( from && last ) {
-					char *end = last + strlen( cut[c][1] );
-					memmove( from, end, strlen( end ) + 1 );
-				}
+	}
+	/* With chromatic aberration off its gather goes, with or without
+	 * supersampling.  Against the supersampled fetch it is not even the
+	 * identity: overwriting red and blue with centre single taps would
+	 * undo the resolve on two of three channels and colour every edge.
+	 * Against the stock single tap it is exactly the identity - kCa.x 0
+	 * puts both taps on the centre texcoord, so they return the centre
+	 * fetch's own red and blue, and the debug LRP with kCa.w 0 returns s
+	 * - and two fetches of three per output pixel for nothing.  The radius
+	 * prologue that remains is dead arithmetic. */
+	if ( hdr_chroma_ab == 0 ) {
+		static const char *cut[][2] = {
+			{ "TEX u, v, texture[0], 2D;\n", "MOV s.b, u.b;\n" },
+			{ "SUB t.xy, fragment.texcoord[0], 0.5;\n", "LRP s, kCa.w, t, s;\n" },
+		};
+		int c;
+		for ( c = 0; c < 2; c++ ) {
+			char *from = strstr( p, cut[c][0] );
+			char *last = from ? strstr( from, cut[c][1] ) : NULL;
+			if ( from && last ) {
+				char *end = last + strlen( cut[c][1] );
+				memmove( from, end, strlen( end ) + 1 );
 			}
 		}
 	}
