@@ -660,6 +660,7 @@ static int    hdr_arb_comp_ssaa = -1;
 static int    hdr_arb_comp_agxlook = -1;
 static int    hdr_arb_comp_desat = -1;
 static int    hdr_arb_comp_pqout = -1;  /* halation tint baked in with it */
+static int    hdr_arb_comp_expand = -1; /* whether the expansion block is in it */
 
 /* Every program in the chain is loaded.  On this build there is no other
    chain to run, so this is a load-state flag rather than a path
@@ -6225,6 +6226,25 @@ static const char *hdr_arb_composite_src( int mode, bool twoBand ) {
 			if ( df ) { fwrite( p, 1, strlen( p ), df ); fwrite( "\n=SPLICED=\n", 1, 11, df ); fclose( df ); }
 		}
 	}
+	/* Expansion off, or tone-mapped 24-bit output (H is 1): the block's
+	 * two closing CMPs hand lin back unchanged, bit for bit, and nothing
+	 * after it reads what else it wrote, so it goes - some forty
+	 * instructions a pixel that every pixel ran.  Checked program
+	 * against program on every curve and splice, float for float.
+	 * The same reasoning does not carry to the shoulder at H = 1: its
+	 * result is min(t, 1) there too, but dropping it changes how a
+	 * driver compiles the curve before it (which multiplies it fuses
+	 * into multiply-adds), and the output moves by an ulp. */
+	if ( hdr_expand_mode == 0 || !hdr_pq_output ) {
+		static const char from[] = "SUB t, lin, program.env[1].y;\n";
+		static const char last[] = "CMP lin, a.x, lin, e;\n";
+		char *at = strstr( p, from );
+		char *end = at ? strstr( at, last ) : NULL;
+		if ( at && end ) {
+			end += sizeof( last ) - 1;
+			memmove( at, end, strlen( end ) + 1 );
+		}
+	}
 	/* With chromatic aberration off its gather goes, with or without
 	 * supersampling.  Against the supersampled fetch it is not even the
 	 * identity: overwriting red and blue with centre single taps would
@@ -7040,7 +7060,8 @@ static bool hdr_arb_ready( void ) {
 			&& hdr_arb_comp_ssaa == hdr_ssaa
 			&& hdr_arb_comp_agxlook == hdr_agx_look
 			&& hdr_arb_comp_desat == hdr_hl_desat
-			&& hdr_arb_comp_pqout == (int)hdr_pq_output ) {
+			&& hdr_arb_comp_pqout == (int)hdr_pq_output
+			&& hdr_arb_comp_expand == (int)( hdr_expand_mode != 0 ) ) {
 		return true;
 	}
 
@@ -7083,7 +7104,8 @@ static bool hdr_arb_ready( void ) {
 			|| hdr_arb_comp_ssaa != hdr_ssaa
 			|| hdr_arb_comp_agxlook != hdr_agx_look
 			|| hdr_arb_comp_desat != hdr_hl_desat
-			|| hdr_arb_comp_pqout != (int)hdr_pq_output ) {
+			|| hdr_arb_comp_pqout != (int)hdr_pq_output
+			|| hdr_arb_comp_expand != (int)( hdr_expand_mode != 0 ) ) {
 		if ( hdr_arb_comp1 ) {
 			GLuint dead[2] = { hdr_arb_comp1, hdr_arb_comp2 };
 			glDeleteProgramsARB( 2, dead );
@@ -7104,6 +7126,7 @@ static bool hdr_arb_ready( void ) {
 		hdr_arb_comp_agxlook = hdr_agx_look;
 		hdr_arb_comp_desat = hdr_hl_desat;
 		hdr_arb_comp_pqout = (int)hdr_pq_output;
+		hdr_arb_comp_expand = (int)( hdr_expand_mode != 0 );
 
 		/* Say what was baked in.  These two are baked into the program
 		 * text rather than uploaded, so if a setting is not reaching the
