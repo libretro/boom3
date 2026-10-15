@@ -77,6 +77,30 @@ moved at load time, so the shading is the same code on the same values.
 #define DRAW_VERTEX_BINDING		1
 #define DRAW_FRAGMENT_BINDING	2
 
+/*
+On GL 4.3 and later with shader draw parameters, the depth fill's opaque
+surfaces and the shadow volumes are drawn in runs: a run of surfaces that
+share the vertex and index buffers and the pass's state goes out as one
+glMultiDrawElementsIndirect, each draw reading its model matrix, light
+origin and depth hack from a uniform block array at gl_DrawIDARB.  The
+commands and the array are written into the vertex cache's ring.  The
+vertex programs are the single-draw ones with those three uniforms
+redirected into the array, so every vertex lands where it did.
+*/
+#define DRAW_LIST_BINDING		3
+#define RB_BATCH_DRAWS			128
+#define RB_BATCH_ENTRY			96		/* std140 rbDraw_t: mat4, vec4, vec4 */
+#ifndef GL_DRAW_INDIRECT_BUFFER
+#define GL_DRAW_INDIRECT_BUFFER	0x8F3F
+#endif
+
+static shaderProgram_t	zfillOpaqueBatchShader;
+static shaderProgram_t	stencilShadowBatchShader;
+static bool				glslBatches = false;	// both linked
+
+static idCVar r_glslBatches( "r_glslBatches", "1", CVAR_RENDERER | CVAR_BOOL,
+	"ES 3.1 renderer on GL 4.3+: draw runs of depth-fill and shadow surfaces with one indirect draw" );
+
 enum {
 	DV_MODEL_MATRIX, DV_DEPTH_HACK, DV_LIGHT_PROJECTION, DV_COLOR_MODULATE, DV_COLOR_ADD,
 	DV_LIGHT_ORIGIN, DV_VIEW_ORIGIN, DV_BUMP_S, DV_BUMP_T, DV_DIFFUSE_S, DV_DIFFUSE_T,
@@ -763,6 +787,138 @@ static void R_FreeGLSLShader(shaderProgram_t* shaderProgram) {
 	memset(shaderProgram, 0, sizeof(shaderProgram_t));
 }
 
+/*
+=================
+Run programs
+
+The single-draw vertex program with its model matrix, depth hack and
+(shadows) light origin read from the run's array at the draw's index.
+NULL when the program does not declare them as expected.
+=================
+*/
+static const char rbDrawList[] =
+	"struct rbDraw_t { highp mat4 modelMatrix; highp vec4 lightOrigin; highp vec4 depthHack; };\n"
+	"layout(std140) uniform DrawList { rbDraw_t rbDraws[128]; };\n"
+	"#define u_modelMatrix rbDraws[RB_DRAW_ID].modelMatrix\n"
+	"#define u_depthHack rbDraws[RB_DRAW_ID].depthHack.x\n";
+
+static bool R_RunSource(const char* es, bool shadow, idStr& out) {
+	static const char depthHack[] = "uniform highp float u_depthHack;\n";
+	static const char modelMatrix[] = "uniform highp mat4 u_modelMatrix;\n";
+	static const char lightOrigin[] = "uniform vec4 u_lightOrigin;\n";
+	const char* drawId;
+	int eol;
+
+	out = es;
+	out.StripLeading('\n');
+	if ( out.Find(depthHack) < 0 || out.Find(modelMatrix) < 0 || ( shadow && out.Find(lightOrigin) < 0 ) ) {
+		return false;
+	}
+	out.Replace(depthHack, rbDrawList);
+	out.Replace(modelMatrix, "");
+	if ( shadow ) {
+		out.Replace(lightOrigin, "#define u_lightOrigin rbDraws[RB_DRAW_ID].lightOrigin\n");
+	}
+	R_GLSLSourceForContext(out, GL_VERTEX_SHADER);
+	if ( idStr::Cmpn(out.c_str(), "#version 330 core\n", 18) != 0 ) {
+		return false;
+	}
+	drawId = gl_caps_has_extension("GL_ARB_shader_draw_parameters")
+		? "#version 430 core\n#extension GL_ARB_shader_draw_parameters : require\n#define RB_DRAW_ID gl_DrawIDARB\n"
+		: "#version 460 core\n#define RB_DRAW_ID gl_DrawID\n";
+	eol = out.Find('\n');
+	out = idStr(drawId) + out.Right(out.Length() - eol - 1);
+	return true;
+}
+
+static GLuint R_CompileRunShader(GLenum type, const char* source) {
+	char log[1024];
+	GLsizei len = 0;
+	GLint ok = 0;
+	const GLuint shader = qglCreateShader(type);
+
+	qglShaderSource(shader, 1, (const GLchar**) &source, 0);
+	qglCompileShader(shader);
+	qglGetShaderiv(shader, GL_COMPILE_STATUS, &ok);
+	if ( !ok ) {
+		qglGetShaderInfoLog(shader, sizeof(log), &len, log);
+		common->Printf("run program: %.*s\n", (int)len, log);
+		qglDeleteShader(shader);
+		return 0;
+	}
+	return shader;
+}
+
+static bool R_BuildRunProgram(shaderProgram_t* program, const char* vertexES, const char* fragmentES, bool shadow) {
+	idStr vertex, fragment;
+	GLint linked = 0;
+	GLuint block;
+
+	R_FreeGLSLShader(program);
+	if ( !R_RunSource(vertexES, shadow, vertex) ) {
+		return false;
+	}
+	fragment = fragmentES;
+	fragment.StripLeading('\n');
+	R_GLSLSourceForContext(fragment, GL_FRAGMENT_SHADER);
+
+	program->vertexShader = R_CompileRunShader(GL_VERTEX_SHADER, vertex.c_str());
+	program->fragmentShader = R_CompileRunShader(GL_FRAGMENT_SHADER, fragment.c_str());
+	if ( !program->vertexShader || !program->fragmentShader ) {
+		R_FreeGLSLShader(program);
+		return false;
+	}
+	program->program = qglCreateProgram();
+	qglAttachShader(program->program, program->vertexShader);
+	qglAttachShader(program->program, program->fragmentShader);
+	qglBindAttribLocation(program->program, ATTR_VERTEX, "attr_Vertex");
+	qglBindAttribLocation(program->program, ATTR_TEXCOORD, "attr_TexCoord");
+	qglLinkProgram(program->program);
+	qglGetProgramiv(program->program, GL_LINK_STATUS, &linked);
+	block = linked ? glGetUniformBlockIndex(program->program, "DrawList") : GL_INVALID_INDEX;
+	if ( block == GL_INVALID_INDEX ) {
+		R_FreeGLSLShader(program);
+		return false;
+	}
+	glUniformBlockBinding(program->program, block, DRAW_LIST_BINDING);
+	RB_GLSL_GetUniformLocations(program);
+	return true;
+}
+
+/*
+=================
+RB_GLSL_InitRunShaders
+
+The run programs, on the ES 3.1 renderer over a desktop GL 4.3+ context
+with shader draw parameters; a driver that will not build them draws every
+surface on its own.
+=================
+*/
+static void RB_GLSL_InitRunShaders(void) {
+	static const float black[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+
+	glslBatches = false;
+	R_FreeGLSLShader(&zfillOpaqueBatchShader);
+	R_FreeGLSLShader(&stencilShadowBatchShader);
+	if ( glConfig.renderer != R_RENDERER_ES31 || glCaps.es || !glCaps.multiDrawIndirect || glslMultiview
+			|| glCaps.maxUniformBlockSize < RB_BATCH_DRAWS * RB_BATCH_ENTRY ) {
+		return;
+	}
+	if ( !R_BuildRunProgram(&zfillOpaqueBatchShader, zfillShaderVP, zfillOpaqueShaderFP, false)
+			|| !R_BuildRunProgram(&stencilShadowBatchShader, stencilShadowShaderVP, stencilShadowShaderFP, true) ) {
+		common->Printf("Draw runs unavailable: their programs did not build\n");
+		R_FreeGLSLShader(&zfillOpaqueBatchShader);
+		R_FreeGLSLShader(&stencilShadowBatchShader);
+		return;
+	}
+	// the depth fill writes black, as the single-draw program does for these surfaces
+	GL_UseProgram(&zfillOpaqueBatchShader);
+	GL_Uniform4fv(offsetof(shaderProgram_t, glColor), black);
+	GL_UseProgram(NULL);
+	glslBatches = true;
+	common->Printf("Draw runs: depth fill and shadow volumes through glMultiDrawElementsIndirect\n");
+}
+
 static bool RB_GLSL_InitShaders(void) {
 
 	if ( backEnd.glState.currentProgram ) {
@@ -991,6 +1147,8 @@ static bool RB_GLSL_InitShaders(void) {
 	} else {
 		RB_GLSL_GetUniformLocations(&stencilShadowShader);
 	}
+
+	RB_GLSL_InitRunShaders();
 
 	return true;
 }
@@ -1552,9 +1710,251 @@ RB_T_GLSL_Shadow
 the shadow volumes face INSIDE
 =====================
 */
-static void RB_T_GLSL_Shadow(const drawSurf_t* surf, const viewLight_t* vLight) {
+/*
+=====================
+RB_GLSL_ShadowIndexes
 
-	//const srfTriangles_t* tri = surf->geo;
+How many of a shadow volume's indexes to draw - the sil planes always, the
+caps when they can be seen - and whether it is drawn depth-pass (external).
+=====================
+*/
+static int RB_GLSL_ShadowIndexes(const drawSurf_t* surf, const viewLight_t* vLight, bool* external) {
+	*external = false;
+	if ( !r_useExternalShadows.GetInteger() ) {
+		return surf->geo->numIndexes;
+	}
+	if ( r_useExternalShadows.GetInteger() == 2 ) {	// force to no caps for testing
+		return surf->geo->numShadowIndexesNoCaps;
+	}
+	if ( !( surf->dsFlags & DSF_VIEW_INSIDE_SHADOW ) ) {
+		// if we aren't inside the shadow projection, no caps are ever needed
+		*external = true;
+		return surf->geo->numShadowIndexesNoCaps;
+	}
+	if ( !vLight->viewInsideLight && !( surf->geo->shadowCapPlaneBits & SHADOW_CAP_INFINITE ) ) {
+		// inside the shadow projection but outside the light, and a
+		// non-infinite shadow: some caps can be skipped
+		*external = true;
+		if ( vLight->viewSeesShadowPlaneBits & surf->geo->shadowCapPlaneBits ) {
+			// a rear cap can be seen through, but not the surface's own caps
+			return surf->geo->numShadowIndexesNoFrontCaps;
+		}
+		return surf->geo->numShadowIndexesNoCaps;
+	}
+	// must draw everything
+	return surf->geo->numIndexes;
+}
+
+/*
+=====================
+RB_GLSL_ShadowStencilOps
+
+depth-fail stencil shadows, else traditional depth-pass ones; most surfaces
+of a light repeat the previous one's ops, sent only on a change
+=====================
+*/
+static void RB_GLSL_ShadowStencilOps(bool external) {
+	if ( rbShadowExternal == (int)external ) {
+		return;
+	}
+	if ( !external ) {
+		qglStencilOpSeparate(backEnd.viewDef->isMirror ? GL_FRONT : GL_BACK, GL_KEEP, GL_DECR, GL_KEEP);
+		qglStencilOpSeparate(backEnd.viewDef->isMirror ? GL_BACK : GL_FRONT, GL_KEEP, GL_INCR, GL_KEEP);
+	} else {
+		qglStencilOpSeparate(backEnd.viewDef->isMirror ? GL_FRONT : GL_BACK, GL_KEEP, GL_KEEP, GL_INCR);
+		qglStencilOpSeparate(backEnd.viewDef->isMirror ? GL_BACK : GL_FRONT, GL_KEEP, GL_KEEP, GL_DECR);
+	}
+	rbShadowExternal = (int)external;
+}
+
+/*
+=====================
+Draw runs (r_glslBatches)
+
+A run collects the draws of consecutive surfaces that share the vertex
+buffer, the index buffer and its type, and the pass's state, then goes out
+as one indirect draw.  A surface that cannot join - its data outside a
+shared buffer, or the ring full - ends the run and is drawn on its own.
+=====================
+*/
+typedef struct {
+	GLuint	count;
+	GLuint	instanceCount;
+	GLuint	firstIndex;
+	GLint	baseVertex;
+	GLuint	baseInstance;
+} rbIndirect_t;
+
+typedef struct {
+	shaderProgram_t*	program;
+	vertCache_t*		vertexes;		// the first draw's blocks, to bind the buffers by
+	vertCache_t*		indexes;
+	GLuint				vertexBuffer;
+	GLuint				indexBuffer;
+	GLenum				indexType;
+	int					stride;			// sizeof idDrawVert: the depth fill, with texcoords
+	int					external;		// shadows: the stencil ops, else -1
+	bool				depthRange;		// the weapon's halved depth range
+	int					draws;
+	rbIndirect_t*		commands;
+	byte*				data;
+	GLuint				commandBuffer;
+	GLuint				dataBuffer;
+	int					commandOffset;
+	int					dataOffset;
+} rbBatch_t;
+
+static rbBatch_t rbBatch;
+
+static bool RB_GLSL_Batching(void) {
+	return glslBatches && r_glslBatches.GetBool() && vertexCache.Streaming() && !glslMultiview;
+}
+
+static void RB_GLSL_BatchFlush(void) {
+	rbBatch_t* b = &rbBatch;
+	if ( !b->draws ) {
+		return;
+	}
+	GL_UseProgram(b->program);
+	if ( b->stride == (int)sizeof(idDrawVert) ) {
+		const idDrawVert* ac = (const idDrawVert*) RB_GLSL_VertexBase(b->vertexes, b->stride);
+		GL_VertexAttribPointer(offsetof(shaderProgram_t, attr_Vertex), 3, GL_FLOAT, false, sizeof(idDrawVert),
+		                       ac->xyz.ToFloatPtr());
+		GL_VertexAttribPointer(offsetof(shaderProgram_t, attr_TexCoord), 2, GL_FLOAT, false, sizeof(idDrawVert),
+		                       ac->st.ToFloatPtr());
+	} else {
+		GL_VertexAttribPointer(offsetof(shaderProgram_t, attr_Vertex), 4, GL_FLOAT, false, sizeof(shadowCache_t),
+		                       RB_GLSL_VertexBase(b->vertexes, b->stride));
+	}
+	vertexCache.Position(b->indexes);
+	if ( b->external >= 0 ) {
+		RB_GLSL_ShadowStencilOps(b->external != 0);
+	}
+	if ( b->depthRange ) {
+		qglDepthRangef(0.0f, 0.5f);
+	}
+	glCaps.BindBufferRange(GL_UNIFORM_BUFFER, DRAW_LIST_BINDING, b->dataBuffer, b->dataOffset,
+	                       RB_BATCH_DRAWS * RB_BATCH_ENTRY);
+	qglBindBufferARB(GL_DRAW_INDIRECT_BUFFER, b->commandBuffer);
+	glCaps.MultiDrawElementsIndirect(GL_TRIANGLES, b->indexType, (const void*)(intptr_t) b->commandOffset,
+	                                 b->draws, 0);
+	qglBindBufferARB(GL_DRAW_INDIRECT_BUFFER, 0);
+	if ( b->depthRange ) {
+		qglDepthRangef(0.0f, 1.0f);
+	}
+	b->draws = 0;
+}
+
+/*
+=====================
+RB_GLSL_BatchAdd
+
+Adds a draw to the run, flushing the run first when the draw cannot share
+it.  False when the draw cannot go in a run at all; the run is then
+flushed, for the caller to draw it on its own.
+=====================
+*/
+static bool RB_GLSL_BatchAdd(shaderProgram_t* program, vertCache_t* vertexes, int stride, vertCache_t* indexes,
+                             int numIndexes, int external, bool depthRange, const viewEntity_t* space,
+                             const float lightOrigin[4]) {
+	rbBatch_t* b = &rbBatch;
+	rbIndirect_t* cmd;
+	float* entry;
+	GLenum indexType;
+	int indexSize;
+	int baseVertex;
+
+	baseVertex = vertexCache.BaseVertex(vertexes, stride);
+	if ( baseVertex < 0 || !indexes || !indexes->vbo || !numIndexes ) {
+		RB_GLSL_BatchFlush();
+		return false;
+	}
+	indexType = vertexCache.IndexType(indexes);
+	indexSize = indexType == GL_UNSIGNED_SHORT ? 2 : 4;
+	if ( ( indexes->offset % indexSize ) != 0 ) {
+		RB_GLSL_BatchFlush();
+		return false;
+	}
+
+	if ( b->draws && ( b->program != program || b->vertexBuffer != vertexes->vbo || b->indexBuffer != indexes->vbo
+			|| b->indexType != indexType || b->external != external || b->depthRange != depthRange
+			|| b->draws == RB_BATCH_DRAWS ) ) {
+		RB_GLSL_BatchFlush();
+	}
+	if ( !b->draws ) {
+		b->commands = (rbIndirect_t*) vertexCache.RingReserve(RB_BATCH_DRAWS * (int)sizeof(rbIndirect_t), 4,
+		                                                       &b->commandBuffer, &b->commandOffset);
+		if ( !b->commands ) {
+			return false;
+		}
+		b->data = (byte*) vertexCache.RingReserve(RB_BATCH_DRAWS * RB_BATCH_ENTRY, glCaps.uniformBufferAlign,
+		                                          &b->dataBuffer, &b->dataOffset);
+		if ( !b->data ) {
+			return false;
+		}
+		b->program = program;
+		b->vertexes = vertexes;
+		b->indexes = indexes;
+		b->vertexBuffer = vertexes->vbo;
+		b->indexBuffer = indexes->vbo;
+		b->indexType = indexType;
+		b->stride = stride;
+		b->external = external;
+		b->depthRange = depthRange;
+	}
+
+	cmd = &b->commands[b->draws];
+	cmd->count = numIndexes;
+	cmd->instanceCount = 1;
+	cmd->firstIndex = (GLuint)( indexes->offset / indexSize );
+	cmd->baseVertex = baseVertex;
+	cmd->baseInstance = 0;
+
+	entry = (float*)( b->data + b->draws * RB_BATCH_ENTRY );
+	memcpy(entry, space->modelMatrix, 16 * sizeof(float));
+	if ( lightOrigin ) {
+		memcpy(entry + 16, lightOrigin, 4 * sizeof(float));
+	} else {
+		entry[16] = entry[17] = entry[18] = entry[19] = 0.0f;
+	}
+	entry[20] = RB_GLSL_DepthHack(space);
+	entry[21] = entry[22] = entry[23] = 0.0f;
+
+	b->draws++;
+	return true;
+}
+
+/*
+=====================
+RB_GLSL_BatchScissor
+
+The scissor change the passes make before a surface, the run flushed first
+when it moves the scissor.
+=====================
+*/
+static void RB_GLSL_BatchScissor(const drawSurf_t* surf) {
+	idScreenRect r;
+
+	if ( !r_useScissor.GetBool() || backEnd.currentScissor.Equals(surf->scissorRect) ) {
+		return;
+	}
+	r = surf->scissorRect;
+	if ( ( r.x2 + 1 - r.x1 ) < 0.0f || ( r.y2 + 1 - r.y1 ) < 0.0f ) {
+		r = backEnd.viewDef->scissor;
+	}
+	if ( !r.Equals(backEnd.currentScissor) ) {
+		RB_GLSL_BatchFlush();
+	}
+	backEnd.currentScissor = r;
+	qglScissor(backEnd.viewDef->viewport.x1 + r.x1,
+	           backEnd.viewDef->viewport.y1 + r.y1,
+	           r.x2 + 1 - r.x1,
+	           r.y2 + 1 - r.y1);
+}
+
+static void RB_T_GLSL_Shadow(const drawSurf_t* surf, const viewLight_t* vLight) {
+	bool external;
+	int numIndexes;
 
 	if ( !surf->geo->shadowCache ) {
 		return;
@@ -1572,72 +1972,9 @@ static void RB_T_GLSL_Shadow(const drawSurf_t* surf, const viewLight_t* vLight) 
 	GL_VertexAttribPointer(offsetof(shaderProgram_t, attr_Vertex), 4, GL_FLOAT, false, sizeof(shadowCache_t),
 	                       RB_GLSL_VertexBase(surf->geo->shadowCache, sizeof(shadowCache_t)));
 
-	// we always draw the sil planes, but we may not need to draw the front or rear caps
-	int numIndexes;
-	bool external = false;
-
-	if ( !r_useExternalShadows.GetInteger()) {
-		numIndexes = surf->geo->numIndexes;
-	} else if ( r_useExternalShadows.GetInteger() == 2 ) { // force to no caps for testing
-		numIndexes = surf->geo->numShadowIndexesNoCaps;
-	} else if ( !( surf->dsFlags & DSF_VIEW_INSIDE_SHADOW )) {
-		// if we aren't inside the shadow projection, no caps are ever needed needed
-		numIndexes = surf->geo->numShadowIndexesNoCaps;
-		external = true;
-	} else if ( !vLight->viewInsideLight && !( surf->geo->shadowCapPlaneBits & SHADOW_CAP_INFINITE )) {
-		// if we are inside the shadow projection, but outside the light, and drawing
-		// a non-infinite shadow, we can skip some caps
-		if ( vLight->viewSeesShadowPlaneBits & surf->geo->shadowCapPlaneBits ) {
-			// we can see through a rear cap, so we need to draw it, but we can skip the
-			// caps on the actual surface
-			numIndexes = surf->geo->numShadowIndexesNoFrontCaps;
-		} else {
-			// we don't need to draw any caps
-			numIndexes = surf->geo->numShadowIndexesNoCaps;
-		}
-
-		external = true;
-	} else {
-		// must draw everything
-		numIndexes = surf->geo->numIndexes;
-	}
-
-	// depth-fail stencil shadows, else traditional depth-pass ones; most
-	// surfaces of a light repeat the previous one's ops, sent only on a change
-	if ( rbShadowExternal != (int)external ) {
-		if ( !external ) {
-			qglStencilOpSeparate(backEnd.viewDef->isMirror ? GL_FRONT : GL_BACK, GL_KEEP, GL_DECR, GL_KEEP);
-			qglStencilOpSeparate(backEnd.viewDef->isMirror ? GL_BACK : GL_FRONT, GL_KEEP, GL_INCR, GL_KEEP);
-		} else {
-			qglStencilOpSeparate(backEnd.viewDef->isMirror ? GL_FRONT : GL_BACK, GL_KEEP, GL_KEEP, GL_INCR);
-			qglStencilOpSeparate(backEnd.viewDef->isMirror ? GL_BACK : GL_FRONT, GL_KEEP, GL_KEEP, GL_DECR);
-		}
-		rbShadowExternal = (int)external;
-	}
+	numIndexes = RB_GLSL_ShadowIndexes(surf, vLight, &external);
+	RB_GLSL_ShadowStencilOps(external);
 	RB_DrawShadowElementsWithCounters(surf->geo, numIndexes);
-
-	// patent-free work around
-	/*
-	if (!external) {
-	  // "preload" the stencil buffer with the number of volumes
-	  // that get clipped by the near or far clip plane
-	  qglStencilOp(GL_KEEP, GL_DECR, GL_DECR);
-	  GL_Cull(CT_FRONT_SIDED);
-	  RB_DrawShadowElementsWithCounters(tri, numIndexes);
-	  qglStencilOp(GL_KEEP, GL_INCR, GL_INCR);
-	  GL_Cull(CT_BACK_SIDED);
-	  RB_DrawShadowElementsWithCounters(tri, numIndexes);
-	}
-
-	// traditional depth-pass stencil shadows
-	qglStencilOp(GL_KEEP, GL_KEEP, GL_INCR);
-	GL_Cull(CT_FRONT_SIDED);
-	RB_DrawShadowElementsWithCounters(tri, numIndexes);
-
-	qglStencilOp(GL_KEEP, GL_KEEP, GL_DECR);
-	GL_Cull(CT_BACK_SIDED);
-	RB_DrawShadowElementsWithCounters(tri, numIndexes);
-	*/
 }
 
 
@@ -1696,6 +2033,65 @@ void RB_GLSL_RenderDrawSurfChainWithFunction(const drawSurf_t* drawSurfs,
 
 /*
 =====================
+RB_GLSL_ShadowRuns
+
+RB_GLSL_RenderDrawSurfChainWithFunction over RB_T_GLSL_Shadow, in runs.
+=====================
+*/
+static void RB_GLSL_ShadowRuns(const drawSurf_t* drawSurfs, const viewLight_t* vLight) {
+	const drawSurf_t* surf;
+	const viewEntity_t* singleSpace = NULL;	// what the single-draw program's uniforms hold
+	const viewEntity_t* lightSpace = NULL;
+	idVec4 localLight;
+	bool external;
+	bool depthRange;
+	int numIndexes;
+
+	localLight.Zero();
+	for ( surf = drawSurfs; surf; surf = surf->nextOnLight ) {
+		RB_GLSL_BatchScissor(surf);
+		if ( !surf->geo->shadowCache ) {
+			continue;
+		}
+		depthRange = surf->space->weaponDepthHack && surf->space->modelDepthHack == 0.0f;
+
+		numIndexes = RB_GLSL_ShadowIndexes(surf, vLight, &external);
+		if ( surf->space != lightSpace ) {
+			R_GlobalPointToLocal(surf->space->modelMatrix, vLight->globalLightOrigin, localLight.ToVec3());
+			localLight.w = 0.0f;
+			lightSpace = surf->space;
+		}
+		if ( RB_GLSL_BatchAdd(&stencilShadowBatchShader, surf->geo->shadowCache, sizeof(shadowCache_t),
+		                      surf->geo->indexCache, numIndexes, external ? 1 : 0, depthRange, surf->space,
+		                      localLight.ToFloatPtr()) ) {
+			backEnd.pc.c_shadowElements++;
+			backEnd.pc.c_shadowIndexes += numIndexes;
+			backEnd.pc.c_shadowVertexes += surf->geo->numVerts;
+			backEnd.pc.c_vboIndexes += numIndexes;
+			continue;
+		}
+
+		// on its own, through the single-draw program
+		GL_UseProgram(&stencilShadowShader);
+		backEnd.currentSpace = singleSpace;
+		if ( surf->space != backEnd.currentSpace ) {
+			RB_GLSL_SetSpace(surf->space);
+		}
+		if ( depthRange ) {
+			qglDepthRangef(0.0f, 0.5f);
+		}
+		RB_T_GLSL_Shadow(surf, vLight);
+		if ( depthRange ) {
+			qglDepthRangef(0.0f, 1.0f);
+		}
+		singleSpace = surf->space;
+	}
+	RB_GLSL_BatchFlush();
+	backEnd.currentSpace = NULL;
+}
+
+/*
+=====================
 RB_GLSL_StencilShadowPass
 
 Stencil test should already be enabled, and the stencil buffer should have
@@ -1749,7 +2145,11 @@ void RB_GLSL_StencilShadowPass(const drawSurf_t* drawSurfs, const viewLight_t* v
 	GL_Cull(CT_TWO_SIDED);
 
 	rbShadowExternal = -1;
-	RB_GLSL_RenderDrawSurfChainWithFunction(drawSurfs, RB_T_GLSL_Shadow, vLight);
+	if ( RB_GLSL_Batching() ) {
+		RB_GLSL_ShadowRuns(drawSurfs, vLight);
+	} else {
+		RB_GLSL_RenderDrawSurfChainWithFunction(drawSurfs, RB_T_GLSL_Shadow, vLight);
+	}
 
 	// Restore culling
 	GL_Cull(CT_FRONT_SIDED);
@@ -2259,6 +2659,32 @@ void RB_T_GLSL_FillDepthBuffer(const drawSurf_t* surf) {
 
 /*
 =====================
+RB_GLSL_DepthFillRun
+
+Whether RB_T_GLSL_FillDepthBuffer would draw the surface solid black with
+the opaque program and no state of its own, which a run can do instead.
+=====================
+*/
+static bool RB_GLSL_DepthFillRun(const drawSurf_t* surf) {
+	const idMaterial* const shader = surf->material;
+	const float* const regs = surf->shaderRegisters;
+	int stage;
+
+	if ( !shader->IsDrawn() || !surf->geo->numIndexes || !surf->geo->ambientCache
+			|| shader->Coverage() != MC_OPAQUE || shader->GetSort() == SS_SUBVIEW
+			|| shader->TestMaterialFlag(MF_POLYGONOFFSET) ) {
+		return false;
+	}
+	for ( stage = 0; stage < shader->GetNumStages(); stage++ ) {
+		if ( regs[shader->GetStage(stage)->conditionRegister] != 0 ) {
+			return true;
+		}
+	}
+	return false;
+}
+
+/*
+=====================
 RB_GLSL_FillDepthBuffer
 
 If we are rendering a subview with a near clip plane, use a second texture
@@ -2339,9 +2765,47 @@ void RB_GLSL_FillDepthBuffer(drawSurf_t** drawSurfs, int numDrawSurfs) {
 	// Optimization to only change MVP matrix when needed
 	backEnd.currentSpace = NULL;
 
+	// the opaque surfaces in runs, when the view has no clip plane
+	const bool runs = RB_GLSL_Batching() && !backEnd.viewDef->numClipPlanes;
+	const viewEntity_t* singleSpace = NULL;	// what the single-draw programs' uniforms hold
+
 	for ( int i = 0; i < numDrawSurfs; i++ ) {
 
 		const drawSurf_t* const drawSurf = drawSurfs[i];
+
+		if ( runs ) {
+			const bool depthRange = drawSurf->space->weaponDepthHack && drawSurf->space->modelDepthHack == 0.0f;
+			const srfTriangles_t* const tri = drawSurf->geo;
+
+			RB_GLSL_BatchScissor(drawSurf);
+			if ( RB_GLSL_DepthFillRun(drawSurf)
+					&& RB_GLSL_BatchAdd(&zfillOpaqueBatchShader, tri->ambientCache, sizeof(idDrawVert), tri->indexCache,
+					                    tri->numIndexes, -1, depthRange, drawSurf->space, NULL) ) {
+				backEnd.pc.c_drawElements++;
+				backEnd.pc.c_drawIndexes += tri->numIndexes;
+				backEnd.pc.c_drawVertexes += tri->numVerts;
+				backEnd.pc.c_vboIndexes += tri->numIndexes;
+				continue;
+			}
+
+			// on its own, through the single-draw programs
+			RB_GLSL_BatchFlush();
+			GL_UseProgram(&zfillOpaqueShader);
+			backEnd.currentSpace = singleSpace;
+			if ( drawSurf->space != backEnd.currentSpace ) {
+				RB_GLSL_SetSpace(drawSurf->space);
+			}
+			if ( depthRange ) {
+				qglDepthRangef(0, 0.5);
+			}
+			RB_T_GLSL_FillDepthBuffer(drawSurf);
+			if ( depthRange ) {
+				qglDepthRangef(0.0f, 1.0f);
+			}
+			backEnd.currentSpace = drawSurf->space;
+			singleSpace = drawSurf->space;
+			continue;
+		}
 
 		///////////////////////////////////////////
 		// GL shader setup for the current surface
@@ -2388,6 +2852,8 @@ void RB_GLSL_FillDepthBuffer(drawSurf_t** drawSurfs, int numDrawSurfs) {
 		// Let's change space for next iteration
 		backEnd.currentSpace = drawSurf->space;
 	}
+
+	RB_GLSL_BatchFlush();
 
 	/////////////////////////////////////////////
 	// Restore everything to an acceptable state
@@ -3269,6 +3735,9 @@ shares the context and does not track them.
 */
 void RB_GLSL_EndFrame(void) {
 	glBindBufferBase(GL_UNIFORM_BUFFER, VIEW_MATRICES_BINDING, 0);
+	if ( glslBatches ) {
+		glBindBufferBase(GL_UNIFORM_BUFFER, DRAW_LIST_BINDING, 0);
+	}
 	if ( glslDrawBlocks ) {
 		glBindBufferBase(GL_UNIFORM_BUFFER, DRAW_VERTEX_BINDING, 0);
 		glBindBufferBase(GL_UNIFORM_BUFFER, DRAW_FRAGMENT_BINDING, 0);

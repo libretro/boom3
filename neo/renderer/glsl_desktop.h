@@ -21,6 +21,7 @@
 #define qglGetAttribLocation        glGetAttribLocation
 #define qglGetProgramiv             glGetProgramiv
 #define qglGetShaderInfoLog         glGetShaderInfoLog
+#define qglGetShaderiv              glGetShaderiv
 #define qglGetUniformLocation       glGetUniformLocation
 #define qglLinkProgram              glLinkProgram
 #define qglShaderSource             glShaderSource
