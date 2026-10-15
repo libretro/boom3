@@ -983,6 +983,13 @@ void RB_DrawView( const void *data ) {
 	// render the scene, jumping to the hardware specific interaction renderers
 	RB_STD_DrawView();
 
+#if defined(LIBRETRO) && defined(HAVE_OPENGLES)
+	// a tiled GPU need not write this view's depth and stencil back
+	if ( backEnd.viewDef->viewEntitys ) {
+		GLimp_EndView3D();
+	}
+#endif
+
 #ifndef HAVE_OPENGLES
 	// restore the context for 2D drawing if we were stubbing it out
 	if ( r_skipRenderContext.GetBool() && backEnd.viewDef->viewEntitys ) {
