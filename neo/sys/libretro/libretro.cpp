@@ -8515,6 +8515,9 @@ void GLimp_SwapBuffers() {
       ldr_present((GLuint)hw_render.get_current_framebuffer());
    }
 
+#ifdef HAVE_OPENGLES3
+   RB_GLSL_EndFrame();   /* the uniform buffer binding points, untracked by glsm */
+#endif
    if (libretro_shared_context)
       glFlush();
    if (!libretro_shared_context)

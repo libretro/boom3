@@ -32,19 +32,21 @@ layout(num_views=NUM_VIEWS) in;
 
 precision mediump float;
 
+// The same vertex must land on the same depth in every program: the
+// interaction passes test it for equality against the depth fill
+invariant gl_Position;
+
 // In
 in highp vec4 attr_Vertex;
 
 // Uniforms
+// Per view: projection * view, with the eye's clip placement folded in
 layout(std140) uniform ViewMatrices
 {
-    uniform highp mat4 u_viewMatrices[NUM_VIEWS];
-    uniform highp vec4 u_eyeClip[NUM_VIEWS];   // per eye clip-space xy scale, xy offset * w
+    uniform highp mat4 u_viewProjectionMatrices[NUM_VIEWS];
 };
-layout(std140) uniform ProjectionMatrix
-{
-    uniform highp mat4 u_projectionMatrix;
-};
+// The weapon and model depth hacks: clip z moves by this per unit of eye w
+uniform highp float u_depthHack;
 uniform highp mat4 u_modelMatrix;
 uniform mat4 u_fogMatrix;
 
@@ -55,8 +57,9 @@ out vec2 var_TexFogEnter;
 
 void main()
 {
-  gl_Position = u_projectionMatrix * (u_viewMatrices[VIEW_ID] * (u_modelMatrix * attr_Vertex));
-  gl_Position.xy = gl_Position.xy * u_eyeClip[VIEW_ID].xy + gl_Position.w * u_eyeClip[VIEW_ID].zw;
+  highp vec4 worldPos = u_modelMatrix * attr_Vertex;
+  gl_Position = u_viewProjectionMatrices[VIEW_ID] * worldPos;
+  gl_Position.z += u_depthHack * worldPos.w;
 
   // What will be computed:
   //

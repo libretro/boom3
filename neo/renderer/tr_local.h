@@ -1487,10 +1487,7 @@ typedef struct shaderProgram_s {
 	GLint		specularExponent;
 
 	GLint		modelMatrix;
-
-	//New for multiview - The view and projection matrix uniforms
-	GLuint		projectionMatrixBinding;
-	GLuint		viewMatricesBinding;
+	GLint		depthHack;	// GLES 3: clip z added per unit of eye w (weapon/model depth hacks)
 
 	GLint		modelViewProjectionMatrix;
   	GLint		modelViewMatrix;
@@ -1530,6 +1527,9 @@ typedef struct shaderProgram_s {
   GLint		u_fragmentCubeMap[MAX_FRAGMENT_IMAGES];
 } shaderProgram_t;
 
+#ifdef HAVE_OPENGLES3
+void RB_GLSL_EndFrame( void );
+#endif
 void R_ReloadGLSLPrograms_f(const idCmdArgs &args);
 
 void RB_GLSL_PrepareShaders(void);

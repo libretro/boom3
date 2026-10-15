@@ -119,13 +119,7 @@ idCVar r_znear( "r_znear", "3", CVAR_RENDERER | CVAR_FLOAT, "near Z clip plane d
 idCVar r_ignoreGLErrors( "r_ignoreGLErrors", "1", CVAR_RENDERER | CVAR_BOOL, "ignore GL errors" );
 
 idCVar r_gamma( "r_gamma", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "changes gamma tables", 0.5f, 3.0f );
-#ifdef HAVE_OPENGLES3
-// Doom3Quest's Quest 2/3 default: in the GLES3 path it is the diffuse
-// overbright (2*b - 1), see RB_SubmittInteraction
-idCVar r_brightness( "r_brightness", "1.480604", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "changes gamma tables", 0.5f, 2.0f );
-#else
 idCVar r_brightness( "r_brightness", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "changes gamma tables", 0.5f, 2.0f );
-#endif
 idCVar r_gammaInShader( "r_gammaInShader", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "Set gamma and brightness in shaders instead using hardware gamma" );
 idCVar r_spectralMix( "r_spectralMix", "0", CVAR_RENDERER | CVAR_BOOL | CVAR_ARCHIVE,
 	"mix light and albedo in a fitted basis instead of per channel; needs a vid_restart" );

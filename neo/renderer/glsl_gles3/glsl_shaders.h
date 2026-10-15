@@ -22,6 +22,8 @@
 // gouraud
 extern const char* const interactionShaderVP;
 extern const char* const interactionShaderFP;
+// blinn (uses interactionShaderVP)
+extern const char* const interactionBlinnShaderFP;
 // phong
 extern const char* const interactionPhongShaderVP;
 extern const char* const interactionPhongShaderFP;

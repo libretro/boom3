@@ -33,7 +33,7 @@ varying vec3 var_V;
 // Uniforms
 uniform lowp vec4 u_diffuseColor;
 uniform mediump vec4 u_hdrParms;   // xyz r_brightness, w 1/r_gamma (negative = luminance-aware clamp)
-uniform lowp vec4 u_specularColor;
+uniform mediump vec4 u_specularColor;   // mediump: lowp guarantees only [-2,2], which the HDR specular boost exceeds
 uniform float u_specularExponent;
 uniform sampler2D u_fragmentMap0; // u_bumpTexture
 uniform sampler2D u_fragmentMap1; // u_lightFalloffTexture
