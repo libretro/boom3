@@ -66,6 +66,48 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "disabled"
    },
 	{
+      "doom_static_shadows",
+      "Static World Shadows",
+      NULL,
+      "Draw the shadows the level's static geometry casts, precomputed when the map was built. Disabling it leaves walls and architecture unshadowed while monsters and moving objects keep their shadows; it saves stencil fill in light-heavy rooms. Takes effect at once.",
+      NULL,
+      NULL,
+      {
+         { "enabled",  NULL },
+         { "disabled", NULL },
+         { NULL, NULL },
+      },
+      "enabled"
+   },
+	{
+      "doom_fog_lights",
+      "Fog Lights",
+      NULL,
+      "Draw fog volumes: the haze, smoke and dust levels place as fog lights. Disabling it removes them and their fill cost. Takes effect at once.",
+      NULL,
+      NULL,
+      {
+         { "enabled",  NULL },
+         { "disabled", NULL },
+         { NULL, NULL },
+      },
+      "enabled"
+   },
+	{
+      "doom_blend_lights",
+      "Blend Lights",
+      NULL,
+      "Draw blend lights: projected light textures blended over surfaces, such as caustics, flashing hazard washes and some light shafts. Disabling it removes them and their fill cost. Takes effect at once.",
+      NULL,
+      NULL,
+      {
+         { "enabled",  NULL },
+         { "disabled", NULL },
+         { NULL, NULL },
+      },
+      "enabled"
+   },
+	{
       "doom_framerate",
       "Frame rate (Restart Required)",
       NULL,

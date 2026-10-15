@@ -1025,7 +1025,11 @@ void R_AddLightSurfaces( void ) {
 		}
 
 		// add the prelight shadows for the static world geometry
-		if ( light->parms.prelightModel && r_useOptimizedShadows.GetBool() ) {
+		/* r_skipPrelightShadows leaves the static world unshadowed; the
+		 * interactions still skip dynamic volumes for it (that test is on
+		 * r_useOptimizedShadows alone), so nothing is generated instead. */
+		if ( light->parms.prelightModel && r_useOptimizedShadows.GetBool()
+				&& !r_skipPrelightShadows.GetBool() ) {
 
 			if ( !light->parms.prelightModel->NumSurfaces() ) {
 				common->Error( "no surfs in prelight model '%s'", light->parms.prelightModel->Name() );

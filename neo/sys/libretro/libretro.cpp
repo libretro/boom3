@@ -2187,6 +2187,21 @@ static void update_variables(bool startup)
 	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
 		cvarSystem->SetCVarBool("r_perFrameShadowVolumes", strcmp(var.value, "enabled") == 0);
 
+	var.key = "doom_static_shadows";
+	var.value = NULL;
+	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+		cvarSystem->SetCVarBool("r_skipPrelightShadows", strcmp(var.value, "disabled") == 0);
+
+	var.key = "doom_fog_lights";
+	var.value = NULL;
+	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+		cvarSystem->SetCVarBool("r_skipFogLights", strcmp(var.value, "disabled") == 0);
+
+	var.key = "doom_blend_lights";
+	var.value = NULL;
+	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+		cvarSystem->SetCVarBool("r_skipBlendLights", strcmp(var.value, "disabled") == 0);
+
 	/* HRTF: 'auto' means hands off - the archived s_HRTF cvar (console,
 	 * config) stays in charge; only an explicit enabled/disabled from the
 	 * frontend menu overrides it. Live-toggling works: the mixer reads
