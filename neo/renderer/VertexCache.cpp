@@ -155,6 +155,12 @@ void idVertexCache::Init() {
 	// use ARB_vertex_buffer_object unless explicitly disabled
 	if( r_useVertexBuffers.GetInteger() && glConfig.ARBVertexBufferObjectAvailable ) {
 		common->Printf( "using ARB_vertex_buffer_object memory\n" );
+		/* Indexes go in buffer objects too: the GLES backends draw stencil
+		 * shadows only from an index buffer, and on every backend a
+		 * client-side index array is copied by the driver on each draw.
+		 * Set here, after the config ran, so an old archived 0 cannot
+		 * turn it back off; the console still can, for debugging. */
+		r_useIndexBuffers.SetBool( true );
 	} else {
 		virtualMemory = true;
 		r_useIndexBuffers.SetBool( false );
