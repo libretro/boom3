@@ -79,6 +79,10 @@ public:
 	// These allocations can be purged, which will zero the pointer.
 	void			Alloc( void *data, int bytes, vertCache_t **buffer, bool indexBuffer = false );
 
+	// Alloc for vertexes rewritten whenever their surface is - a skinned
+	// mesh's - so the driver keeps them where the CPU writes cheaply.
+	void			AllocStream( void *data, int bytes, vertCache_t **buffer );
+
 	// This will be a real pointer with virtual memory,
 	// but it will be an int offset cast to a pointer of ARB_vertex_buffer_object
 	void *			Position( vertCache_t *buffer );

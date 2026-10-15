@@ -298,7 +298,14 @@ void idMD5Mesh::UpdateSurface( const struct renderEntity_s *ent, const idJointMa
 		// if the number of verts and indexes are the same we can re-use the triangle surface
 		// the number of indexes must be the same to assure the correct amount of memory is allocated for the facePlanes
 		if ( surf->geometry->numVerts == deformInfo->numOutputVerts && surf->geometry->numIndexes == deformInfo->numIndexes ) {
+			// the indexes are the mesh's, the same every frame: their buffer stays
+			struct vertCache_s *indexCache = NULL;
+			if ( surf->geometry->indexes == deformInfo->indexes ) {
+				indexCache = surf->geometry->indexCache;
+				surf->geometry->indexCache = NULL;
+			}
 			R_FreeStaticTriSurfVertexCaches( surf->geometry );
+			surf->geometry->indexCache = indexCache;
 		} else {
 			R_FreeStaticTriSurf( surf->geometry );
 			surf->geometry = R_AllocStaticTriSurf();

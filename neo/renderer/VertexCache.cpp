@@ -418,6 +418,17 @@ void idVertexCache::Alloc( void *data, int size, vertCache_t **buffer, bool inde
 
 /*
 ===========
+idVertexCache::AllocStream
+===========
+*/
+void idVertexCache::AllocStream( void *data, int size, vertCache_t **buffer ) {
+	allocatingTempBuffer = true;
+	Alloc( data, size, buffer );
+	allocatingTempBuffer = false;
+}
+
+/*
+===========
 idVertexCache::Touch
 ===========
 */

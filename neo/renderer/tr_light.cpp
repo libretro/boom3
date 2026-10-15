@@ -68,7 +68,11 @@ bool R_CreateAmbientCache( srfTriangles_t *tri, bool needsLighting ) {
 		R_DeriveTangents( tri );
 	}
 
-	vertexCache.Alloc( tri->verts, tri->numVerts * sizeof( tri->verts[0] ), &tri->ambientCache );
+	if ( tri->deformedSurface ) {
+		vertexCache.AllocStream( tri->verts, tri->numVerts * sizeof( tri->verts[0] ), &tri->ambientCache );
+	} else {
+		vertexCache.Alloc( tri->verts, tri->numVerts * sizeof( tri->verts[0] ), &tri->ambientCache );
+	}
 	if ( !tri->ambientCache ) {
 		return false;
 	}
@@ -145,7 +149,11 @@ void R_CreateVertexProgramShadowCache( srfTriangles_t *tri ) {
 
 	SIMDProcessor->CreateVertexProgramShadowCache( &temp->xyz, tri->verts, tri->numVerts );
 
-	vertexCache.Alloc( temp, tri->numVerts * 2 * sizeof( shadowCache_t ), &tri->shadowCache );
+	if ( tri->deformedSurface ) {
+		vertexCache.AllocStream( temp, tri->numVerts * 2 * sizeof( shadowCache_t ), &tri->shadowCache );
+	} else {
+		vertexCache.Alloc( temp, tri->numVerts * 2 * sizeof( shadowCache_t ), &tri->shadowCache );
+	}
 	Mem_FreeA( temp, tempOnStack );
 }
 
