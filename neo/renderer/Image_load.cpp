@@ -2352,7 +2352,13 @@ CopyFramebuffer
 void idImage::CopyFramebuffer( int x, int y, int imageWidth, int imageHeight, bool useOversizedBuffer ) {
 	Bind();
 
-	if ( cvarSystem->GetCVarBool( "g_lowresFullscreenFX" ) ) {
+	/* the game's cvar, found once it exists rather than looked up by name
+	 * on every capture */
+	static idCVar *lowresFullscreenFX = NULL;
+	if ( lowresFullscreenFX == NULL ) {
+		lowresFullscreenFX = cvarSystem->Find( "g_lowresFullscreenFX" );
+	}
+	if ( lowresFullscreenFX != NULL && lowresFullscreenFX->GetBool() ) {
 		imageWidth = 512;
 		imageHeight = 512;
 	}
@@ -2383,8 +2389,14 @@ void idImage::CopyFramebuffer( int x, int y, int imageWidth, int imageHeight, bo
 	   GL_BACK only when one is not.
 	*/
 	{
+#ifdef LIBRETRO
+		/* the core knows what it bound; asking GL is a round trip that
+		 * syncs threaded drivers on every capture */
+		const GLuint boundFbo = GLimp_ViewFramebuffer();
+#else
 		GLint boundFbo = 0;
 		qglGetIntegerv( GL_FRAMEBUFFER_BINDING, &boundFbo );
+#endif
 		qglReadBuffer( boundFbo ? GL_COLOR_ATTACHMENT0 : GL_BACK );
 	}
 #endif
@@ -2468,9 +2480,8 @@ CopyDepthbuffer
 This should just be part of copyFramebuffer once we have a proper image type field
 ====================
 */
-void idImage::CopyDepthbuffer( int x, int y, int imageWidth, int imageHeight, bool useOversizedBuffer )
+void idImage::CopyDepthbuffer( int x, int y, int imageWidth, int imageHeight, bool useOversizedBuffer, bool copyPixels )
 {
-	this->Bind();
 	// if the size isn't a power of 2, the image must be increased in size
 	int	potWidth, potHeight;
 
@@ -2478,8 +2489,26 @@ void idImage::CopyDepthbuffer( int x, int y, int imageWidth, int imageHeight, bo
 	potHeight = MakePowerOfTwo( imageHeight );
 	GetDownsize( imageWidth, imageHeight );
 	GetDownsize( potWidth, potHeight );
-	// Ensure we are reading from the back buffer:
-	qglReadBuffer( GL_BACK );
+	/* No read buffer to set: a depth copy reads the depth buffer whatever
+	 * it is, and GL_BACK is an error on the framebuffer objects the core
+	 * draws into.  No copy: the size (which the program environment
+	 * reports) moves exactly as a copy would move it, nothing else. */
+	if ( !copyPixels ) {
+		if ( ( useOversizedBuffer && ( uploadWidth < potWidth || uploadHeight < potHeight ) ) || ( !useOversizedBuffer && ( uploadWidth != potWidth || uploadHeight != potHeight ) ) ) {
+			this->Bind();
+			uploadWidth = potWidth;
+			uploadHeight = potHeight;
+#ifdef GL_DEPTH_COMPONENT24_ARB
+			qglTexImage2D( GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24_ARB, potWidth, potHeight, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_BYTE, NULL );
+#elif defined(GL_DEPTH_COMPONENT24_OES)
+			qglTexImage2D( GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24_OES, potWidth, potHeight, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_BYTE, NULL);
+#else
+			qglTexImage2D( GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT16, potWidth, potHeight, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_BYTE, NULL );
+#endif
+		}
+		return;
+	}
+	this->Bind();
 	// only resize if the current dimensions can't hold it at all,
 	// otherwise subview renderings could thrash this
 	if ( ( useOversizedBuffer && ( uploadWidth < potWidth || uploadHeight < potHeight ) ) || ( !useOversizedBuffer && ( uploadWidth != potWidth || uploadHeight != potHeight ) ) )

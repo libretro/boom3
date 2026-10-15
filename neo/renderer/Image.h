@@ -203,7 +203,9 @@ public:
 
 	void		CopyFramebuffer( int x, int y, int width, int height, bool useOversizedBuffer );
 
-	void		CopyDepthbuffer( int x, int y, int width, int height, bool useOversizedBuffer );
+	// copyPixels false only sizes the image as a copy would, for a view
+	// with nothing to read it
+	void		CopyDepthbuffer( int x, int y, int width, int height, bool useOversizedBuffer, bool copyPixels = true );
 
 
 	void		UploadScratch( const byte *pic, int width, int height );

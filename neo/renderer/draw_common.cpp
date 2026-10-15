@@ -652,6 +652,66 @@ void RB_SetProgramEnvironment( bool isPostProcess ); // so RB_STD_FillDepthBuffe
 
 /*
 =====================
+RB_MaterialReadsCurrentDepth / RB_ViewReadsCurrentDepth
+
+What reads _currentDepth: soft particles (a surface flagged
+DSF_SOFT_PARTICLE with a softening radius), any material stage or
+fragment program image that is the image itself (surfaces and lights
+alike), and r_showDepth.  A view with none of them never samples the copy.
+=====================
+*/
+static bool RB_MaterialReadsCurrentDepth( const idMaterial *material ) {
+	int i, j;
+	if ( material == NULL ) {
+		return false;
+	}
+	for ( i = 0; i < material->GetNumStages(); i++ ) {
+		const shaderStage_t *stage = material->GetStage( i );
+		if ( stage->texture.image == globalImages->currentDepthImage ) {
+			return true;
+		}
+		if ( stage->newStage ) {
+			for ( j = 0; j < stage->newStage->numFragmentProgramImages; j++ ) {
+				if ( stage->newStage->fragmentProgramImages[j] == globalImages->currentDepthImage ) {
+					return true;
+				}
+			}
+		}
+	}
+	return false;
+}
+
+static bool RB_ViewReadsCurrentDepth( void ) {
+	const viewDef_t *view = backEnd.viewDef;
+	const viewLight_t *vLight;
+	const idMaterial *last = NULL;
+	int i;
+	if ( r_showDepth.GetBool() ) {
+		return true;
+	}
+	for ( i = 0; i < view->numDrawSurfs; i++ ) {
+		const drawSurf_t *surf = view->drawSurfs[i];
+		if ( ( surf->dsFlags & DSF_SOFT_PARTICLE ) && surf->particle_radius > 0.0f ) {
+			return true;
+		}
+		// surfaces sharing a material sit together in the sorted list
+		if ( surf->material != last ) {
+			last = surf->material;
+			if ( RB_MaterialReadsCurrentDepth( last ) ) {
+				return true;
+			}
+		}
+	}
+	for ( vLight = view->viewLights; vLight; vLight = vLight->next ) {
+		if ( RB_MaterialReadsCurrentDepth( vLight->lightShader ) ) {
+			return true;
+		}
+	}
+	return false;
+}
+
+/*
+=====================
 RB_STD_FillDepthBuffer
 
 If we are rendering a subview with a near clip plane, use a second texture
@@ -696,11 +756,15 @@ void RB_STD_FillDepthBuffer( drawSurf_t **drawSurfs, int numDrawSurfs ) {
 
 	if ( getDepthCapture && backEnd.viewDef->renderView.viewID >= 0 ) // Suppress for lightgem rendering passes
 	{
+		/* The copy is a full-viewport depth read every view; the pixels
+		 * are copied only for a view that has something to read them.
+		 * Otherwise only the image's size follows the view, so the
+		 * program environment reports what it always reported. */
 		globalImages->currentDepthImage->CopyDepthbuffer( backEnd.viewDef->viewport.x1,
 														  backEnd.viewDef->viewport.y1,
 														  backEnd.viewDef->viewport.x2 - backEnd.viewDef->viewport.x1 + 1,
-														  backEnd.viewDef->viewport.y2 - backEnd.viewDef->viewport.y1 + 1, 
-														  true );
+														  backEnd.viewDef->viewport.y2 - backEnd.viewDef->viewport.y1 + 1,
+														  true, RB_ViewReadsCurrentDepth() );
 		bool isPostProcess = false;
 		RB_SetProgramEnvironment( isPostProcess );
 	}

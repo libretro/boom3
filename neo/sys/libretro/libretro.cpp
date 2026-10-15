@@ -1221,8 +1221,9 @@ void VR_BindTargetForView( int vrView ) {
  * at one layer of whichever target is being drawn.  Not ours: left alone. */
 
 void VR_BeginLayerRead( int layer ) {
-	GLint draw = 0;
-	glGetIntegerv( GL_DRAW_FRAMEBUFFER_BINDING, &draw );
+	/* the target being drawn, as bound here; not asked of GL, which
+	 * syncs threaded drivers on every copy */
+	const GLuint draw = core_view_fbo;
 	vr_read_redirected = false;
 	for ( int i = 0; i < 3; i += 2 ) {
 		if ( vr_fbo[i] && (GLuint)draw == vr_fbo[i] ) {
@@ -1237,11 +1238,11 @@ void VR_BeginLayerRead( int layer ) {
 }
 
 void VR_BeginSceneRead( void ) {
-	GLint read = 0;
+	/* the core binds draw and read together (GL_FRAMEBUFFER) */
+	const GLuint read = core_view_fbo;
 	vr_read_redirected = false;
 	if ( !vr_fbo[0] || !vr_tex[0] )
 		return;
-	glGetIntegerv( GL_READ_FRAMEBUFFER_BINDING, &read );
 	if ( !vr_read_fbo ) glGenFramebuffers( 1, &vr_read_fbo );
 	glBindFramebuffer( GL_READ_FRAMEBUFFER, vr_read_fbo );
 	glFramebufferTextureLayer( GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, vr_tex[0], 0, 0 );
@@ -7484,6 +7485,10 @@ static void hdr_bind_scene( void ) {
 		return;
 	glBindFramebuffer( RARCH_GL_FRAMEBUFFER, hdr_fbo );
 	core_view_fbo = hdr_fbo;
+}
+
+GLuint GLimp_ViewFramebuffer( void ) {
+	return core_view_fbo;
 }
 
 /* The end of a 3D view: every 3D view clears depth and stencil when it
