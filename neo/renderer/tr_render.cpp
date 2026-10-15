@@ -105,7 +105,7 @@ void RB_DrawElementsWithCounters( const srfTriangles_t *tri ) {
                          (int *)vertexCache.Position( tri->indexCache ) );
         backEnd.pc.c_vboIndexes += tri->numIndexes;
     } else {
-        qglBindBuffer( GL_ELEMENT_ARRAY_BUFFER, 0 );
+        vertexCache.UnbindIndex();
         qglDrawElements( GL_TRIANGLES, tri->numIndexes, GL_INDEX_TYPE,
                          tri->indexes );
     }

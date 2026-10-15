@@ -51,6 +51,7 @@ extern "C" {
 #include "framework/KeyInput.h"
 #include "framework/Session_local.h"
 #include "renderer/ModelManager.h"
+#include "renderer/VertexCache.h"
 #include "renderer/tr_local.h"
 #include "renderer/aces2_jmh.h"
 #include "renderer/aces2_arb.h"
@@ -8581,6 +8582,7 @@ void GLimp_SwapBuffers() {
       glsm_ctl(GLSM_CTL_STATE_BIND, NULL);
 	glBindFramebuffer(RARCH_GL_FRAMEBUFFER, hw_render.get_current_framebuffer());
 	hdr_bind_scene();   /* loading-screen pumps and the next frame render here */
+	vertexCache.InvalidateBindings();   /* the present passes bound their own buffers */
 
 	/* A map load runs synchronously inside a single retro_run(): the engine
 	 * pumps the loading screen through UpdateScreen()->GLimp_SwapBuffers()

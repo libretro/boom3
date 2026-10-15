@@ -120,9 +120,9 @@ void *idVertexCache::Position( vertCache_t *buffer ) {
 			}
 		}
 		if ( buffer->indexBuffer ) {
-			qglBindBufferARB( GL_ELEMENT_ARRAY_BUFFER_ARB, buffer->vbo );
+			BindElement( buffer->vbo );
 		} else {
-			qglBindBufferARB( GL_ARRAY_BUFFER_ARB, buffer->vbo );
+			BindArray( buffer->vbo );
 		}
 		return (void *)buffer->offset;
 	}
@@ -132,7 +132,47 @@ void *idVertexCache::Position( vertCache_t *buffer ) {
 }
 
 void idVertexCache::UnbindIndex() {
-	qglBindBufferARB( GL_ELEMENT_ARRAY_BUFFER_ARB, 0 );
+	BindElement( 0 );
+}
+
+/*
+==============
+idVertexCache bindings
+
+Every draw sets its attribute pointers through Position(), several per
+draw and all in the same buffer, so the binds that change nothing are
+skipped.  Uploads (Alloc, AllocFrameTemp) bind unconditionally: they run
+in the frontend, where the libretro frontend's state binding may have
+moved the bindings since the backend last ran.
+==============
+*/
+void idVertexCache::InvalidateBindings() {
+	boundArray = UNKNOWN_BINDING;
+	boundElement = UNKNOWN_BINDING;
+}
+
+void idVertexCache::BindArray( GLuint vbo ) {
+	if ( boundArray != vbo ) {
+		qglBindBufferARB( GL_ARRAY_BUFFER_ARB, vbo );
+		boundArray = vbo;
+	}
+}
+
+void idVertexCache::BindElement( GLuint vbo ) {
+	if ( boundElement != vbo ) {
+		qglBindBufferARB( GL_ELEMENT_ARRAY_BUFFER_ARB, vbo );
+		boundElement = vbo;
+	}
+}
+
+void idVertexCache::ForceBindArray( GLuint vbo ) {
+	qglBindBufferARB( GL_ARRAY_BUFFER_ARB, vbo );
+	boundArray = vbo;
+}
+
+void idVertexCache::ForceBindElement( GLuint vbo ) {
+	qglBindBufferARB( GL_ELEMENT_ARRAY_BUFFER_ARB, vbo );
+	boundElement = vbo;
 }
 
 
@@ -151,6 +191,7 @@ void idVertexCache::Init() {
 	}
 
 	virtualMemory = false;
+	InvalidateBindings();
 
 	// use ARB_vertex_buffer_object unless explicitly disabled
 	if( r_useVertexBuffers.GetInteger() && glConfig.ARBVertexBufferObjectAvailable ) {
@@ -282,10 +323,10 @@ void idVertexCache::Alloc( void *data, int size, vertCache_t **buffer, bool inde
 	// copy the data
 	if ( block->vbo ) {
 		if ( indexBuffer ) {
-			qglBindBufferARB( GL_ELEMENT_ARRAY_BUFFER_ARB, block->vbo );
+			ForceBindElement( block->vbo );
 			qglBufferDataARB( GL_ELEMENT_ARRAY_BUFFER_ARB, (GLsizeiptrARB)size, data, GL_STATIC_DRAW_ARB );
 		} else {
-			qglBindBufferARB( GL_ARRAY_BUFFER_ARB, block->vbo );
+			ForceBindArray( block->vbo );
 			if ( allocatingTempBuffer ) {
 				qglBufferDataARB( GL_ARRAY_BUFFER_ARB, (GLsizeiptrARB)size, data, GL_STREAM_DRAW_ARB );
 			} else {
@@ -419,7 +460,7 @@ vertCache_t	*idVertexCache::AllocFrameTemp( void *data, int size ) {
 	block->vbo = tempBuffers[listNum]->vbo;
 
 	if ( block->vbo ) {
-		qglBindBufferARB( GL_ARRAY_BUFFER_ARB, block->vbo );
+		ForceBindArray( block->vbo );
 		qglBufferSubDataARB( GL_ARRAY_BUFFER_ARB, block->offset, (GLsizeiptrARB)size, data );
 	} else {
 		SIMDProcessor->Memcpy( (byte *)block->virtMem + block->offset, data, size );
@@ -455,16 +496,24 @@ void idVertexCache::EndFrame() {
 			staticCountTotal, staticAllocTotal/1024 );
 	}
 
-	if( !virtualMemory ) {
-		// unbind vertex buffers so normal virtual memory will be used in case
-		// r_useVertexBuffers / r_useIndexBuffers
-		qglBindBufferARB( GL_ARRAY_BUFFER_ARB, 0 );
-		qglBindBufferARB( GL_ELEMENT_ARRAY_BUFFER_ARB, 0 );
-	}
-
-
 	currentFrame = tr.frameCount;
 	listNum = currentFrame % NUM_VERTEX_FRAMES;
+
+	if( !virtualMemory ) {
+		/* The temp buffer this frame streams into was last drawn from
+		 * NUM_VERTEX_FRAMES frames ago and may still be in flight: orphan
+		 * its storage before the first upload, so the driver hands back
+		 * fresh memory instead of syncing or copying under the
+		 * glBufferSubData calls.  Only the old contents are dropped, and
+		 * nothing reads them again. */
+		ForceBindArray( tempBuffers[listNum]->vbo );
+		qglBufferDataARB( GL_ARRAY_BUFFER_ARB, (GLsizeiptrARB)frameBytes, NULL, GL_STREAM_DRAW_ARB );
+
+		// unbind vertex buffers so normal virtual memory will be used in case
+		// r_useVertexBuffers / r_useIndexBuffers
+		ForceBindArray( 0 );
+		ForceBindElement( 0 );
+	}
 	staticAllocThisFrame = 0;
 	staticCountThisFrame = 0;
 	dynamicAllocThisFrame = 0;
