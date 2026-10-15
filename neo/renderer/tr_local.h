@@ -1525,7 +1525,18 @@ typedef struct shaderProgram_s {
 
 	GLint		u_fragmentMap[MAX_FRAGMENT_IMAGES];
   GLint		u_fragmentCubeMap[MAX_FRAGMENT_IMAGES];
+
+	/* The last value uploaded to each uniform from glColor to clipPlane,
+	 * so an upload of the same value is skipped (GL_UniformChanged).
+	 * Zeroed with the program, which marks every slot unknown. */
+	unsigned int	uniformCacheValid;
+	float		uniformCache[25][16];
 } shaderProgram_t;
+
+/* True when value (count floats) differs from what the program's uniform at
+ * locationOffset (an offsetof into shaderProgram_t) last received, which it
+ * then records; true for anything it does not cache. */
+bool GL_UniformChanged( shaderProgram_t *program, int locationOffset, const float *value, int count );
 
 #ifdef HAVE_OPENGLES3
 void RB_GLSL_EndFrame( void );

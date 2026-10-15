@@ -88,7 +88,9 @@ GL_Uniform1fv
 ====================
 */
 static void GL_Uniform1fv(GLint location, const GLfloat* value) {
-	qglUniform1fv(*( GLint * )((char*) backEnd.glState.currentProgram + location), 1, value);
+	if ( GL_UniformChanged(backEnd.glState.currentProgram, location, value, 1) ) {
+		qglUniform1fv(*( GLint * )((char*) backEnd.glState.currentProgram + location), 1, value);
+	}
 }
 
 /*
@@ -97,7 +99,9 @@ GL_Uniform4fv
 ====================
 */
 static void GL_Uniform4fv(GLint location, const GLfloat* value) {
-	qglUniform4fv(*( GLint * )((char*) backEnd.glState.currentProgram + location), 1, value);
+	if ( GL_UniformChanged(backEnd.glState.currentProgram, location, value, 4) ) {
+		qglUniform4fv(*( GLint * )((char*) backEnd.glState.currentProgram + location), 1, value);
+	}
 }
 
 /*
@@ -106,7 +110,9 @@ GL_UniformMatrix4fv
 ====================
 */
 static void GL_UniformMatrix4fv(GLint location, const GLfloat* value) {
-	qglUniformMatrix4fv(*( GLint * )((char*) backEnd.glState.currentProgram + location), 1, GL_FALSE, value);
+	if ( GL_UniformChanged(backEnd.glState.currentProgram, location, value, 16) ) {
+		qglUniformMatrix4fv(*( GLint * )((char*) backEnd.glState.currentProgram + location), 1, GL_FALSE, value);
+	}
 }
 
 /*
