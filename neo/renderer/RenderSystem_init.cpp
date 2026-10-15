@@ -364,6 +364,18 @@ R_CheckPortableExtensions
 static void R_CheckPortableExtensions( void ) {
 	glConfig.glVersion = atof( glConfig.version_string );
 
+	// what the context offers above the floor this build links against,
+	// and from that the renderer it runs
+	gl_caps_init( (gl_caps_loader_t)GLimp_ExtensionPointer );
+	glConfig.renderer = GLimp_RequestedRenderer();
+	if ( glConfig.renderer == R_RENDERER_ES31 ) {
+		const char *missing = gl_caps_es31_missing();
+		if ( missing ) {
+			common->Warning( "The ES 3.1 renderer needs %s; using the ES 3 renderer", missing );
+			glConfig.renderer = R_RENDERER_ES3;
+		}
+	}
+
 	/*
 	   Query the framebuffer's actual bit depths.
 

@@ -81,6 +81,24 @@ void RB_DrawElementsImmediate( const srfTriangles_t *tri ) {
 
 /*
 ================
+RB_DrawIndexes
+
+Triangles from count indexes, offset by the base vertex the backend's
+attribute pointers were set up with (the ES 3.1 renderer's shared buffers).
+================
+*/
+#ifdef HAVE_OPENGLES
+static void RB_DrawIndexes( int count, GLenum type, const void *indexes ) {
+	if ( backEnd.glState.baseVertex > 0 ) {
+		glCaps.DrawElementsBaseVertex( GL_TRIANGLES, count, type, indexes, backEnd.glState.baseVertex );
+	} else {
+		qglDrawElements( GL_TRIANGLES, count, type, indexes );
+	}
+}
+#endif
+
+/*
+================
 RB_DrawElementsWithCounters
 ================
 */
@@ -101,13 +119,12 @@ void RB_DrawElementsWithCounters( const srfTriangles_t *tri ) {
 
 #ifdef HAVE_OPENGLES
     if ( tri->indexCache ) {
-        qglDrawElements( GL_TRIANGLES, tri->numIndexes, vertexCache.IndexType( tri->indexCache ),
-                         (int *)vertexCache.Position( tri->indexCache ) );
+        RB_DrawIndexes( tri->numIndexes, vertexCache.IndexType( tri->indexCache ),
+                        vertexCache.Position( tri->indexCache ) );
         backEnd.pc.c_vboIndexes += tri->numIndexes;
     } else {
         vertexCache.UnbindIndex();
-        qglDrawElements( GL_TRIANGLES, tri->numIndexes, GL_INDEX_TYPE,
-                         tri->indexes );
+        RB_DrawIndexes( tri->numIndexes, GL_INDEX_TYPE, tri->indexes );
     }
 #else
 	if ( tri->indexCache && r_useIndexBuffers.GetBool() ) {
@@ -140,8 +157,8 @@ void RB_DrawShadowElementsWithCounters( const srfTriangles_t *tri, int numIndexe
 
 #ifdef HAVE_OPENGLES
     if ( tri->indexCache ) {
-        qglDrawElements( GL_TRIANGLES, numIndexes, vertexCache.IndexType( tri->indexCache ),
-                         (int *)vertexCache.Position( tri->indexCache ) );
+        RB_DrawIndexes( numIndexes, vertexCache.IndexType( tri->indexCache ),
+                        vertexCache.Position( tri->indexCache ) );
         backEnd.pc.c_vboIndexes += numIndexes;
     } else {
         static bool bOnce = true;

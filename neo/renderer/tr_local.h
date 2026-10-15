@@ -657,6 +657,9 @@ typedef struct {
 	int     	currentTexture;
 	struct shaderProgram_s	*currentProgram;
 #endif
+	// added to every index of the next draws: the vertex block the
+	// attribute pointers are at, when they start at its shared buffer
+	int			baseVertex;
 } glstate_t;
 
 
@@ -1558,6 +1561,9 @@ int  RB_GLSL_DrawShaderPasses(drawSurf_t **drawSurfs, int numDrawSurfs);
 void RB_GLSL_FogAllLights(void);
 
 #endif
+
+// the renderer the frontend asked for with the context it made
+rendererKind_t GLimp_RequestedRenderer( void );
 
 /*
 ============================================================

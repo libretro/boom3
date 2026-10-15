@@ -51,6 +51,22 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       },
       "auto"
    },
+#if defined(HAVE_OPENGLES3)
+	{
+      "doom_renderer",
+      "Renderer (Restart Required)",
+      NULL,
+      "Which renderer draws the game. 'OpenGL ES 3.1' packs static geometry into a few shared buffers drawn with base-vertex draws, streams each frame's data through one persistently mapped ring and hands each light interaction its parameters in a uniform buffer: less driver work per draw, the same picture. It needs an OpenGL ES 3.1 context and falls back to 'OpenGL ES 3.0' where the device or frontend cannot provide one.",
+      NULL,
+      NULL,
+      {
+         { "es3",  "OpenGL ES 3.0" },
+         { "es31", "OpenGL ES 3.1" },
+         { NULL, NULL },
+      },
+      "es3"
+   },
+#endif
 	{
       "doom_shadow_smoothing",
       "Smooth Shadows From Moving Lights",

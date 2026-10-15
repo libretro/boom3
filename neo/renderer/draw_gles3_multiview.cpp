@@ -23,6 +23,7 @@
 
 #include "glsl_gles3/glsl_shaders.h"
 #include "renderer/spectral_mix.h"
+#include "renderer/glsl_blocks.h"
 
 #ifdef HAVE_OPENGLES
 #include "renderer/gles_compat.h"
@@ -54,6 +55,103 @@ GLuint		viewMatricesBuffer;
 
 // the programs were built with BOOM3_MULTIVIEW, for 2-layer VR targets
 static bool glslMultiview = false;
+
+/*
+The ES 3.1 renderer hands the interaction programs their per-draw values in
+two uniform blocks, one per stage, written into the vertex cache's ring and
+bound by range: two binds a draw instead of a dozen uniform uploads.  The
+blocks hold the very declarations the programs had as plain uniforms,
+moved at load time, so the shading is the same code on the same values.
+*/
+#define DRAW_VERTEX_BINDING		1
+#define DRAW_FRAGMENT_BINDING	2
+
+enum {
+	DV_MODEL_MATRIX, DV_DEPTH_HACK, DV_LIGHT_PROJECTION, DV_COLOR_MODULATE, DV_COLOR_ADD,
+	DV_LIGHT_ORIGIN, DV_VIEW_ORIGIN, DV_BUMP_S, DV_BUMP_T, DV_DIFFUSE_S, DV_DIFFUSE_T,
+	DV_SPECULAR_S, DV_SPECULAR_T, DV_COUNT
+};
+static const char* const drawVertexNames[DV_COUNT] = {
+	"u_modelMatrix", "u_depthHack", "u_lightProjection", "u_colorModulate", "u_colorAdd",
+	"u_lightOrigin", "u_viewOrigin", "u_bumpMatrixS", "u_bumpMatrixT", "u_diffuseMatrixS",
+	"u_diffuseMatrixT", "u_specularMatrixS", "u_specularMatrixT"
+};
+enum {
+	DF_DIFFUSE_COLOR, DF_SPECULAR_COLOR, DF_HDR_PARMS, DF_SPECULAR_EXPONENT, DF_COUNT
+};
+static const char* const drawFragmentNames[DF_COUNT] = {
+	"u_diffuseColor", "u_specularColor", "u_hdrParms", "u_specularExponent"
+};
+
+// where each block member sits, per interaction program; -1 absent
+typedef struct {
+	const shaderProgram_t*	program;
+	GLint	vertexOffset[DV_COUNT];
+	GLint	fragmentOffset[DF_COUNT];
+	GLint	vertexSize;				// 0: the program has no block
+	GLint	fragmentSize;
+} drawBlocks_t;
+
+static drawBlocks_t	drawBlocks[3];
+static int			numDrawBlocks;
+// the programs were built with the blocks (R_GLSL_UseDrawBlocks at load)
+static bool			glslDrawBlocks = false;
+// for a ring that cannot be mapped: one buffer per block, rewritten per draw
+static GLuint		drawBlockFallback[2];
+// the specular exponent of the interaction pass being drawn
+static float		rbSpecularExponent;
+
+/*
+====================
+Attribute pointers
+
+What each attribute location was last pointed at, so a pointer that changes
+nothing is not sent: with base-vertex draws the surfaces of a pass that
+share a buffer all point at its start.  Forgotten at the start of each view,
+as the frontend may have pointed them elsewhere.
+====================
+*/
+typedef struct {
+	const GLvoid*	pointer;
+	GLuint			buffer;
+	GLsizei			stride;
+	GLenum			type;
+	GLint			size;
+	GLboolean		normalized;
+	bool			valid;
+} rbAttribPointer_t;
+
+#define RB_ATTRIB_CACHE 16
+static rbAttribPointer_t rbAttribs[RB_ATTRIB_CACHE];
+
+static void RB_GLSL_ForgetAttribPointers(void) {
+	int i;
+	for ( i = 0; i < RB_ATTRIB_CACHE; i++ ) {
+		rbAttribs[i].valid = false;
+	}
+}
+
+/*
+====================
+RB_GLSL_VertexBase
+
+Binds a vertex block for its attribute pointers and returns where they
+start: the block itself, or - the ES 3.1 renderer, the block in a shared
+buffer - the buffer's start, the draws then carrying the block's base
+vertex.
+====================
+*/
+static const byte* RB_GLSL_VertexBase(vertCache_t* cache, int stride) {
+	if ( glConfig.renderer == R_RENDERER_ES31 ) {
+		const int baseVertex = vertexCache.BaseVertex(cache, stride);
+		if ( baseVertex >= 0 ) {
+			backEnd.glState.baseVertex = baseVertex;
+			return NULL;
+		}
+	}
+	backEnd.glState.baseVertex = 0;
+	return (const byte*) vertexCache.Position(cache);
+}
 
 #define ATTR_VERTEX     0   // Don't change this, as WebGL require the vertex attrib 0 to be always bound
 #define ATTR_COLOR      1
@@ -202,8 +300,134 @@ GL_VertexAttribPointer
 static void GL_VertexAttribPointer(GLuint index, GLint size, GLenum type,
                                    GLboolean normalized, GLsizei stride,
                                    const GLvoid* pointer) {
-	qglVertexAttribPointer(*( GLint * )((char*) backEnd.glState.currentProgram + index),
-	                       size, type, normalized, stride, pointer);
+	const GLint location = *( GLint * )((char*) backEnd.glState.currentProgram + index);
+	if ( location < 0 ) {
+		return;		// the program does not read it
+	}
+	if ( location < RB_ATTRIB_CACHE ) {
+		rbAttribPointer_t* a = &rbAttribs[location];
+		const GLuint buffer = vertexCache.BoundArray();
+		if ( a->valid && a->pointer == pointer && a->buffer == buffer && a->stride == stride
+				&& a->type == type && a->size == size && a->normalized == normalized ) {
+			return;
+		}
+		a->pointer = pointer;
+		a->buffer = buffer;
+		a->stride = stride;
+		a->type = type;
+		a->size = size;
+		a->normalized = normalized;
+		a->valid = buffer != idVertexCache::UNKNOWN_BINDING;
+	}
+	qglVertexAttribPointer(location, size, type, normalized, stride, pointer);
+}
+
+/*
+=================
+Program binaries
+
+The ES 3.1 renderer keeps each linked program's binary in the save
+directory, named by a hash of its sources and of the driver, and loads it
+instead of compiling when the same driver asks for the same program: a
+start without the compile, which on phones is most of the renderer's
+start-up.  A binary the driver refuses is rebuilt from the sources.
+=================
+*/
+#define PROGRAM_BINARY_MAGIC	0x42503342u		/* "B3PB" */
+#define PROGRAM_BINARY_VERSION	1u
+
+// the sources R_LoadGLSLShader was given for the program being built
+static idStr	pendingSource[2];
+static bool		pendingSources = false;
+
+static bool R_ProgramBinariesActive(void) {
+	return glConfig.renderer == R_RENDERER_ES31 && glCaps.programBinary;
+}
+
+static unsigned long long R_ProgramBinaryHash(unsigned long long h, const char* text) {
+	while ( text && *text ) {
+		h ^= (unsigned char)*text++;
+		h *= 1099511628211ull;
+	}
+	return h;
+}
+
+static idStr R_ProgramBinaryPath(const char* name) {
+	unsigned long long h = 14695981039346656037ull;
+	h = R_ProgramBinaryHash(h, pendingSource[0].c_str());
+	h = R_ProgramBinaryHash(h, "\x01");
+	h = R_ProgramBinaryHash(h, pendingSource[1].c_str());
+	h = R_ProgramBinaryHash(h, (const char*)qglGetString(GL_VENDOR));
+	h = R_ProgramBinaryHash(h, (const char*)qglGetString(GL_RENDERER));
+	h = R_ProgramBinaryHash(h, (const char*)qglGetString(GL_VERSION));
+	return va("glslcache/%s-%08x%08x.bin", name, (unsigned int)( h >> 32 ), (unsigned int)h);
+}
+
+static bool R_LoadProgramBinary(shaderProgram_t* shaderProgram, const char* path) {
+	void* file = NULL;
+	const int len = fileSystem->ReadFile(path, &file, NULL);
+	bool ok = false;
+	if ( len > 16 && file ) {
+		const unsigned int* head = (const unsigned int*)file;
+		if ( head[0] == PROGRAM_BINARY_MAGIC && head[1] == PROGRAM_BINARY_VERSION
+				&& (int)head[3] == len - 16 ) {
+			GLint linked = 0;
+			shaderProgram->program = qglCreateProgram();
+			glCaps.ProgramBinary(shaderProgram->program, (GLenum)head[2], (const byte*)file + 16, len - 16);
+			qglGetProgramiv(shaderProgram->program, GL_LINK_STATUS, &linked);
+			if ( linked ) {
+				ok = true;
+			} else {
+				qglDeleteProgram(shaderProgram->program);
+				shaderProgram->program = 0;
+			}
+		}
+	}
+	if ( file ) {
+		fileSystem->FreeFile(file);
+	}
+	while ( qglGetError() != GL_NO_ERROR ) { }
+	return ok;
+}
+
+static void R_SaveProgramBinary(const shaderProgram_t* shaderProgram, const char* path) {
+	GLint len = 0;
+	qglGetProgramiv(shaderProgram->program, GL_PROGRAM_BINARY_LENGTH, &len);
+	if ( len <= 0 ) {
+		return;
+	}
+	byte* file = (byte*)Mem_Alloc(len + 16);
+	GLsizei got = 0;
+	GLenum format = 0;
+	glCaps.GetProgramBinary(shaderProgram->program, len, &got, &format, file + 16);
+	if ( got > 0 ) {
+		unsigned int* head = (unsigned int*)file;
+		head[0] = PROGRAM_BINARY_MAGIC;
+		head[1] = PROGRAM_BINARY_VERSION;
+		head[2] = format;
+		head[3] = (unsigned int)got;
+		fileSystem->WriteFile(path, file, got + 16);
+	}
+	Mem_Free(file);
+	while ( qglGetError() != GL_NO_ERROR ) { }
+}
+
+static void R_CompileGLSLShader(const char* buffer, shaderProgram_t* shaderProgram, GLenum type) {
+	switch ( type ) {
+	case GL_VERTEX_SHADER:
+		shaderProgram->vertexShader = qglCreateShader(GL_VERTEX_SHADER);
+		qglShaderSource(shaderProgram->vertexShader, 1, (const GLchar**) &buffer, 0);
+		qglCompileShader(shaderProgram->vertexShader);
+		break;
+	case GL_FRAGMENT_SHADER:
+		shaderProgram->fragmentShader = qglCreateShader(GL_FRAGMENT_SHADER);
+		qglShaderSource(shaderProgram->fragmentShader, 1, (const GLchar**) &buffer, 0);
+		qglCompileShader(shaderProgram->fragmentShader);
+		break;
+	default:
+		common->Printf("R_LoadGLSLShader: no type\n");
+		return;
+	}
 }
 
 /*
@@ -226,25 +450,13 @@ static void R_LoadGLSLShader(const char* buffer, shaderProgram_t* shaderProgram,
 		const int eol = source.Find('\n', source.Find("#version"));
 		source.Insert("#define BOOM3_MULTIVIEW\n", eol + 1);
 	}
-	buffer = source.c_str();
-
-	switch ( type ) {
-	case GL_VERTEX_SHADER:
-		// create vertex shader
-		shaderProgram->vertexShader = qglCreateShader(GL_VERTEX_SHADER);
-		qglShaderSource(shaderProgram->vertexShader, 1, (const GLchar**) &buffer, 0);
-		qglCompileShader(shaderProgram->vertexShader);
-		break;
-	case GL_FRAGMENT_SHADER:
-		// create fragment shader
-		shaderProgram->fragmentShader = qglCreateShader(GL_FRAGMENT_SHADER);
-		qglShaderSource(shaderProgram->fragmentShader, 1, (const GLchar**) &buffer, 0);
-		qglCompileShader(shaderProgram->fragmentShader);
-		break;
-	default:
-		common->Printf("R_LoadGLSLShader: no type\n");
+	if ( R_ProgramBinariesActive() && ( type == GL_VERTEX_SHADER || type == GL_FRAGMENT_SHADER ) ) {
+		// compiled at link, and only when no binary of the program is kept
+		pendingSource[type == GL_VERTEX_SHADER ? 0 : 1] = source;
+		pendingSources = true;
 		return;
 	}
+	R_CompileGLSLShader(source.c_str(), shaderProgram, type);
 }
 
 /*
@@ -258,8 +470,22 @@ static bool R_LinkGLSLShader(shaderProgram_t* shaderProgram, const char* name) {
 	char buf[BUFSIZ];
 	int len;
 	GLint linked;
+	idStr binaryPath;
+
+	if ( pendingSources ) {
+		pendingSources = false;
+		binaryPath = R_ProgramBinaryPath(name);
+		if ( R_LoadProgramBinary(shaderProgram, binaryPath.c_str()) ) {
+			return true;
+		}
+		R_CompileGLSLShader(pendingSource[0].c_str(), shaderProgram, GL_VERTEX_SHADER);
+		R_CompileGLSLShader(pendingSource[1].c_str(), shaderProgram, GL_FRAGMENT_SHADER);
+	}
 
 	shaderProgram->program = qglCreateProgram();
+	if ( binaryPath.Length() ) {
+		glCaps.ProgramParameteri(shaderProgram->program, GL_PROGRAM_BINARY_RETRIEVABLE_HINT, GL_TRUE);
+	}
 
 	qglAttachShader(shaderProgram->program, shaderProgram->vertexShader);
 	qglAttachShader(shaderProgram->program, shaderProgram->fragmentShader);
@@ -288,6 +514,9 @@ static bool R_LinkGLSLShader(shaderProgram_t* shaderProgram, const char* name) {
 		return false;
 	}
 
+	if ( binaryPath.Length() ) {
+		R_SaveProgramBinary(shaderProgram, binaryPath.c_str());
+	}
 	return true;
 }
 
@@ -408,6 +637,109 @@ static void RB_GLSL_GetUniformLocations(shaderProgram_t* shader) {
 
 /*
 =================
+R_LoadInteractionShader
+
+An interaction program's stage, its per-draw uniforms moved into the stage's
+block when the programs are built with them.
+=================
+*/
+static void R_LoadInteractionShader(const char* buffer, shaderProgram_t* shaderProgram, GLenum type) {
+	if ( !glslDrawBlocks ) {
+		R_LoadGLSLShader(buffer, shaderProgram, type);
+		return;
+	}
+	char* src = type == GL_VERTEX_SHADER
+		? glsl_uniforms_to_block(buffer, "DrawVertex", drawVertexNames, DV_COUNT)
+		: glsl_uniforms_to_block(buffer, "DrawFragment", drawFragmentNames, DF_COUNT);
+	if ( !src ) {
+		common->FatalError("R_LoadInteractionShader: out of memory");
+	}
+	R_LoadGLSLShader(src, shaderProgram, type);
+	free(src);
+}
+
+/*
+=================
+RB_GLSL_BlockMembers
+
+The block's binding and size, and where its members sit; false when the
+block is laid out other than the draws write it.
+=================
+*/
+static bool RB_GLSL_BlockMembers(GLuint program, const char* blockName, GLuint binding,
+		const char* const* names, int count, GLint* offsets, GLint* size) {
+	GLuint indexes[DV_COUNT];
+	int i;
+
+	*size = 0;
+	for ( i = 0; i < count; i++ ) {
+		offsets[i] = -1;
+	}
+	const GLuint block = glCaps.GetUniformBlockIndex(program, blockName);
+	if ( block == GL_INVALID_INDEX ) {
+		return true;
+	}
+	glCaps.UniformBlockBinding(program, block, binding);
+	glCaps.GetActiveUniformBlockiv(program, block, GL_UNIFORM_BLOCK_DATA_SIZE, size);
+
+	glCaps.GetUniformIndices(program, count, names, indexes);
+	for ( i = 0; i < count; i++ ) {
+		GLint v;
+		if ( indexes[i] == GL_INVALID_INDEX ) {
+			continue;
+		}
+		glCaps.GetActiveUniformsiv(program, 1, &indexes[i], GL_UNIFORM_OFFSET, &v);
+		offsets[i] = v;
+		// matrices are written the way GL_FALSE uploads read them:
+		// four columns, 16 bytes apart
+		glCaps.GetActiveUniformsiv(program, 1, &indexes[i], GL_UNIFORM_TYPE, &v);
+		if ( v == GL_FLOAT_MAT4 ) {
+			glCaps.GetActiveUniformsiv(program, 1, &indexes[i], GL_UNIFORM_MATRIX_STRIDE, &v);
+			if ( v != 16 ) {
+				return false;
+			}
+			glCaps.GetActiveUniformsiv(program, 1, &indexes[i], GL_UNIFORM_IS_ROW_MAJOR, &v);
+			if ( v ) {
+				return false;
+			}
+		}
+	}
+	return true;
+}
+
+/*
+=================
+RB_GLSL_SetupDrawBlocks
+=================
+*/
+static void RB_GLSL_SetupDrawBlocks(shaderProgram_t* shader) {
+	if ( !glslDrawBlocks || numDrawBlocks == (int)( sizeof(drawBlocks) / sizeof(drawBlocks[0]) ) ) {
+		return;
+	}
+	drawBlocks_t* b = &drawBlocks[numDrawBlocks];
+	if ( !RB_GLSL_BlockMembers(shader->program, "DrawVertex", DRAW_VERTEX_BINDING,
+				drawVertexNames, DV_COUNT, b->vertexOffset, &b->vertexSize)
+			|| !RB_GLSL_BlockMembers(shader->program, "DrawFragment", DRAW_FRAGMENT_BINDING,
+				drawFragmentNames, DF_COUNT, b->fragmentOffset, &b->fragmentSize) ) {
+		common->Error("RB_GLSL_SetupDrawBlocks: unexpected uniform block layout");
+		return;
+	}
+	b->program = shader;
+	numDrawBlocks++;
+}
+
+static const drawBlocks_t* RB_GLSL_DrawBlocks(const shaderProgram_t* shader) {
+	int i;
+	for ( i = 0; i < numDrawBlocks; i++ ) {
+		if ( drawBlocks[i].program == shader ) {
+			return &drawBlocks[i];
+		}
+	}
+	return NULL;
+}
+
+/*
+=================
 RB_GLSL_InitShaders
 
 =================
@@ -431,6 +763,11 @@ static bool RB_GLSL_InitShaders(void) {
 		GL_UseProgram(NULL);
 	}
 
+	// the ES 3.1 renderer's interaction programs take their per-draw
+	// values from uniform blocks
+	glslDrawBlocks = glConfig.renderer == R_RENDERER_ES31;
+	numDrawBlocks = 0;
+
 	// the view-projection matrices of both views, rewritten once per view
 	if ( !viewMatricesBuffer ) {
 		qglGenBuffers(1, &viewMatricesBuffer);
@@ -444,7 +781,7 @@ static bool RB_GLSL_InitShaders(void) {
 	common->Printf("Loading Blinn interaction shader\n");
 	R_FreeGLSLShader(&interactionBlinnShader);
 
-	R_LoadGLSLShader(interactionShaderVP, &interactionBlinnShader, GL_VERTEX_SHADER);
+	R_LoadInteractionShader(interactionShaderVP, &interactionBlinnShader, GL_VERTEX_SHADER);
 	{
 		idStr fp( interactionBlinnShaderFP );
 
@@ -479,40 +816,43 @@ static bool RB_GLSL_InitShaders(void) {
 			mix += "  fragColor.a = var_Color.a;";
 			fp.Replace( stockLine, mix.c_str() );
 		}
-		R_LoadGLSLShader( fp.c_str(), &interactionBlinnShader, GL_FRAGMENT_SHADER );
+		R_LoadInteractionShader( fp.c_str(), &interactionBlinnShader, GL_FRAGMENT_SHADER );
 	}
 
 	if ( !R_LinkGLSLShader(&interactionBlinnShader, "interactionBlinn") && !R_ValidateGLSLProgram(&interactionBlinnShader)) {
 		return false;
 	} else {
 		RB_GLSL_GetUniformLocations(&interactionBlinnShader);
+		RB_GLSL_SetupDrawBlocks(&interactionBlinnShader);
 	}
 
 	// PBR interaction shader (r_usePBR 1 and 2)
 	common->Printf("Loading PBR interaction shader\n");
 	R_FreeGLSLShader(&interactionShader);
 
-	R_LoadGLSLShader(interactionShaderVP, &interactionShader, GL_VERTEX_SHADER);
-	R_LoadGLSLShader(interactionShaderFP, &interactionShader, GL_FRAGMENT_SHADER);
+	R_LoadInteractionShader(interactionShaderVP, &interactionShader, GL_VERTEX_SHADER);
+	R_LoadInteractionShader(interactionShaderFP, &interactionShader, GL_FRAGMENT_SHADER);
 
 	if ( !R_LinkGLSLShader(&interactionShader, "interaction") && !R_ValidateGLSLProgram(&interactionShader)) {
 		return false;
 	} else {
 		RB_GLSL_GetUniformLocations(&interactionShader);
+		RB_GLSL_SetupDrawBlocks(&interactionShader);
 	}
 
 	// main Interaction shader, Phong version
 	common->Printf("Loading main interaction shader (Phong) \n");
 	R_FreeGLSLShader(&interactionPhongShader);
 
-	R_LoadGLSLShader(interactionPhongShaderVP, &interactionPhongShader, GL_VERTEX_SHADER);
-	R_LoadGLSLShader(interactionPhongShaderFP, &interactionPhongShader, GL_FRAGMENT_SHADER);
+	R_LoadInteractionShader(interactionPhongShaderVP, &interactionPhongShader, GL_VERTEX_SHADER);
+	R_LoadInteractionShader(interactionPhongShaderFP, &interactionPhongShader, GL_FRAGMENT_SHADER);
 
 	if ( !R_LinkGLSLShader(&interactionPhongShader, "interactionPhong") &&
 	        !R_ValidateGLSLProgram(&interactionPhongShader)) {
 		return false;
 	} else {
 		RB_GLSL_GetUniformLocations(&interactionPhongShader);
+		RB_GLSL_SetupDrawBlocks(&interactionPhongShader);
 	}
 
 	// default diffuse shader
@@ -674,6 +1014,7 @@ void R_ReloadGLSLPrograms_f(const idCmdArgs& args) {
 			memset(programs[i], 0, sizeof(shaderProgram_t));
 		}
 		viewMatricesBuffer = 0;
+		drawBlockFallback[0] = drawBlockFallback[1] = 0;
 	}
 	backEnd.glState.currentProgram = NULL;
 
@@ -686,6 +1027,148 @@ void R_ReloadGLSLPrograms_f(const idCmdArgs& args) {
 
 /*
 ==================
+RB_GLSL_HDRParms
+
+Gamma, brightness and the luminance-aware clamp, packed as on GLES2:
+xyz brightness (through RB_HDRGammaBrightness, so the encoding fold is in),
+w 1/gamma, negative w for the luminance-aware clamp.
+==================
+*/
+static void RB_GLSL_HDRParms(float hp[4]) {
+	extern bool  hdr_luma_clamp;
+	hp[0] = hp[1] = hp[2] = r_gammaInShader.GetBool() ? RB_HDRGammaBrightness( false ) : 1.0f;
+	hp[3] = r_gammaInShader.GetBool() ? 1.0f / r_gamma.GetFloat() : 1.0f;
+	if ( hdr_luma_clamp ) {
+		hp[3] = -hp[3];
+	}
+}
+
+/*
+==================
+RB_GLSL_DrawBlockMember
+==================
+*/
+static ID_INLINE void RB_GLSL_DrawBlockMember(byte* block, GLint offset, const float* value, int count) {
+	if ( offset >= 0 ) {
+		memcpy(block + offset, value, count * sizeof(float));
+	}
+}
+
+/*
+==================
+RB_GLSL_BindDrawBlock
+
+size bytes of block data for the binding: from the ring, else rewritten in
+a buffer of its own.  Returns where to write them, valid until the draw.
+==================
+*/
+static byte* RB_GLSL_BindDrawBlock(GLuint binding, int slot, GLint size, byte* scratch) {
+	GLuint buffer;
+	int offset;
+	byte* p = (byte*) vertexCache.RingReserve(size, glCaps.uniformBufferAlign, &buffer, &offset);
+	if ( p ) {
+		glCaps.BindBufferRange(GL_UNIFORM_BUFFER, binding, buffer, offset, size);
+		return p;
+	}
+	if ( !drawBlockFallback[slot] ) {
+		qglGenBuffers(1, &drawBlockFallback[slot]);
+		glBindBuffer(GL_UNIFORM_BUFFER, drawBlockFallback[slot]);
+		glBufferData(GL_UNIFORM_BUFFER, glCaps.maxUniformBlockSize < 4096 ? glCaps.maxUniformBlockSize : 4096,
+				NULL, GL_STREAM_DRAW);
+	}
+	glCaps.BindBufferBase(GL_UNIFORM_BUFFER, binding, drawBlockFallback[slot]);
+	return scratch;
+}
+
+/*
+==================
+RB_GLSL_DrawInteractionBlocks
+
+The ES 3.1 renderer's interaction draw: the values RB_GLSL_DrawInteraction
+uploads, in the program's blocks.
+==================
+*/
+static void RB_GLSL_DrawInteractionBlocks(const drawInteraction_t* din, const drawBlocks_t* blocks) {
+	static const float colorIgnore[2] = { 0.0f, 1.0f };
+	static const float colorModulate[2] = { 1 / 255.0f, 0.0f };
+	static const float colorInverse[2] = { -1.0f / 255.0f, 1.0f };
+	static byte scratch[2][4096];
+	const viewEntity_t* space = din->surf->space;
+	const float depthHack = RB_GLSL_DepthHack(space);
+	const float* color;
+	byte* v;
+	byte* f;
+
+	switch ( din->vertexColor ) {
+	case SVC_MODULATE:
+		color = colorModulate;
+		break;
+	case SVC_INVERSE_MODULATE:
+		color = colorInverse;
+		break;
+	default:
+		color = colorIgnore;
+		break;
+	}
+
+	v = RB_GLSL_BindDrawBlock(DRAW_VERTEX_BINDING, 0, blocks->vertexSize, scratch[0]);
+	RB_GLSL_DrawBlockMember(v, blocks->vertexOffset[DV_MODEL_MATRIX], space->modelMatrix, 16);
+	RB_GLSL_DrawBlockMember(v, blocks->vertexOffset[DV_DEPTH_HACK], &depthHack, 1);
+	RB_GLSL_DrawBlockMember(v, blocks->vertexOffset[DV_LIGHT_PROJECTION], din->lightProjection.ToFloatPtr(), 16);
+	RB_GLSL_DrawBlockMember(v, blocks->vertexOffset[DV_COLOR_MODULATE], &color[0], 1);
+	RB_GLSL_DrawBlockMember(v, blocks->vertexOffset[DV_COLOR_ADD], &color[1], 1);
+	RB_GLSL_DrawBlockMember(v, blocks->vertexOffset[DV_LIGHT_ORIGIN], din->localLightOrigin.ToFloatPtr(), 4);
+	RB_GLSL_DrawBlockMember(v, blocks->vertexOffset[DV_VIEW_ORIGIN], din->localViewOrigin.ToFloatPtr(), 4);
+	RB_GLSL_DrawBlockMember(v, blocks->vertexOffset[DV_BUMP_S], din->bumpMatrix[0].ToFloatPtr(), 4);
+	RB_GLSL_DrawBlockMember(v, blocks->vertexOffset[DV_BUMP_T], din->bumpMatrix[1].ToFloatPtr(), 4);
+	RB_GLSL_DrawBlockMember(v, blocks->vertexOffset[DV_DIFFUSE_S], din->diffuseMatrix[0].ToFloatPtr(), 4);
+	RB_GLSL_DrawBlockMember(v, blocks->vertexOffset[DV_DIFFUSE_T], din->diffuseMatrix[1].ToFloatPtr(), 4);
+	RB_GLSL_DrawBlockMember(v, blocks->vertexOffset[DV_SPECULAR_S], din->specularMatrix[0].ToFloatPtr(), 4);
+	RB_GLSL_DrawBlockMember(v, blocks->vertexOffset[DV_SPECULAR_T], din->specularMatrix[1].ToFloatPtr(), 4);
+	if ( v == scratch[0] ) {
+		glBufferSubData(GL_UNIFORM_BUFFER, 0, blocks->vertexSize, v);
+	}
+
+	if ( blocks->fragmentSize ) {
+		/* the HDR specular boost, folded into the constant as
+		   RB_GLSL_DrawInteraction does */
+		const float specBoost = RB_HDRSpecularBoost();
+		float sc[4];
+		float hp[4];
+		sc[0] = din->specularColor[0] * specBoost;
+		sc[1] = din->specularColor[1] * specBoost;
+		sc[2] = din->specularColor[2] * specBoost;
+		sc[3] = din->specularColor[3];
+		RB_GLSL_HDRParms(hp);
+
+		f = RB_GLSL_BindDrawBlock(DRAW_FRAGMENT_BINDING, 1, blocks->fragmentSize, scratch[1]);
+		RB_GLSL_DrawBlockMember(f, blocks->fragmentOffset[DF_DIFFUSE_COLOR], din->diffuseColor.ToFloatPtr(), 4);
+		RB_GLSL_DrawBlockMember(f, blocks->fragmentOffset[DF_SPECULAR_COLOR],
+				specBoost != 1.0f ? sc : din->specularColor.ToFloatPtr(), 4);
+		RB_GLSL_DrawBlockMember(f, blocks->fragmentOffset[DF_HDR_PARMS], hp, 4);
+		RB_GLSL_DrawBlockMember(f, blocks->fragmentOffset[DF_SPECULAR_EXPONENT], &rbSpecularExponent, 1);
+		if ( f == scratch[1] ) {
+			glBufferSubData(GL_UNIFORM_BUFFER, 0, blocks->fragmentSize, f);
+		}
+	}
+
+	// the textures, as RB_GLSL_DrawInteraction binds them
+	din->bumpImage->Bind();
+	GL_SelectTexture(1);
+	din->lightFalloffImage->Bind();
+	GL_SelectTexture(2);
+	din->lightImage->Bind();
+	GL_SelectTexture(3);
+	din->diffuseImage->Bind();
+	GL_SelectTexture(4);
+	din->specularImage->Bind();
+	GL_SelectTexture(0);
+
+	RB_DrawElementsWithCounters(din->surf->geo);
+}
+
+/*
+==================
 RB_GLSL_DrawInteraction
 ==================
 */
@@ -694,6 +1177,14 @@ static void RB_GLSL_DrawInteraction(const drawInteraction_t* din) {
 	static const GLfloat one[1] = { 1 };
 	static const GLfloat oneScaled[1] = { 1 / 255.0f };
 	static const GLfloat negOneScaled[1] = { -1.0f / 255.0f };
+
+	if ( glslDrawBlocks ) {
+		const drawBlocks_t* blocks = RB_GLSL_DrawBlocks(backEnd.glState.currentProgram);
+		if ( blocks && blocks->vertexSize ) {
+			RB_GLSL_DrawInteractionBlocks(din, blocks);
+			return;
+		}
+	}
 
 	// load all the vertex program parameters
 	GL_Uniform4fv(offsetof(shaderProgram_t, localLightOrigin), din->localLightOrigin.ToFloatPtr());
@@ -744,13 +1235,8 @@ static void RB_GLSL_DrawInteraction(const drawInteraction_t* din) {
 	   xyz brightness (through RB_HDRGammaBrightness, so the encoding fold
 	   is in), w 1/gamma, negative w for the luminance-aware clamp. */
 	if ( backEnd.glState.currentProgram != NULL && backEnd.glState.currentProgram->hdrParms >= 0 ) {
-		extern bool  hdr_luma_clamp;
 		float hp[4];
-		hp[0] = hp[1] = hp[2] = r_gammaInShader.GetBool() ? RB_HDRGammaBrightness( false ) : 1.0f;
-		hp[3] = r_gammaInShader.GetBool() ? 1.0f / r_gamma.GetFloat() : 1.0f;
-		if ( hdr_luma_clamp ) {
-			hp[3] = -hp[3];
-		}
+		RB_GLSL_HDRParms(hp);
 		GL_Uniform4fv(offsetof(shaderProgram_t, hdrParms), hp);
 	}
 
@@ -979,6 +1465,9 @@ static void RB_GLSL_CreateDrawInteractions(const drawSurf_t* surf, const viewLig
 
 	// Set the specular exponent now (NB: it could be cached instead)
 	GL_Uniform1fv(offsetof(shaderProgram_t, specularExponent), &f);
+	rbSpecularExponent = f;
+	// with the blocks, each draw carries its space
+	const bool drawBlocksActive = glslDrawBlocks && RB_GLSL_DrawBlocks(backEnd.glState.currentProgram) != NULL;
 
 
 
@@ -996,7 +1485,7 @@ static void RB_GLSL_CreateDrawInteractions(const drawSurf_t* surf, const viewLig
 	for ( ; surf; surf = surf->nextOnLight ) {
 		// perform setup here that will not change over multiple interaction passes
 
-		if ( surf->space != backEnd.currentSpace ) {
+		if ( surf->space != backEnd.currentSpace && !drawBlocksActive ) {
 			RB_GLSL_SetSpace(surf->space);
 		}
 
@@ -1008,7 +1497,7 @@ static void RB_GLSL_CreateDrawInteractions(const drawSurf_t* surf, const viewLig
 		}
 
 		// set the vertex pointers
-		idDrawVert* ac = (idDrawVert*) vertexCache.Position(surf->geo->ambientCache);
+		idDrawVert* ac = (idDrawVert*) RB_GLSL_VertexBase(surf->geo->ambientCache, sizeof(idDrawVert));
 
 		GL_VertexAttribPointer(offsetof(shaderProgram_t, attr_Normal), 3, GL_FLOAT, false, sizeof(idDrawVert),
 		                       ac->normal.ToFloatPtr());
@@ -1076,7 +1565,7 @@ static void RB_T_GLSL_Shadow(const drawSurf_t* surf, const viewLight_t* vLight) 
 	}
 
 	GL_VertexAttribPointer(offsetof(shaderProgram_t, attr_Vertex), 4, GL_FLOAT, false, sizeof(shadowCache_t),
-	                       vertexCache.Position(surf->geo->shadowCache));
+	                       RB_GLSL_VertexBase(surf->geo->shadowCache, sizeof(shadowCache_t)));
 
 	// we always draw the sil planes, but we may not need to draw the front or rear caps
 	int numIndexes;
@@ -1389,7 +1878,7 @@ static void RB_T_GLSL_BasicFog(const drawSurf_t* surf, const viewLight_t* vLight
 		GL_UniformMatrix4fv(offsetof(shaderProgram_t, fogMatrix), fogMatrix.ToFloatPtr());
 	}
 
-	idDrawVert* ac = (idDrawVert*) vertexCache.Position(surf->geo->ambientCache);
+	idDrawVert* ac = (idDrawVert*) RB_GLSL_VertexBase(surf->geo->ambientCache, sizeof(idDrawVert));
 
 	GL_VertexAttribPointer(offsetof(shaderProgram_t, attr_Vertex), 3, GL_FLOAT, false, sizeof(idDrawVert),
 	                       ac->xyz.ToFloatPtr());
@@ -1614,7 +2103,7 @@ void RB_T_GLSL_FillDepthBuffer(const drawSurf_t* surf) {
 	GL_Uniform4fv(offsetof(shaderProgram_t, glColor), color);
 
 	// Get vertex data
-	idDrawVert* ac = (idDrawVert*) vertexCache.Position(surf->geo->ambientCache);
+	idDrawVert* ac = (idDrawVert*) RB_GLSL_VertexBase(surf->geo->ambientCache, sizeof(idDrawVert));
 
 	// Setup attribute pointers
 	GL_VertexAttribPointer(offsetof(shaderProgram_t, attr_Vertex), 3, GL_FLOAT, false, sizeof(idDrawVert),
@@ -1983,7 +2472,7 @@ void RB_GLSL_T_RenderShaderPasses(const drawSurf_t* surf) {
 	GL_Cull(shader->GetCullType());
 
 	// Location of vertex attributes data
-	const idDrawVert* const ac = (const idDrawVert* const) vertexCache.Position(surf->geo->ambientCache);
+	const idDrawVert* const ac = (const idDrawVert* const) RB_GLSL_VertexBase(surf->geo->ambientCache, sizeof(idDrawVert));
 
 	// get the expressions for conditionals / color / texcoords
 	const float* const regs = surf->shaderRegisters;
@@ -2498,10 +2987,10 @@ static void RB_T_GLSL_BlendLight(const drawSurf_t *surf, const viewLight_t* vLig
 
 	// This gets used for both blend lights and shadow draws
 	if (surf->geo->ambientCache) {
-		idDrawVert *ac = (idDrawVert *) vertexCache.Position(surf->geo->ambientCache);
+		idDrawVert *ac = (idDrawVert *) RB_GLSL_VertexBase(surf->geo->ambientCache, sizeof(idDrawVert));
 		GL_VertexAttribPointer(offsetof(shaderProgram_t, attr_Vertex), 3, GL_FLOAT, false, sizeof(idDrawVert), ac->xyz.ToFloatPtr());
 	} else if (surf->geo->shadowCache) {
-		shadowCache_t *sc = (shadowCache_t *) vertexCache.Position(surf->geo->shadowCache);
+		shadowCache_t *sc = (shadowCache_t *) RB_GLSL_VertexBase(surf->geo->shadowCache, sizeof(shadowCache_t));
 		GL_VertexAttribPointer(offsetof(shaderProgram_t, attr_Vertex), 3, GL_FLOAT, false, sizeof(shadowCache_t), sc->xyz.ToFloatPtr());
 	}
 
@@ -2718,6 +3207,10 @@ void RB_GLSL_PrepareShaders(void) {
 	// No shaders set by default
 	GL_UseProgram(NULL);
 
+	// the frontend may have moved them since the last view
+	RB_GLSL_ForgetAttribPointers();
+	backEnd.glState.baseVertex = 0;
+
 #if defined(LIBRETRO) && defined(BOOM3_VR)
 	// in VR every view draws into 2-layer targets, which only multiview programs can
 	if ( VR_Active() != glslMultiview ) {
@@ -2774,5 +3267,9 @@ shares the context and does not track them.
 */
 void RB_GLSL_EndFrame(void) {
 	glBindBufferBase(GL_UNIFORM_BUFFER, VIEW_MATRICES_BINDING, 0);
+	if ( glslDrawBlocks ) {
+		glBindBufferBase(GL_UNIFORM_BUFFER, DRAW_VERTEX_BINDING, 0);
+		glBindBufferBase(GL_UNIFORM_BUFFER, DRAW_FRAGMENT_BINDING, 0);
+	}
 	glBindBuffer(GL_UNIFORM_BUFFER, 0);
 }

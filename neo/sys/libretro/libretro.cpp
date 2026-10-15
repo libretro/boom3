@@ -3603,9 +3603,61 @@ static bool context_framebuffer_lock(void *data)
     return false;
 }
 
+/* The renderer the doom_renderer option names, as this build runs it.  It
+ * decides the context asked for, so it is read before that and kept for
+ * the session: changing it needs a restart. */
+static rendererKind_t libretro_renderer = R_RENDERER_ARB2;
+
+static rendererKind_t renderer_option(void)
+{
+#if defined(HAVE_OPENGLES3)
+   struct retro_variable var;
+   var.key   = "doom_renderer";
+   var.value = NULL;
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value
+         && !strcmp(var.value, "es31"))
+      return R_RENDERER_ES31;
+   return R_RENDERER_ES3;
+#elif defined(HAVE_OPENGLES)
+   return R_RENDERER_ES2;
+#else
+   return R_RENDERER_ARB2;
+#endif
+}
+
+rendererKind_t GLimp_RequestedRenderer(void)
+{
+   return libretro_renderer;
+}
+
 static bool initialize_opengl(void)
 {
    glsm_ctx_params_t params = {0};
+
+#if defined(HAVE_OPENGLES3)
+   /* ES 3.1 is asked for by version, which glsm's GLES set-up cannot do;
+    * a frontend that refuses it gets the ES 3.0 renderer's context */
+   if (libretro_renderer == R_RENDERER_ES31)
+   {
+      hw_render.context_type       = RETRO_HW_CONTEXT_OPENGLES_VERSION;
+      hw_render.version_major      = 3;
+      hw_render.version_minor      = 1;
+      hw_render.context_reset      = context_reset;
+      hw_render.context_destroy    = context_destroy;
+      hw_render.stencil            = true;
+      hw_render.depth              = true;
+      hw_render.bottom_left_origin = true;
+      hw_render.cache_context      = false;
+      if (environ_cb(RETRO_ENVIRONMENT_SET_HW_RENDER, &hw_render))
+      {
+         libretro_shared_context = environ_cb(RETRO_ENVIRONMENT_SET_HW_SHARED_CONTEXT, NULL);
+         return true;
+      }
+      log_cb(RETRO_LOG_WARN, "boom3: no OpenGL ES 3.1 context from the frontend; using the ES 3.0 renderer.\n");
+      libretro_renderer = R_RENDERER_ES3;
+      hw_render.version_minor = 0;
+   }
+#endif
 
    params.context_type 	   = get_hw_context_type();
    params.context_reset    = context_reset;
@@ -3734,6 +3786,8 @@ bool retro_load_game(const struct retro_game_info *info)
 		                | RETRO_SERIALIZATION_QUIRK_PLATFORM_DEPENDENT;
 		environ_cb(RETRO_ENVIRONMENT_SET_SERIALIZATION_QUIRKS, &quirks);
 	}
+
+	libretro_renderer = renderer_option();
 
 	hw_render.context_type    = get_hw_context_type();
 	hw_render.context_reset   = context_reset;

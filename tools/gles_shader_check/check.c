@@ -31,6 +31,8 @@
 #include <EGL/eglext.h>
 #include <GLES3/gl3.h>
 
+#include "glsl_blocks.h"
+
 #ifndef EGL_PLATFORM_SURFACELESS_MESA
 #define EGL_PLATFORM_SURFACELESS_MESA 0x31DD
 #endif
@@ -180,6 +182,18 @@ static GLuint compile(GLenum type, const char *src, const char *what)
 
 #define WANT_GLES3   1   /* ViewMatrices block and u_depthHack */
 #define WANT_HDR     2   /* u_hdrParms */
+#define WANT_BLOCKS  4   /* the ES 3.1 renderer's DrawVertex/DrawFragment blocks */
+
+/* the uniforms the ES 3.1 renderer moves into its per-draw blocks, as
+ * draw_gles3_multiview.cpp names them */
+static const char *const draw_vertex_names[] = {
+   "u_modelMatrix", "u_depthHack", "u_lightProjection", "u_colorModulate", "u_colorAdd",
+   "u_lightOrigin", "u_viewOrigin", "u_bumpMatrixS", "u_bumpMatrixT", "u_diffuseMatrixS",
+   "u_diffuseMatrixT", "u_specularMatrixS", "u_specularMatrixT"
+};
+static const char *const draw_fragment_names[] = {
+   "u_diffuseColor", "u_specularColor", "u_hdrParms", "u_specularExponent"
+};
 
 static void check_program(const char *what, const char *vs_src, const char *fs_src,
       unsigned want)
@@ -240,13 +254,36 @@ static void check_program(const char *what, const char *vs_src, const char *fs_s
                failures++;
             }
          }
-         if (glGetUniformLocation(prog, "u_depthHack") < 0)
+         if (!(want & WANT_BLOCKS) && glGetUniformLocation(prog, "u_depthHack") < 0)
          {
             fprintf(stderr, "FAIL %s: no active u_depthHack\n", what);
             failures++;
          }
       }
-      if ((want & WANT_HDR) && glGetUniformLocation(prog, "u_hdrParms") < 0)
+      if (want & WANT_BLOCKS)
+      {
+         /* every per-draw value comes from the blocks */
+         int i;
+         if (glGetUniformBlockIndex(prog, "DrawVertex") == GL_INVALID_INDEX
+               || glGetUniformBlockIndex(prog, "DrawFragment") == GL_INVALID_INDEX)
+         {
+            fprintf(stderr, "FAIL %s: no DrawVertex or DrawFragment block\n", what);
+            failures++;
+         }
+         for (i = 0; i < (int)(sizeof(draw_vertex_names) / sizeof(draw_vertex_names[0])); i++)
+            if (glGetUniformLocation(prog, draw_vertex_names[i]) >= 0)
+            {
+               fprintf(stderr, "FAIL %s: %s is outside the blocks\n", what, draw_vertex_names[i]);
+               failures++;
+            }
+         for (i = 0; i < (int)(sizeof(draw_fragment_names) / sizeof(draw_fragment_names[0])); i++)
+            if (glGetUniformLocation(prog, draw_fragment_names[i]) >= 0)
+            {
+               fprintf(stderr, "FAIL %s: %s is outside the blocks\n", what, draw_fragment_names[i]);
+               failures++;
+            }
+      }
+      else if ((want & WANT_HDR) && glGetUniformLocation(prog, "u_hdrParms") < 0)
       {
          fprintf(stderr, "FAIL %s: no active u_hdrParms\n", what);
          failures++;
@@ -381,6 +418,25 @@ static void check_set(const char *subdir, const struct pairing *set, int gles3)
          sprintf(what, "%s %s (multiview)", subdir, p->name);
          check_program(what, mv, fs, p->want);
          free(mv);
+      }
+      /* the ES 3.1 renderer's interaction programs, fed from blocks */
+      if (gles3 && vs && fs && (p->want & WANT_HDR))
+      {
+         char *bvs = glsl_uniforms_to_block(vs, "DrawVertex", draw_vertex_names,
+               (int)(sizeof(draw_vertex_names) / sizeof(draw_vertex_names[0])));
+         char *bfs = glsl_uniforms_to_block(fs, "DrawFragment", draw_fragment_names,
+               (int)(sizeof(draw_fragment_names) / sizeof(draw_fragment_names[0])));
+         sprintf(what, "%s %s (ES 3.1 blocks)", subdir, p->name);
+         check_program(what, bvs, bfs, p->want | WANT_BLOCKS);
+         if (have_multiview)
+         {
+            char *mv = multiview_variant(bvs);
+            sprintf(what, "%s %s (ES 3.1 blocks, multiview)", subdir, p->name);
+            check_program(what, mv, bfs, p->want | WANT_BLOCKS);
+            free(mv);
+         }
+         free(bvs);
+         free(bfs);
       }
       free(vs);
       free(fs);

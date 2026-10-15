@@ -44,6 +44,14 @@ If you have questions concerning this license or the applicable additional terms
 
 // Contains variables specific to the OpenGL configuration being run right now.
 // These are constant once the OpenGL subsystem is initialized.
+// the renderer a context runs: the ARB2 path, or one of the GLSL ones
+typedef enum {
+	R_RENDERER_ARB2,
+	R_RENDERER_ES2,
+	R_RENDERER_ES3,
+	R_RENDERER_ES31		// ES 3.1 on GLES, GL 4.3 on the desktop
+} rendererKind_t;
+
 typedef struct glconfig_s {
 	const char			*renderer_string;
 	const char			*vendor_string;
@@ -85,6 +93,8 @@ typedef struct glconfig_s {
 	int					vidWidth, vidHeight;	// passed to R_BeginFrame
 
 	bool				allowARB2Path;
+
+	rendererKind_t		renderer;
 
 	bool				isInitialized;
 

@@ -39,6 +39,39 @@ If you have questions concerning this license or the applicable additional terms
 static const int	FRAME_MEMORY_BYTES = 0x200000;
 static const int	EXPAND_HEADERS = 1024;
 
+// the streaming tier: each frame's share of the ring, and the size of the
+// shared buffers static data is packed into
+static const int	STREAM_FRAME_BYTES = 0x800000;
+static const int	ARENA_BYTES = 0x1000000;
+
+#ifndef GL_COPY_READ_BUFFER
+#define GL_COPY_READ_BUFFER			0x8F36
+#endif
+#ifndef GL_COPY_WRITE_BUFFER
+#define GL_COPY_WRITE_BUFFER		0x8F37
+#endif
+#ifndef GL_MAP_PERSISTENT_BIT
+#define GL_MAP_PERSISTENT_BIT		0x0040
+#endif
+#ifndef GL_MAP_COHERENT_BIT
+#define GL_MAP_COHERENT_BIT			0x0080
+#endif
+#ifndef GL_MAP_INVALIDATE_RANGE_BIT
+#define GL_MAP_INVALIDATE_RANGE_BIT	0x0004
+#endif
+#ifndef GL_MAP_UNSYNCHRONIZED_BIT
+#define GL_MAP_UNSYNCHRONIZED_BIT	0x0020
+#endif
+#ifndef GL_SYNC_GPU_COMMANDS_COMPLETE
+#define GL_SYNC_GPU_COMMANDS_COMPLETE	0x9117
+#endif
+#ifndef GL_SYNC_FLUSH_COMMANDS_BIT
+#define GL_SYNC_FLUSH_COMMANDS_BIT	0x00000001
+#endif
+#ifndef GL_TIMEOUT_EXPIRED
+#define GL_TIMEOUT_EXPIRED			0x911B
+#endif
+
 idCVar idVertexCache::r_showVertexCache( "r_showVertexCache", "0", CVAR_INTEGER|CVAR_RENDERER, "" );
 idCVar idVertexCache::r_vertexBufferMegs( "r_vertexBufferMegs", "32", CVAR_INTEGER|CVAR_RENDERER, "" );
 
@@ -74,7 +107,13 @@ void idVertexCache::ActuallyFree( vertCache_t *block ) {
 		staticAllocTotal -= block->size;
 		staticCountTotal--;
 
-		if ( block->vbo ) {
+		if ( block->arena >= 0 ) {
+			// the range goes back to its buffer; the header keeps its own
+			range_alloc_free( &arenas[block->arena].ranges, (unsigned int)block->offset, (unsigned int)block->size );
+			block->arena = -1;
+			block->vbo = block->ownVbo;
+			block->offset = 0;
+		} else if ( block->vbo ) {
 		} else if ( block->virtMem ) {
 			Mem_Free( block->virtMem );
 			block->virtMem = NULL;
@@ -219,6 +258,15 @@ void idVertexCache::Init() {
 	frameBytes = FRAME_MEMORY_BYTES;
 	staticAllocTotal = 0;
 
+	InitStreaming();
+	if ( streaming ) {
+		// the frame's data goes through the ring, not the temp buffers
+		frameBytes = ringSegmentBytes;
+		tempBuffers[0] = tempBuffers[1] = NULL;
+		EndFrame();
+		return;
+	}
+
 	byte	*junk = (byte *)Mem_Alloc( frameBytes );
 	for ( int i = 0 ; i < NUM_VERTEX_FRAMES ; i++ ) {
 		allocatingTempBuffer = true;	// force the alloc to use GL_STREAM_DRAW_ARB
@@ -284,9 +332,12 @@ void idVertexCache::Alloc( void *data, int size, vertCache_t **buffer, bool inde
 			block->next->prev = block;
 			block->prev->next = block;
 
+			block->vbo = 0;
 			if( !virtualMemory ) {
 				qglGenBuffersARB( 1, & block->vbo );
 			}
+			block->ownVbo = block->vbo;
+			block->arena = -1;
 		}
 	}
 
@@ -320,6 +371,11 @@ void idVertexCache::Alloc( void *data, int size, vertCache_t **buffer, bool inde
 
 	block->indexBuffer = indexBuffer;
 	block->indexType = indexBuffer ? GL_INDEX_TYPE : 0;
+
+	// the streaming tier packs it into a shared buffer when it fits one
+	if ( streaming && ArenaAlloc( block, data, size, indexBuffer ) ) {
+		return;
+	}
 
 	// copy the data
 	if ( block->vbo ) {
@@ -435,7 +491,10 @@ vertCache_t	*idVertexCache::AllocFrameTemp( void *data, int size ) {
 		common->Error( "idVertexCache::AllocFrameTemp: size = %i\n", size );
 	}
 
-	if ( dynamicAllocThisFrame + size > frameBytes ) {
+	// in the ring a vertex block starts at a multiple of every stride, for
+	// base-vertex draws
+	const int ringBytes = streaming ? ( ( size + VERTEX_ALIGN - 1 ) / VERTEX_ALIGN ) * VERTEX_ALIGN : size;
+	if ( streaming ? ringUsed + ringBytes > ringSegmentBytes : dynamicAllocThisFrame + size > frameBytes ) {
 		// if we don't have enough room in the temp block, allocate a static block,
 		// but immediately free it so it will get freed at the next frame
 		tempOverflow = true;
@@ -455,6 +514,8 @@ vertCache_t	*idVertexCache::AllocFrameTemp( void *data, int size ) {
 			block->prev = &freeDynamicHeaders;
 			block->next->prev = block;
 			block->prev->next = block;
+			block->ownVbo = 0;
+			block->arena = -1;
 		}
 	}
 
@@ -476,6 +537,16 @@ vertCache_t	*idVertexCache::AllocFrameTemp( void *data, int size ) {
 	dynamicCountThisFrame++;
 	block->user = NULL;
 	block->frameUsed = 0;
+
+	if ( streaming ) {
+		block->virtMem = NULL;
+		block->vbo = ringBuffer;
+		block->offset = ringSegment * ringSegmentBytes + ringUsed;
+		ringUsed += ringBytes;
+		SIMDProcessor->Memcpy( RingMemory( (int)block->offset, size ), data, size );
+		RingRelease();
+		return block;
+	}
 
 	// copy the data
 	block->virtMem = tempBuffers[listNum]->virtMem;
@@ -521,7 +592,11 @@ void idVertexCache::EndFrame() {
 	currentFrame = tr.frameCount;
 	listNum = currentFrame % NUM_VERTEX_FRAMES;
 
-	if( !virtualMemory ) {
+	if ( streaming ) {
+		RingEndFrame();
+		ForceBindArray( 0 );
+		ForceBindElement( 0 );
+	} else if( !virtualMemory ) {
 		/* The temp buffer this frame streams into was last drawn from
 		 * NUM_VERTEX_FRAMES frames ago and may still be in flight: orphan
 		 * its storage before the first upload, so the driver hands back
@@ -587,6 +662,15 @@ void idVertexCache::List( void ) {
 	common->Printf( "%5i free static headers\n", numFreeStaticHeaders );
 	common->Printf( "%5i free dynamic headers\n", numFreeDynamicHeaders );
 
+	if ( streaming ) {
+		int i;
+		common->Printf( "Ring: %i segments of %ik, %s\n", RING_SEGMENTS, ringSegmentBytes / 1024,
+			ringMemory ? "persistently mapped" : "mapped per write" );
+		for ( i = 0; i < numArenas; i++ ) {
+			common->Printf( "Shared %s buffer %i: %ik of %ik used\n", arenas[i].indexes ? "index" : "vertex",
+				i, arenas[i].ranges.used / 1024, arenas[i].ranges.capacity / 1024 );
+		}
+	}
 	if ( !virtualMemory  ) {
 		common->Printf( "Vertex cache is in ARB_vertex_buffer_object memory (FAST).\n");
 	} else {
@@ -610,6 +694,328 @@ just for gfxinfo printing
 bool idVertexCache::IsFast() {
 	if ( virtualMemory ) {
 		return false;
+	}
+	return true;
+}
+
+/*
+==============================================================================
+
+The streaming tier (the ES 3.1 / GL 4.3 renderer)
+
+Static data is packed into a few large shared buffers, so the surfaces of a
+pass mostly share one buffer: their attribute pointers are set once and each
+draws with a base vertex.  Uploads into a shared buffer go through the ring
+and a GPU-side copy, which the driver orders after the draws already queued
+from that buffer, so the CPU never waits on it and nothing duplicates it.
+
+Every frame's temporary data is written straight into one ring buffer,
+persistently mapped where the context allows.  The ring holds
+RING_SEGMENTS frames; a fence at the end of each frame tells when the GPU
+is done with its segment, which the frontend then reuses.
+
+==============================================================================
+*/
+
+/*
+==============
+idVertexCache::InitStreaming
+==============
+*/
+void idVertexCache::InitStreaming() {
+	int i;
+
+	// what the previous context had died with it
+	streaming = false;
+	numArenas = 0;
+	ringBuffer = 0;
+	ringMemory = NULL;
+	ringSegment = 0;
+	ringUsed = 0;
+	ringPendingBytes = 0;
+	ringPendingMapped = false;
+	for ( i = 0; i < RING_SEGMENTS; i++ ) {
+		ringFences[i] = NULL;
+	}
+	for ( i = 0; i < MAX_ARENAS; i++ ) {
+		range_alloc_deinit( &arenas[i].ranges );
+		arenas[i].buffer = 0;
+	}
+
+	if ( virtualMemory || glConfig.renderer != R_RENDERER_ES31 ) {
+		return;
+	}
+
+	// segments start at a multiple of VERTEX_ALIGN and of 256, so the
+	// blocks in them keep both alignments
+	ringSegmentBytes = ( STREAM_FRAME_BYTES / ( VERTEX_ALIGN * 16 ) ) * ( VERTEX_ALIGN * 16 );
+	arenaBytes = ARENA_BYTES;
+	const int total = ringSegmentBytes * RING_SEGMENTS;
+
+	qglGenBuffersARB( 1, &ringBuffer );
+	qglBindBufferARB( GL_COPY_WRITE_BUFFER, ringBuffer );
+	if ( glCaps.bufferStorage ) {
+		const GLbitfield flags = GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT;
+		glCaps.BufferStorage( GL_COPY_WRITE_BUFFER, total, NULL, flags );
+		ringMemory = (byte *)glCaps.MapBufferRange( GL_COPY_WRITE_BUFFER, 0, total, flags );
+		if ( !ringMemory ) {
+			// immutable now: start over with a buffer that is mapped per write
+			qglBindBufferARB( GL_COPY_WRITE_BUFFER, 0 );
+			qglDeleteBuffersARB( 1, &ringBuffer );
+			qglGenBuffersARB( 1, &ringBuffer );
+			qglBindBufferARB( GL_COPY_WRITE_BUFFER, ringBuffer );
+		}
+	}
+	if ( !ringMemory ) {
+		qglBufferDataARB( GL_COPY_WRITE_BUFFER, total, NULL, GL_STREAM_DRAW_ARB );
+	}
+	qglBindBufferARB( GL_COPY_WRITE_BUFFER, 0 );
+
+	streaming = true;
+	common->Printf( "vertex cache: %i x %ik %s ring, static data in %ik shared buffers%s\n",
+		RING_SEGMENTS, ringSegmentBytes / 1024, ringMemory ? "persistent" : "mapped",
+		arenaBytes / 1024, glCaps.baseVertex ? ", base-vertex draws" : "" );
+}
+
+/*
+==============
+idVertexCache::RingMemory
+
+Where to write size bytes at offset in the ring, until RingRelease.
+==============
+*/
+void *idVertexCache::RingMemory( int offset, int size ) {
+	if ( ringMemory ) {
+		return ringMemory + offset;
+	}
+	ringPendingOffset = offset;
+	ringPendingBytes = size;
+	qglBindBufferARB( GL_COPY_WRITE_BUFFER, ringBuffer );
+	void *p = glCaps.MapBufferRange( GL_COPY_WRITE_BUFFER, offset, size,
+		GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_RANGE_BIT | GL_MAP_UNSYNCHRONIZED_BIT );
+	ringPendingMapped = p != NULL;
+	if ( p ) {
+		return p;
+	}
+	// a driver that cannot map gets the bytes uploaded at release
+	if ( ringScratchBytes < size ) {
+		Mem_Free( ringScratch );
+		ringScratchBytes = size;
+		ringScratch = (byte *)Mem_Alloc( ringScratchBytes );
+	}
+	return ringScratch;
+}
+
+/*
+==============
+idVertexCache::RingRelease
+==============
+*/
+void idVertexCache::RingRelease() {
+	if ( ringMemory || !ringPendingBytes ) {
+		return;
+	}
+	if ( ringPendingMapped ) {
+		glCaps.UnmapBuffer( GL_COPY_WRITE_BUFFER );
+	} else {
+		qglBufferSubDataARB( GL_COPY_WRITE_BUFFER, ringPendingOffset, ringPendingBytes, ringScratch );
+	}
+	qglBindBufferARB( GL_COPY_WRITE_BUFFER, 0 );
+	ringPendingBytes = 0;
+	ringPendingMapped = false;
+}
+
+/*
+==============
+idVertexCache::RingEndFrame
+
+The frame's segment is fenced; the next one is waited for, which is
+normally long since done.
+==============
+*/
+void idVertexCache::RingEndFrame() {
+	if ( ringFences[ringSegment] ) {
+		glCaps.DeleteSync( ringFences[ringSegment] );
+	}
+	ringFences[ringSegment] = glCaps.FenceSync( GL_SYNC_GPU_COMMANDS_COMPLETE, 0 );
+
+	ringSegment = ( ringSegment + 1 ) % RING_SEGMENTS;
+	ringUsed = 0;
+
+	gl_caps_sync_t fence = ringFences[ringSegment];
+	if ( fence ) {
+		// a second per try; a GPU that is that far behind is lost anyway,
+		// and the segment is reused rather than the frame hanging
+		int tries;
+		for ( tries = 0; tries < 4; tries++ ) {
+			const GLenum r = glCaps.ClientWaitSync( fence, GL_SYNC_FLUSH_COMMANDS_BIT, 1000000000ull );
+			if ( r != GL_TIMEOUT_EXPIRED ) {
+				break;
+			}
+		}
+		glCaps.DeleteSync( fence );
+		ringFences[ringSegment] = NULL;
+	}
+}
+
+/*
+==============
+idVertexCache::RingReserve
+==============
+*/
+void *idVertexCache::RingReserve( int size, int align, GLuint *buffer, int *offset ) {
+	if ( !ringMemory ) {
+		return NULL;
+	}
+	const int base = ringSegment * ringSegmentBytes;
+	const int at = ( ( base + ringUsed + align - 1 ) / align ) * align;
+	if ( at + size > base + ringSegmentBytes ) {
+		return NULL;
+	}
+	// the next vertex block keeps its alignment
+	ringUsed = ( ( at + size - base + VERTEX_ALIGN - 1 ) / VERTEX_ALIGN ) * VERTEX_ALIGN;
+	if ( ringUsed > ringSegmentBytes ) {
+		ringUsed = ringSegmentBytes;
+	}
+	*buffer = ringBuffer;
+	*offset = at;
+	return ringMemory + at;
+}
+
+/*
+==============
+idVertexCache::BaseVertex
+==============
+*/
+int idVertexCache::BaseVertex( vertCache_t *buffer, int stride ) {
+	if ( !streaming || !glCaps.baseVertex || !buffer || !buffer->vbo
+			|| buffer->indexBuffer || ( buffer->offset % stride ) != 0 ) {
+		return -1;
+	}
+	BindArray( buffer->vbo );
+	return (int)( buffer->offset / stride );
+}
+
+/*
+==============
+idVertexCache::ArenaUpload
+
+data into buffer at offset, as 16-bit indexes when shortIndexes (data then
+holds size bytes of glIndex_t).  Through the ring and a GPU copy when the
+frame's segment has room; at level load it often has not, and nothing draws
+from the buffer yet, so a direct upload costs nothing there.
+==============
+*/
+void idVertexCache::ArenaUpload( GLuint buffer, int offset, const void *data, int size, bool shortIndexes ) {
+	const int count = size / (int)sizeof( glIndex_t );
+	const int bytes = shortIndexes ? count * (int)sizeof( unsigned short ) : size;
+	const glIndex_t *src = (const glIndex_t *)data;
+	int i;
+
+	if ( ringUsed + bytes <= ringSegmentBytes ) {
+		const int at = ringSegment * ringSegmentBytes + ringUsed;
+		// keep the ring's vertex blocks at their alignment
+		ringUsed += ( ( bytes + VERTEX_ALIGN - 1 ) / VERTEX_ALIGN ) * VERTEX_ALIGN;
+		if ( ringUsed > ringSegmentBytes ) {
+			ringUsed = ringSegmentBytes;
+		}
+		void *dst = RingMemory( at, bytes );
+		if ( shortIndexes ) {
+			unsigned short *d = (unsigned short *)dst;
+			for ( i = 0; i < count; i++ ) {
+				d[i] = (unsigned short)src[i];
+			}
+		} else {
+			SIMDProcessor->Memcpy( dst, data, bytes );
+		}
+		RingRelease();
+		qglBindBufferARB( GL_COPY_READ_BUFFER, ringBuffer );
+		qglBindBufferARB( GL_COPY_WRITE_BUFFER, buffer );
+		glCaps.CopyBufferSubData( GL_COPY_READ_BUFFER, GL_COPY_WRITE_BUFFER, at, offset, bytes );
+		qglBindBufferARB( GL_COPY_READ_BUFFER, 0 );
+		qglBindBufferARB( GL_COPY_WRITE_BUFFER, 0 );
+		return;
+	}
+
+	qglBindBufferARB( GL_COPY_WRITE_BUFFER, buffer );
+	if ( shortIndexes ) {
+		unsigned short *d = (unsigned short *)Mem_Alloc( bytes );
+		for ( i = 0; i < count; i++ ) {
+			d[i] = (unsigned short)src[i];
+		}
+		qglBufferSubDataARB( GL_COPY_WRITE_BUFFER, offset, bytes, d );
+		Mem_Free( d );
+	} else {
+		qglBufferSubDataARB( GL_COPY_WRITE_BUFFER, offset, bytes, data );
+	}
+	qglBindBufferARB( GL_COPY_WRITE_BUFFER, 0 );
+}
+
+/*
+==============
+idVertexCache::ArenaAlloc
+
+Puts a static block in a shared buffer; false when it is too large for one
+or no buffer can be had, and it gets its own.
+==============
+*/
+bool idVertexCache::ArenaAlloc( vertCache_t *block, const void *data, int size, bool indexBuffer ) {
+	bool shortIndexes = false;
+	int bytes, align, i;
+	unsigned int at = 0;
+
+	if ( indexBuffer ) {
+		const glIndex_t *src = (const glIndex_t *)data;
+		const int count = size / (int)sizeof( glIndex_t );
+		shortIndexes = ( size % (int)sizeof( glIndex_t ) ) == 0;
+		for ( i = 0; i < count && shortIndexes; i++ ) {
+			shortIndexes = (unsigned int)src[i] <= 0xffffu;
+		}
+		bytes = shortIndexes ? count * (int)sizeof( unsigned short ) : size;
+		bytes = ( bytes + 3 ) & ~3;
+		align = 4;
+	} else {
+		bytes = ( ( size + VERTEX_ALIGN - 1 ) / VERTEX_ALIGN ) * VERTEX_ALIGN;
+		align = VERTEX_ALIGN;
+	}
+	if ( bytes > arenaBytes / 2 ) {
+		return false;
+	}
+
+	for ( i = 0; i < numArenas; i++ ) {
+		if ( arenas[i].indexes == indexBuffer
+				&& range_alloc_alloc( &arenas[i].ranges, (unsigned int)bytes, (unsigned int)align, &at ) ) {
+			break;
+		}
+	}
+	if ( i == numArenas ) {
+		if ( numArenas == MAX_ARENAS ) {
+			return false;
+		}
+		arena_t *a = &arenas[numArenas];
+		if ( !range_alloc_init( &a->ranges, (unsigned int)arenaBytes ) ) {
+			return false;
+		}
+		qglGenBuffersARB( 1, &a->buffer );
+		qglBindBufferARB( GL_COPY_WRITE_BUFFER, a->buffer );
+		qglBufferDataARB( GL_COPY_WRITE_BUFFER, arenaBytes, NULL, GL_STATIC_DRAW_ARB );
+		qglBindBufferARB( GL_COPY_WRITE_BUFFER, 0 );
+		a->indexes = indexBuffer;
+		numArenas++;
+		if ( !range_alloc_alloc( &a->ranges, (unsigned int)bytes, (unsigned int)align, &at ) ) {
+			return false;
+		}
+	}
+
+	ArenaUpload( arenas[i].buffer, (int)at, data, size, shortIndexes );
+
+	staticAllocTotal += bytes - block->size;
+	block->size = bytes;
+	block->arena = i;
+	block->vbo = arenas[i].buffer;
+	block->offset = at;
+	if ( shortIndexes ) {
+		block->indexType = GL_UNSIGNED_SHORT;
 	}
 	return true;
 }

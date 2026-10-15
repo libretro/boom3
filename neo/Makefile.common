@@ -420,6 +420,9 @@ SOURCES_CXX	:=\
 	$(SRC_GAME) \
 
 SOURCES_C	:=\
+	$(CORE_DIR)/renderer/gl_caps.c \
+	$(CORE_DIR)/renderer/glsl_blocks.c \
+	$(CORE_DIR)/renderer/range_alloc.c \
 	$(LIBRETRO_COMM_DIR)/formats/data_transfer.c \
 	$(LIBRETRO_COMM_DIR)/memmap/memmap.c \
 	$(SRC_GLAD) \

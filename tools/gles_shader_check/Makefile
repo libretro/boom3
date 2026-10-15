@@ -10,7 +10,7 @@
 
 CC      ?= cc
 CFLAGS  ?= -O1 -g
-CFLAGS  += -std=c89 -pedantic -Wall -Wno-long-long -Wno-overlength-strings
+CFLAGS  += -std=c89 -pedantic -Wall -Wno-long-long -Wno-overlength-strings -I../../neo/renderer
 LIBS     = -lEGL -lGLESv2
 
 TARGET = gles_shader_check
@@ -21,8 +21,8 @@ endif
 
 all: $(TARGET)
 
-$(TARGET): check.c
-	$(CC) $(CFLAGS) -o $@ check.c $(LIBS)
+$(TARGET): check.c ../../neo/renderer/glsl_blocks.c ../../neo/renderer/glsl_blocks.h
+	$(CC) $(CFLAGS) -o $@ check.c ../../neo/renderer/glsl_blocks.c $(LIBS)
 
 check: $(TARGET)
 	./$(TARGET) ../../neo/renderer

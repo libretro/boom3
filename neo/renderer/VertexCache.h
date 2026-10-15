@@ -28,6 +28,8 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "framework/CVarSystem.h"
 #include "renderer/qgl.h"
+#include "renderer/gl_caps.h"
+#include "renderer/range_alloc.h"
 
 // vertex cache calls should only be made by the front end
 
@@ -42,6 +44,8 @@ typedef enum {
 
 typedef struct vertCache_s {
 	GLuint			vbo;
+	GLuint			ownVbo;				// the header's own buffer; vbo names a shared one while the block lives in it
+	int				arena;				// the shared buffer the block lives in, or -1
 	void			*virtMem;			// only one of vbo / virtMem will be set
 	bool			indexBuffer;		// holds indexes instead of vertexes
 	GLenum			indexType;			// GL_UNSIGNED_SHORT or GL_UNSIGNED_INT for an index buffer
@@ -116,7 +120,47 @@ public:
 	// listVertexCache calls this
 	void			List();
 
+	// The ES 3.1 / GL 4.3 renderer's buffers: static data packed into a few
+	// large buffers, every frame's data streamed through one ring.
+	bool			Streaming() const { return streaming; }
+
+	// the buffer GL_ARRAY_BUFFER holds, or UNKNOWN_BINDING when that is
+	// not known (InvalidateBindings)
+	GLuint			BoundArray() const { return boundArray; }
+	static const GLuint UNKNOWN_BINDING = 0xffffffffu;
+
+	// The base vertex to draw a vertex block with, its vertexes being
+	// stride bytes apart: the attribute pointers then start at the buffer,
+	// which is bound, so surfaces in the same buffer share them.  -1 when
+	// the block has to be drawn through Position() instead.
+	int				BaseVertex( vertCache_t *buffer, int stride );
+
+	// size bytes of the frame's ring at a multiple of align, written
+	// through the pointer and read by the GPU as they are; buffer and offset
+	// name them for GL.  NULL when the ring is full or not persistently
+	// mapped, which the caller takes as "draw without the ring".
+	void *			RingReserve( int size, int align, GLuint *buffer, int *offset );
+
 private:
+	static const int RING_SEGMENTS = 3;		// frames the ring holds before it waits on the GPU
+	static const int MAX_ARENAS = 64;
+	// a vertex block in a shared buffer starts at a multiple of every stride
+	// the backends draw vertexes with (idDrawVert's 60, shadowCache_t's 16)
+	static const int VERTEX_ALIGN = 240;
+
+	typedef struct arena_s {
+		range_alloc_t	ranges;
+		GLuint			buffer;
+		bool			indexes;
+	} arena_t;
+
+	void			InitStreaming();
+	bool			ArenaAlloc( vertCache_t *block, const void *data, int size, bool indexBuffer );
+	void			ArenaUpload( GLuint buffer, int offset, const void *data, int size, bool shortIndexes );
+	void *			RingMemory( int offset, int size );
+	void			RingRelease();
+	void			RingEndFrame();
+
 	void			InitMemoryBlocks( int size );
 	void			ActuallyFree( vertCache_t *block );
 	// bind, skipping it when the cache says the buffer is already bound
@@ -126,7 +170,6 @@ private:
 	void			ForceBindArray( GLuint vbo );
 	void			ForceBindElement( GLuint vbo );
 
-	static const GLuint UNKNOWN_BINDING = 0xffffffffu;
 	GLuint			boundArray;				// GL_ARRAY_BUFFER, or UNKNOWN_BINDING
 	GLuint			boundElement;			// GL_ELEMENT_ARRAY_BUFFER, or UNKNOWN_BINDING
 
@@ -161,6 +204,22 @@ private:
 											// staticHeaders.next is most recently used
 
 	int				frameBytes;				// for each of NUM_VERTEX_FRAMES frames
+
+	arena_t			arenas[MAX_ARENAS];
+	gl_caps_sync_t	ringFences[RING_SEGMENTS];
+	byte *			ringMemory;				// the ring's persistent mapping, or NULL
+	byte *			ringScratch;			// where RingMemory writes when the ring cannot be mapped
+	int				ringScratchBytes;
+	int				ringPendingOffset;		// what RingRelease has to put in place
+	int				ringPendingBytes;
+	bool			ringPendingMapped;		// mapped, rather than in ringScratch
+	int				numArenas;
+	int				arenaBytes;				// size of each shared buffer
+	GLuint			ringBuffer;
+	int				ringSegmentBytes;
+	int				ringSegment;			// the segment this frame writes
+	int				ringUsed;				// bytes of it handed out
+	bool			streaming;
 };
 
 extern	idVertexCache	vertexCache;
