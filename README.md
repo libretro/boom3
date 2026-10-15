@@ -226,13 +226,15 @@ clean build** — the Makefile has no dependency tracking.
 
 VR mode requires pak399.pk4 (https://github.com/Team-Beef-Studios/Doom3Quest).
 
-They can be found here: https://github.com/libretro/boom3/tools/vr_paks/compiled
-and must be installed relative to your base pk4s:
+They can be found here: https://github.com/libretro/boom3/tree/master/tools/vr_paks/compiled
+(or built from `vr/` with `tools/vr_paks/make_vr_paks.sh`) and must be
+installed beside the game's own directories:
 
 ```
 e.g. base/
      base_vr/pak399.pk4
-     demo/
+     d3xp/
+     d3xp_vr/pak399roe.pk4
 ```
 
 ## Testing

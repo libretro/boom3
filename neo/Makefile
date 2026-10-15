@@ -187,7 +187,7 @@ else ifneq (,$(findstring android,$(platform)))
    TARGET := $(TARGET_NAME)_libretro_android.so
    fpic := -fPIC
    SHARED := -shared -Wl,--version-script=$(CORE_DIR)/link.T -Wl,--no-undefined
-   LIBS := -ldl -llog
+   LIBS := -ldl
    GL_LIB := -lGLESv2
    CFLAGS += -DHAVE_OPENGLES
    CXXFLAGS += -DHAVE_OPENGLES

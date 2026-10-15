@@ -63,9 +63,6 @@ extern "C" {
 #include "libretro_core_options.h"
 
 #include <locale.h>
-#if defined(__ANDROID__)
-#include <android/log.h>
-#endif
 
 #include <glsm/glsm.h>
 
@@ -873,7 +870,7 @@ gp_layout_t vr_quest = {
 };
 
 static idCVar vr_turnmode( "vr_turnmode", "0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL, "VR right stick: 0 snap turn, 1 smooth turn" );
-static idCVar vr_turnangle( "vr_turnangle", "45", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_INTEGER, "VR snap turn in degrees; a smooth turn goes a ninth of it each frame" );
+static idCVar vr_turnangle( "vr_turnangle", "45", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_INTEGER, "VR snap turn in degrees; a smooth turn goes eight times it a second (a ninth of it a frame at 72 Hz)" );
 #endif
 
 static retro_hw_context_type get_hw_context_type(void)
@@ -1009,7 +1006,9 @@ static void Cmd_VRRecenter_f( const idCmdArgs &args ) { vr_recenter_req = true; 
 
 /* Turning the option off leaves VR at the next frame; until then the
  * renderer has to keep matching vr_present. */
-bool VR_Active( void ) { return vr_active; }
+/* Not while the eye targets have failed: the renderer then draws flat until
+ * vr_update leaves VR on the next frame. */
+bool VR_Active( void ) { return vr_active && !vr_targets_bad; }
 
 /* The game's view supplies body position and yaw (mouse/stick turning).
  * The head supplies everything else, relative to the recenter reference,
@@ -1087,6 +1086,7 @@ bool VR_GetHandPose( int hand, bool aim, const idVec3 &viewOrigin, const idMat3 
  * so the UI target has two layers as well; both get the same picture. */
 static GLuint vr_depth;
 static GLuint vr_read_fbo, vr_read_restore;   /* VR_BeginLayerRead */
+static bool   vr_read_redirected;             /* restore vr_read_restore, which may be 0 */
 
 static void vr_destroy_targets( void ) {
 	for ( int i = 0; i < 3; i++ ) {
@@ -1165,13 +1165,14 @@ void VR_BindTargetForView( int vrView ) {
 void VR_BeginLayerRead( int layer ) {
 	GLint draw = 0;
 	glGetIntegerv( GL_DRAW_FRAMEBUFFER_BINDING, &draw );
-	vr_read_restore = 0;
+	vr_read_redirected = false;
 	for ( int i = 0; i < 3; i += 2 ) {
 		if ( vr_fbo[i] && (GLuint)draw == vr_fbo[i] ) {
 			if ( !vr_read_fbo ) glGenFramebuffers( 1, &vr_read_fbo );
 			glBindFramebuffer( GL_READ_FRAMEBUFFER, vr_read_fbo );
 			glFramebufferTextureLayer( GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, vr_tex[i], 0, layer );
 			vr_read_restore = (GLuint)draw;
+			vr_read_redirected = true;
 			return;
 		}
 	}
@@ -1179,21 +1180,30 @@ void VR_BeginLayerRead( int layer ) {
 
 void VR_BeginSceneRead( void ) {
 	GLint read = 0;
-	vr_read_restore = 0;
+	vr_read_redirected = false;
 	if ( !vr_fbo[0] || !vr_tex[0] )
 		return;
 	glGetIntegerv( GL_READ_FRAMEBUFFER_BINDING, &read );
 	if ( !vr_read_fbo ) glGenFramebuffers( 1, &vr_read_fbo );
 	glBindFramebuffer( GL_READ_FRAMEBUFFER, vr_read_fbo );
 	glFramebufferTextureLayer( GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, vr_tex[0], 0, 0 );
-	vr_read_restore = read ? (GLuint)read : vr_fbo[0];
+	/* back to whatever was bound for reading, the frontend's 0 included */
+	vr_read_restore = (GLuint)read;
+	vr_read_redirected = true;
 }
 
 void VR_EndLayerRead( void ) {
-	if ( vr_read_restore ) {
+	if ( vr_read_redirected ) {
 		glBindFramebuffer( GL_READ_FRAMEBUFFER, vr_read_restore );
-		vr_read_restore = 0;
+		vr_read_redirected = false;
 	}
+}
+
+/* Multiview targets and programs need GL_OVR_multiview2; without it VR is
+ * refused rather than entered. */
+static bool vr_multiview_supported( void ) {
+	const char *ext = (const char *)glGetString( GL_EXTENSIONS );
+	return glFramebufferTextureMultiviewOVR && ext && strstr( ext, "GL_OVR_multiview2" ) != NULL;
 }
 #else
 static void vr_destroy_targets( void ) {
@@ -1743,7 +1753,9 @@ static void vr_controls_apply( void );
  * its session runs, after the game loaded: a core at the flat screen's rate
  * then makes too much audio a second, which crackles, and runs fast.  The
  * output clock and the tic schedule both carry on through a change, so the
- * rate moves with VR.  Asked only as VR starts and stops, never per frame:
+ * rate moves with VR.  Asked as VR starts and stops, and once more when the
+ * headset's rate appears after the start (polled a few seconds, vr_rate_recheck),
+ * never per frame beyond that:
  * the timing sent with a change restarts the frontend's video and with it
  * the headset's session, which reports no rate until it runs again - a
  * per-frame follower bounces between the two rates, restarting each time.
@@ -1772,6 +1784,12 @@ static bool framerate_follow_target( void ) {
 	return true;
 }
 
+/* Frames left in which VR still looks for the headset's own refresh rate:
+ * the frontend publishes it only once the session has run a while, which
+ * can be after VR started.  Followed once, then no more, so the restart
+ * the new timing causes cannot bounce the rate back. */
+static unsigned vr_rate_recheck;
+
 static void vr_enter( void ) {
 	vr_flat_w     = scr_width;
 	vr_flat_h     = scr_height;
@@ -1788,12 +1806,14 @@ static void vr_enter( void ) {
 	vr_active = true;
 	vr_controls_apply();
 	framerate_follow_target();   /* the timing goes with the AV info that follows */
+	vr_rate_recheck = (unsigned)framerate * VR_HOLD_SECONDS;
 	if ( log_cb )
 		log_cb( RETRO_LOG_INFO, "[boom3] VR active: %ux%u per eye\n", vr_eye_w, vr_eye_h );
 }
 
 static void vr_leave( void ) {
 	vr_active = false;
+	vr_rate_recheck = 0;
 	vr_controls_apply();
 	framerate_follow_target();   /* back to the flat screen's; vr_send_av_info below */
 	vr_clear_map();
@@ -1839,6 +1859,17 @@ static void vr_update( bool *dupe ) {
 			vr_user_enable && vr_24bit && !first_boot && !vr_refused, hmd,
 			(unsigned)framerate * VR_HOLD_SECONDS ) ) {
 	case VR_HOLD_ENTER:
+#ifdef HAVE_OPENGLES3
+		/* GLES 3 draws the eyes only as multiview layers */
+		if ( !vr_multiview_supported() ) {
+			vr_hold_state.active = false;
+			vr_refused = true;
+			if ( log_cb )
+				log_cb( RETRO_LOG_WARN, "[boom3] VR: the GPU lacks GL_OVR_multiview2, "
+						"which the GLES 3 renderer draws both eyes with\n" );
+			return;
+		}
+#endif
 		if ( !vr_request_session() ) {
 			vr_clear_map();   /* a first map may have been accepted */
 			vr_hold_state.active = false;
@@ -1855,6 +1886,23 @@ static void vr_update( bool *dupe ) {
 		vr_send_av_info();
 		return;
 	case VR_HOLD_TRACK:
+		/* the eye targets could not be made (incomplete framebuffer): back to
+		 * the flat screen, and not retried until the headset or option drops */
+		if ( vr_targets_bad ) {
+			vr_hold_state.active = false;
+			vr_refused = true;
+			vr_leave();
+			if ( log_cb )
+				log_cb( RETRO_LOG_WARN, "[boom3] VR: no usable eye targets; left VR\n" );
+			return;
+		}
+		if ( vr_rate_recheck ) {
+			vr_rate_recheck--;
+			if ( framerate_follow_target() ) {
+				vr_rate_recheck = 0;
+				vr_send_av_info();
+			}
+		}
 		break;
 	case VR_HOLD_WAIT:
 		*dupe = true;
@@ -3173,7 +3221,7 @@ void Sys_SetKeys(){
 
 #ifdef BOOM3_VR
 /* The right stick in VR, as Doom3Quest has it: sideways turns, by
- * vr_turnangle at a flick or a ninth of it each frame held, and up or down
+ * vr_turnangle at a flick or held at eight times it a second, and up or down
  * flicks to the previous or next weapon. */
 static void vr_stick( int x, int y )
 {
@@ -3185,8 +3233,8 @@ static void vr_stick( int x, int y )
 
    if ( fx > 0.7f || fx < -0.7f ) {
       const float side = fx > 0.0f ? 1.0f : -1.0f;
-      if ( vr_turnmode.GetBool() )
-         turn = side * vr_turnangle.GetFloat() / 9.0f;
+      if ( vr_turnmode.GetBool() )   /* per second, not per frame: the same at any refresh */
+         turn = side * vr_turnangle.GetFloat() * ( 72.0f / 9.0f ) / (float)framerate;
       else if ( !turned )
          turn = side * vr_turnangle.GetFloat();
       turned = true;
