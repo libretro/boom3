@@ -77,15 +77,6 @@ static void GL_Uniform1fv(GLint location, const GLfloat* value) {
 
 /*
 ====================
-GL_Uniform1iv
-====================
-*/
-static void GL_Uniform1iv(GLint location, const GLint* value) {
-  qglUniform1iv(*( GLint * )((char*) backEnd.glState.currentProgram + location), 1, value);
-}
-
-/*
-====================
 GL_Uniform4fv
 ====================
 */
@@ -2368,7 +2359,7 @@ static void RB_T_GLSL_BlendLight(const drawSurf_t *surf, const viewLight_t* vLig
     GL_VertexAttribPointer(offsetof(shaderProgram_t, attr_Vertex), 3, GL_FLOAT, false, sizeof(idDrawVert), ac->xyz.ToFloatPtr());
   } else if (tri->shadowCache) {
     shadowCache_t *sc = (shadowCache_t *) vertexCache.Position(tri->shadowCache);
-    GL_VertexAttribPointer(offsetof(shaderProgram_t, attr_Vertex), 3, GL_FLOAT, false, sizeof(idDrawVert), sc->xyz.ToFloatPtr());
+    GL_VertexAttribPointer(offsetof(shaderProgram_t, attr_Vertex), 3, GL_FLOAT, false, sizeof(shadowCache_t), sc->xyz.ToFloatPtr());
   }
 
   ////////////////////

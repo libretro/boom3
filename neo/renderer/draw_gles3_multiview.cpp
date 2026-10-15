@@ -22,6 +22,7 @@
 #include "tr_local.h"
 
 #include "glsl_gles3/glsl_shaders.h"
+#include "renderer/spectral_mix.h"
 
 #ifdef HAVE_OPENGLES
 #include "renderer/gles_compat.h"
@@ -32,6 +33,7 @@
 #endif
 
 shaderProgram_t interactionShader;
+shaderProgram_t interactionBlinnShader;
 shaderProgram_t interactionPhongShader;
 shaderProgram_t fogShader;
 shaderProgram_t blendLightShader;
@@ -43,22 +45,14 @@ shaderProgram_t skyboxCubeShader;
 shaderProgram_t reflectionCubeShader;
 shaderProgram_t stencilShadowShader;
 
-#define ORTHO_PROJECTION			0
-#define NORMAL_PROJECTION			1
-#define WEAPON_PROJECTION			2
-#define DEPTH_HACK_PROJECTION		3
-#define NUM_DEPTH_HACK_PROJECTIONS  50
 GLuint		viewMatricesBuffer;
-// ViewMatrices block (std140): mat4 u_viewMatrices[2], then vec4 u_eyeClip[2]
-#define VIEW_MATRICES_FLOATS	(2 * 16 + 2 * 4)
+// ViewMatrices block (std140): mat4 u_viewProjectionMatrices[2], projection
+// times view per eye, rewritten once per view and bound to point 0
+#define VIEW_MATRICES_FLOATS	(2 * 16)
+#define VIEW_MATRICES_BINDING	0
 
 // the programs were built with BOOM3_MULTIVIEW, for 2-layer VR targets
 static bool glslMultiview = false;
-
-bool        projectionMatricesSet = false;
-// the projection last written to projectionMatricesBuffer, zero when they are new
-static float projectionMatricesSource[16];
-GLuint		projectionMatricesBuffer[DEPTH_HACK_PROJECTION + NUM_DEPTH_HACK_PROJECTIONS + 1];
 
 #define ATTR_VERTEX     0   // Don't change this, as WebGL require the vertex attrib 0 to be always bound
 #define ATTR_COLOR      1
@@ -94,15 +88,6 @@ GL_Uniform1fv
 */
 static void GL_Uniform1fv(GLint location, const GLfloat* value) {
 	qglUniform1fv(*( GLint * )((char*) backEnd.glState.currentProgram + location), 1, value);
-}
-
-/*
-====================
-GL_Uniform1iv
-====================
-*/
-static void GL_Uniform1iv(GLint location, const GLint* value) {
-	qglUniform1iv(*( GLint * )((char*) backEnd.glState.currentProgram + location), 1, value);
 }
 
 /*
@@ -147,34 +132,41 @@ static void GL_ViewMatricesUniformBuffer(const float value[VIEW_MATRICES_FLOATS]
 	memcpy((char*)viewMatrices, value, VIEW_MATRICES_FLOATS * sizeof(float));
 
 	glUnmapBuffer(GL_UNIFORM_BUFFER);
-	qglBindBuffer(GL_UNIFORM_BUFFER, 0);
+	glBindBufferBase(GL_UNIFORM_BUFFER, VIEW_MATRICES_BINDING, viewMatricesBuffer);
 }
 
 /*
 ====================
-GL_ProjectionMatricesUniformBuffer
+RB_GLSL_DepthHack
+
+The weapon and model depth hacks.  GLES2 moves projectionMatrix[14], which
+adds its change times eye w to clip z; the shaders here add u_depthHack
+times w after the one view-projection matrix, the same thing without a
+projection per hack.  A model hack wins over the weapon one, as on GLES2.
 ====================
 */
-static void GL_ProjectionMatricesUniformBuffer(GLint projectionMatricesBuffer, const float value[16]) {
-
-	// Update the scene matrices.
-	glBindBuffer(GL_UNIFORM_BUFFER, projectionMatricesBuffer);
-	float* projectionMatrix = (float*)glMapBufferRange(
-			GL_UNIFORM_BUFFER,
-			0,
-			16 * sizeof(float),
-			GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT);
-
-	if (projectionMatrix == NULL)
-	{
-		common->Error("Projection Matrices Uniform Buffer is NULL");
-		return;
+static float RB_GLSL_DepthHack(const viewEntity_t* space) {
+	const float p14 = backEnd.viewDef->projectionMatrix[14];
+	if ( space->modelDepthHack != 0.0f ) {
+		return -space->modelDepthHack;
 	}
+	if ( space->weaponDepthHack ) {
+		return p14 * 0.25f - p14;
+	}
+	return 0.0f;
+}
 
-	memcpy((char*)projectionMatrix, value, 16 * sizeof(float));
+/*
+====================
+RB_GLSL_SetSpace
 
-	glUnmapBuffer(GL_UNIFORM_BUFFER);
-	qglBindBuffer(GL_UNIFORM_BUFFER, 0);
+The current program's model matrix and depth hack for a space.
+====================
+*/
+static void RB_GLSL_SetSpace(const viewEntity_t* space) {
+	const float hack = RB_GLSL_DepthHack(space);
+	GL_UniformMatrix4fv(offsetof(shaderProgram_t, modelMatrix), space->modelMatrix);
+	GL_Uniform1fv(offsetof(shaderProgram_t, depthHack), &hack);
 }
 
 /*
@@ -348,22 +340,14 @@ static void RB_GLSL_GetUniformLocations(shaderProgram_t* shader) {
 
 	shader->modelMatrix = qglGetUniformLocation(shader->program, "u_modelMatrix");
 
-	//Shader Matrices for the View Matrices
-	GLuint viewMatricesUniformLocation = glGetUniformBlockIndex(shader->program, "ViewMatrices");
-	int numBufferBindings = 0;
-	shader->viewMatricesBinding = numBufferBindings++;
-	glUniformBlockBinding(
-			shader->program,
-			viewMatricesUniformLocation,
-			shader->viewMatricesBinding);
+	shader->depthHack = qglGetUniformLocation(shader->program, "u_depthHack");
+	shader->hdrParms = qglGetUniformLocation(shader->program, "u_hdrParms");
 
-	//Shader Matrices for the Projection Matrix
-	GLuint projectionMatrixUniformLocation = glGetUniformBlockIndex(shader->program, "ProjectionMatrix");
-	shader->projectionMatrixBinding = numBufferBindings++;
-	glUniformBlockBinding(
-			shader->program,
-			projectionMatrixUniformLocation,
-			shader->projectionMatrixBinding);
+	// every program reads its view-projection matrices from one binding point
+	const GLuint viewMatricesBlock = glGetUniformBlockIndex(shader->program, "ViewMatrices");
+	if ( viewMatricesBlock != GL_INVALID_INDEX ) {
+		glUniformBlockBinding(shader->program, viewMatricesBlock, VIEW_MATRICES_BINDING);
+	}
 
 	shader->modelViewMatrix = qglGetUniformLocation(shader->program, "u_modelViewMatrix");
 	shader->textureMatrix = qglGetUniformLocation(shader->program, "u_textureMatrix");
@@ -440,33 +424,65 @@ static bool RB_GLSL_InitShaders(void) {
 		GL_UseProgram(NULL);
 	}
 
-	//Generate buffer for 2 * view matrices and their eye clip adjustments
+	// the view-projection matrices of both views, rewritten once per view
 	if ( !viewMatricesBuffer ) {
-	memset(projectionMatricesSource, 0, sizeof(projectionMatricesSource));
-	qglGenBuffers(1, &viewMatricesBuffer);
-    glBindBuffer(GL_UNIFORM_BUFFER, viewMatricesBuffer);
-    glBufferData(
-            GL_UNIFORM_BUFFER,
-            VIEW_MATRICES_FLOATS * sizeof(float),
-            NULL,
-            GL_STATIC_DRAW);
-    glBindBuffer(GL_UNIFORM_BUFFER, 0);
-
-    for (int i = 0; i <= (NUM_DEPTH_HACK_PROJECTIONS+DEPTH_HACK_PROJECTION); ++i)
-	{
-		qglGenBuffers(1, &projectionMatricesBuffer[i]);
-		glBindBuffer(GL_UNIFORM_BUFFER, projectionMatricesBuffer[i]);
-		glBufferData(
-				GL_UNIFORM_BUFFER,
-				16 * sizeof(float),
-				NULL,
-				GL_STATIC_DRAW);
+		qglGenBuffers(1, &viewMatricesBuffer);
+		glBindBuffer(GL_UNIFORM_BUFFER, viewMatricesBuffer);
+		glBufferData(GL_UNIFORM_BUFFER, VIEW_MATRICES_FLOATS * sizeof(float), NULL, GL_DYNAMIC_DRAW);
 		glBindBuffer(GL_UNIFORM_BUFFER, 0);
 	}
+
+	// Blinn-Phong interaction shader, the r_usePhong 0 one, with GLES2's
+	// load-time substitutions: off, each leaves exactly the stock shader
+	common->Printf("Loading Blinn interaction shader\n");
+	R_FreeGLSLShader(&interactionBlinnShader);
+
+	R_LoadGLSLShader(interactionShaderVP, &interactionBlinnShader, GL_VERTEX_SHADER);
+	{
+		idStr fp( interactionBlinnShaderFP );
+
+		/* Toksvig specular antialiasing: N is deliberately unnormalised,
+		   so its length carries the mip variance; 12 is the exponent this
+		   shader hardcodes. */
+		if ( r_specularAA.GetBool() ) {
+			const char *tokStock = "  float NdotH2 = NdotH * NdotH;\n  float NdotH4 = NdotH2 * NdotH2;\n  float specularFalloff = NdotH4 * NdotH4 * NdotH4;";
+			if ( fp.Find( tokStock ) != -1 ) {
+				fp.Replace( tokStock,
+					"  float tkLen = length(N);\n"
+					"  float tkFt = tkLen / (tkLen + 12.0 * (1.0 - tkLen));\n"
+					"  float specularFalloff = pow(max(NdotH, 0.0), 12.0 * tkFt);" );
+			} else {
+				common->Warning( "r_specularAA: GLES3 falloff lines not found; shader left stock" );
+			}
+		}
+		/* Pseudo-spectral mixing: a basis change either side of the
+		   multiply by the light's colour, as on GLES2. */
+		const char *stockLine = "fragColor = vec4(dhewm3Epilogue(color), 1.0) * var_Color;";
+		if ( r_spectralMix.GetBool() && fp.Find( stockLine ) != -1 ) {
+			idStr mix( "vec3 smBase = dhewm3Epilogue(color);\n" );
+			mix += va( "  mat3 smM = mat3(%.7f, %.7f, %.7f, %.7f, %.7f, %.7f, %.7f, %.7f, %.7f);\n",
+					spectral_mix_forward[0][0], spectral_mix_forward[1][0], spectral_mix_forward[2][0],
+					spectral_mix_forward[0][1], spectral_mix_forward[1][1], spectral_mix_forward[2][1],
+					spectral_mix_forward[0][2], spectral_mix_forward[1][2], spectral_mix_forward[2][2] );
+			mix += va( "  mat3 smN = mat3(%.7f, %.7f, %.7f, %.7f, %.7f, %.7f, %.7f, %.7f, %.7f);\n",
+					spectral_mix_inverse[0][0], spectral_mix_inverse[1][0], spectral_mix_inverse[2][0],
+					spectral_mix_inverse[0][1], spectral_mix_inverse[1][1], spectral_mix_inverse[2][1],
+					spectral_mix_inverse[0][2], spectral_mix_inverse[1][2], spectral_mix_inverse[2][2] );
+			mix += "  fragColor = vec4(smN * ((smM * smBase) * (smM * var_Color.rgb)), 1.0);\n";
+			mix += "  fragColor.a = var_Color.a;";
+			fp.Replace( stockLine, mix.c_str() );
+		}
+		R_LoadGLSLShader( fp.c_str(), &interactionBlinnShader, GL_FRAGMENT_SHADER );
 	}
 
-    // main Interaction shader
-	common->Printf("Loading main interaction shader\n");
+	if ( !R_LinkGLSLShader(&interactionBlinnShader, "interactionBlinn") && !R_ValidateGLSLProgram(&interactionBlinnShader)) {
+		return false;
+	} else {
+		RB_GLSL_GetUniformLocations(&interactionBlinnShader);
+	}
+
+	// PBR interaction shader (r_usePBR 1 and 2)
+	common->Printf("Loading PBR interaction shader\n");
 	R_FreeGLSLShader(&interactionShader);
 
 	R_LoadGLSLShader(interactionShaderVP, &interactionShader, GL_VERTEX_SHADER);
@@ -621,79 +637,31 @@ R_ReloadGLSLPrograms_f
 void R_ReloadGLSLPrograms_f(const idCmdArgs& args) {
 	common->Printf("----- R_ReloadGLSLPrograms -----\n");
 
-	// This also runs after a context reset, where every old handle is stale and
-	// may already name something new, so drop them rather than delete them.
-	shaderProgram_t* const programs[] = {
-		&interactionShader, &interactionPhongShader, &fogShader, &blendLightShader,
-		&zfillShader, &zfillClipShader, &diffuseMapShader, &diffuseCubeShader,
-		&skyboxCubeShader, &reflectionCubeShader, &stencilShadowShader
-	};
-	for ( int i = 0; i < (int)(sizeof(programs) / sizeof(programs[0])); i++ ) {
-		memset(programs[i], 0, sizeof(shaderProgram_t));
+	// R_InitOpenGL calls this with no arguments, also after a context reset,
+	// where every old handle is stale and may already name something new:
+	// drop them rather than delete them.  From the console (the command name
+	// is argument 0) the context is the same one, and RB_GLSL_InitShaders
+	// frees each program before it rebuilds it.
+	if ( args.Argc() == 0 ) {
+		shaderProgram_t* const programs[] = {
+			&interactionShader, &interactionBlinnShader, &interactionPhongShader,
+			&fogShader, &blendLightShader, &zfillShader, &zfillClipShader,
+			&diffuseMapShader, &diffuseCubeShader, &skyboxCubeShader,
+			&reflectionCubeShader, &stencilShadowShader
+		};
+		int i;
+		for ( i = 0; i < (int)(sizeof(programs) / sizeof(programs[0])); i++ ) {
+			memset(programs[i], 0, sizeof(shaderProgram_t));
+		}
+		viewMatricesBuffer = 0;
 	}
 	backEnd.glState.currentProgram = NULL;
-	viewMatricesBuffer = 0;
-	memset(projectionMatricesBuffer, 0, sizeof(projectionMatricesBuffer));
 
 	if ( !RB_GLSL_InitShaders()) {
 		common->Printf("GLSL shaders failed to init.\n");
 	}
 
 	common->Printf("-------------------------------\n");
-}
-
-/*
-=================
-RB_ComputeProjection
-
-Compute the required projection matrix depth hacks
-=================
-*/
-void RB_ComputeProjection(bool weaponDepthHack, float modelDepthHack, float *projection) {
-	// Get the projection matrix
-	float localProjectionMatrix[16];
-	memcpy(localProjectionMatrix, backEnd.viewDef->projectionMatrix, sizeof(localProjectionMatrix));
-
-	// Quick and dirty hacks on the projection matrix
-	if ( weaponDepthHack ) {
-		localProjectionMatrix[14] = backEnd.viewDef->projectionMatrix[14] * 0.25;
-	} else if ( modelDepthHack != 0.0 ) {
-		localProjectionMatrix[14] = backEnd.viewDef->projectionMatrix[14] - modelDepthHack;
-	}
-
-	memcpy(projection, localProjectionMatrix, sizeof(localProjectionMatrix));
-}
-
-/*
-=================
-RB_CalculateProjection
-
-Compute which projection matrix buffer should be used
-=================
-*/
-
-GLuint RB_CalculateProjection(const drawSurf_t * const surf) {
-	GLuint result = NORMAL_PROJECTION;
-	if ( surf->space->weaponDepthHack ) {
-		result = WEAPON_PROJECTION;
-	} else if ( surf->space->modelDepthHack > 0.0 &&
-				surf->space->modelDepthHack <= 1.0 ) {
-		result = DEPTH_HACK_PROJECTION + (GLuint)(surf->space->modelDepthHack * (float)NUM_DEPTH_HACK_PROJECTIONS);
-	} else if (
-	        //Is this set up as an orthographic projection?
-            backEnd.viewDef->projectionMatrix[0] == 2.0f / 640.0f &&
-			backEnd.viewDef->projectionMatrix[5] == -2.0f / 480.0f &&
-			backEnd.viewDef->projectionMatrix[10] == -2.0f / 1.0f &&
-			backEnd.viewDef->projectionMatrix[12] == -1.0f &&
-			backEnd.viewDef->projectionMatrix[13] == 1.0f &&
-			backEnd.viewDef->projectionMatrix[14] == -1.0f &&
-			backEnd.viewDef->projectionMatrix[15] == 1.0f
-			)
-	{
-		result = ORTHO_PROJECTION;
-	}
-
-	return result;
 }
 
 /*
@@ -737,7 +705,34 @@ static void RB_GLSL_DrawInteraction(const drawInteraction_t* din) {
 
 	// set the constant colors
 	GL_Uniform4fv(offsetof(shaderProgram_t, diffuseColor), din->diffuseColor.ToFloatPtr());
-	GL_Uniform4fv(offsetof(shaderProgram_t, specularColor), din->specularColor.ToFloatPtr());
+	/* HDR specular boost, folded into the constant as on GLES2, gated the
+	   same way by RB_HDRSpecularBoost; u_specularColor is mediump so the
+	   boosted value is not clipped. */
+	const float specBoost = RB_HDRSpecularBoost();
+	if ( specBoost != 1.0f ) {
+		float sc[4];
+		sc[0] = din->specularColor[0] * specBoost;
+		sc[1] = din->specularColor[1] * specBoost;
+		sc[2] = din->specularColor[2] * specBoost;
+		sc[3] = din->specularColor[3];
+		GL_Uniform4fv(offsetof(shaderProgram_t, specularColor), sc);
+	} else {
+		GL_Uniform4fv(offsetof(shaderProgram_t, specularColor), din->specularColor.ToFloatPtr());
+	}
+
+	/* Gamma, brightness and the luminance-aware clamp, packed as on GLES2:
+	   xyz brightness (through RB_HDRGammaBrightness, so the encoding fold
+	   is in), w 1/gamma, negative w for the luminance-aware clamp. */
+	if ( backEnd.glState.currentProgram != NULL && backEnd.glState.currentProgram->hdrParms >= 0 ) {
+		extern bool  hdr_luma_clamp;
+		float hp[4];
+		hp[0] = hp[1] = hp[2] = r_gammaInShader.GetBool() ? RB_HDRGammaBrightness( false ) : 1.0f;
+		hp[3] = r_gammaInShader.GetBool() ? 1.0f / r_gamma.GetFloat() : 1.0f;
+		if ( hdr_luma_clamp ) {
+			hp[3] = -hp[3];
+		}
+		GL_Uniform4fv(offsetof(shaderProgram_t, hdrParms), hp);
+	}
 
 	// set the textures
 
@@ -944,11 +939,6 @@ static void RB_GLSL_CreateDrawInteractions(const drawSurf_t* surf, const viewLig
 	// bind the vertex and fragment shader and set the specular exponent
 	float f = 0;
 	switch (r_usePBR.GetInteger()) {
-		default:
-		case 0: //Phong shading
-			GL_UseProgram(&interactionPhongShader);
-			f = r_specularExponent.GetFloat();
-			break;
 		case 1: //Basic PBR shading
 			GL_UseProgram(&interactionShader);
 			f = r_specularExponentPBR.GetFloat();
@@ -957,15 +947,19 @@ static void RB_GLSL_CreateDrawInteractions(const drawSurf_t* surf, const viewLig
 			GL_UseProgram(&interactionShader);
 			f = -r_specularExponentPBR.GetFloat();
 			break;
+		default: // as on GLES2: Phong with its exponent, or Blinn-Phong
+			if ( r_usePhong.GetBool() ) {
+				GL_UseProgram(&interactionPhongShader);
+				f = r_specularExponent.GetFloat();
+			} else {
+				GL_UseProgram(&interactionBlinnShader);
+			}
+			break;
 	}
 
 	// Set the specular exponent now (NB: it could be cached instead)
 	GL_Uniform1fv(offsetof(shaderProgram_t, specularExponent), &f);
 
-	glBindBufferBase(
-		GL_UNIFORM_BUFFER,
-		backEnd.glState.currentProgram->viewMatricesBinding,
-		viewMatricesBuffer);
 
 
 	// Setup attributes arrays
@@ -983,12 +977,7 @@ static void RB_GLSL_CreateDrawInteractions(const drawSurf_t* surf, const viewLig
 		// perform setup here that will not change over multiple interaction passes
 
 		if ( surf->space != backEnd.currentSpace ) {
-			GL_UniformMatrix4fv(offsetof(shaderProgram_t, modelMatrix), surf->space->modelMatrix);
-
-			glBindBufferBase(
-					GL_UNIFORM_BUFFER,
-					backEnd.glState.currentProgram->projectionMatrixBinding,
-					projectionMatricesBuffer[RB_CalculateProjection(surf)]);
+			RB_GLSL_SetSpace(surf->space);
 		}
 
 		// Hack Depth Range if necessary
@@ -1146,12 +1135,7 @@ void RB_GLSL_RenderDrawSurfChainWithFunction(const drawSurf_t* drawSurfs,
 
 		// Change the MVP matrix if needed
 		if ( drawSurf->space != backEnd.currentSpace ) {
-			GL_UniformMatrix4fv(offsetof(shaderProgram_t, modelMatrix), drawSurf->space->modelMatrix);
-
-			glBindBufferBase(
-					GL_UNIFORM_BUFFER,
-					backEnd.glState.currentProgram->projectionMatrixBinding,
-					projectionMatricesBuffer[RB_CalculateProjection(drawSurf)]);
+			RB_GLSL_SetSpace(drawSurf->space);
 		}
 
 		// Hack Depth Range if necessary
@@ -1222,10 +1206,6 @@ void RB_GLSL_StencilShadowPass(const drawSurf_t* drawSurfs, const viewLight_t* v
 	// Use the stencil shadow shader
 	GL_UseProgram(&stencilShadowShader);
 
-	glBindBufferBase(
-            GL_UNIFORM_BUFFER,
-			backEnd.glState.currentProgram->viewMatricesBinding,
-			viewMatricesBuffer);
 
 	// Setup attributes arrays
 	// Vertex attribute is always enabled
@@ -1417,10 +1397,6 @@ void RB_GLSL_FogPass(const drawSurf_t* drawSurfs, const drawSurf_t* drawSurfs2, 
 
 	GL_UseProgram(&fogShader);
 
-	glBindBufferBase(
-			GL_UNIFORM_BUFFER,
-			backEnd.glState.currentProgram->viewMatricesBinding,
-			viewMatricesBuffer);
 
 	// Setup attributes arrays
 	// Vertex attribute is always enabled
@@ -1781,10 +1757,6 @@ void RB_GLSL_FillDepthBuffer(drawSurf_t** drawSurfs, int numDrawSurfs) {
 		GL_UseProgram(&zfillShader);
 	}
 
-	glBindBufferBase(
-			GL_UNIFORM_BUFFER,
-			backEnd.glState.currentProgram->viewMatricesBinding,
-			viewMatricesBuffer);
 
 	// Setup attributes arrays
 	// Vertex attribute is always enabled
@@ -1826,12 +1798,7 @@ void RB_GLSL_FillDepthBuffer(drawSurf_t** drawSurfs, int numDrawSurfs) {
 
 		// Change the MVP matrix if needed
 		if ( drawSurf->space != backEnd.currentSpace ) {
-			GL_UniformMatrix4fv(offsetof(shaderProgram_t, modelMatrix), drawSurf->space->modelMatrix);
-
-			glBindBufferBase(
-					GL_UNIFORM_BUFFER,
-					backEnd.glState.currentProgram->projectionMatrixBinding,
-					projectionMatricesBuffer[RB_CalculateProjection(drawSurf)]);
+			RB_GLSL_SetSpace(drawSurf->space);
 		}
 
 		// Hack Depth Range if necessary
@@ -1891,7 +1858,7 @@ RB_GLSL_T_RenderShaderPasses
 This is also called for the generated 2D rendering
 ==================
 */
-void RB_GLSL_T_RenderShaderPasses(const drawSurf_t* surf, GLuint projection) {
+void RB_GLSL_T_RenderShaderPasses(const drawSurf_t* surf) {
 
 	// global constants
 	static const GLfloat zero[1] = { 0 };
@@ -2050,10 +2017,6 @@ void RB_GLSL_T_RenderShaderPasses(const drawSurf_t* surf, GLuint projection) {
 				// This is diffuse cube mapping
 				GL_UseProgram(&diffuseCubeShader);
 
-				glBindBufferBase(
-						GL_UNIFORM_BUFFER,
-						backEnd.glState.currentProgram->viewMatricesBinding,
-						viewMatricesBuffer);
 
 				// Possible that normals should be transformed by a normal matrix in the shader ? I am not sure...
 
@@ -2071,10 +2034,6 @@ void RB_GLSL_T_RenderShaderPasses(const drawSurf_t* surf, GLuint projection) {
 				// This is skybox cube mapping
 				GL_UseProgram(&skyboxCubeShader);
 
-				glBindBufferBase(
-						GL_UNIFORM_BUFFER,
-						backEnd.glState.currentProgram->viewMatricesBinding,
-						viewMatricesBuffer);
 
 				// Disable TexCoord attribute
 				GL_DisableVertexAttribArray(ATTR_TEXCOORD);
@@ -2092,10 +2051,6 @@ void RB_GLSL_T_RenderShaderPasses(const drawSurf_t* surf, GLuint projection) {
 				// This is skybox cube mapping, with special texture matrix
 				GL_UseProgram(&skyboxCubeShader);
 
-				glBindBufferBase(
-						GL_UNIFORM_BUFFER,
-						backEnd.glState.currentProgram->viewMatricesBinding,
-						viewMatricesBuffer);
 
 				// Disable TexCoord attribute
 				GL_DisableVertexAttribArray(ATTR_TEXCOORD);
@@ -2127,10 +2082,6 @@ void RB_GLSL_T_RenderShaderPasses(const drawSurf_t* surf, GLuint projection) {
 				// This is reflection cubemapping
 				GL_UseProgram(&reflectionCubeShader);
 
-				glBindBufferBase(
-						GL_UNIFORM_BUFFER,
-						backEnd.glState.currentProgram->viewMatricesBinding,
-						viewMatricesBuffer);
 
 				// NB: in original D3, if the surface had a bump map it would lead to the "Bumpy reflection cubemaping" shader being used.
 				// This is not implemented for now, we only do standard reflection cubemaping. Visual difference is really minor.
@@ -2151,10 +2102,6 @@ void RB_GLSL_T_RenderShaderPasses(const drawSurf_t* surf, GLuint projection) {
 				// Otherwise, this is just regular surface shader with explicit texcoords
 				GL_UseProgram(&diffuseMapShader);
 
-				glBindBufferBase(
-						GL_UNIFORM_BUFFER,
-						backEnd.glState.currentProgram->viewMatricesBinding,
-						viewMatricesBuffer);
 
 				// Setup the TexCoord pointer
 				GL_VertexAttribPointer(offsetof(shaderProgram_t, attr_TexCoord), 2, GL_FLOAT, false, sizeof(idDrawVert),
@@ -2189,12 +2136,7 @@ void RB_GLSL_T_RenderShaderPasses(const drawSurf_t* surf, GLuint projection) {
 
 				// MVP
 				if ( !bMVPSet[pStage->texture.texgen] ) {
-					GL_UniformMatrix4fv(offsetof(shaderProgram_t, modelMatrix), surf->space->modelMatrix);
-
-					glBindBufferBase(
-							GL_UNIFORM_BUFFER,
-							backEnd.glState.currentProgram->projectionMatrixBinding,
-                            projectionMatricesBuffer[projection]);
+					RB_GLSL_SetSpace(surf->space);
 
 					bMVPSet[pStage->texture.texgen] = true;
 				}
@@ -2202,8 +2144,31 @@ void RB_GLSL_T_RenderShaderPasses(const drawSurf_t* surf, GLuint projection) {
 
 			// Stage dependent state
 
+			/* Emissive headroom, the rule draw_common.cpp and GLES2 apply:
+			   an additive stage is emitted light, scaled by the emissive
+			   gain (particles by their own) in HDR; alpha is left alone. */
+			float emissive[4];
+			const float *stageColor = color;
+			{
+				extern bool  hdr_output_active;
+				extern float hdr_emissive_gain;
+				extern float hdr_particle_gain;
+				const int blend = pStage->drawStateBits & ( GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS );
+				const deform_t dfm = surf->material->Deform();
+				const float gain = ( dfm == DFRM_PARTICLE || dfm == DFRM_PARTICLE2 )
+					? hdr_particle_gain : hdr_emissive_gain;
+				if ( hdr_output_active && gain != 1.0f
+						&& ( blend & GLS_DSTBLEND_BITS ) == GLS_DSTBLEND_ONE ) {
+					emissive[0] = color[0] * gain;
+					emissive[1] = color[1] * gain;
+					emissive[2] = color[2] * gain;
+					emissive[3] = color[3];
+					stageColor = emissive;
+				}
+			}
+
 			// Setup the Color uniform
-			GL_Uniform4fv(offsetof(shaderProgram_t, glColor), color);
+			GL_Uniform4fv(offsetof(shaderProgram_t, glColor), stageColor);
 
 			// Setup the Color modulation
 			switch ( pStage->vertexColor ) {
@@ -2371,7 +2336,6 @@ int RB_GLSL_DrawShaderPasses(drawSurf_t** drawSurfs, int numDrawSurfs) {
 	// For each surface loop
 	/////////////////////////
 
-	GLuint projection = -1;
 	backEnd.currentSpace = NULL;
 
 	int i;
@@ -2399,12 +2363,6 @@ int RB_GLSL_DrawShaderPasses(drawSurf_t** drawSurfs, int numDrawSurfs) {
 		}
 
 
-		// Change the MVP matrix if needed
-		if ( drawSurfs[i]->space != backEnd.currentSpace ) {
-			projection = RB_CalculateProjection(drawSurfs[i]);
-			// We can't set the uniform now, as we still don't know which shader to use
-		}
-
 		// Hack Depth Range if necessary
 		bool bNeedRestoreDepthRange = false;
 		if (drawSurfs[i]->space->weaponDepthHack && drawSurfs[i]->space->modelDepthHack == 0.0f) {
@@ -2415,7 +2373,7 @@ int RB_GLSL_DrawShaderPasses(drawSurf_t** drawSurfs, int numDrawSurfs) {
 		////////////////////
 		// Do the real work
 		////////////////////
-		RB_GLSL_T_RenderShaderPasses(drawSurfs[i], projection);
+		RB_GLSL_T_RenderShaderPasses(drawSurfs[i]);
 
 		if (bNeedRestoreDepthRange) {
 			qglDepthRangef(0.0f, 1.0f);
@@ -2487,7 +2445,7 @@ static void RB_T_GLSL_BlendLight(const drawSurf_t *surf, const viewLight_t* vLig
 		GL_VertexAttribPointer(offsetof(shaderProgram_t, attr_Vertex), 3, GL_FLOAT, false, sizeof(idDrawVert), ac->xyz.ToFloatPtr());
 	} else if (surf->geo->shadowCache) {
 		shadowCache_t *sc = (shadowCache_t *) vertexCache.Position(surf->geo->shadowCache);
-		GL_VertexAttribPointer(offsetof(shaderProgram_t, attr_Vertex), 3, GL_FLOAT, false, sizeof(idDrawVert), sc->xyz.ToFloatPtr());
+		GL_VertexAttribPointer(offsetof(shaderProgram_t, attr_Vertex), 3, GL_FLOAT, false, sizeof(shadowCache_t), sc->xyz.ToFloatPtr());
 	}
 
 	////////////////////
@@ -2528,10 +2486,6 @@ void RB_GLSL_BlendLight(const drawSurf_t *drawSurfs, const drawSurf_t *drawSurfs
 	// Use blendLight shader
 	GL_UseProgram(&blendLightShader);
 
-	glBindBufferBase(
-			GL_UNIFORM_BUFFER,
-			backEnd.glState.currentProgram->viewMatricesBinding,
-			viewMatricesBuffer);
 
 	// Texture 1 will get the falloff texture
 	GL_SelectTexture(1);
@@ -2615,9 +2569,6 @@ void RB_GLSL_FogAllLights(void) {
 	// Skip Cases
 	//////////////
 
-	//GB Never do this on Doom3Quest
-	return;
-
 	if (r_skipFogLights.GetBool() || backEnd.viewDef->isXraySubview /* dont fog in xray mode*/ ) {
 		return;
 	}
@@ -2678,10 +2629,34 @@ void RB_GLSL_FogAllLights(void) {
 
 /*
 =================
+RB_GLSL_ViewProjection
+
+projection * view for one view, with the eye's clip placement folded into
+the x and y rows: x' = s.x * x + o.x * w, y' = s.y * y + o.y * w.
+=================
+*/
+static void RB_GLSL_ViewProjection(const float view[16], const float projection[16],
+		const float clip[4], float out[16]) {
+	int col;
+	myGlMultMatrix(view, projection, out);
+	for ( col = 0; col < 4; col++ ) {
+		const float w = out[col * 4 + 3];
+		out[col * 4 + 0] = clip[0] * out[col * 4 + 0] + clip[2] * w;
+		out[col * 4 + 1] = clip[1] * out[col * 4 + 1] + clip[3] * w;
+	}
+}
+
+/*
+=================
 RB_BeginGLSLShaderPasses
 =================
 */
 void RB_GLSL_PrepareShaders(void) {
+	static const float noEyeClip[4] = { 1.0f, 1.0f, 0.0f, 0.0f };
+	float viewMatrices[VIEW_MATRICES_FLOATS];
+	const float *view[2];
+	const float *clip[2];
+	int eye;
 
 	// No shaders set by default
 	GL_UseProgram(NULL);
@@ -2696,69 +2671,31 @@ void RB_GLSL_PrepareShaders(void) {
 	}
 #endif
 
-	//Set up the buffers that won't change this frame
-	static const float noEyeClip[4] = { 1.0f, 1.0f, 0.0f, 0.0f };
-	float viewMatrices[VIEW_MATRICES_FLOATS];
+	// One matrix per view for the whole view: the projection is the view's
+	// own (the 2D views carry their ortho one), the depth hacks are a
+	// per-space uniform.
 #ifdef BOOM3_VR_MULTIVIEW
 	// subviews inherit vrView 3 for the target, but are drawn from their own one view
 	if ( backEnd.viewDef->vrView == 3 && !backEnd.viewDef->isSubview ) {
-		memcpy(viewMatrices, backEnd.viewDef->vrEyeViewMatrix, 2 * 16 * sizeof(float));
-		memcpy(viewMatrices + 32, backEnd.viewDef->vrEyeClip, 2 * 4 * sizeof(float));
+		view[0] = backEnd.viewDef->vrEyeViewMatrix[0];
+		view[1] = backEnd.viewDef->vrEyeViewMatrix[1];
+		clip[0] = backEnd.viewDef->vrEyeClip[0];
+		clip[1] = backEnd.viewDef->vrEyeClip[1];
 		// scissor rects are in the shared projection, which matches neither eye
 		qglDisable(GL_SCISSOR_TEST);
 	} else
 #endif
 	{
 		// one view: both layers (when there are two) see the same thing
-		memcpy(viewMatrices, backEnd.viewDef->worldSpace.modelViewMatrix, 16 * sizeof(float));
-		memcpy(viewMatrices + 16, backEnd.viewDef->worldSpace.modelViewMatrix, 16 * sizeof(float));
-		memcpy(viewMatrices + 32, noEyeClip, sizeof(noEyeClip));
-		memcpy(viewMatrices + 36, noEyeClip, sizeof(noEyeClip));
+		view[0] = view[1] = backEnd.viewDef->worldSpace.modelViewMatrix;
+		clip[0] = clip[1] = noEyeClip;
 		qglEnable(GL_SCISSOR_TEST);
 	}
+	for ( eye = 0; eye < 2; eye++ ) {
+		RB_GLSL_ViewProjection(view[eye], backEnd.viewDef->projectionMatrix, clip[eye],
+				viewMatrices + eye * 16);
+	}
 	GL_ViewMatricesUniformBuffer(viewMatrices);
-
-	float* const defaultProjection = projectionMatricesSource;
-
-    //We only need to do the following if the default projection changes
-	if (memcmp(defaultProjection, backEnd.viewDef->projectionMatrix, 16 * sizeof(float)) != 0)
-    {
-	    //Take a copy of the default projection
-        memcpy(defaultProjection, backEnd.viewDef->projectionMatrix, 16 * sizeof(float));
-
-        float orthoProjectionMatrix[16];
-        memset(orthoProjectionMatrix, 0, sizeof(orthoProjectionMatrix));
-        orthoProjectionMatrix[0] = 2.0f / 640.0f;
-        orthoProjectionMatrix[5] = -2.0f / 480.0f;
-        orthoProjectionMatrix[10] = -2.0f / 1.0f;
-        orthoProjectionMatrix[12] = -1.0f;
-        orthoProjectionMatrix[13] = 1.0f;
-        orthoProjectionMatrix[14] = -1.0f;
-        orthoProjectionMatrix[15] = 1.0f;
-
-        //0 is ortho projection matrix
-        GL_ProjectionMatricesUniformBuffer(projectionMatricesBuffer[ORTHO_PROJECTION],
-                                           orthoProjectionMatrix);
-
-        //1 is unadjusted projection matrix
-        GL_ProjectionMatricesUniformBuffer(projectionMatricesBuffer[NORMAL_PROJECTION],
-                                           backEnd.viewDef->projectionMatrix);
-
-        //2 is weapon depth hack projection
-        float projection[16];
-        RB_ComputeProjection(true, 0.0, projection);
-        GL_ProjectionMatricesUniformBuffer(projectionMatricesBuffer[WEAPON_PROJECTION], projection);
-
-        //3+ ore model depth hack projections
-        for (int i = 0; i <= NUM_DEPTH_HACK_PROJECTIONS; ++i) {
-            float depthHack = (float)(i+1) / float(NUM_DEPTH_HACK_PROJECTIONS+1);
-            RB_ComputeProjection(false, depthHack, projection);
-            GL_ProjectionMatricesUniformBuffer(projectionMatricesBuffer[DEPTH_HACK_PROJECTION + i],
-                                               projection);
-        }
-
-        projectionMatricesSet = true;
-    }
 
 	// Always enable the vertex, color and texcoord attributes arrays
 	GL_EnableVertexAttribArray(ATTR_VERTEX);
@@ -2768,4 +2705,17 @@ void RB_GLSL_PrepareShaders(void) {
 	GL_DisableVertexAttribArray(ATTR_NORMAL);
 	GL_DisableVertexAttribArray(ATTR_TANGENT);
 	GL_DisableVertexAttribArray(ATTR_BITANGENT);
+}
+
+/*
+=================
+RB_GLSL_EndFrame
+
+Leave the uniform buffer binding points as the frontend expects them: it
+shares the context and does not track them.
+=================
+*/
+void RB_GLSL_EndFrame(void) {
+	glBindBufferBase(GL_UNIFORM_BUFFER, VIEW_MATRICES_BINDING, 0);
+	glBindBuffer(GL_UNIFORM_BUFFER, 0);
 }

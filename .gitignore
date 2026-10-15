@@ -19,3 +19,5 @@ boom3_libretro_android.so
 /neo/CMakeSettings.json
 /neo/.build_flags
 *.d
+/tools/gles_shader_check/gles_shader_check
+/tools/gles_shader_check/gles_shader_check.exe

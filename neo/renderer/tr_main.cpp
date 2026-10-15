@@ -864,10 +864,12 @@ void R_SetViewMatrix( viewDef_t *viewDef ) {
 
 	memset( world, 0, sizeof(*world) );
 
-	// the model matrix is an identity
+	// the model matrix is an identity; the GLES 3 shaders transform by it
+	// as a full 4x4, so w needs its 1 like the rest
 	world->modelMatrix[0*4+0] = 1;
 	world->modelMatrix[1*4+1] = 1;
 	world->modelMatrix[2*4+2] = 1;
+	world->modelMatrix[3*4+3] = 1;
 
 	// transform by the camera placement
 	origin = viewDef->renderView.vieworg;
