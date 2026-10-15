@@ -32,6 +32,7 @@ shaderProgram_t interactionPhongShader;
 shaderProgram_t fogShader;
 shaderProgram_t blendLightShader;
 shaderProgram_t zfillShader;
+shaderProgram_t zfillOpaqueShader;
 shaderProgram_t zfillClipShader;
 shaderProgram_t diffuseMapShader;
 shaderProgram_t diffuseCubeShader;
@@ -461,6 +462,19 @@ static bool RB_GLSL_InitShaders(void) {
   }
   else {
     RB_GLSL_GetUniformLocations(&zfillShader);
+  }
+
+  // Z Fill shader, opaque surfaces: no texture, no discard
+  common->Printf("Loading Zfill shader (opaque)\n");
+  memset(&zfillOpaqueShader, 0, sizeof(shaderProgram_t));
+
+  R_LoadGLSLShader(zfillShaderVP, &zfillOpaqueShader, GL_VERTEX_SHADER);
+  R_LoadGLSLShader(zfillOpaqueShaderFP, &zfillOpaqueShader, GL_FRAGMENT_SHADER);
+
+  if ( !R_LinkGLSLShader(&zfillOpaqueShader, "zfillOpaque") && !R_ValidateGLSLProgram(&zfillOpaqueShader)) {
+    return false;
+  } else {
+    RB_GLSL_GetUniformLocations(&zfillOpaqueShader);
   }
 
   // Z Fill shader, Clip planes version
@@ -1392,6 +1406,25 @@ void RB_GLSL_FogPass(const drawSurf_t* drawSurfs, const drawSurf_t* drawSurfs2, 
 RB_T_FillDepthBuffer
 ==================
 */
+/*
+==================
+RB_GLSL_DepthFillProgram
+
+Switch the depth fill between its opaque and alpha-tested programs for one
+surface; the program switched to gets the surface's MVP, as the pass only
+sets it on the program current when the space changes.
+==================
+*/
+static void RB_GLSL_DepthFillProgram(shaderProgram_t* program, const drawSurf_t* surf) {
+  float mvp[16];
+  if ( backEnd.glState.currentProgram == program ) {
+    return;
+  }
+  GL_UseProgram(program);
+  RB_ComputeMVP(surf, mvp);
+  GL_UniformMatrix4fv(offsetof(shaderProgram_t, modelViewProjectionMatrix), mvp);
+}
+
 void RB_T_GLSL_FillDepthBuffer(const drawSurf_t* surf) {
 
   const idMaterial* const shader = surf->material;
@@ -1533,6 +1566,11 @@ void RB_T_GLSL_FillDepthBuffer(const drawSurf_t* surf) {
       // GL Setup for the stage
       //////////////////////////
 
+      // the alpha test needs the program with the texture and the discard
+      if ( !backEnd.viewDef->numClipPlanes ) {
+        RB_GLSL_DepthFillProgram(&zfillShader, surf);
+      }
+
       // Color
       // alpha testing
       GL_Uniform4fv(offsetof(shaderProgram_t, glColor), color);
@@ -1582,6 +1620,11 @@ void RB_T_GLSL_FillDepthBuffer(const drawSurf_t* surf) {
 
     // Restore white image binding to Tex0
     globalImages->whiteImage->Bind();
+
+    // back to the opaque program, whose colour this surface already set
+    if ( !backEnd.viewDef->numClipPlanes ) {
+      RB_GLSL_DepthFillProgram(&zfillOpaqueShader, surf);
+    }
   }
 
   ////////////////////////////////////////
@@ -1657,7 +1700,9 @@ void RB_GLSL_FillDepthBuffer(drawSurf_t** drawSurfs, int numDrawSurfs) {
   }
     // If no clip planes, just use the regular zfill shader
   else {
-    GL_UseProgram(&zfillShader);
+    // opaque surfaces draw without discard; an alpha-tested stage switches
+    // to zfillShader for itself (RB_GLSL_DepthFillProgram)
+    GL_UseProgram(&zfillOpaqueShader);
   }
 
   // Setup attributes arrays

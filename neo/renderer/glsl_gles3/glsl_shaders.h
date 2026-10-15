@@ -35,6 +35,7 @@ extern const char* const fogShaderFP;
 // no clip planes
 extern const char* const zfillShaderVP;
 extern const char* const zfillShaderFP;
+extern const char* const zfillOpaqueShaderFP;
 // clip planes
 extern const char* const zfillClipShaderVP;
 extern const char* const zfillClipShaderFP;
