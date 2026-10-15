@@ -319,12 +319,33 @@ void idVertexCache::Alloc( void *data, int size, vertCache_t **buffer, bool inde
 	block->frameUsed = currentFrame - NUM_VERTEX_FRAMES;
 
 	block->indexBuffer = indexBuffer;
+	block->indexType = indexBuffer ? GL_INDEX_TYPE : 0;
 
 	// copy the data
 	if ( block->vbo ) {
 		if ( indexBuffer ) {
+			/* Indexes that all fit in 16 bits are stored in 16: half the
+			 * memory and half the fetch bandwidth for the same triangles,
+			 * which is nearly every surface.  The scan is once per upload. */
+			const glIndex_t *src = (const glIndex_t *)data;
+			const int count = size / (int)sizeof( glIndex_t );
+			bool small = ( size % (int)sizeof( glIndex_t ) ) == 0;
+			int i;
+			for ( i = 0; i < count && small; i++ ) {
+				small = (unsigned int)src[i] <= 0xffffu;
+			}
 			ForceBindElement( block->vbo );
-			qglBufferDataARB( GL_ELEMENT_ARRAY_BUFFER_ARB, (GLsizeiptrARB)size, data, GL_STATIC_DRAW_ARB );
+			if ( small ) {
+				unsigned short *dst = (unsigned short *)Mem_Alloc( count * sizeof( unsigned short ) );
+				for ( i = 0; i < count; i++ ) {
+					dst[i] = (unsigned short)src[i];
+				}
+				qglBufferDataARB( GL_ELEMENT_ARRAY_BUFFER_ARB, (GLsizeiptrARB)( count * sizeof( unsigned short ) ), dst, GL_STATIC_DRAW_ARB );
+				Mem_Free( dst );
+				block->indexType = GL_UNSIGNED_SHORT;
+			} else {
+				qglBufferDataARB( GL_ELEMENT_ARRAY_BUFFER_ARB, (GLsizeiptrARB)size, data, GL_STATIC_DRAW_ARB );
+			}
 		} else {
 			ForceBindArray( block->vbo );
 			if ( allocatingTempBuffer ) {
@@ -449,6 +470,7 @@ vertCache_t	*idVertexCache::AllocFrameTemp( void *data, int size ) {
 	block->size = size;
 	block->tag = TAG_TEMP;
 	block->indexBuffer = false;
+	block->indexType = 0;
 	block->offset = dynamicAllocThisFrame;
 	dynamicAllocThisFrame += block->size;
 	dynamicCountThisFrame++;

@@ -101,7 +101,7 @@ void RB_DrawElementsWithCounters( const srfTriangles_t *tri ) {
 
 #ifdef HAVE_OPENGLES
     if ( tri->indexCache ) {
-        qglDrawElements( GL_TRIANGLES, tri->numIndexes, GL_INDEX_TYPE,
+        qglDrawElements( GL_TRIANGLES, tri->numIndexes, vertexCache.IndexType( tri->indexCache ),
                          (int *)vertexCache.Position( tri->indexCache ) );
         backEnd.pc.c_vboIndexes += tri->numIndexes;
     } else {
@@ -113,7 +113,7 @@ void RB_DrawElementsWithCounters( const srfTriangles_t *tri ) {
 	if ( tri->indexCache && r_useIndexBuffers.GetBool() ) {
 		qglDrawElements( GL_TRIANGLES,
 						r_singleTriangle.GetBool() ? 3 : tri->numIndexes,
-						GL_INDEX_TYPE,
+						vertexCache.IndexType( tri->indexCache ),
 						(int *)vertexCache.Position( tri->indexCache ) );
 		backEnd.pc.c_vboIndexes += tri->numIndexes;
 	} else {
@@ -140,7 +140,7 @@ void RB_DrawShadowElementsWithCounters( const srfTriangles_t *tri, int numIndexe
 
 #ifdef HAVE_OPENGLES
     if ( tri->indexCache ) {
-        qglDrawElements( GL_TRIANGLES, numIndexes, GL_INDEX_TYPE,
+        qglDrawElements( GL_TRIANGLES, numIndexes, vertexCache.IndexType( tri->indexCache ),
                          (int *)vertexCache.Position( tri->indexCache ) );
         backEnd.pc.c_vboIndexes += numIndexes;
     } else {
@@ -154,7 +154,7 @@ void RB_DrawShadowElementsWithCounters( const srfTriangles_t *tri, int numIndexe
 	if ( tri->indexCache && r_useIndexBuffers.GetBool() ) {
 		qglDrawElements( GL_TRIANGLES,
 						r_singleTriangle.GetBool() ? 3 : numIndexes,
-						GL_INDEX_TYPE,
+						vertexCache.IndexType( tri->indexCache ),
 						(int *)vertexCache.Position( tri->indexCache ) );
 		backEnd.pc.c_vboIndexes += numIndexes;
 	} else {

@@ -44,6 +44,7 @@ typedef struct vertCache_s {
 	GLuint			vbo;
 	void			*virtMem;			// only one of vbo / virtMem will be set
 	bool			indexBuffer;		// holds indexes instead of vertexes
+	GLenum			indexType;			// GL_UNSIGNED_SHORT or GL_UNSIGNED_INT for an index buffer
 
 	intptr_t		offset;
 	int				size;				// may be larger than the amount asked for, due
@@ -81,6 +82,10 @@ public:
 	// if r_useIndexBuffers is enabled, but you need to draw something without
 	// an indexCache, this must be called to reset GL_ELEMENT_ARRAY_BUFFER_ARB
 	void			UnbindIndex();
+
+	// the type to draw an index buffer's indexes with: an index buffer whose
+	// indexes all fit in 16 bits holds them in 16 bits
+	GLenum			IndexType( const vertCache_t *buffer ) const { return buffer->indexType; }
 
 	// Position() skips binding a buffer that is already bound; the backend
 	// calls this when it starts, as the frontend and the libretro frontend
