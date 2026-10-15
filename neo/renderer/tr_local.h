@@ -1155,6 +1155,10 @@ void		GLimp_Shutdown( void );
 // and resets the gamma ramps.
 
 void		GLimp_SwapBuffers( void );
+#ifdef LIBRETRO
+// the framebuffer the core draws its views into (0 the default one)
+GLuint		GLimp_ViewFramebuffer( void );
+#endif
 // Calls the system specific swapbuffers routine, and may also perform
 // other system specific cvar checks that happen every frame.
 // This will not be called if 'r_drawBuffer GL_FRONT'
@@ -1544,6 +1548,7 @@ void RB_GLSL_EndFrame( void );
 #if defined(LIBRETRO) && defined(HAVE_OPENGLES)
 void GLimp_EndView3D( void );
 #endif
+
 void R_ReloadGLSLPrograms_f(const idCmdArgs &args);
 
 void RB_GLSL_PrepareShaders(void);
