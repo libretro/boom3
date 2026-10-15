@@ -116,6 +116,36 @@ void RB_SetDefaultGLState( void ) {
 
 
 
+#ifdef HAVE_OPENGLES
+/*
+====================
+GL_UniformChanged
+
+The GLSL backends set most uniforms per draw from values that repeat - the
+light, view and colour constants of one surface's stages, the identity
+texture matrix restored after every stage that moved it.  Uniforms persist
+in their program, so an upload of the value already there changes nothing
+and is skipped.
+====================
+*/
+bool GL_UniformChanged( shaderProgram_t *program, int locationOffset, const float *value, int count ) {
+	const int first = (int)offsetof( shaderProgram_t, glColor );
+	const int slot = ( locationOffset - first ) / (int)sizeof( GLint );
+	unsigned int bit;
+	if ( program == NULL || slot < 0 || slot >= 25 || count > 16 ) {
+		return true;
+	}
+	bit = 1u << slot;
+	if ( ( program->uniformCacheValid & bit )
+			&& memcmp( program->uniformCache[slot], value, count * sizeof( float ) ) == 0 ) {
+		return false;
+	}
+	memcpy( program->uniformCache[slot], value, count * sizeof( float ) );
+	program->uniformCacheValid |= bit;
+	return true;
+}
+#endif
+
 /*
 ====================
 GL_SelectTexture
