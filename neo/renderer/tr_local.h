@@ -641,6 +641,14 @@ typedef struct {
 	textureType_t	textureType;
 } tmu_t;
 
+/*
+Where a member of a vertex sits in a vertex block whose position is a
+buffer offset (idVertexCache::Position) rather than an address: integer
+arithmetic, the offset being zero for a block at the start of its buffer.
+*/
+#define RB_MEMBER_AT( base, type, member )	( (const GLvoid *)( (uintptr_t)( base ) + offsetof( type, member ) ) )
+#define RB_DRAWVERT( base, member )			RB_MEMBER_AT( base, idDrawVert, member )
+
 const int MAX_MULTITEXTURE_UNITS =	8;
 typedef struct {
 	tmu_t		tmu[MAX_MULTITEXTURE_UNITS];

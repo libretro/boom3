@@ -208,8 +208,8 @@ void RB_RenderTriangleSurface( const srfTriangles_t *tri ) {
 
 
 	idDrawVert *ac = (idDrawVert *)vertexCache.Position( tri->ambientCache );
-	qglVertexPointer( 3, GL_FLOAT, sizeof( idDrawVert ), ac->xyz.ToFloatPtr() );
-	qglTexCoordPointer( 2, GL_FLOAT, sizeof( idDrawVert ), ac->st.ToFloatPtr() );
+	qglVertexPointer( 3, GL_FLOAT, sizeof( idDrawVert ), RB_DRAWVERT( ac, xyz ) );
+	qglTexCoordPointer( 2, GL_FLOAT, sizeof( idDrawVert ), RB_DRAWVERT( ac, st ) );
 
 	RB_DrawElementsWithCounters( tri );
 }
@@ -469,7 +469,7 @@ void RB_BindStageTexture( const float *shaderRegisters, const textureStage_t *te
 
 	// texgens
 	if ( texture->texgen == TG_DIFFUSE_CUBE ) {
-		qglTexCoordPointer( 3, GL_FLOAT, sizeof( idDrawVert ), ((idDrawVert *)vertexCache.Position( surf->geo->ambientCache ))->normal.ToFloatPtr() );
+		qglTexCoordPointer( 3, GL_FLOAT, sizeof( idDrawVert ), RB_DRAWVERT( vertexCache.Position( surf->geo->ambientCache ), normal ) );
 	}
 	if ( texture->texgen == TG_SKYBOX_CUBE || texture->texgen == TG_WOBBLESKY_CUBE ) {
 		qglTexCoordPointer( 3, GL_FLOAT, 0, vertexCache.Position( surf->dynamicTexCoords ) );
@@ -482,7 +482,7 @@ void RB_BindStageTexture( const float *shaderRegisters, const textureStage_t *te
 		qglTexGenf( GL_T, GL_TEXTURE_GEN_MODE, GL_REFLECTION_MAP_EXT );
 		qglTexGenf( GL_R, GL_TEXTURE_GEN_MODE, GL_REFLECTION_MAP_EXT );
 		qglEnableClientState( GL_NORMAL_ARRAY );
-		qglNormalPointer( GL_FLOAT, sizeof( idDrawVert ), ((idDrawVert *)vertexCache.Position( surf->geo->ambientCache ))->normal.ToFloatPtr() );
+		qglNormalPointer( GL_FLOAT, sizeof( idDrawVert ), RB_DRAWVERT( vertexCache.Position( surf->geo->ambientCache ), normal ) );
 
 		qglMatrixMode( GL_TEXTURE );
 		float	mat[16];

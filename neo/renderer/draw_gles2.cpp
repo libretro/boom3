@@ -52,6 +52,7 @@ shaderProgram_t skyboxCubeShader;
 shaderProgram_t reflectionCubeShader;
 shaderProgram_t stencilShadowShader;
 
+
 #define ATTR_VERTEX     0   // Don't change this, as WebGL require the vertex attrib 0 to be always bound
 #define ATTR_COLOR      1
 #define ATTR_TEXCOORD   2
@@ -918,17 +919,17 @@ static void RB_GLSL_CreateDrawInteractions(const drawSurf_t* surf, const viewLig
     idDrawVert* ac = (idDrawVert*) vertexCache.Position(surf->geo->ambientCache);
 
     GL_VertexAttribPointer(offsetof(shaderProgram_t, attr_Normal), 3, GL_FLOAT, false, sizeof(idDrawVert),
-                           ac->normal.ToFloatPtr());
+                           RB_DRAWVERT( ac, normal));
     GL_VertexAttribPointer(offsetof(shaderProgram_t, attr_Bitangent), 3, GL_FLOAT, false, sizeof(idDrawVert),
-                           ac->tangents[1].ToFloatPtr());
+                           RB_DRAWVERT( ac, tangents[1]));
     GL_VertexAttribPointer(offsetof(shaderProgram_t, attr_Tangent), 3, GL_FLOAT, false, sizeof(idDrawVert),
-                           ac->tangents[0].ToFloatPtr());
+                           RB_DRAWVERT( ac, tangents[0]));
     GL_VertexAttribPointer(offsetof(shaderProgram_t, attr_TexCoord), 2, GL_FLOAT, false, sizeof(idDrawVert),
-                           ac->st.ToFloatPtr());
+                           RB_DRAWVERT( ac, st));
     GL_VertexAttribPointer(offsetof(shaderProgram_t, attr_Vertex), 3, GL_FLOAT, false, sizeof(idDrawVert),
-                           ac->xyz.ToFloatPtr());
+                           RB_DRAWVERT( ac, xyz));
     GL_VertexAttribPointer(offsetof(shaderProgram_t, attr_Color), 4, GL_UNSIGNED_BYTE, false, sizeof(idDrawVert),
-                           (void*) &ac->color);
+                           RB_DRAWVERT( ac, color ));
 
     // this may cause RB_GLSL_DrawInteraction to be exacuted multiple
     // times with different colors and images if the surface or light have multiple layers
@@ -1304,7 +1305,7 @@ static void RB_T_GLSL_BasicFog(const drawSurf_t* surf, const viewLight_t* vLight
   idDrawVert* ac = (idDrawVert*) vertexCache.Position(surf->geo->ambientCache);
 
   GL_VertexAttribPointer(offsetof(shaderProgram_t, attr_Vertex), 3, GL_FLOAT, false, sizeof(idDrawVert),
-                         ac->xyz.ToFloatPtr());
+                         RB_DRAWVERT( ac, xyz));
 
   RB_DrawElementsWithCounters(surf->geo);
 }
@@ -1531,9 +1532,9 @@ void RB_T_GLSL_FillDepthBuffer(const drawSurf_t* surf) {
 
   // Setup attribute pointers
   GL_VertexAttribPointer(offsetof(shaderProgram_t, attr_Vertex), 3, GL_FLOAT, false, sizeof(idDrawVert),
-                         ac->xyz.ToFloatPtr());
+                         RB_DRAWVERT( ac, xyz));
   GL_VertexAttribPointer(offsetof(shaderProgram_t, attr_TexCoord), 2, GL_FLOAT, false, sizeof(idDrawVert),
-                         ac->st.ToFloatPtr());
+                         RB_DRAWVERT( ac, st));
 
   bool drawSolid = false;
 
@@ -1987,7 +1988,7 @@ void RB_GLSL_T_RenderShaderPasses(const drawSurf_t* surf, const float mvp[16]) {
 
         // Setup texcoord array to use the normals
         GL_VertexAttribPointer(offsetof(shaderProgram_t, attr_TexCoord), 3, GL_FLOAT, false, sizeof(idDrawVert),
-                               ac->normal.ToFloatPtr());
+                               RB_DRAWVERT( ac, normal));
 
         // Setup the texture matrix
         if ( pStage->texture.hasMatrix ) {
@@ -2057,7 +2058,7 @@ void RB_GLSL_T_RenderShaderPasses(const drawSurf_t* surf, const float mvp[16]) {
 
         // Setup texcoord array to use the normals
         GL_VertexAttribPointer(offsetof(shaderProgram_t, attr_TexCoord), 3, GL_FLOAT, false, sizeof(idDrawVert),
-                               ac->normal.ToFloatPtr());
+                               RB_DRAWVERT( ac, normal));
 
         // Setup the modelViewMatrix, we will need it to compute the reflection
         GL_UniformMatrix4fv(offsetof(shaderProgram_t, modelViewMatrix), surf->space->modelViewMatrix);
@@ -2074,7 +2075,7 @@ void RB_GLSL_T_RenderShaderPasses(const drawSurf_t* surf, const float mvp[16]) {
 
         // Setup the TexCoord pointer
         GL_VertexAttribPointer(offsetof(shaderProgram_t, attr_TexCoord), 2, GL_FLOAT, false, sizeof(idDrawVert),
-                               ac->st.ToFloatPtr());
+                               RB_DRAWVERT( ac, st));
 
         // Setup the texture matrix
         if ( pStage->texture.hasMatrix ) {
@@ -2094,11 +2095,11 @@ void RB_GLSL_T_RenderShaderPasses(const drawSurf_t* surf, const float mvp[16]) {
 
           // Setup the Vertex Attrib pointer
           GL_VertexAttribPointer(offsetof(shaderProgram_t, attr_Vertex), 3, GL_FLOAT, false, sizeof(idDrawVert),
-                                 ac->xyz.ToFloatPtr());
+                                 RB_DRAWVERT( ac, xyz));
 
           // Setup the Color pointer
           GL_VertexAttribPointer(offsetof(shaderProgram_t, attr_Color), 4, GL_UNSIGNED_BYTE, false, sizeof(idDrawVert),
-                                 (void*) &ac->color);
+                                 RB_DRAWVERT( ac, color ));
 
           bVASet[pStage->texture.texgen] = true;
         }
@@ -2420,10 +2421,10 @@ static void RB_T_GLSL_BlendLight(const drawSurf_t *surf, const viewLight_t* vLig
   // This gets used for both blend lights and shadow draws
   if (tri->ambientCache) {
     idDrawVert *ac = (idDrawVert *) vertexCache.Position(tri->ambientCache);
-    GL_VertexAttribPointer(offsetof(shaderProgram_t, attr_Vertex), 3, GL_FLOAT, false, sizeof(idDrawVert), ac->xyz.ToFloatPtr());
+    GL_VertexAttribPointer(offsetof(shaderProgram_t, attr_Vertex), 3, GL_FLOAT, false, sizeof(idDrawVert), RB_DRAWVERT( ac, xyz));
   } else if (tri->shadowCache) {
     shadowCache_t *sc = (shadowCache_t *) vertexCache.Position(tri->shadowCache);
-    GL_VertexAttribPointer(offsetof(shaderProgram_t, attr_Vertex), 3, GL_FLOAT, false, sizeof(shadowCache_t), sc->xyz.ToFloatPtr());
+    GL_VertexAttribPointer(offsetof(shaderProgram_t, attr_Vertex), 3, GL_FLOAT, false, sizeof(shadowCache_t), RB_MEMBER_AT( sc, shadowCache_t, xyz ));
   }
 
   ////////////////////
