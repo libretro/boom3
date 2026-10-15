@@ -724,6 +724,10 @@ RB_GLSL_CreateSingleDrawInteractions(const drawSurf_t* surf, void (* DrawInterac
   const idMaterial* lightShader = vLight->lightShader;
   const float* lightRegs = vLight->shaderRegisters;
   drawInteraction_t inter;
+  inter.diffuseMatrix[0].Zero();
+  inter.diffuseMatrix[1].Zero();
+  inter.specularMatrix[0].Zero();
+  inter.specularMatrix[1].Zero();
 
   if ( r_skipInteractions.GetBool() || !surf->geo || !surf->geo->ambientCache ) {
     return;
