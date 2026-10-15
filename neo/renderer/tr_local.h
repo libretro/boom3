@@ -1541,6 +1541,9 @@ bool GL_UniformChanged( shaderProgram_t *program, int locationOffset, const floa
 #ifdef HAVE_OPENGLES3
 void RB_GLSL_EndFrame( void );
 #endif
+#if defined(LIBRETRO) && defined(HAVE_OPENGLES)
+void GLimp_EndView3D( void );
+#endif
 void R_ReloadGLSLPrograms_f(const idCmdArgs &args);
 
 void RB_GLSL_PrepareShaders(void);

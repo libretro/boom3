@@ -613,6 +613,50 @@ static void ldr_destroy_target( void );
 static void ssaa_apply( int want );
 extern bool ssaa_push_cvar;
 
+#ifdef HAVE_OPENGLES
+/* Tell a tiled GPU that attachments of the bound framebuffer hold nothing
+ * anyone will read, so it neither writes them out at the end of the pass
+ * nor loads them back at the start of the next one.  fbo is the bound
+ * framebuffer's name, which decides the attachment enums (0 is the
+ * default framebuffer).  GLES 2 needs EXT_discard_framebuffer. */
+#ifndef HAVE_OPENGLES3
+static int gles_discard_supported = -1;
+#endif
+
+static void gles_invalidate( GLuint fbo, bool color, bool depthStencil ) {
+	GLenum att[3];
+	GLsizei n = 0;
+#ifdef HAVE_OPENGLES3
+	if ( color )        att[n++] = fbo ? GL_COLOR_ATTACHMENT0 : GL_COLOR;
+	if ( depthStencil ) {
+		att[n++] = fbo ? GL_DEPTH_ATTACHMENT : GL_DEPTH;
+		att[n++] = fbo ? GL_STENCIL_ATTACHMENT : GL_STENCIL;
+	}
+	if ( n )
+		glInvalidateFramebuffer( GL_FRAMEBUFFER, n, att );
+#else
+	if ( gles_discard_supported < 0 ) {
+		const char *ext = (const char *)glGetString( GL_EXTENSIONS );
+		gles_discard_supported = glDiscardFramebufferEXT && ext
+			&& strstr( ext, "GL_EXT_discard_framebuffer" ) != NULL;
+	}
+	if ( !gles_discard_supported )
+		return;
+	if ( color )        att[n++] = fbo ? GL_COLOR_ATTACHMENT0 : GL_COLOR_EXT;
+	if ( depthStencil ) {
+		att[n++] = fbo ? GL_DEPTH_ATTACHMENT : GL_DEPTH_EXT;
+		att[n++] = fbo ? GL_STENCIL_ATTACHMENT : GL_STENCIL_EXT;
+	}
+	if ( n )
+		glDiscardFramebufferEXT( GL_FRAMEBUFFER, n, att );
+#endif
+}
+#endif
+
+/* The framebuffer the renderer draws its views into, for
+ * GLimp_EndView3D: the frontend's, a core scene target, or a VR target. */
+static GLuint core_view_fbo;
+
 static retro_log_printf_t log_cb;
 static retro_video_refresh_t video_cb;
 static retro_audio_sample_t audio_cb;
@@ -698,6 +742,11 @@ static bool   vr_recenter_req = true;
 static idVec3 vr_ref_pos;     /* Doom axes, metres */
 static float  vr_ref_yaw;
 static GLuint vr_fbo[3], vr_tex[3], vr_rbo;   /* 0 left, 1 right, 2 UI */
+/* bit i: vr_fbo[i] holds last frame's picture, retired at present, and is
+ * cleared by its first bind this frame (or by vr_present when nothing drew
+ * into it) - a clear at the end of a frame is a pass a tiled GPU writes out
+ * in full and loads back for the next one */
+static unsigned vr_need_clear;
 static unsigned vr_tgt_w, vr_tgt_h;           /* the eye size they were made at */
 static bool   vr_targets_bad;
 #endif
@@ -1101,7 +1150,10 @@ static void vr_destroy_targets( void ) {
 	vr_read_fbo = 0;
 }
 
+static void vr_clear_target( int i );
+
 static void vr_clear_targets( void ) {
+	vr_need_clear = 0;
 	glDisable( GL_SCISSOR_TEST );
 	glColorMask( GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE );
 	for ( int i = 0; i < 3; i += 2 ) {
@@ -1157,7 +1209,12 @@ static bool vr_ensure_targets( void ) {
 void VR_BindTargetForView( int vrView ) {
 	if ( !vr_ensure_targets() ) return;
 	/* 3 is both eyes at once; 1 and 2 are not drawn separately here */
-	glBindFramebuffer( RARCH_GL_FRAMEBUFFER, vr_fbo[ vrView != 0 ? 0 : 2 ] );
+	const int i = vrView != 0 ? 0 : 2;
+	if ( vr_need_clear & ( 1u << i ) )
+		vr_clear_target( i );   /* binds it */
+	else
+		glBindFramebuffer( RARCH_GL_FRAMEBUFFER, vr_fbo[i] );
+	core_view_fbo = vr_fbo[i];
 }
 
 /* Reads from a multiview framebuffer are errors, so point the read binding
@@ -1217,7 +1274,10 @@ static void vr_destroy_targets( void ) {
 	vr_rbo = 0;
 }
 
+static void vr_clear_target( int i );
+
 static void vr_clear_targets( void ) {
+	vr_need_clear = 0;
 	glDisable( GL_SCISSOR_TEST );
 	glColorMask( GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE );
 	for ( int i = 0; i < 3; i++ ) {
@@ -1266,10 +1326,49 @@ static bool vr_ensure_targets( void ) {
 
 void VR_BindTargetForView( int vrView ) {
 	if ( !vr_ensure_targets() ) return;
-	glBindFramebuffer( RARCH_GL_FRAMEBUFFER, vr_fbo[ vrView == 1 ? 0 : vrView == 2 ? 1 : 2 ] );
+	const int i = vrView == 1 ? 0 : vrView == 2 ? 1 : 2;
+	if ( vr_need_clear & ( 1u << i ) )
+		vr_clear_target( i );   /* binds it */
+	else
+		glBindFramebuffer( RARCH_GL_FRAMEBUFFER, vr_fbo[i] );
+	core_view_fbo = vr_fbo[i];
 }
 
 #endif
+
+/* One target cleared as vr_clear_targets clears it, bound afterwards.  The
+ * scissor is put back on: the backends keep it enabled. */
+static void vr_clear_target( int i ) {
+	glBindFramebuffer( RARCH_GL_FRAMEBUFFER, vr_fbo[i] );   /* every view of a multiview target */
+	glDisable( GL_SCISSOR_TEST );
+	glColorMask( GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE );
+	glClearColor( 0, 0, 0, i == 2 ? 0.0f : 1.0f );   /* UI starts transparent */
+	glClear( GL_COLOR_BUFFER_BIT );
+	glEnable( GL_SCISSOR_TEST );
+	vr_need_clear &= ~( 1u << i );
+}
+
+/* After present: nothing reads the targets again until they are drawn, so
+ * a tiled GPU need not keep them, and each is cleared at its first bind. */
+static void vr_retire_targets( void ) {
+	for ( int i = 0; i < 3; i++ ) {
+		if ( !vr_fbo[i] )
+			continue;
+#ifdef HAVE_OPENGLES
+		glBindFramebuffer( RARCH_GL_FRAMEBUFFER, vr_fbo[i] );
+		gles_invalidate( vr_fbo[i], true, true );
+#endif
+		vr_need_clear |= 1u << i;
+	}
+}
+
+/* A target present reads that no view drew into this frame holds what a
+ * clear leaves, as before. */
+static void vr_clear_undrawn_targets( void ) {
+	for ( int i = 0; i < 3; i++ )
+		if ( vr_fbo[i] && ( vr_need_clear & ( 1u << i ) ) )
+			vr_clear_target( i );
+}
 
 /* Pixel rect of the head-locked HUD/menu screen inside one eye. A point straight
  * ahead at distance D is seen at +-(ipd/2)/D from each eye's forward axis. */
@@ -1536,6 +1635,7 @@ static void quad_draw_layer( GLuint tex, int layer, bool blend, float keep = -1.
 static void vr_present( GLuint dstFbo ) {
 	int eye, x, y, w, h;
 	if ( !vr_ensure_targets() ) return;
+	vr_clear_undrawn_targets();
 	glBindFramebuffer( RARCH_GL_FRAMEBUFFER, dstFbo );
 	glDisable( GL_STENCIL_TEST );
 	glDepthMask( GL_FALSE );
@@ -1543,6 +1643,9 @@ static void vr_present( GLuint dstFbo ) {
 	glColorMask( GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE );
 	glClearColor( 0, 0, 0, 1 );
 	glClear( GL_COLOR_BUFFER_BIT );                       /* alpha = 1 for the compositor */
+#ifdef HAVE_OPENGLES
+	gles_invalidate( dstFbo, false, true );               /* the frontend never reads our depth */
+#endif
 	glColorMask( GL_TRUE, GL_TRUE, GL_TRUE, GL_FALSE );   /* leave it at 1 */
 	if ( vr_screen_mode ) {
 		/* the UI alone, the whole of the map's one view */
@@ -1550,7 +1653,7 @@ static void vr_present( GLuint dstFbo ) {
 		quad_draw_layer( vr_tex[2], 0, true );
 		glColorMask( GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE );
 		glDepthMask( GL_TRUE );
-		vr_clear_targets();
+		vr_retire_targets();
 		return;
 	}
 	for ( eye = 0; eye < 2; eye++ ) {
@@ -1569,12 +1672,13 @@ static void vr_present( GLuint dstFbo ) {
 	glColorMask( GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE );
 	glDepthMask( GL_TRUE );
 
-	vr_clear_targets();                                   /* next frame starts clean */
+	vr_retire_targets();                                  /* cleared at their next first bind */
 }
 #else
 static void vr_present( GLuint dstFbo ) {
 	int eye, x, y, w, h;
 	if ( !vr_ensure_targets() ) return;
+	vr_clear_undrawn_targets();
 	glBindFramebuffer( RARCH_GL_FRAMEBUFFER, dstFbo );
 	glDisable( GL_STENCIL_TEST );
 	glDepthMask( GL_FALSE );
@@ -1582,6 +1686,9 @@ static void vr_present( GLuint dstFbo ) {
 	glColorMask( GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE );
 	glClearColor( 0, 0, 0, 1 );
 	glClear( GL_COLOR_BUFFER_BIT );                       /* alpha = 1 for the compositor */
+#ifdef HAVE_OPENGLES
+	gles_invalidate( dstFbo, false, true );               /* the frontend never reads our depth */
+#endif
 	glColorMask( GL_TRUE, GL_TRUE, GL_TRUE, GL_FALSE );   /* leave it at 1 */
 	if ( vr_screen_mode ) {
 		/* the UI alone, the whole of the map's one view */
@@ -1589,7 +1696,7 @@ static void vr_present( GLuint dstFbo ) {
 		quad_draw( vr_tex[2], true );
 		glColorMask( GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE );
 		glDepthMask( GL_TRUE );
-		vr_clear_targets();
+		vr_retire_targets();
 		return;
 	}
 	for ( eye = 0; eye < 2; eye++ ) {
@@ -1608,7 +1715,7 @@ static void vr_present( GLuint dstFbo ) {
 	glColorMask( GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE );
 	glDepthMask( GL_TRUE );
 
-	vr_clear_targets();                                   /* next frame starts clean */
+	vr_retire_targets();                                  /* cleared at their next first bind */
 }
 
 #endif
@@ -7362,17 +7469,30 @@ static void hdr_bind_scene( void ) {
 	if ( vr_active ) { VR_BindTargetForView( 0 ); return; }
 #endif
 
+	core_view_fbo = (GLuint)hw_render.get_current_framebuffer();
 	if ( !hdr_output_active ) {
 		/* 24-bit supersampling renders into its own target; everything
 		 * else in 24-bit renders where the caller already bound */
 		if ( hdr_ssaa == 2
-				&& ldr_ensure_target( scr_width * 2, scr_height * 2 ) )
+				&& ldr_ensure_target( scr_width * 2, scr_height * 2 ) ) {
 			glBindFramebuffer( RARCH_GL_FRAMEBUFFER, ldr_fbo );
+			core_view_fbo = ldr_fbo;
+		}
 		return;
 	}
 	if ( !hdr_ensure_target( scr_width * hdr_ssaa, scr_height * hdr_ssaa ) )
 		return;
 	glBindFramebuffer( RARCH_GL_FRAMEBUFFER, hdr_fbo );
+	core_view_fbo = hdr_fbo;
+}
+
+/* The end of a 3D view: every 3D view clears depth and stencil when it
+ * starts and nothing reads them after it ends, so a tiled GPU need not
+ * write them back to memory. */
+void GLimp_EndView3D( void ) {
+#ifdef HAVE_OPENGLES
+	gles_invalidate( core_view_fbo, false, true );
+#endif
 }
 
 /* the 24-bit downsample: one LINEAR tap per output pixel at the centre
@@ -7382,6 +7502,10 @@ static void ldr_present( GLuint dstFbo )
 	if ( hdr_output_active || hdr_ssaa != 2 || ldr_fbo == 0 )
 		return;
 	glBindFramebuffer( RARCH_GL_FRAMEBUFFER, dstFbo );
+#ifdef HAVE_OPENGLES
+	/* about to be covered by one opaque quad: nothing of it is kept */
+	gles_invalidate( dstFbo, true, true );
+#endif
 	glViewport( 0, 0, scr_width, scr_height );
 #if defined(BOOM3_VR)
 	quad_draw( ldr_tex, false );
@@ -8229,6 +8353,10 @@ static void hdr_present( GLuint dstFbo ) {
 
 
 	glBindFramebuffer( RARCH_GL_FRAMEBUFFER, dstFbo );
+#ifdef HAVE_OPENGLES
+	/* the frontend reads only colour; its depth need not be loaded */
+	gles_invalidate( dstFbo, false, true );
+#endif
 	/* The presentation viewport is the frontend's size, not the scene's.
 	 * These were the same number until supersampling split them, at
 	 * which point hdr_w here meant "draw the fullscreen triangle twice
