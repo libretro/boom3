@@ -416,6 +416,7 @@ SOURCES_C	:=\
 	$(CORE_DIR)/renderer/glsl_blocks.c \
 	$(CORE_DIR)/renderer/glsl_translate.c \
 	$(CORE_DIR)/renderer/range_alloc.c \
+	$(CORE_DIR)/renderer/gles_pack.c \
 	$(LIBRETRO_COMM_DIR)/formats/data_transfer.c \
 	$(LIBRETRO_COMM_DIR)/memmap/memmap.c \
 	$(SRC_GLAD) \

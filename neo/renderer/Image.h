@@ -286,6 +286,7 @@ public:
 	bool				levelLoadReferenced;	// for determining if it needs to be purged
 	bool				precompressedFile;		// true when it was loaded from a .d3t file
 	bool				defaulted;				// true if the default image was generated because a file couldn't be loaded
+	bool				rgbaUpdates;			// its texels are replaced later by RGBA sub-uploads, so it stays RGBA
 	ID_TIME_T				timestamp;				// the most recent of all images used in creation, for reloadImages command
 
 	int					imageHash;				// for identical-image checking
@@ -325,6 +326,7 @@ ID_INLINE idImage::idImage() {
 	levelLoadReferenced = false;
 	precompressedFile = false;
 	defaulted = false;
+	rgbaUpdates = false;
 	timestamp = 0;
 	bindCount = 0;
 	uploadWidth = uploadHeight = uploadDepth = 0;

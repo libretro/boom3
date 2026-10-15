@@ -40,6 +40,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "renderer/gles_compat.h"
 #endif
 #include "renderer/gl_caps.h"
+#include "renderer/gles_pack.h"
 
 #ifndef GL_TEXTURE_SWIZZLE_R
 #define GL_TEXTURE_SWIZZLE_R	0x8E42
@@ -152,6 +153,85 @@ static void R_TexImageRGBA( GLenum target, int level, GLenum internalFormat, int
 }
 #endif
 
+#ifdef HAVE_OPENGLES
+/*
+================
+GLES single-channel textures
+
+A GLES build uploads every generated image as RGBA.  One whose channels
+repeat - the light falloffs and projections, fog ramps and fonts mostly
+are - goes up in one or two bytes a texel instead (gles_pack.h), sampling
+back to the same values.  An image later sub-uploaded as RGBA, or tinted
+per level for debugging, stays RGBA.
+================
+*/
+#ifdef HAVE_OPENGLES3
+#define GLES_PACK_SWIZZLE 1
+#else
+#define GLES_PACK_SWIZZLE 0
+#endif
+
+static gles_pack_t R_GLESPacking( const idImage *image, const byte *rgba, int count ) {
+	if ( image->rgbaUpdates || globalImages->image_colorMipLevels.GetBool() ) {
+		return GLES_PACK_RGBA;
+	}
+	return gles_pack_classify( rgba, count );
+}
+
+// the sized name of what a packing stores, for the memory statistics
+static GLenum R_GLESPackedFormat( gles_pack_t pack ) {
+	switch ( pack ) {
+	case GLES_PACK_L:	return GL_LUMINANCE8;
+	case GLES_PACK_A0:	return GL_ALPHA8;
+	case GLES_PACK_LA:	return GL_LUMINANCE8_ALPHA8;
+	case GLES_PACK_I:
+	case GLES_PACK_A1:	return GLES_PACK_SWIZZLE ? GL_R8 : GL_LUMINANCE8_ALPHA8;
+	default:			return GL_RGBA8;
+	}
+}
+
+/*
+================
+R_GLESTexImage
+
+One level from RGBA bytes, in the packing's format.
+================
+*/
+static void R_GLESTexImage( GLenum target, int level, gles_pack_t pack, int width, int height, const byte *rgba ) {
+	if ( pack == GLES_PACK_RGBA ) {
+		qglTexImage2D( target, level, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba );
+		return;
+	}
+	const int bytes = gles_pack_bytes( pack, GLES_PACK_SWIZZLE );
+	GLenum format;
+	if ( pack == GLES_PACK_L ) {
+		format = GL_LUMINANCE;
+	} else if ( pack == GLES_PACK_A0 ) {
+		format = GL_ALPHA;
+	} else if ( bytes == 2 ) {
+		format = GL_LUMINANCE_ALPHA;
+	} else {
+		format = GL_RED;
+	}
+	byte *packed = (byte *)R_StaticAlloc( width * height * bytes );
+	gles_pack_texels( pack, GLES_PACK_SWIZZLE, rgba, width * height, packed );
+	GLint alignment = 4;
+	qglGetIntegerv( GL_UNPACK_ALIGNMENT, &alignment );
+	qglPixelStorei( GL_UNPACK_ALIGNMENT, 1 );
+	qglTexImage2D( target, level, format == GL_RED ? GL_R8 : format, width, height, 0, format, GL_UNSIGNED_BYTE, packed );
+	qglPixelStorei( GL_UNPACK_ALIGNMENT, alignment );
+	R_StaticFree( packed );
+	if ( level == 0 && format == GL_RED ) {
+		// intensity reads red everywhere; the white mask is white with red as alpha
+		const GLint c = pack == GLES_PACK_A1 ? GL_ONE : GL_RED;
+		qglTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_R, c );
+		qglTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_G, c );
+		qglTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_B, c );
+		qglTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_A, GL_RED );
+	}
+}
+#endif
+
 static bool FormatIsDXT(int internalFormat) {
 #ifdef HAVE_OPENGLES
 #ifdef HAVE_OPENGLES3
@@ -202,7 +282,11 @@ int idImage::BitsForInternalFormat( int internalFormat ) const {
 #ifdef HAVE_OPENGLES3
     switch (internalFormat) {
         case GL_R8:
+        case GL_LUMINANCE8:
+        case GL_ALPHA8:
 			return 8;
+        case GL_LUMINANCE8_ALPHA8:
+			return 16;
         case GL_RG8:
 			return 16;
         case GL_RGB8:
@@ -950,6 +1034,12 @@ void idImage::GenerateImage( const byte *pic, int width, int height,
 	Bind();
 
 
+#ifdef HAVE_OPENGLES
+	// the levels below keep the base level's channel relation
+	const gles_pack_t pack = R_GLESPacking( this, scaledBuffer, scaled_width * scaled_height );
+	internalFormat = R_GLESPackedFormat( pack );
+#endif
+
 	if ( internalFormat == GL_COLOR_INDEX8_EXT ) {
 		/*
 		if ( depth == TD_BUMP ) {
@@ -962,7 +1052,7 @@ void idImage::GenerateImage( const byte *pic, int width, int height,
 		UploadCompressedNormalMap( scaled_width, scaled_height, scaledBuffer, 0 );
 	} else {
 #ifdef HAVE_OPENGLES
-		qglTexImage2D( GL_TEXTURE_2D, 0, internalFormat, scaled_width, scaled_height, 0, GL_RGBA, GL_UNSIGNED_BYTE, scaledBuffer );
+		R_GLESTexImage( GL_TEXTURE_2D, 0, pack, scaled_width, scaled_height, scaledBuffer );
 #else
 		R_TexImageRGBA( GL_TEXTURE_2D, 0, internalFormat, scaled_width, scaled_height, scaledBuffer );
 #endif
@@ -1001,8 +1091,7 @@ void idImage::GenerateImage( const byte *pic, int width, int height,
 			UploadCompressedNormalMap( scaled_width, scaled_height, scaledBuffer, miplevel );
 		} else {
 #ifdef HAVE_OPENGLES
-			qglTexImage2D( GL_TEXTURE_2D, miplevel, GLES2_INTERNAL_FMT(internalFormat), scaled_width, scaled_height,
-				0, GL_RGBA, GL_UNSIGNED_BYTE, scaledBuffer );
+			R_GLESTexImage( GL_TEXTURE_2D, miplevel, pack, scaled_width, scaled_height, scaledBuffer );
 #else
 			R_TexImageRGBA( GL_TEXTURE_2D, miplevel, internalFormat, scaled_width, scaled_height, scaledBuffer );
 #endif

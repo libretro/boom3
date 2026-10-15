@@ -423,6 +423,9 @@ static void R_BorderClampImage( idImage *image ) {
 static void R_RGBA8Image( idImage *image ) {
 	byte	data[DEFAULT_SIZE][DEFAULT_SIZE][4];
 
+	// rendered or streamed into later
+	image->rgbaUpdates = true;
+
 	memset( data, 0, sizeof( data ) );
 	data[0][0][0] = 16;
 	data[0][0][1] = 32;
@@ -435,6 +438,9 @@ static void R_RGBA8Image( idImage *image ) {
 
 static void R_DepthImage( idImage *image ) {
 	byte	data[DEFAULT_SIZE][DEFAULT_SIZE][4];
+
+	// rendered or streamed into later
+	image->rgbaUpdates = true;
 
 	memset( data, 0, sizeof( data ) );
 	data[0][0][0] = 16;

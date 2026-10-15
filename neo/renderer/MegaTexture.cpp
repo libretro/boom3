@@ -79,6 +79,9 @@ static void R_EmptyLevelImage( idImage *image ) {
 		((int *)data)[i] = fillColor.intVal;
 	}
 
+	// the tiles are sub-uploaded into it as RGBA
+	image->rgbaUpdates = true;
+
 	// FIXME: this won't live past vid mode changes
 	image->GenerateImage( data, MAX_LEVEL_WIDTH, MAX_LEVEL_WIDTH,
 		TF_DEFAULT, false, TR_REPEAT, TD_HIGH_QUALITY );
