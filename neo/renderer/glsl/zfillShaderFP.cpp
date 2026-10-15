@@ -44,3 +44,20 @@ void main(void)
   gl_FragColor = u_glColor;
 }
 )";
+
+// The depth fill of opaque surfaces: zfillShaderFP's result when nothing is
+// alpha tested (u_alphaTest 1, the white image bound), with no discard in
+// the program, so tiled GPUs keep early depth testing for the pass that
+// exists to prime it.  Paired with zfillShaderVP.
+const char * const zfillOpaqueShaderFP = R"(
+#version 100
+precision mediump float;
+
+// Uniforms
+uniform lowp vec4 u_glColor;
+
+void main(void)
+{
+  gl_FragColor = u_glColor;
+}
+)";
