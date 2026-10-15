@@ -156,7 +156,8 @@ void GL_SelectTexture( int unit ) {
 		return;
 	}
 
-	if ( unit < 0 || (unit >= glConfig.maxTextureUnits && unit >= glConfig.maxTextureImageUnits) ) {
+	if ( unit < 0 || unit >= MAX_MULTITEXTURE_UNITS
+			|| ( unit >= glConfig.maxTextureUnits && unit >= glConfig.maxTextureImageUnits ) ) {
 		common->Warning( "GL_SelectTexture: unit = %i", unit );
 		return;
 	}

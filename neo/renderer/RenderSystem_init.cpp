@@ -483,8 +483,10 @@ static void R_CheckPortableExtensions( void ) {
     glConfig.depthBoundsTestAvailable     = false;
     qglGetIntegerv( GL_MAX_TEXTURE_IMAGE_UNITS, (GLint*)&glConfig.maxTextureImageUnits );
     qglGetIntegerv( GL_MAX_TEXTURE_SIZE,        (GLint*)&glConfig.maxTextureSize );
-    glConfig.maxTextureUnits  = glConfig.maxTextureImageUnits;
-    glConfig.maxTextureCoords = glConfig.maxTextureImageUnits;
+    // the backend tracks MAX_MULTITEXTURE_UNITS units of state, and sets
+    // up every unit counted here
+    glConfig.maxTextureUnits  = Min( glConfig.maxTextureImageUnits, MAX_MULTITEXTURE_UNITS );
+    glConfig.maxTextureCoords = glConfig.maxTextureUnits;
 
 	if ( R_CheckExtension("GL_OES_compressed_ETC1_RGB8_texture") ) {
 		//glConfig.textureCompressionAvailable = true;
