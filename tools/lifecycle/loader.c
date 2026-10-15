@@ -1,5 +1,5 @@
 /* minimal libretro lifecycle harness: exercises the core's no-content
-   entry points under whatever sanitizers the .so carries. */
+   entry points under whatever sanitizers the .so carries.
 
    build: gcc -O1 -g -fsanitize=address -o loader loader.c -ldl
    run:   ASAN_OPTIONS=detect_leaks=1 ./loader path/to/boom3_libretro.so
@@ -7,7 +7,7 @@
    exercises retro_set_environment / retro_init / retro_deinit without
    content, so init-path leaks and UB report at exit. The full-game
    sweep still needs a real frontend and retail data; this covers the
-   lifecycle a frontend performs before content exists.
+   lifecycle a frontend performs before content exists. */
 #include <dlfcn.h>
 #include <stdio.h>
 #include <stdarg.h>

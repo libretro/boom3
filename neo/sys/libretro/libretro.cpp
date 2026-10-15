@@ -946,7 +946,9 @@ static retro_hw_context_type get_hw_context_type(void)
 
 #ifdef BOOM3_VR
 /* ============ VR ============ */
+#ifdef HAVE_OPENGLES
 static GLuint hdr_compile( GLenum type, const char *src ); // forward declaration
+#endif
 
 /* tracking (+X right, +Y up, -Z fwd) -> Doom (+X fwd, +Y left, +Z up) */
 static idVec3 vr_conv( float x, float y, float z ) {
