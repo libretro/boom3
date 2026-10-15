@@ -1169,6 +1169,40 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       },
       "enabled"
    },
+   {
+      "boom3_vr_turn_mode",
+      "VR Turning",
+      NULL,
+      "How the right stick turns the view in VR. Snap turns by the VR Turn "
+      "Angle at each flick of the stick. Smooth turns for as long as the stick "
+      "is held, at eight times the VR Turn Angle each second.",
+      NULL,
+      NULL,
+      {
+         { "snap",    "Snap" },
+         { "smooth",  "Smooth" },
+         { NULL, NULL },
+      },
+      "snap"
+   },
+   {
+      "boom3_vr_turn_angle",
+      "VR Turn Angle",
+      NULL,
+      "Degrees per snap turn. Smooth turning goes eight times this each "
+      "second, so 45 turns a full circle in one second.",
+      NULL,
+      NULL,
+      {
+         { "15",  "15" },
+         { "30",  "30" },
+         { "45",  "45 (Default)" },
+         { "60",  "60" },
+         { "90",  "90" },
+         { NULL, NULL },
+      },
+      "45"
+   },
 #endif
    { NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL },
 };
