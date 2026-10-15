@@ -2663,6 +2663,16 @@ static void update_variables(bool startup)
 	{
 		vr_user_enable = strcmp(var.value, "enabled") == 0;
 	}
+
+	var.key = "boom3_vr_turn_mode";
+	var.value = NULL;
+	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+		vr_turnmode.SetBool(strcmp(var.value, "smooth") == 0);
+
+	var.key = "boom3_vr_turn_angle";
+	var.value = NULL;
+	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+		vr_turnangle.SetInteger(atoi(var.value));
 #endif
 
 	/* the curve just parsed decides which of its options are shown */
