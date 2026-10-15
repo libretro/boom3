@@ -1047,6 +1047,10 @@ static void RB_GLSL_CreateDrawInteractions(const drawSurf_t* surf, const viewLig
 }
 
 
+// the separate stencil ops the current shadow pass last set: -1 unknown,
+// 0 depth-fail, 1 depth-pass; RB_GLSL_StencilShadowPass forgets them
+static int rbShadowExternal = -1;
+
 /*
 =====================
 RB_T_GLSL_Shadow
@@ -1104,14 +1108,17 @@ static void RB_T_GLSL_Shadow(const drawSurf_t* surf, const viewLight_t* vLight) 
 		numIndexes = surf->geo->numIndexes;
 	}
 
-	// depth-fail stencil shadows
-	if ( !external ) {
-		qglStencilOpSeparate(backEnd.viewDef->isMirror ? GL_FRONT : GL_BACK, GL_KEEP, GL_DECR, GL_KEEP);
-		qglStencilOpSeparate(backEnd.viewDef->isMirror ? GL_BACK : GL_FRONT, GL_KEEP, GL_INCR, GL_KEEP);
-	} else {
-		// traditional depth-pass stencil shadows
-		qglStencilOpSeparate(backEnd.viewDef->isMirror ? GL_FRONT : GL_BACK, GL_KEEP, GL_KEEP, GL_INCR);
-		qglStencilOpSeparate(backEnd.viewDef->isMirror ? GL_BACK : GL_FRONT, GL_KEEP, GL_KEEP, GL_DECR);
+	// depth-fail stencil shadows, else traditional depth-pass ones; most
+	// surfaces of a light repeat the previous one's ops, sent only on a change
+	if ( rbShadowExternal != (int)external ) {
+		if ( !external ) {
+			qglStencilOpSeparate(backEnd.viewDef->isMirror ? GL_FRONT : GL_BACK, GL_KEEP, GL_DECR, GL_KEEP);
+			qglStencilOpSeparate(backEnd.viewDef->isMirror ? GL_BACK : GL_FRONT, GL_KEEP, GL_INCR, GL_KEEP);
+		} else {
+			qglStencilOpSeparate(backEnd.viewDef->isMirror ? GL_FRONT : GL_BACK, GL_KEEP, GL_KEEP, GL_INCR);
+			qglStencilOpSeparate(backEnd.viewDef->isMirror ? GL_BACK : GL_FRONT, GL_KEEP, GL_KEEP, GL_DECR);
+		}
+		rbShadowExternal = (int)external;
 	}
 	RB_DrawShadowElementsWithCounters(surf->geo, numIndexes);
 
@@ -1247,6 +1254,7 @@ void RB_GLSL_StencilShadowPass(const drawSurf_t* drawSurfs, const viewLight_t* v
 	// Culling will be done two side for shadows
 	GL_Cull(CT_TWO_SIDED);
 
+	rbShadowExternal = -1;
 	RB_GLSL_RenderDrawSurfChainWithFunction(drawSurfs, RB_T_GLSL_Shadow, vLight);
 
 	// Restore culling

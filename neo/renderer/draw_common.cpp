@@ -1637,6 +1637,59 @@ BACK END RENDERING OF STENCIL SHADOWS
 
 /*
 =====================
+Shadow pass state
+
+Every shadow surface set its depth bounds and its two separate stencil
+ops, though most surfaces of a light repeat the previous one's.  What the
+current shadow pass last set is kept here and only a change is sent;
+RB_StencilShadowPass forgets it when it starts.
+=====================
+*/
+static bool		rbShadowBoundsSet;
+static float	rbShadowBoundsMin, rbShadowBoundsMax;
+static int		rbShadowStencilOps;		// 0 unknown, else RB_SHADOW_OPS_*
+
+enum {
+	RB_SHADOW_OPS_ZFAIL = 1,		// back decr / front incr on depth fail
+	RB_SHADOW_OPS_ZPASS,			// back incr / front decr on depth pass
+	RB_SHADOW_OPS_ZPASS_PRELOAD		// both decr / incr on fail and pass
+};
+
+static void RB_ShadowDepthBounds( float zmin, float zmax ) {
+	if ( rbShadowBoundsSet && rbShadowBoundsMin == zmin && rbShadowBoundsMax == zmax ) {
+		return;
+	}
+	qglDepthBoundsEXT( zmin, zmax );
+	rbShadowBoundsSet = true;
+	rbShadowBoundsMin = zmin;
+	rbShadowBoundsMax = zmax;
+}
+
+static void RB_ShadowStencilOpSeparate( int ops ) {
+	const GLenum firstFace = backEnd.viewDef->isMirror ? GL_FRONT : GL_BACK;
+	const GLenum secondFace = backEnd.viewDef->isMirror ? GL_BACK : GL_FRONT;
+	if ( rbShadowStencilOps == ops ) {
+		return;
+	}
+	switch ( ops ) {
+	case RB_SHADOW_OPS_ZFAIL:
+		qglStencilOpSeparate( firstFace, GL_KEEP, tr.stencilDecr, GL_KEEP );
+		qglStencilOpSeparate( secondFace, GL_KEEP, tr.stencilIncr, GL_KEEP );
+		break;
+	case RB_SHADOW_OPS_ZPASS:
+		qglStencilOpSeparate( firstFace, GL_KEEP, GL_KEEP, tr.stencilIncr );
+		qglStencilOpSeparate( secondFace, GL_KEEP, GL_KEEP, tr.stencilDecr );
+		break;
+	default:
+		qglStencilOpSeparate( firstFace, GL_KEEP, tr.stencilDecr, tr.stencilDecr );
+		qglStencilOpSeparate( secondFace, GL_KEEP, tr.stencilIncr, tr.stencilIncr );
+		break;
+	}
+	rbShadowStencilOps = ops;
+}
+
+/*
+=====================
 RB_T_Shadow
 
 the shadow volumes face INSIDE
@@ -1694,7 +1747,7 @@ static void RB_T_Shadow( const drawSurf_t *surf ) {
 
 	// set depth bounds
 	if( glConfig.depthBoundsTestAvailable && r_useDepthBoundsTest.GetBool() ) {
-		qglDepthBoundsEXT( surf->scissorRect.zmin, surf->scissorRect.zmax );
+		RB_ShadowDepthBounds( surf->scissorRect.zmin, surf->scissorRect.zmax );
 	}
 
 	// debug visualization
@@ -1726,6 +1779,7 @@ static void RB_T_Shadow( const drawSurf_t *surf ) {
 		}
 
 		qglStencilOp( GL_KEEP, GL_KEEP, GL_KEEP );
+		rbShadowStencilOps = 0;
 		qglDisable( GL_STENCIL_TEST );
 		GL_Cull( CT_TWO_SIDED );
 		RB_DrawShadowElementsWithCounters( tri, numIndexes );
@@ -1741,17 +1795,13 @@ static void RB_T_Shadow( const drawSurf_t *surf ) {
 	if( !r_useCarmacksReverse.GetBool() ) {
 		if( useStencilOpSeperate ) {
 			// not using z-fail, but using qglStencilOpSeparate()
-			GLenum firstFace = backEnd.viewDef->isMirror ? GL_FRONT : GL_BACK;
-			GLenum secondFace = backEnd.viewDef->isMirror ? GL_BACK : GL_FRONT;
 			GL_Cull( CT_TWO_SIDED );
 			if ( !external ) {
-				qglStencilOpSeparate( firstFace, GL_KEEP, tr.stencilDecr, tr.stencilDecr );
-				qglStencilOpSeparate( secondFace, GL_KEEP, tr.stencilIncr, tr.stencilIncr );
+				RB_ShadowStencilOpSeparate( RB_SHADOW_OPS_ZPASS_PRELOAD );
 				RB_DrawShadowElementsWithCounters( tri, numIndexes );
 			}
 
-			qglStencilOpSeparate( firstFace, GL_KEEP, GL_KEEP, tr.stencilIncr );
-			qglStencilOpSeparate( secondFace, GL_KEEP, GL_KEEP, tr.stencilDecr );
+			RB_ShadowStencilOpSeparate( RB_SHADOW_OPS_ZPASS );
 
 			RB_DrawShadowElementsWithCounters( tri, numIndexes );
 
@@ -1780,14 +1830,10 @@ static void RB_T_Shadow( const drawSurf_t *surf ) {
 	} else { // use the formerly patented "Carmack's Reverse" Z-Fail code
 		if( useStencilOpSeperate ) {
 			// Z-Fail with glStencilOpSeparate() which will reduce draw calls
-			GLenum firstFace = backEnd.viewDef->isMirror ? GL_FRONT : GL_BACK;
-			GLenum secondFace = backEnd.viewDef->isMirror ? GL_BACK : GL_FRONT;
 			if ( !external ) { // z-fail
-				qglStencilOpSeparate( firstFace, GL_KEEP, tr.stencilDecr, GL_KEEP );
-				qglStencilOpSeparate( secondFace, GL_KEEP, tr.stencilIncr, GL_KEEP );
+				RB_ShadowStencilOpSeparate( RB_SHADOW_OPS_ZFAIL );
 			} else { // depth-pass
-				qglStencilOpSeparate( firstFace, GL_KEEP, GL_KEEP, tr.stencilIncr );
-				qglStencilOpSeparate( secondFace, GL_KEEP, GL_KEEP, tr.stencilDecr );
+				RB_ShadowStencilOpSeparate( RB_SHADOW_OPS_ZPASS );
 			}
 			GL_Cull( CT_TWO_SIDED );
 			RB_DrawShadowElementsWithCounters( tri, numIndexes );
@@ -1864,6 +1910,9 @@ void RB_StencilShadowPass( const drawSurf_t *drawSurfs ) {
 		qglEnable( GL_DEPTH_BOUNDS_TEST_EXT );
 	}
 
+	// nothing of this pass's per-surface state is known yet
+	rbShadowBoundsSet = false;
+	rbShadowStencilOps = 0;
 	RB_RenderDrawSurfChainWithFunction( drawSurfs, RB_T_Shadow );
 
 	GL_Cull( CT_FRONT_SIDED );
