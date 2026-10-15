@@ -82,6 +82,11 @@ public:
 	// an indexCache, this must be called to reset GL_ELEMENT_ARRAY_BUFFER_ARB
 	void			UnbindIndex();
 
+	// Position() skips binding a buffer that is already bound; the backend
+	// calls this when it starts, as the frontend and the libretro frontend
+	// may have bound others since
+	void			InvalidateBindings();
+
 	// automatically freed at the end of the next frame
 	// used for specular texture coordinates and gui drawing, which
 	// will change every frame.
@@ -109,6 +114,16 @@ public:
 private:
 	void			InitMemoryBlocks( int size );
 	void			ActuallyFree( vertCache_t *block );
+	// bind, skipping it when the cache says the buffer is already bound
+	void			BindArray( GLuint vbo );
+	void			BindElement( GLuint vbo );
+	// bind and record, for uploads made outside the backend
+	void			ForceBindArray( GLuint vbo );
+	void			ForceBindElement( GLuint vbo );
+
+	static const GLuint UNKNOWN_BINDING = 0xffffffffu;
+	GLuint			boundArray;				// GL_ARRAY_BUFFER, or UNKNOWN_BINDING
+	GLuint			boundElement;			// GL_ELEMENT_ARRAY_BUFFER, or UNKNOWN_BINDING
 
 	static idCVar	r_showVertexCache;
 	static idCVar	r_vertexBufferMegs;

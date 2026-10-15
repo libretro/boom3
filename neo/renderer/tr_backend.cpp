@@ -27,6 +27,7 @@ If you have questions concerning this license or the applicable additional terms
 */
 #include "sys/platform.h"
 
+#include "renderer/VertexCache.h"
 #include "renderer/tr_local.h"
 
 static idCVar r_fillWindowAlphaChan( "r_fillWindowAlphaChan", "-1", CVAR_SYSTEM | CVAR_NOCHEAT | CVAR_ARCHIVE, "Make sure alpha channel of windows default framebuffer is completely opaque at the end of each frame. Needed at least when using Wayland with older drivers.\n 1: do this, 0: don't do it, -1: let dhewm3 decide (default)" );
@@ -644,6 +645,10 @@ void RB_ExecuteBackEndCommands( const emptyCommand_t *cmds ) {
 
 	// needed for editor rendering
 	RB_SetDefaultGLState();
+
+	// the frontend, and the libretro frontend between frames, may have
+	// bound other buffers since the last backend run
+	vertexCache.InvalidateBindings();
 
 	// upload any image loads that have completed
 	globalImages->CompleteBackgroundImageLoads();
