@@ -25,3 +25,4 @@ boom3_libretro_android.so
 /tools/es31_block_check/es31_block_check.exe
 /tools/gles_pack_check/gles_pack_check
 /tools/egl_host/egl_host
+/tools/egl_host/ppmdiff

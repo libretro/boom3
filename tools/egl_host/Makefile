@@ -15,12 +15,16 @@ LIBS     = -ldl -lEGL -Wl,--no-as-needed -lm
 
 TARGET = egl_host
 
-all: $(TARGET)
+all: $(TARGET) ppmdiff
 
 $(TARGET): egl_host.c
 	$(CC) $(CFLAGS) -o $@ egl_host.c $(LIBS)
 
+# the frame comparison parity_check.sh and hdr_check.sh use
+ppmdiff: ppmdiff.c
+	$(CC) $(CFLAGS) -o $@ ppmdiff.c
+
 clean:
-	rm -f $(TARGET)
+	rm -f $(TARGET) ppmdiff
 
 .PHONY: all clean
