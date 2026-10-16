@@ -133,11 +133,29 @@ void GL_DisableVertexAttribArray(GLuint index) {
 GL_VertexAttribPointer
 ====================
 */
+static GLint GL_AttribLocation(GLuint index) {
+  // the location every program binds the attribute to (R_LoadGLSLShader),
+  // whether or not the current one reads it: the pointer is GL state the
+  // next program finds in place
+  switch ( index ) {
+  case offsetof(shaderProgram_t, attr_Vertex):    return ATTR_VERTEX;
+  case offsetof(shaderProgram_t, attr_Color):     return ATTR_COLOR;
+  case offsetof(shaderProgram_t, attr_TexCoord):  return ATTR_TEXCOORD;
+  case offsetof(shaderProgram_t, attr_Normal):    return ATTR_NORMAL;
+  case offsetof(shaderProgram_t, attr_Tangent):   return ATTR_TANGENT;
+  case offsetof(shaderProgram_t, attr_Bitangent): return ATTR_BITANGENT;
+  }
+  return *( GLint * )((char*) backEnd.glState.currentProgram + index);
+}
+
 static void GL_VertexAttribPointer(GLuint index, GLint size, GLenum type,
                                    GLboolean normalized, GLsizei stride,
                                    const GLvoid* pointer) {
-  qglVertexAttribPointer(*( GLint * )((char*) backEnd.glState.currentProgram + index),
-                         size, type, normalized, stride, pointer);
+  const GLint location = GL_AttribLocation(index);
+  if ( location < 0 ) {
+    return;
+  }
+  qglVertexAttribPointer(location, size, type, normalized, stride, pointer);
 }
 
 /*
