@@ -8,8 +8,10 @@
  * filtering at several sizes and offsets, so every level and fractional
  * positions between texels are sampled.  The two pictures must be equal
  * byte for byte.  Done in a GLES 2 context (packings without swizzles) and
- * a GLES 3 one (with), and once more with a colour image forced into a
- * one-byte packing, which must differ - the check can fail.
+ * a GLES 3 one (R8 and RG8 with swizzles), where the packed and the plain
+ * texture are also drawn from glTexStorage2D storage filled level by
+ * level, as the engine does; and once more with a colour image forced into
+ * a one-byte packing, which must differ - the check can fail.
  *
  * Linux: Mesa's EGL and GLES (libegl-dev libgles-dev); runs on llvmpipe.
  *
@@ -36,6 +38,17 @@
 #endif
 #ifndef GL_R8
 #define GL_R8 0x8229
+#endif
+#ifndef GL_RG
+#define GL_RG 0x8227
+#define GL_RG8 0x822B
+#endif
+#ifndef GL_RGBA8
+#define GL_RGBA8 0x8058
+#endif
+#ifndef GL_GREEN
+#define GL_GREEN 0x1904
+#define GL_BLUE 0x1905
 #endif
 #ifndef GL_TEXTURE_SWIZZLE_R
 #define GL_TEXTURE_SWIZZLE_R 0x8E42
@@ -92,32 +105,58 @@ static unsigned char *mip(const unsigned char *in, int w, int h)
    return out;
 }
 
-/* One texture from the image: RGBA, or the packing given (swizzle as the
- * engine sets it on GLES 3). */
-static GLuint upload(const unsigned char *image, int packed, gles_pack_t pack, int swizzle)
+typedef void (GL_APIENTRYP tex_storage_t)(GLenum target, GLsizei levels, GLenum internalformat,
+      GLsizei width, GLsizei height);
+static tex_storage_t tex_storage;
+
+static int levels_for(int w, int h)
 {
+   int n = 1;
+   while (w > 1 || h > 1)
+   {
+      w = w > 1 ? w / 2 : 1;
+      h = h > 1 ? h / 2 : 1;
+      n++;
+   }
+   return n;
+}
+
+/* One texture from the image, as the engine uploads it: RGBA, or the
+ * packing given - on GLES 3 (swizzle) in R8 or RG8 read through the
+ * packing's swizzle, on GLES 2 in luminance, alpha or luminance-alpha -
+ * with every level allocated by glTexStorage2D first when storage is set. */
+static GLuint upload(const unsigned char *image, int packed, gles_pack_t pack, int swizzle, int storage)
+{
+   static const GLint from[6] = { GL_ZERO, GL_ONE, GL_RED, GL_GREEN, GL_BLUE, GL_ALPHA };
    GLuint tex;
    unsigned char *level = (unsigned char *)malloc(SIZE * SIZE * 4);
    unsigned char *bytes = (unsigned char *)malloc(SIZE * SIZE * 4);
    int w = SIZE, h = SIZE, l = 0;
    const int n = packed ? gles_pack_bytes(pack, swizzle) : 4;
    GLenum format = GL_RGBA;
+   GLenum sized = GL_RGBA8;
 
-   if (packed)
+   if (packed && swizzle)
+   {
+      format = n == 2 ? GL_RG : GL_RED;
+      sized  = n == 2 ? GL_RG8 : GL_R8;
+   }
+   else if (packed)
    {
       if (pack == GLES_PACK_L)
          format = GL_LUMINANCE;
       else if (pack == GLES_PACK_A0)
          format = GL_ALPHA;
-      else if (n == 2)
+      else
          format = GL_LUMINANCE_ALPHA;
-      else if (n == 1)
-         format = GL_RED;
+      sized = format;
    }
 
    glGenTextures(1, &tex);
    glBindTexture(GL_TEXTURE_2D, tex);
    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+   if (storage)
+      tex_storage(GL_TEXTURE_2D, levels_for(SIZE, SIZE), sized, SIZE, SIZE);
    memcpy(level, image, SIZE * SIZE * 4);
    for (;;)
    {
@@ -126,8 +165,10 @@ static GLuint upload(const unsigned char *image, int packed, gles_pack_t pack, i
          gles_pack_texels(pack, swizzle, level, w * h, bytes);
       else
          memcpy(bytes, level, w * h * 4);
-      glTexImage2D(GL_TEXTURE_2D, l, format == GL_RED ? GL_R8 : format, w, h, 0, format,
-            GL_UNSIGNED_BYTE, bytes);
+      if (storage)
+         glTexSubImage2D(GL_TEXTURE_2D, l, 0, 0, w, h, format, GL_UNSIGNED_BYTE, bytes);
+      else
+         glTexImage2D(GL_TEXTURE_2D, l, swizzle ? sized : format, w, h, 0, format, GL_UNSIGNED_BYTE, bytes);
       if (w == 1 && h == 1)
          break;
       next = mip(level, w, h);
@@ -137,13 +178,14 @@ static GLuint upload(const unsigned char *image, int packed, gles_pack_t pack, i
       h = h > 1 ? h / 2 : 1;
       l++;
    }
-   if (format == GL_RED)
+   if (packed && swizzle)
    {
-      const GLint c = pack == GLES_PACK_A1 ? GL_ONE : GL_RED;
-      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_R, c);
-      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_G, c);
-      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_B, c);
-      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_A, GL_RED);
+      int sw[4];
+      gles_pack_swizzle(pack, sw);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_R, from[sw[0]]);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_G, from[sw[1]]);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_B, from[sw[2]]);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_A, from[sw[3]]);
    }
    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -234,15 +276,21 @@ static int compare(GLuint prog, gles_pack_t kind, gles_pack_t pack, int swizzle)
    unsigned char *a = (unsigned char *)malloc(PICTURE_BYTES);
    unsigned char *b = (unsigned char *)malloc(PICTURE_BYTES);
    GLuint t[2];
-   int same;
+   int same = 1;
+   int v;
 
    make_image(kind, image);
-   t[0] = upload(image, 0, pack, swizzle);
-   t[1] = upload(image, 1, pack, swizzle);
+   t[0] = upload(image, 0, pack, swizzle, 0);
    draw(prog, t[0], a);
-   draw(prog, t[1], b);
-   same = glGetError() == GL_NO_ERROR && memcmp(a, b, PICTURE_BYTES) == 0;
-   glDeleteTextures(2, t);
+   /* packed; then, where storage exists, packed and plain in storage */
+   for (v = 0; v < (swizzle ? 3 : 1); v++)
+   {
+      t[1] = upload(image, v != 2, pack, swizzle, v != 0);
+      draw(prog, t[1], b);
+      same &= glGetError() == GL_NO_ERROR && memcmp(a, b, PICTURE_BYTES) == 0;
+      glDeleteTextures(1, &t[1]);
+   }
+   glDeleteTextures(1, &t[0]);
    free(image);
    free(a);
    free(b);
@@ -340,6 +388,12 @@ static int run(int major)
       return 1;
    }
 
+   tex_storage = (tex_storage_t)eglGetProcAddress("glTexStorage2D");
+   if (swizzle && !tex_storage)
+   {
+      fprintf(stderr, "gles_pack_check: no glTexStorage2D in the GLES 3 context\n");
+      return 1;
+   }
    prog = program();
    glGenBuffers(1, &vbo);
    glBindBuffer(GL_ARRAY_BUFFER, vbo);

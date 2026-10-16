@@ -210,6 +210,9 @@ public:
 
 	void		UploadScratch( const byte *pic, int width, int height );
 
+	// a fresh texture name in place of immutable storage, bound, before re-specifying
+	void		RespecifiableStorage();
+
 	// just for resource tracking
 	void		SetClassification( int tag );
 
@@ -287,6 +290,7 @@ public:
 	bool				precompressedFile;		// true when it was loaded from a .d3t file
 	bool				defaulted;				// true if the default image was generated because a file couldn't be loaded
 	bool				rgbaUpdates;			// its texels are replaced later by RGBA sub-uploads, so it stays RGBA
+	bool				immutable;				// its levels were allocated with glTexStorage2D
 	ID_TIME_T				timestamp;				// the most recent of all images used in creation, for reloadImages command
 
 	int					imageHash;				// for identical-image checking
@@ -327,6 +331,7 @@ ID_INLINE idImage::idImage() {
 	precompressedFile = false;
 	defaulted = false;
 	rgbaUpdates = false;
+	immutable = false;
 	timestamp = 0;
 	bindCount = 0;
 	uploadWidth = uploadHeight = uploadDepth = 0;

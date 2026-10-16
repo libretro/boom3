@@ -85,3 +85,26 @@ void gles_pack_texels(gles_pack_t pack, int swizzle, const unsigned char *rgba,
          *out++ = pack == GLES_PACK_L ? rgba[0] : rgba[3];
    }
 }
+
+void gles_pack_swizzle(gles_pack_t pack, int swizzle[4])
+{
+   int rgb = GLES_PACK_FROM_RED;
+   int a   = GLES_PACK_FROM_RED;
+
+   switch (pack)
+   {
+      case GLES_PACK_L:  a   = GLES_PACK_FROM_ONE;   break;
+      case GLES_PACK_I:                              break;
+      case GLES_PACK_LA: a   = GLES_PACK_FROM_GREEN; break;
+      case GLES_PACK_A0: rgb = GLES_PACK_FROM_ZERO;  break;
+      case GLES_PACK_A1: rgb = GLES_PACK_FROM_ONE;   break;
+      default:
+         swizzle[0] = GLES_PACK_FROM_RED;
+         swizzle[1] = GLES_PACK_FROM_GREEN;
+         swizzle[2] = GLES_PACK_FROM_BLUE;
+         swizzle[3] = GLES_PACK_FROM_ALPHA;
+         return;
+   }
+   swizzle[0] = swizzle[1] = swizzle[2] = rgb;
+   swizzle[3] = a;
+}

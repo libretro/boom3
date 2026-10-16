@@ -41,6 +41,19 @@ int gles_pack_bytes(gles_pack_t pack, int swizzle);
 void gles_pack_texels(gles_pack_t pack, int swizzle, const unsigned char *rgba,
       int count, unsigned char *out);
 
+/* What each channel of a texel reads to give back the RGBA texel, where
+ * texture swizzles exist and the packing is held in R8 (one byte) or RG8
+ * (two); the identity for RGBA. */
+enum {
+   GLES_PACK_FROM_ZERO = 0,
+   GLES_PACK_FROM_ONE,
+   GLES_PACK_FROM_RED,
+   GLES_PACK_FROM_GREEN,
+   GLES_PACK_FROM_BLUE,
+   GLES_PACK_FROM_ALPHA
+};
+void gles_pack_swizzle(gles_pack_t pack, int swizzle[4]);
+
 #ifdef __cplusplus
 }
 #endif

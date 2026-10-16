@@ -67,6 +67,42 @@ If you have questions concerning this license or the applicable additional terms
 PROBLEM: compressed textures may break the zero clamp rule!
 */
 
+/*
+================
+Texture storage
+
+The GLSL renderers allocate a generated image's levels at once with
+glTexStorage2D, where the context has it and the format is a plain sized
+one, and then fill them: one allocation for the whole chain, and a texture
+the driver knows will not change shape.  An image re-specified later - the
+scratch, cinematic and framebuffer-copy images - keeps glTexImage2D, and so
+does ARB2.
+================
+*/
+static int R_MipLevels( int width, int height ) {
+	int levels = 1;
+	while ( width > 1 || height > 1 ) {
+		width = width > 1 ? width >> 1 : 1;
+		height = height > 1 ? height >> 1 : 1;
+		levels++;
+	}
+	return levels;
+}
+
+static bool R_UseStorage( const idImage *image ) {
+	return glCaps.texStorage && R_GLSLRenderer() && !image->rgbaUpdates;
+}
+
+// one level: specified, or filled into storage allocated before
+static void R_TexLevel( GLenum target, int level, GLenum internalFormat, int width, int height,
+						GLenum format, const void *data, bool immutable ) {
+	if ( immutable ) {
+		qglTexSubImage2D( target, level, 0, 0, width, height, format, GL_UNSIGNED_BYTE, data );
+	} else {
+		qglTexImage2D( target, level, internalFormat, width, height, 0, format, GL_UNSIGNED_BYTE, data );
+	}
+}
+
 #ifndef HAVE_OPENGLES
 /*
 ================
@@ -108,17 +144,39 @@ static bool R_CoreSwizzled( GLenum internalFormat, GLenum *coreFormat, GLint swi
 
 /*
 ================
+R_StorageFormat
+
+The sized format an image of internalFormat is stored in, or 0 when it
+cannot have texture storage (compressed, paletted and the legacy formats
+of a compatibility profile).
+================
+*/
+static GLenum R_StorageFormat( GLenum internalFormat ) {
+	GLenum coreFormat;
+	GLint swizzle[4];
+	if ( R_CoreSwizzled( internalFormat, &coreFormat, swizzle ) ) {
+		return coreFormat;
+	}
+	if ( internalFormat == GL_RGBA8 || internalFormat == GL_RGB8 ) {
+		return internalFormat;
+	}
+	return 0;
+}
+
+/*
+================
 R_TexImageRGBA
 
 One level of a texture from RGBA bytes, as qglTexImage2D takes them with
 format GL_RGBA, on core profiles in the swizzled form.
 ================
 */
-static void R_TexImageRGBA( GLenum target, int level, GLenum internalFormat, int width, int height, const byte *rgba ) {
+static void R_TexImageRGBA( GLenum target, int level, GLenum internalFormat, int width, int height, const byte *rgba,
+							bool immutable ) {
 	GLenum coreFormat;
 	GLint swizzle[4];
 	if ( !R_CoreSwizzled( internalFormat, &coreFormat, swizzle ) ) {
-		qglTexImage2D( target, level, internalFormat, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba );
+		R_TexLevel( target, level, internalFormat, width, height, GL_RGBA, rgba, immutable );
 		return;
 	}
 	// the channels the format kept: luminance or intensity from red,
@@ -140,7 +198,7 @@ static void R_TexImageRGBA( GLenum target, int level, GLenum internalFormat, int
 	GLint alignment = 4;
 	qglGetIntegerv( GL_UNPACK_ALIGNMENT, &alignment );
 	qglPixelStorei( GL_UNPACK_ALIGNMENT, 1 );
-	qglTexImage2D( target, level, coreFormat, width, height, 0, channels == 2 ? GL_RG : GL_RED, GL_UNSIGNED_BYTE, packed );
+	R_TexLevel( target, level, coreFormat, width, height, channels == 2 ? GL_RG : GL_RED, packed, immutable );
 	qglPixelStorei( GL_UNPACK_ALIGNMENT, alignment );
 	R_StaticFree( packed );
 	if ( level == 0 ) {
@@ -178,57 +236,70 @@ static gles_pack_t R_GLESPacking( const idImage *image, const byte *rgba, int co
 	return gles_pack_classify( rgba, count );
 }
 
-// the sized name of what a packing stores, for the memory statistics
+// the sized format a packing stores, for texture storage and the statistics
 static GLenum R_GLESPackedFormat( gles_pack_t pack ) {
+	if ( pack == GLES_PACK_RGBA ) {
+		return GL_RGBA8;
+	}
+#ifdef HAVE_OPENGLES3
+	return gles_pack_bytes( pack, 1 ) == 2 ? GL_RG8 : GL_R8;
+#else
 	switch ( pack ) {
 	case GLES_PACK_L:	return GL_LUMINANCE8;
 	case GLES_PACK_A0:	return GL_ALPHA8;
-	case GLES_PACK_LA:	return GL_LUMINANCE8_ALPHA8;
-	case GLES_PACK_I:
-	case GLES_PACK_A1:	return GLES_PACK_SWIZZLE ? GL_R8 : GL_LUMINANCE8_ALPHA8;
-	default:			return GL_RGBA8;
+	default:			return GL_LUMINANCE8_ALPHA8;
 	}
+#endif
 }
 
 /*
 ================
 R_GLESTexImage
 
-One level from RGBA bytes, in the packing's format.
+One level from RGBA bytes, in the packing's format.  GLES 3 holds the
+packings in R8 or RG8 read back through swizzles; GLES 2, without
+swizzles, in luminance, alpha and luminance-alpha.
 ================
 */
-static void R_GLESTexImage( GLenum target, int level, gles_pack_t pack, int width, int height, const byte *rgba ) {
+static void R_GLESTexImage( GLenum target, int level, gles_pack_t pack, int width, int height, const byte *rgba,
+							bool immutable ) {
 	if ( pack == GLES_PACK_RGBA ) {
-		qglTexImage2D( target, level, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba );
+		R_TexLevel( target, level, GL_RGBA, width, height, GL_RGBA, rgba, immutable );
 		return;
 	}
 	const int bytes = gles_pack_bytes( pack, GLES_PACK_SWIZZLE );
 	GLenum format;
+#ifdef HAVE_OPENGLES3
+	format = bytes == 2 ? GL_RG : GL_RED;
+#else
 	if ( pack == GLES_PACK_L ) {
 		format = GL_LUMINANCE;
 	} else if ( pack == GLES_PACK_A0 ) {
 		format = GL_ALPHA;
-	} else if ( bytes == 2 ) {
-		format = GL_LUMINANCE_ALPHA;
 	} else {
-		format = GL_RED;
+		format = GL_LUMINANCE_ALPHA;
 	}
+#endif
 	byte *packed = (byte *)R_StaticAlloc( width * height * bytes );
 	gles_pack_texels( pack, GLES_PACK_SWIZZLE, rgba, width * height, packed );
 	GLint alignment = 4;
 	qglGetIntegerv( GL_UNPACK_ALIGNMENT, &alignment );
 	qglPixelStorei( GL_UNPACK_ALIGNMENT, 1 );
-	qglTexImage2D( target, level, format == GL_RED ? GL_R8 : format, width, height, 0, format, GL_UNSIGNED_BYTE, packed );
+	R_TexLevel( target, level, GLES_PACK_SWIZZLE ? R_GLESPackedFormat( pack ) : format, width, height,
+				format, packed, immutable );
 	qglPixelStorei( GL_UNPACK_ALIGNMENT, alignment );
 	R_StaticFree( packed );
-	if ( level == 0 && format == GL_RED ) {
-		// intensity reads red everywhere; the white mask is white with red as alpha
-		const GLint c = pack == GLES_PACK_A1 ? GL_ONE : GL_RED;
-		qglTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_R, c );
-		qglTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_G, c );
-		qglTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_B, c );
-		qglTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_A, GL_RED );
+#ifdef HAVE_OPENGLES3
+	if ( level == 0 ) {
+		static const GLint from[6] = { GL_ZERO, GL_ONE, GL_RED, GL_GREEN, GL_BLUE, GL_ALPHA };
+		int swizzle[4];
+		gles_pack_swizzle( pack, swizzle );
+		qglTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_R, from[swizzle[0]] );
+		qglTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_G, from[swizzle[1]] );
+		qglTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_B, from[swizzle[2]] );
+		qglTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_A, from[swizzle[3]] );
 	}
+#endif
 }
 #endif
 
@@ -1038,7 +1109,16 @@ void idImage::GenerateImage( const byte *pic, int width, int height,
 	// the levels below keep the base level's channel relation
 	const gles_pack_t pack = R_GLESPacking( this, scaledBuffer, scaled_width * scaled_height );
 	internalFormat = R_GLESPackedFormat( pack );
+	const GLenum storageFormat = R_UseStorage( this ) ? (GLenum)internalFormat : 0;
+#else
+	const GLenum storageFormat = R_UseStorage( this ) && internalFormat != GL_COLOR_INDEX8_EXT
+		? R_StorageFormat( internalFormat ) : 0;
 #endif
+	if ( storageFormat ) {
+		glCaps.TexStorage2D( GL_TEXTURE_2D, R_MipLevels( scaled_width, scaled_height ), storageFormat,
+							 scaled_width, scaled_height );
+	}
+	immutable = storageFormat != 0;
 
 	if ( internalFormat == GL_COLOR_INDEX8_EXT ) {
 		/*
@@ -1052,9 +1132,9 @@ void idImage::GenerateImage( const byte *pic, int width, int height,
 		UploadCompressedNormalMap( scaled_width, scaled_height, scaledBuffer, 0 );
 	} else {
 #ifdef HAVE_OPENGLES
-		R_GLESTexImage( GL_TEXTURE_2D, 0, pack, scaled_width, scaled_height, scaledBuffer );
+		R_GLESTexImage( GL_TEXTURE_2D, 0, pack, scaled_width, scaled_height, scaledBuffer, immutable );
 #else
-		R_TexImageRGBA( GL_TEXTURE_2D, 0, internalFormat, scaled_width, scaled_height, scaledBuffer );
+		R_TexImageRGBA( GL_TEXTURE_2D, 0, internalFormat, scaled_width, scaled_height, scaledBuffer, immutable );
 #endif
 	}
 
@@ -1091,9 +1171,9 @@ void idImage::GenerateImage( const byte *pic, int width, int height,
 			UploadCompressedNormalMap( scaled_width, scaled_height, scaledBuffer, miplevel );
 		} else {
 #ifdef HAVE_OPENGLES
-			R_GLESTexImage( GL_TEXTURE_2D, miplevel, pack, scaled_width, scaled_height, scaledBuffer );
+			R_GLESTexImage( GL_TEXTURE_2D, miplevel, pack, scaled_width, scaled_height, scaledBuffer, immutable );
 #else
-			R_TexImageRGBA( GL_TEXTURE_2D, miplevel, internalFormat, scaled_width, scaled_height, scaledBuffer );
+			R_TexImageRGBA( GL_TEXTURE_2D, miplevel, internalFormat, scaled_width, scaled_height, scaledBuffer, immutable );
 #endif
 		}
 	}
@@ -1324,14 +1404,27 @@ void idImage::GenerateCubeImage( const byte *pic[6], int size,
 		common->FatalError( "R_CreateImage: bad texture filter" );
 	}
 
+	// every level allocated up front where the format allows it
+#ifdef HAVE_OPENGLES
+	const GLenum storageFormat = R_UseStorage( this ) ? GL_RGBA8 : 0;
+#else
+	const GLenum storageFormat = R_UseStorage( this ) ? R_StorageFormat( internalFormat ) : 0;
+#endif
+	if ( storageFormat ) {
+		glCaps.TexStorage2D( GL_TEXTURE_CUBE_MAP_EXT, R_MipLevels( scaled_width, scaled_height ), storageFormat,
+							 scaled_width, scaled_height );
+	}
+	immutable = storageFormat != 0;
+
 	// upload the base level
 	// FIXME: support GL_COLOR_INDEX8_EXT?
 	for ( i = 0 ; i < 6 ; i++ ) {
 #ifdef HAVE_OPENGLES
-		qglTexImage2D( GL_TEXTURE_CUBE_MAP_POSITIVE_X_EXT+i, 0, internalFormat, scaled_width, scaled_height, 0,
-			GL_RGBA, GL_UNSIGNED_BYTE, pic[i] );
+		R_TexLevel( GL_TEXTURE_CUBE_MAP_POSITIVE_X_EXT+i, 0, internalFormat, scaled_width, scaled_height,
+			GL_RGBA, pic[i], immutable );
 #else
-		R_TexImageRGBA( GL_TEXTURE_CUBE_MAP_POSITIVE_X_EXT+i, 0, internalFormat, scaled_width, scaled_height, pic[i] );
+		R_TexImageRGBA( GL_TEXTURE_CUBE_MAP_POSITIVE_X_EXT+i, 0, internalFormat, scaled_width, scaled_height, pic[i],
+			immutable );
 #endif
 	}
 
@@ -1350,12 +1443,11 @@ void idImage::GenerateCubeImage( const byte *pic[6], int size,
 			byte	*shrunken;
 
 #ifdef HAVE_OPENGLES
-			qglTexImage2D( GL_TEXTURE_CUBE_MAP_POSITIVE_X_EXT+i, miplevel, internalFormat,
-				scaled_width / 2, scaled_height / 2, 0,
-				GL_RGBA, GL_UNSIGNED_BYTE, shrunk[i] );
+			R_TexLevel( GL_TEXTURE_CUBE_MAP_POSITIVE_X_EXT+i, miplevel, internalFormat,
+				scaled_width / 2, scaled_height / 2, GL_RGBA, shrunk[i], immutable );
 #else
 			R_TexImageRGBA( GL_TEXTURE_CUBE_MAP_POSITIVE_X_EXT+i, miplevel, internalFormat,
-				scaled_width / 2, scaled_height / 2, shrunk[i] );
+				scaled_width / 2, scaled_height / 2, shrunk[i], immutable );
 #endif
 
 			if ( scaled_width > 2 ) {
@@ -2352,6 +2444,7 @@ void idImage::PurgeImage() {
 		qglDeleteTextures( 1, &texnum );	// this should be the ONLY place it is ever called!
 		texnum = TEXTURE_NOT_LOADED;
 	}
+	immutable = false;
 
 	// clear all the current binding caches, so the next bind will do a real one
 	for ( int i = 0 ; i < MAX_MULTITEXTURE_UNITS ; i++ ) {
@@ -2781,6 +2874,26 @@ void idImage::CopyDepthbuffer( int x, int y, int imageWidth, int imageHeight, bo
 
 /*
 =============
+RespecifiableStorage
+
+A texture allocated with immutable storage cannot be specified again; an
+image about to be, a cube map reused as the scratch cube, gets a fresh
+texture name first, bound.
+=============
+*/
+void idImage::RespecifiableStorage() {
+	if ( !immutable ) {
+		return;
+	}
+	PurgeImage();
+	qglGenTextures( 1, &texnum );
+	immutable = false;
+	uploadWidth = uploadHeight = -1;
+	Bind();
+}
+
+/*
+=============
 RB_UploadScratchImage
 
 if rows = cols * 6, assume it is a cube map animation
@@ -2797,6 +2910,7 @@ void idImage::UploadScratch( const byte *data, int cols, int rows ) {
 		}
 
 		Bind();
+		RespecifiableStorage();
 
 		rows /= 6;
 		// if the scratchImage isn't in the format we want, specify it as a new texture
@@ -2835,6 +2949,7 @@ void idImage::UploadScratch( const byte *data, int cols, int rows ) {
 		}
 
 		Bind();
+		RespecifiableStorage();
 
 		// if the scratchImage isn't in the format we want, specify it as a new texture
 		if ( cols != uploadWidth || rows != uploadHeight ) {
