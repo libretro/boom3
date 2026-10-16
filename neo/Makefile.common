@@ -355,7 +355,9 @@ ifeq ($(HAVE_ARM_NEON_ASM_OPTIMIZATIONS),1)
 endif
 
 # the GLSL shader sources, one set per GLSL renderer
-GLSL_SHADERS := cubeMapShaderFP diffuseMapShaderVP diffuseCubeShaderVP diffuseMapShaderFP \
+GLSL_SHADERS := cubeMapShaderFP diffuseMapShaderVP diffuseCubeShaderVP diffuseMapShaderFP diffuseMapGuiShaderFP \
+	heatHazeShaderVP heatHazeShaderFP heatHazeMaskShaderFP heatHazeMaskVertexShaderFP \
+	colorProcessShaderVP colorProcessShaderFP bumpyEnvironmentShaderVP bumpyEnvironmentShaderFP \
 	fogShaderFP fogShaderVP blendLightShaderVP interactionPhongShaderFP \
 	interactionPhongShaderVP interactionShaderFP interactionShaderVP \
 	reflectionCubeShaderVP skyboxCubeShaderVP stencilShadowShaderFP \

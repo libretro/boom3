@@ -170,7 +170,7 @@ typedef struct draw_s {
    float f[NF][4];
 } draw_t;
 
-static void random_draw(draw_t *d, int hdr_negative)
+static void random_draw(draw_t *d, int clamp_mode)
 {
    int i, j;
    float mod_add[3][2] = { { 0.0f, 1.0f }, { 1.0f / 255.0f, 0.0f }, { -1.0f / 255.0f, 1.0f } };
@@ -190,7 +190,8 @@ static void random_draw(draw_t *d, int hdr_negative)
       for (j = 0; j < 4; j++)
          d->f[i][j] = frand(0.0f, 1.0f);
    d->f[1][0] *= 3.0f;                     /* boosted specular above 1 */
-   d->f[2][3] = hdr_negative ? -frand(0.3f, 1.0f) : frand(0.3f, 1.0f);
+   d->f[2][1] = (float)clamp_mode;             /* the epilogue's clamp mode */
+   d->f[2][3] = frand(0.3f, 1.0f);
    d->f[3][0] = frand(1.0f, 64.0f);
 }
 
@@ -499,7 +500,7 @@ static int compare_program(const struct pairing *pr, GLuint zfill, GLuint fbo8, 
       if (!fbo)
          continue;
       for (i = 0; i < DRAWS; i++)
-         random_draw(&draws[i], (i & 3) == 3);
+         random_draw(&draws[i], i % 3);
       render(fbo, zfill, a, 0, draws, DRAWS, pa, bpp);
       render(fbo, zfill, b, 1, draws, DRAWS, pb, bpp);
       if (memcmp(pa, pb, (size_t)SIZE * SIZE * bpp) != 0)

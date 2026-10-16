@@ -29,10 +29,10 @@
 #include "renderer/glsl_desktop.h"
 #endif
 
-extern bool  hdr_luma_clamp;
 extern bool  hdr_output_active;
 extern float hdr_emissive_gain;
 extern float hdr_particle_gain;
+extern bool  HDR_GuiCorrectionActive( unsigned int *tex );
 
 // the ES 2 renderer, beside the others in a desktop core
 namespace gles2 {
@@ -47,10 +47,13 @@ shaderProgram_t zfillShader;
 shaderProgram_t zfillOpaqueShader;
 shaderProgram_t zfillClipShader;
 shaderProgram_t diffuseMapShader;
+shaderProgram_t diffuseMapGuiShader;  // SS_GUI stages under the ACES 2.0 inverse
 shaderProgram_t diffuseCubeShader;
 shaderProgram_t skyboxCubeShader;
 shaderProgram_t reflectionCubeShader;
 shaderProgram_t stencilShadowShader;
+// the custom stage programs, by glslStageProgram_t; GLSL_STAGE_NONE unused
+shaderProgram_t stageShaders[GLSL_STAGE_COUNT];
 
 
 #define ATTR_VERTEX     0   // Don't change this, as WebGL require the vertex attrib 0 to be always bound
@@ -269,10 +272,14 @@ static void RB_GLSL_GetUniformLocations(shaderProgram_t* shader) {
   shader->alphaTest = qglGetUniformLocation(shader->program, "u_alphaTest");
   shader->specularExponent = qglGetUniformLocation(shader->program, "u_specularExponent");
   shader->modelViewProjectionMatrix = qglGetUniformLocation(shader->program, "u_modelViewProjectionMatrix");
+  shader->modelMatrix = qglGetUniformLocation(shader->program, "u_modelMatrix");
   shader->modelViewMatrix = qglGetUniformLocation(shader->program, "u_modelViewMatrix");
   shader->textureMatrix = qglGetUniformLocation(shader->program, "u_textureMatrix");
   shader->clipPlane = qglGetUniformLocation(shader->program, "u_clipPlane");
   shader->fogMatrix = qglGetUniformLocation(shader->program, "u_fogMatrix");
+  shader->projectionMatrix = qglGetUniformLocation(shader->program, "u_projectionMatrix");
+  shader->vertexParms = qglGetUniformLocation(shader->program, "u_vertexParms");
+  shader->screenParms = qglGetUniformLocation(shader->program, "u_screenParms");
 
   shader->attr_TexCoord = qglGetAttribLocation(shader->program, "attr_TexCoord");
   shader->attr_Tangent = qglGetAttribLocation(shader->program, "attr_Tangent");
@@ -424,6 +431,20 @@ static bool RB_GLSL_InitShaders(void) {
     RB_GLSL_GetUniformLocations(&diffuseMapShader);
   }
 
+  // the diffuse shader with the GUI's output-transform inverse on the texel
+  common->Printf("Loading GUI diffuse shader\n");
+  memset(&diffuseMapGuiShader, 0, sizeof(shaderProgram_t));
+
+  R_LoadGLSLShader(diffuseMapShaderVP, &diffuseMapGuiShader, GL_VERTEX_SHADER);
+  R_LoadGLSLShader(diffuseMapGuiShaderFP, &diffuseMapGuiShader, GL_FRAGMENT_SHADER);
+
+  if ( !R_LinkGLSLShader(&diffuseMapGuiShader, "diffuseMapGui") && !R_ValidateGLSLProgram(&diffuseMapGuiShader)) {
+    return false;
+  }
+  else {
+    RB_GLSL_GetUniformLocations(&diffuseMapGuiShader);
+  }
+
   // Skybox cubemap shader
   common->Printf("Loading skybox cubemap shader\n");
   memset(&skyboxCubeShader, 0, sizeof(shaderProgram_t));
@@ -550,6 +571,29 @@ static bool RB_GLSL_InitShaders(void) {
     RB_GLSL_GetUniformLocations(&stencilShadowShader);
   }
 
+  // the custom stage programs
+  {
+    static const struct { int id; const char* name; const char* const* vp; const char* const* fp; } stages[] = {
+      { GLSL_STAGE_HEAT_HAZE, "heatHaze", &heatHazeShaderVP, &heatHazeShaderFP },
+      { GLSL_STAGE_HEAT_HAZE_MASK, "heatHazeMask", &heatHazeShaderVP, &heatHazeMaskShaderFP },
+      { GLSL_STAGE_HEAT_HAZE_MASK_VERTEX, "heatHazeMaskVertex", &heatHazeShaderVP, &heatHazeMaskVertexShaderFP },
+      { GLSL_STAGE_COLOR_PROCESS, "colorProcess", &colorProcessShaderVP, &colorProcessShaderFP },
+      { GLSL_STAGE_BUMPY_ENVIRONMENT, "bumpyEnvironment", &bumpyEnvironmentShaderVP, &bumpyEnvironmentShaderFP },
+    };
+    int i;
+    memset(stageShaders, 0, sizeof(stageShaders));
+    for ( i = 0; i < (int)( sizeof( stages ) / sizeof( stages[0] ) ); i++ ) {
+      shaderProgram_t* const program = &stageShaders[stages[i].id];
+      common->Printf("Loading %s stage shader\n", stages[i].name);
+      R_LoadGLSLShader(*stages[i].vp, program, GL_VERTEX_SHADER);
+      R_LoadGLSLShader(*stages[i].fp, program, GL_FRAGMENT_SHADER);
+      if ( !R_LinkGLSLShader(program, stages[i].name) && !R_ValidateGLSLProgram(program)) {
+        return false;
+      }
+      RB_GLSL_GetUniformLocations(program);
+    }
+  }
+
   return true;
 }
 
@@ -654,23 +698,13 @@ static void RB_GLSL_DrawInteraction(const drawInteraction_t* din) {
     GL_Uniform4fv(offsetof(shaderProgram_t, specularColor), din->specularColor.ToFloatPtr());
   }
 
-  /* Gamma, brightness and the luminance-aware clamp, matching what the ARB2
-     epilogue does per fragment.  x..z carry r_brightness (already through
-     RB_HDRGammaBrightness, so the encoding fold is included), w carries
-     1/r_gamma, and the clamp mode rides in the sign of w: negative means
-     luminance-aware, positive means the per-channel clamp GLES has always
-     done.  Packing it there costs no extra uniform and no extra upload. */
   /* GL_Uniform4fv addresses the location through backEnd.glState.currentProgram,
    * so the guard has to read the same object rather than a local. */
   const shaderProgram_t * const curProg =
       (const shaderProgram_t *)backEnd.glState.currentProgram;
   if ( curProg != NULL && curProg->hdrParms >= 0 ) {
     float hp[4];
-    hp[0] = hp[1] = hp[2] = r_gammaInShader.GetBool() ? RB_HDRGammaBrightness( false ) : 1.0f;
-    hp[3] = r_gammaInShader.GetBool() ? 1.0f / r_gamma.GetFloat() : 1.0f;
-    if ( hdr_luma_clamp ) {
-      hp[3] = -hp[3];
-    }
+    RB_GLSLEpilogueParms( false, hp );
     GL_Uniform4fv(offsetof(shaderProgram_t, hdrParms), hp);
   }
 
@@ -1830,6 +1864,105 @@ void RB_GLSL_FillDepthBuffer(drawSurf_t** drawSurfs, int numDrawSurfs) {
 
 /*
 ==================
+RB_GLSL_DrawStageProgram
+
+A stage through one of the custom stage programs: the surface's
+attributes, the stage's images on their units, its vertex parms, and the
+view's projection and _currentRender placement.  A post-process stage
+reads the scene back, so its epilogue leaves the encoding alone.
+==================
+*/
+static void RB_GLSL_DrawStageProgram(const drawSurf_t* surf, const shaderStage_t* pStage, int programId,
+                                     idImage* const* images, int numImages, const idDrawVert* ac,
+                                     const float mvp[16], const idVec4& localViewOrigin) {
+  shaderProgram_t* const program = &stageShaders[programId];
+  const float* const regs = surf->shaderRegisters;
+  const newShaderStage_t* const newStage = pStage->newStage;
+  const bool tangents = programId == GLSL_STAGE_BUMPY_ENVIRONMENT;
+  float parms[MAX_VERTEX_PARMS][4];
+  float hp[4];
+  int i;
+
+  GL_UseProgram(program);
+  GL_UniformMatrix4fv(offsetof(shaderProgram_t, modelViewProjectionMatrix), mvp);
+  GL_UniformMatrix4fv(offsetof(shaderProgram_t, modelMatrix), surf->space->modelMatrix);
+
+  GL_VertexAttribPointer(offsetof(shaderProgram_t, attr_Vertex), 3, GL_FLOAT, false, sizeof(idDrawVert),
+                         RB_DRAWVERT( ac, xyz));
+  GL_VertexAttribPointer(offsetof(shaderProgram_t, attr_TexCoord), 2, GL_FLOAT, false, sizeof(idDrawVert),
+                         RB_DRAWVERT( ac, st));
+  GL_VertexAttribPointer(offsetof(shaderProgram_t, attr_Color), 4, GL_UNSIGNED_BYTE, false, sizeof(idDrawVert),
+                         RB_DRAWVERT( ac, color ));
+  if ( tangents ) {
+    GL_EnableVertexAttribArray(ATTR_NORMAL);
+    GL_EnableVertexAttribArray(ATTR_TANGENT);
+    GL_EnableVertexAttribArray(ATTR_BITANGENT);
+    GL_VertexAttribPointer(offsetof(shaderProgram_t, attr_Normal), 3, GL_FLOAT, false, sizeof(idDrawVert),
+                           RB_DRAWVERT( ac, normal));
+    GL_VertexAttribPointer(offsetof(shaderProgram_t, attr_Tangent), 3, GL_FLOAT, false, sizeof(idDrawVert),
+                           RB_DRAWVERT( ac, tangents[0]));
+    GL_VertexAttribPointer(offsetof(shaderProgram_t, attr_Bitangent), 3, GL_FLOAT, false, sizeof(idDrawVert),
+                           RB_DRAWVERT( ac, tangents[1]));
+  }
+
+  GL_UniformMatrix4fv(offsetof(shaderProgram_t, modelViewMatrix), surf->space->modelViewMatrix);
+  GL_UniformMatrix4fv(offsetof(shaderProgram_t, projectionMatrix), backEnd.viewDef->projectionMatrix);
+  GL_Uniform4fv(offsetof(shaderProgram_t, localViewOrigin), localViewOrigin.ToFloatPtr());
+  if ( newStage && program->vertexParms >= 0 && newStage->numVertexParms > 0 ) {
+    for ( i = 0; i < newStage->numVertexParms; i++ ) {
+      parms[i][0] = regs[newStage->vertexParms[i][0]];
+      parms[i][1] = regs[newStage->vertexParms[i][1]];
+      parms[i][2] = regs[newStage->vertexParms[i][2]];
+      parms[i][3] = regs[newStage->vertexParms[i][3]];
+    }
+    qglUniform4fv(program->vertexParms, newStage->numVertexParms, &parms[0][0]);
+  }
+  if ( program->screenParms >= 0 ) {
+    const float w = (float)( backEnd.viewDef->viewport.x2 - backEnd.viewDef->viewport.x1 + 1 );
+    const float h = (float)( backEnd.viewDef->viewport.y2 - backEnd.viewDef->viewport.y1 + 1 );
+    float sp[4];
+    sp[0] = 1.0f / w;
+    sp[1] = 1.0f / h;
+    sp[2] = w / globalImages->currentRenderImage->uploadWidth;
+    sp[3] = h / globalImages->currentRenderImage->uploadHeight;
+    GL_Uniform4fv(offsetof(shaderProgram_t, screenParms), sp);
+  }
+  if ( surf->material->GetSort() >= SS_POST_PROCESS ) {
+    RB_GLSLEpilogueParms( true, hp );
+    hp[0] = hp[2] = hp[3] = 1.0f;
+  }
+  else {
+    RB_GLSLEpilogueParms( RB_FilterBlend( pStage->drawStateBits ), hp );
+  }
+  GL_Uniform4fv(offsetof(shaderProgram_t, hdrParms), hp);
+
+  for ( i = 0; i < numImages; i++ ) {
+    if ( images[i] ) {
+      GL_SelectTexture(i);
+      images[i]->Bind();
+    }
+  }
+  GL_SelectTexture(0);
+
+  GL_State(pStage->drawStateBits);
+  RB_DrawElementsWithCounters(surf->geo);
+
+  for ( i = 1; i < numImages; i++ ) {
+    if ( images[i] ) {
+      GL_SelectTexture(i);
+      globalImages->BindNull();
+    }
+  }
+  GL_SelectTexture(0);
+  if ( tangents ) {
+    GL_DisableVertexAttribArray(ATTR_NORMAL);
+    GL_DisableVertexAttribArray(ATTR_TANGENT);
+    GL_DisableVertexAttribArray(ATTR_BITANGENT);
+  }
+}
+
+/*
+==================
 RB_GLSL_T_RenderShaderPasses
 
 This is also called for the generated 2D rendering
@@ -1912,6 +2045,14 @@ void RB_GLSL_T_RenderShaderPasses(const drawSurf_t* surf, const float mvp[16]) {
   R_GlobalPointToLocal(surf->space->modelMatrix, backEnd.viewDef->renderView.vieworg, localViewOrigin.ToVec3());
   localViewOrigin.w = 1.0f;
 
+  // the GUI correction LUT, when the surface is a GUI and the output transform asks for it
+  unsigned int guiLut = 0;
+  if ( shader->GetSort() == SS_GUI ) {
+    if ( !HDR_GuiCorrectionActive( &guiLut ) ) {
+      guiLut = 0;
+    }
+  }
+
   ///////////////////////
   // For each stage loop
   ///////////////////////
@@ -1943,8 +2084,13 @@ void RB_GLSL_T_RenderShaderPasses(const drawSurf_t* surf, const float mvp[16]) {
     const newShaderStage_t* const newStage = pStage->newStage;
 
     if ( newStage ) {
-      // new style stages: Not implemented in GLSL yet!
-      continue;
+      // new style stages: the ones the game data names have programs here
+      if ( r_skipNewAmbient.GetBool() || newStage->glslProgram == GLSL_STAGE_NONE
+          || !stageShaders[newStage->glslProgram].program ) {
+        continue;
+      }
+      RB_GLSL_DrawStageProgram(surf, pStage, newStage->glslProgram, newStage->fragmentProgramImages,
+                               newStage->numFragmentProgramImages, ac, mvp, localViewOrigin);
     }
     else {
 
@@ -2055,6 +2201,15 @@ void RB_GLSL_T_RenderShaderPasses(const drawSurf_t* surf, const float mvp[16]) {
       }
       else if ( pStage->texture.texgen == TG_REFLECT_CUBE ) {
         // This is reflection cubemapping
+        // with a bump map: per-pixel through the normal map, as ARB2's bumpy environment
+        const shaderStage_t* const bumpStage = shader->GetBumpStage();
+        if ( bumpStage && stageShaders[GLSL_STAGE_BUMPY_ENVIRONMENT].program ) {
+          idImage* images[2];
+          images[0] = pStage->texture.image;
+          images[1] = bumpStage->texture.image;
+          RB_GLSL_DrawStageProgram(surf, pStage, GLSL_STAGE_BUMPY_ENVIRONMENT, images, 2, ac, mvp, localViewOrigin);
+          continue;
+        }
         GL_UseProgram(&reflectionCubeShader);
 
         // NB: in original D3, if the surface had a bump map it would lead to the "Bumpy reflection cubemaping" shader being used.
@@ -2075,7 +2230,20 @@ void RB_GLSL_T_RenderShaderPasses(const drawSurf_t* surf, const float mvp[16]) {
       }
       else {  // TG_EXPLICIT
         // Otherwise, this is just regular surface shader with explicit texcoords
-        GL_UseProgram(&diffuseMapShader);
+        /* An in-world GUI is authored in display space; under the ACES 2.0
+           output transform its texel goes through the transform's inverse
+           first (the LUT on unit 1), so the forward transform puts it
+           back.  Only SS_GUI pays for the fetches. */
+        if ( guiLut ) {
+          GL_UseProgram(&diffuseMapGuiShader);
+          GL_SelectTexture(1);
+          qglBindTexture(GL_TEXTURE_2D, guiLut);
+          backEnd.glState.tmu[1].current2DMap = -1;
+          GL_SelectTexture(0);
+        }
+        else {
+          GL_UseProgram(&diffuseMapShader);
+        }
 
         // Setup the TexCoord pointer
         GL_VertexAttribPointer(offsetof(shaderProgram_t, attr_TexCoord), 2, GL_FLOAT, false, sizeof(idDrawVert),
@@ -2152,6 +2320,15 @@ void RB_GLSL_T_RenderShaderPasses(const drawSurf_t* surf, const float mvp[16]) {
 
       // Setup the Color uniform
       GL_Uniform4fv(offsetof(shaderProgram_t, glColor), stageColor);
+
+      // the epilogue: a filter blend's source is a factor, so it skips the
+      // fold; a reflection is scene energy whatever its blend
+      if ( backEnd.glState.currentProgram->hdrParms >= 0 ) {
+        float hp[4];
+        RB_GLSLEpilogueParms( pStage->texture.texgen != TG_REFLECT_CUBE
+                              && RB_FilterBlend( pStage->drawStateBits ), hp );
+        GL_Uniform4fv(offsetof(shaderProgram_t, hdrParms), hp);
+      }
 
       // Setup the Color modulation
       switch ( pStage->vertexColor ) {
@@ -2287,11 +2464,11 @@ int RB_GLSL_DrawShaderPasses(drawSurf_t** drawSurfs, int numDrawSurfs) {
 
     // only dump if in a 3d view
     if ( backEnd.viewDef->viewEntitys ) {
-      //globalImages->currentRenderImage->CopyFramebuffer(backEnd.viewDef->viewport.x1,
-      //                                                  backEnd.viewDef->viewport.y1,
-      //                                                  backEnd.viewDef->viewport.x2 - backEnd.viewDef->viewport.x1 + 1,
-      //                                                  backEnd.viewDef->viewport.y2 - backEnd.viewDef->viewport.y1 + 1,
-      //                                                  true);
+      globalImages->currentRenderImage->CopyFramebuffer(backEnd.viewDef->viewport.x1,
+                                                        backEnd.viewDef->viewport.y1,
+                                                        backEnd.viewDef->viewport.x2 - backEnd.viewDef->viewport.x1 + 1,
+                                                        backEnd.viewDef->viewport.y2 - backEnd.viewDef->viewport.y1 + 1,
+                                                        true);
     }
 
     backEnd.currentRenderCopied = true;
@@ -2520,6 +2697,13 @@ void RB_GLSL_BlendLight(const drawSurf_t *drawSurfs, const drawSurf_t *drawSurfs
     lightColor[1] = regs[stage->color.registers[1]];
     lightColor[2] = regs[stage->color.registers[2]];
     lightColor[3] = regs[stage->color.registers[3]];
+    // an additive blend light is a glow the volume emits: the emissive headroom, as on a material stage
+    if ( hdr_output_active && hdr_emissive_gain != 1.0f
+    		&& ( stage->drawStateBits & GLS_DSTBLEND_BITS ) == GLS_DSTBLEND_ONE ) {
+    	lightColor[0] *= hdr_emissive_gain;
+    	lightColor[1] *= hdr_emissive_gain;
+    	lightColor[2] *= hdr_emissive_gain;
+    }
     GL_Uniform4fv(offsetof(shaderProgram_t, fogColor), lightColor);
 
     ////////////////////

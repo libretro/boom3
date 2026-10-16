@@ -46,11 +46,21 @@ extern const char* const zfillClipShaderFP;
 // diffuse mapping (default diffuse surfaces)
 extern const char* const diffuseMapShaderVP;
 extern const char* const diffuseMapShaderFP;
+extern const char* const diffuseMapGuiShaderFP;
 // cube mapping (skybox/wobblesky, diffusecube, reflection)
 extern const char* const diffuseCubeShaderVP;
 extern const char* const skyboxCubeShaderVP;
 extern const char* const reflectionCubeShaderVP;
 extern const char* const cubeMapShaderFP;
+// custom material stages (glprogs/*.vfp)
+extern const char* const heatHazeShaderVP;
+extern const char* const heatHazeShaderFP;
+extern const char* const heatHazeMaskShaderFP;
+extern const char* const heatHazeMaskVertexShaderFP;
+extern const char* const colorProcessShaderVP;
+extern const char* const colorProcessShaderFP;
+extern const char* const bumpyEnvironmentShaderVP;
+extern const char* const bumpyEnvironmentShaderFP;
 // Shadows
 extern const char* const stencilShadowShaderVP;
 extern const char* const stencilShadowShaderFP;

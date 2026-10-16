@@ -192,8 +192,20 @@ typedef enum {
 static const int	MAX_FRAGMENT_IMAGES = 8;
 static const int	MAX_VERTEX_PARMS = 4;
 
+// the GLSL renderers' programs for the custom stages the game data names
+typedef enum {
+	GLSL_STAGE_NONE,
+	GLSL_STAGE_HEAT_HAZE,				// heatHaze.vfp
+	GLSL_STAGE_HEAT_HAZE_MASK,			// heatHazeWithMask.vfp
+	GLSL_STAGE_HEAT_HAZE_MASK_VERTEX,	// heatHazeWithMaskAndVertex.vfp
+	GLSL_STAGE_COLOR_PROCESS,			// colorProcess.vfp
+	GLSL_STAGE_BUMPY_ENVIRONMENT,		// bumpyEnvironment.vfp
+	GLSL_STAGE_COUNT
+} glslStageProgram_t;
+
 typedef struct {
 	int					vertexProgram;
+	int					glslProgram;		// glslStageProgram_t, by the fragment program's name
 	int					numVertexParms;
 	int					vertexParms[MAX_VERTEX_PARMS][4];	// evaluated register indexes
 

@@ -210,6 +210,46 @@ float RB_HDRGammaBrightness( bool filterBlend ) {
 	return b * memoPow;
 }
 
+/*
+===================
+RB_GLSLEpilogueParms
+
+u_hdrParms for the GLSL renderers' epilogue, which does what the epilogue
+draw_arb2.cpp injects into every ARB2 program: x r_brightness with the
+encoding fold (RB_HDRGammaBrightness), y the clamp - 0 per channel, 1
+luminance-aware, 2 none above 1 on a float scene target with true blending,
+as the ARB2 variants choose - z as x, w 1/r_gamma.
+===================
+*/
+void RB_GLSLEpilogueParms( bool filterBlend, float hp[4] ) {
+	extern bool hdr_luma_clamp;
+	extern bool hdr_fp16_scene;
+	extern bool hdr_fp32_scene;
+	extern bool hdr_unbounded_blend;
+	const bool inShader = r_gammaInShader.GetBool();
+	const bool unbounded = ( hdr_fp16_scene || hdr_fp32_scene ) && hdr_unbounded_blend;
+
+	hp[0] = inShader ? RB_HDRGammaBrightness( filterBlend ) : 1.0f;
+	hp[1] = unbounded ? 2.0f : hdr_luma_clamp ? 1.0f : 0.0f;
+	hp[2] = hp[0];
+	hp[3] = inShader ? 1.0f / r_gamma.GetFloat() : 1.0f;
+}
+
+/*
+===================
+RB_FilterBlend
+
+Whether a stage's blend multiplies the destination by the source: such a
+source is a factor, not scene energy, so the encoding fold stays off it.
+===================
+*/
+bool RB_FilterBlend( int drawStateBits ) {
+	const int src = drawStateBits & GLS_SRCBLEND_BITS;
+	const int dst = drawStateBits & GLS_DSTBLEND_BITS;
+	return src == GLS_SRCBLEND_DST_COLOR || src == GLS_SRCBLEND_ONE_MINUS_DST_COLOR
+		|| dst == GLS_DSTBLEND_SRC_COLOR || dst == GLS_DSTBLEND_ONE_MINUS_SRC_COLOR;
+}
+
 #ifdef BOOM3_ARB2_RENDERER
 
 /*
@@ -2386,6 +2426,34 @@ static void RB_ARB2_DrawView( drawSurf_t **drawSurfs, int numDrawSurfs ) {
 	RB_RenderDebugTools( drawSurfs, numDrawSurfs );
 }
 #endif
+
+/*
+==================
+R_GLSLStageProgram
+
+The GLSL renderers' program for a custom stage, by the name the material
+gives (with or without the extension).
+==================
+*/
+int R_GLSLStageProgram( const char *program ) {
+	static const struct { const char *name; int id; } table[] = {
+		{ "heatHaze", GLSL_STAGE_HEAT_HAZE },
+		{ "heatHazeWithMask", GLSL_STAGE_HEAT_HAZE_MASK },
+		{ "heatHazeWithMaskAndVertex", GLSL_STAGE_HEAT_HAZE_MASK_VERTEX },
+		{ "colorProcess", GLSL_STAGE_COLOR_PROCESS },
+		{ "bumpyEnvironment", GLSL_STAGE_BUMPY_ENVIRONMENT },
+	};
+	idStr stripped = program;
+	int i;
+
+	stripped.StripFileExtension();
+	for ( i = 0; i < (int)( sizeof( table ) / sizeof( table[0] ) ); i++ ) {
+		if ( !idStr::Icmp( stripped.c_str(), table[i].name ) ) {
+			return table[i].id;
+		}
+	}
+	return GLSL_STAGE_NONE;
+}
 
 #ifdef BOOM3_GLSL_RENDERERS
 /*

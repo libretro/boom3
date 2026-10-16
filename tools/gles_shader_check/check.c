@@ -17,7 +17,7 @@
  * Per program it also checks the interface the renderer relies on: the
  * GLES3 programs' ViewMatrices block (two mat4, 128 bytes, the renderer's
  * VIEW_MATRICES_FLOATS) and their u_depthHack uniform, and u_hdrParms in
- * every interaction program.
+ * every interaction and shader-pass program.
  *
  * build: make
  * run:   ./gles_shader_check ../../neo/renderer
@@ -326,16 +326,22 @@ struct pairing
 static const struct pairing gles2_programs[] = {
    { "interaction", "interactionShaderVP.cpp", "interactionShaderVP", "interactionShaderFP.cpp", "interactionShaderFP", WANT_HDR },
    { "interactionPhong", "interactionPhongShaderVP.cpp", "interactionPhongShaderVP", "interactionPhongShaderFP.cpp", "interactionPhongShaderFP", WANT_HDR },
-   { "diffuseMap", "diffuseMapShaderVP.cpp", "diffuseMapShaderVP", "diffuseMapShaderFP.cpp", "diffuseMapShaderFP", 0 },
-   { "skyboxCube", "skyboxCubeShaderVP.cpp", "skyboxCubeShaderVP", "cubeMapShaderFP.cpp", "cubeMapShaderFP", 0 },
-   { "reflectionCube", "reflectionCubeShaderVP.cpp", "reflectionCubeShaderVP", "cubeMapShaderFP.cpp", "cubeMapShaderFP", 0 },
-   { "diffuseCube", "diffuseCubeShaderVP.cpp", "diffuseCubeShaderVP", "cubeMapShaderFP.cpp", "cubeMapShaderFP", 0 },
+   { "diffuseMap", "diffuseMapShaderVP.cpp", "diffuseMapShaderVP", "diffuseMapShaderFP.cpp", "diffuseMapShaderFP", WANT_HDR },
+   { "diffuseMapGui", "diffuseMapShaderVP.cpp", "diffuseMapShaderVP", "diffuseMapGuiShaderFP.cpp", "diffuseMapGuiShaderFP", WANT_HDR },
+   { "skyboxCube", "skyboxCubeShaderVP.cpp", "skyboxCubeShaderVP", "cubeMapShaderFP.cpp", "cubeMapShaderFP", WANT_HDR },
+   { "reflectionCube", "reflectionCubeShaderVP.cpp", "reflectionCubeShaderVP", "cubeMapShaderFP.cpp", "cubeMapShaderFP", WANT_HDR },
+   { "diffuseCube", "diffuseCubeShaderVP.cpp", "diffuseCubeShaderVP", "cubeMapShaderFP.cpp", "cubeMapShaderFP", WANT_HDR },
    { "zfill", "zfillShaderVP.cpp", "zfillShaderVP", "zfillShaderFP.cpp", "zfillShaderFP", 0 },
    { "zfillOpaque", "zfillShaderVP.cpp", "zfillShaderVP", "zfillShaderFP.cpp", "zfillOpaqueShaderFP", 0 },
    { "zfillClip", "zfillClipShaderVP.cpp", "zfillClipShaderVP", "zfillClipShaderFP.cpp", "zfillClipShaderFP", 0 },
    { "fog", "fogShaderVP.cpp", "fogShaderVP", "fogShaderFP.cpp", "fogShaderFP", 0 },
    { "blendLight", "blendLightShaderVP.cpp", "blendLightShaderVP", "fogShaderFP.cpp", "fogShaderFP", 0 },
    { "stencilShadow", "stencilShadowShaderVP.cpp", "stencilShadowShaderVP", "stencilShadowShaderFP.cpp", "stencilShadowShaderFP", 0 },
+   { "heatHaze", "heatHazeShaderVP.cpp", "heatHazeShaderVP", "heatHazeShaderFP.cpp", "heatHazeShaderFP", WANT_HDR },
+   { "heatHazeMask", "heatHazeShaderVP.cpp", "heatHazeShaderVP", "heatHazeMaskShaderFP.cpp", "heatHazeMaskShaderFP", WANT_HDR },
+   { "heatHazeMaskVertex", "heatHazeShaderVP.cpp", "heatHazeShaderVP", "heatHazeMaskVertexShaderFP.cpp", "heatHazeMaskVertexShaderFP", WANT_HDR },
+   { "colorProcess", "colorProcessShaderVP.cpp", "colorProcessShaderVP", "colorProcessShaderFP.cpp", "colorProcessShaderFP", WANT_HDR },
+   { "bumpyEnvironment", "bumpyEnvironmentShaderVP.cpp", "bumpyEnvironmentShaderVP", "bumpyEnvironmentShaderFP.cpp", "bumpyEnvironmentShaderFP", WANT_HDR },
    { NULL, NULL, NULL, NULL, NULL, 0 }
 };
 
@@ -344,16 +350,22 @@ static const struct pairing gles3_programs[] = {
    { "interactionBlinn", "interactionShaderVP.cpp", "interactionShaderVP", "interactionShaderFP.cpp", "interactionBlinnShaderFP", WANT_GLES3 | WANT_HDR },
    { "interaction (PBR)", "interactionShaderVP.cpp", "interactionShaderVP", "interactionShaderFP.cpp", "interactionShaderFP", WANT_GLES3 | WANT_HDR },
    { "interactionPhong", "interactionPhongShaderVP.cpp", "interactionPhongShaderVP", "interactionPhongShaderFP.cpp", "interactionPhongShaderFP", WANT_GLES3 | WANT_HDR },
-   { "diffuseMap", "diffuseMapShaderVP.cpp", "diffuseMapShaderVP", "diffuseMapShaderFP.cpp", "diffuseMapShaderFP", WANT_GLES3 },
-   { "skyboxCube", "skyboxCubeShaderVP.cpp", "skyboxCubeShaderVP", "cubeMapShaderFP.cpp", "cubeMapShaderFP", WANT_GLES3 },
-   { "reflectionCube", "reflectionCubeShaderVP.cpp", "reflectionCubeShaderVP", "cubeMapShaderFP.cpp", "cubeMapShaderFP", WANT_GLES3 },
-   { "diffuseCube", "diffuseCubeShaderVP.cpp", "diffuseCubeShaderVP", "cubeMapShaderFP.cpp", "cubeMapShaderFP", WANT_GLES3 },
+   { "diffuseMap", "diffuseMapShaderVP.cpp", "diffuseMapShaderVP", "diffuseMapShaderFP.cpp", "diffuseMapShaderFP", WANT_GLES3 | WANT_HDR },
+   { "diffuseMapGui", "diffuseMapShaderVP.cpp", "diffuseMapShaderVP", "diffuseMapGuiShaderFP.cpp", "diffuseMapGuiShaderFP", WANT_GLES3 | WANT_HDR },
+   { "skyboxCube", "skyboxCubeShaderVP.cpp", "skyboxCubeShaderVP", "cubeMapShaderFP.cpp", "cubeMapShaderFP", WANT_GLES3 | WANT_HDR },
+   { "reflectionCube", "reflectionCubeShaderVP.cpp", "reflectionCubeShaderVP", "cubeMapShaderFP.cpp", "cubeMapShaderFP", WANT_GLES3 | WANT_HDR },
+   { "diffuseCube", "diffuseCubeShaderVP.cpp", "diffuseCubeShaderVP", "cubeMapShaderFP.cpp", "cubeMapShaderFP", WANT_GLES3 | WANT_HDR },
    { "zfill", "zfillShaderVP.cpp", "zfillShaderVP", "zfillShaderFP.cpp", "zfillShaderFP", WANT_GLES3 },
    { "zfillOpaque", "zfillShaderVP.cpp", "zfillShaderVP", "zfillShaderFP.cpp", "zfillOpaqueShaderFP", WANT_GLES3 },
    { "zfillClip", "zfillClipShaderVP.cpp", "zfillClipShaderVP", "zfillClipShaderFP.cpp", "zfillClipShaderFP", WANT_GLES3 },
    { "fog", "fogShaderVP.cpp", "fogShaderVP", "fogShaderFP.cpp", "fogShaderFP", WANT_GLES3 },
    { "blendLight", "blendLightShaderVP.cpp", "blendLightShaderVP", "fogShaderFP.cpp", "fogShaderFP", WANT_GLES3 },
    { "stencilShadow", "stencilShadowShaderVP.cpp", "stencilShadowShaderVP", "stencilShadowShaderFP.cpp", "stencilShadowShaderFP", WANT_GLES3 },
+   { "heatHaze", "heatHazeShaderVP.cpp", "heatHazeShaderVP", "heatHazeShaderFP.cpp", "heatHazeShaderFP", WANT_GLES3 | WANT_HDR },
+   { "heatHazeMask", "heatHazeShaderVP.cpp", "heatHazeShaderVP", "heatHazeMaskShaderFP.cpp", "heatHazeMaskShaderFP", WANT_GLES3 | WANT_HDR },
+   { "heatHazeMaskVertex", "heatHazeShaderVP.cpp", "heatHazeShaderVP", "heatHazeMaskVertexShaderFP.cpp", "heatHazeMaskVertexShaderFP", WANT_GLES3 | WANT_HDR },
+   { "colorProcess", "colorProcessShaderVP.cpp", "colorProcessShaderVP", "colorProcessShaderFP.cpp", "colorProcessShaderFP", WANT_GLES3 | WANT_HDR },
+   { "bumpyEnvironment", "bumpyEnvironmentShaderVP.cpp", "bumpyEnvironmentShaderVP", "bumpyEnvironmentShaderFP.cpp", "bumpyEnvironmentShaderFP", WANT_GLES3 | WANT_HDR },
    { NULL, NULL, NULL, NULL, NULL, 0 }
 };
 

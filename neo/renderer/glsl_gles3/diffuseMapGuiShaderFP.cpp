@@ -1,0 +1,77 @@
+/*
+ * The fixed-function stage program with the ACES 2.0 GUI inverse, the GLSL
+ * counterpart of ARB2's ff_gamma_gui.vfp.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, version 3.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <http://www.gnu.org/licenses/>.
+*/
+
+#include "glsl_shaders.h"
+
+namespace glsl_es3 {
+
+const char * const diffuseMapGuiShaderFP = R"(
+#version 300 es
+precision mediump float;
+
+// In
+in vec2 var_TexCoord;
+in lowp vec4 var_Color;
+
+// Uniforms
+uniform sampler2D u_fragmentMap0;
+uniform sampler2D u_fragmentMap1;     // the ACES 2.0 inverse, one row
+uniform mediump vec4 u_glColor;
+uniform mediump vec4 u_hdrParms;   // x r_brightness, y clamp mode, w 1/r_gamma
+
+// Out
+layout(location = 0) out vec4 fragColor;
+
+// HDR / gamma epilogue, as the interaction programs have it and as the ARB2
+// path injects into its stage programs: u_hdrParms.x r_brightness with the
+// HDR encoding fold in (not for filter blends), y the clamp - 0 per channel,
+// 1 luminance-aware, 2 none above 1 - and w 1/r_gamma.  Alpha is coverage
+// and passes through.
+vec3 dhewm3Epilogue(vec3 c)
+{
+  c *= u_hdrParms.x;
+  if (u_hdrParms.y > 1.5) {
+    c = max(c, 0.0);
+  } else if (u_hdrParms.y > 0.5) {
+    c = max(c, 0.0);
+    float L = dot(c, vec3(0.2126, 0.7152, 0.0722));
+    float peak = max(c.r, max(c.g, c.b));
+    float t = clamp((peak - 1.0) / max(peak - L, 0.0001), 0.0, 1.0);
+    c = clamp(mix(c, vec3(L), t), 0.0, 1.0);
+  } else {
+    c = clamp(c, 0.0, 1.0);
+  }
+  if (u_hdrParms.w == 1.0) {
+    return c;
+  }
+  return pow(c, vec3(u_hdrParms.w));
+}
+
+void main()
+{
+  vec4 t = texture(u_fragmentMap0, var_TexCoord);
+  // an in-world GUI is authored in display space: its texel goes through
+  // the output transform's inverse, so the transform puts it back
+  t.r = texture(u_fragmentMap1, vec2(t.r, 0.5)).r;
+  t.g = texture(u_fragmentMap1, vec2(t.g, 0.5)).r;
+  t.b = texture(u_fragmentMap1, vec2(t.b, 0.5)).r;
+  vec4 c = t * u_glColor * var_Color;
+  fragColor = vec4(dhewm3Epilogue(c.rgb), c.a);
+}
+)";
+
+}

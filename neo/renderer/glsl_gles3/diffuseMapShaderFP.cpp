@@ -29,14 +29,42 @@ in lowp vec4 var_Color;
 
 // Uniforms
 uniform sampler2D u_fragmentMap0;
-uniform lowp vec4 u_glColor;
+uniform mediump vec4 u_glColor;
+uniform mediump vec4 u_hdrParms;   // x r_brightness, y clamp mode, w 1/r_gamma
 
 // Out
 layout(location = 0) out vec4 fragColor;
 
+// HDR / gamma epilogue, as the interaction programs have it and as the ARB2
+// path injects into its stage programs: u_hdrParms.x r_brightness with the
+// HDR encoding fold in (not for filter blends), y the clamp - 0 per channel,
+// 1 luminance-aware, 2 none above 1 - and w 1/r_gamma.  Alpha is coverage
+// and passes through.
+vec3 dhewm3Epilogue(vec3 c)
+{
+  c *= u_hdrParms.x;
+  if (u_hdrParms.y > 1.5) {
+    c = max(c, 0.0);
+  } else if (u_hdrParms.y > 0.5) {
+    c = max(c, 0.0);
+    float L = dot(c, vec3(0.2126, 0.7152, 0.0722));
+    float peak = max(c.r, max(c.g, c.b));
+    float t = clamp((peak - 1.0) / max(peak - L, 0.0001), 0.0, 1.0);
+    c = clamp(mix(c, vec3(L), t), 0.0, 1.0);
+  } else {
+    c = clamp(c, 0.0, 1.0);
+  }
+  if (u_hdrParms.w == 1.0) {
+    return c;
+  }
+  return pow(c, vec3(u_hdrParms.w));
+}
+
 void main()
 {
-  fragColor = texture(u_fragmentMap0, var_TexCoord) * u_glColor * var_Color;
+  vec4 t = texture(u_fragmentMap0, var_TexCoord);
+  vec4 c = t * u_glColor * var_Color;
+  fragColor = vec4(dhewm3Epilogue(c.rgb), c.a);
 }
 )";
 

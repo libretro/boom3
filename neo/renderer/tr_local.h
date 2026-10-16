@@ -1332,6 +1332,8 @@ void RB_RenderDrawSurfChainWithFunction( const drawSurf_t *drawSurfs,
 void RB_DrawShaderPasses( drawSurf_t **drawSurfs, int numDrawSurfs );
 float RB_HDRGammaBrightness( bool filterBlend );
 float RB_HDRSpecularBoost( void );
+void RB_GLSLEpilogueParms( bool filterBlend, float hp[4] );
+bool RB_FilterBlend( int drawStateBits );
 void RB_LoadShaderTextureMatrix( const float *shaderRegisters, const textureStage_t *texture );
 void RB_GetShaderTextureMatrix( const float *shaderRegisters, const textureStage_t *texture, float matrix[16] );
 void RB_CreateSingleDrawInteractions( const drawSurf_t *surf, void (*DrawInteraction)(const drawInteraction_t *) );
@@ -1381,6 +1383,7 @@ void	R_ARB2_Init( void );
 void	RB_ARB2_DrawInteractions( void );
 void	R_ReloadARBPrograms_f( const idCmdArgs &args );
 int		R_FindARBProgram( GLenum target, const char *program );
+int		R_GLSLStageProgram( const char *program );
 
 typedef enum {
 	PROG_INVALID,
@@ -1516,12 +1519,17 @@ typedef struct shaderProgram_s {
 	GLint		colorAdd;
 	GLint		diffuseColor;
 	GLint		specularColor;
-	GLint		hdrParms;	// x..z brightness, w = 1/gamma (negative selects the luminance-aware clamp)
+	GLint		hdrParms;	// the epilogue: RB_GLSLEpilogueParms
 	GLint		fogColor;
 
   	GLint		fogMatrix;
 
 	GLint		clipPlane;
+
+	// the custom stage programs', set per draw
+	GLint		projectionMatrix;
+	GLint		vertexParms;	// vec4[MAX_VERTEX_PARMS]
+	GLint		screenParms;	// xy window to 0..1, zw _currentRender's power-of-two adjust
 
 	/* gl_... */
 	GLint		attr_TexCoord;

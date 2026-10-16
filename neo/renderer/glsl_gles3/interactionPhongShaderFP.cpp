@@ -34,7 +34,7 @@ in vec3 var_V;
 
 // Uniforms
 uniform lowp vec4 u_diffuseColor;
-uniform mediump vec4 u_hdrParms;   // xyz r_brightness, w 1/r_gamma (negative = luminance-aware clamp)
+uniform mediump vec4 u_hdrParms;   // x r_brightness, y clamp mode, w 1/r_gamma
 uniform mediump vec4 u_specularColor;   // mediump: lowp guarantees only [-2,2], which the HDR specular boost exceeds
 uniform float u_specularExponent;
 uniform sampler2D u_fragmentMap0; // u_bumpTexture
@@ -48,9 +48,9 @@ layout(location = 0) out vec4 fragColor;
 
 // HDR / gamma epilogue, the GLSL counterpart of the ARB2 injected epilogue in
 // draw_arb2.cpp.  Same maths, expressed for this codepath rather than shared
-// with it: u_hdrParms.xyz is r_brightness (with the HDR encoding fold already
-// folded in), u_hdrParms.w is 1/r_gamma, and a negative w selects the
-// luminance-aware clamp.
+// with it: u_hdrParms.x is r_brightness (with the HDR encoding fold already
+// folded in), u_hdrParms.y the clamp - 0 per channel, 1 luminance-aware, 2
+// none above 1 - and u_hdrParms.w 1/r_gamma (RB_GLSLEpilogueParms).
 //
 // Per-channel clamping rewrites the colour of anything overbright - it pulls a
 // pixel toward whichever channel saturated first, which is where hue fringing
@@ -60,24 +60,25 @@ layout(location = 0) out vec4 fragColor;
 // neutral white instead of at a primary.
 vec3 dhewm3Epilogue(vec3 c)
 {
-  float gw = u_hdrParms.w;
-  c *= u_hdrParms.xyz;
-  if (gw < 0.0) {
+  c *= u_hdrParms.x;
+  if (u_hdrParms.y > 1.5) {
+    // a float scene target with true blending: nothing above 1 is lost
+    c = max(c, 0.0);
+  } else if (u_hdrParms.y > 0.5) {
     c = max(c, 0.0);
     float L = dot(c, vec3(0.2126, 0.7152, 0.0722));
     float peak = max(c.r, max(c.g, c.b));
     float t = clamp((peak - 1.0) / max(peak - L, 0.0001), 0.0, 1.0);
     c = clamp(mix(c, vec3(L), t), 0.0, 1.0);
-    gw = -gw;
   } else {
     c = clamp(c, 0.0, 1.0);
   }
   // pow() is skipped at unity gamma: the identity, and the exponent is a
   // uniform so the branch is uniform across the draw.
-  if (gw == 1.0) {
+  if (u_hdrParms.w == 1.0) {
     return c;
   }
-  return pow(c, vec3(gw));
+  return pow(c, vec3(u_hdrParms.w));
 }
 
 void main(void)
