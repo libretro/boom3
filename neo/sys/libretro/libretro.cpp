@@ -4540,8 +4540,6 @@ static const char *hdr_fs_src =
 	"  return a / b;\n"
 	"}\n"
 	"vec3 rolloffRGB(vec3 c) {\n"
-	"  float H = uParms.y;\n"
-	"  if (H <= 1.0001) return min(c, vec3(1.0));\n"
 	"  if (uParms.z > 22.5) {\n"                       /* ACES 2.0, complete */
 	"    return aces2Transform(c);\n"
 	"  }\n"
@@ -4609,7 +4607,6 @@ static const char *hdr_fs_src =
 	"}\n"
 	"float rolloff(float v) {\n"
 	"  float H = uParms.y;\n"
-	"  if (H <= 1.0001) return min(v, 1.0);\n"
 	/*
 	   Uchimura's GT curve, published defaults folded to constants:
 	   a = 1, m = 0.22, l = 0.4, c = 1.33, b = 0, P = 1, which give
@@ -4623,20 +4620,20 @@ static const char *hdr_fs_src =
 	   stays put, and each handed to the same shoulder above it.  Hable
 	   and Lottes are linear in and out; Unreal bakes in a display gamma
 	   and has it undone; Drago is used as published. */
-	"  if (uParms.z > 6.5) {\n"
+	"  if (uParms.z > 6.5 && uParms.z < 7.5) {\n"
 	"    float n = v / (v + 0.155) * 1.019;\n"
 	"    return shoulder(v, pow(n, 2.2) * 1.3173380);\n"
 	"  }\n"
-	"  if (uParms.z > 5.5) {\n"
+	"  if (uParms.z > 5.5 && uParms.z < 6.5) {\n"
 	"    float n = log(1.0 + max(v, 0.0)) / log(2.0 + 8.0 * pow(max(v, 0.0) / 8.0, 0.2344653));\n"
 	"    return shoulder(v, n * (1.0 / 0.9542425) * 2.6616800);\n"
 	"  }\n"
-	"  if (uParms.z > 4.5) {\n"
+	"  if (uParms.z > 4.5 && uParms.z < 5.5) {\n"
 	"    float p = pow(max(v, 0.0), 1.6);\n"
 	"    float q = pow(max(v, 0.0), 1.5632);\n"
 	"    return shoulder(v, (p / (q * 0.1674199 + 1.0730397)) * 1.2404596);\n"
 	"  }\n"
-	"  if (uParms.z > 3.5) {\n"
+	"  if (uParms.z > 3.5 && uParms.z < 4.5) {\n"
 	"    float n = ((v * (0.15 * v + 0.05) + 0.004) / (v * (0.15 * v + 0.50) + 0.06)) - 0.0666667;\n"
 	"    return shoulder(v, n * 4.5319149);\n"
 	"  }\n"
@@ -6930,6 +6927,24 @@ static bool hdr_aces2_build( float peakLuminance ) {
 	hdr_aces2_peak = peakLuminance;
 	return true;
 }
+/*
+================
+HDR_GuiCorrectionActive
+
+The GUI correction table, for surfaces the artist authored in display
+space: built when the ACES 2.0 tables are, so the stage programs push the
+texel through the transform's inverse ahead of it.  Every other roll-off
+has no inverse to offer, and a GUI simply goes through it.
+================
+*/
+bool HDR_GuiCorrectionActive( unsigned int *tex ) {
+	if ( !hdr_aces2_gui_ready || hdr_aces2_gui_tex == 0 ) {
+		return false;
+	}
+	*tex = hdr_aces2_gui_tex;
+	return true;
+}
+
 #ifdef LR_ARB_PASSES
 
 /* The appearance matrices are applied on the CPU as row-vector times
@@ -6946,40 +6961,6 @@ static void hdr_aces2_env_row( int reg, const double m[9], int row ) {
 		(float)m[row*3+0], (float)m[row*3+1], (float)m[row*3+2], 0.0f );
 }
 
-/*
-================
-HDR_GuiInverse
-
-Display value in, scene value out, for surfaces the artist authored in
-display space.  A table because the assembled inverse costs more than
-the transform it undoes; built when the ACES 2.0 tables are, and the
-identity whenever that transform is not the one running - every other
-roll-off has no inverse to offer and a GUI simply goes through it as
-before.
-================
-*/
-bool HDR_GuiCorrectionActive( unsigned int *tex ) {
-	if ( !hdr_aces2_gui_ready || hdr_aces2_gui_tex == 0 ) {
-		return false;
-	}
-	*tex = hdr_aces2_gui_tex;
-	return true;
-}
-
-float HDR_GuiInverse( float v ) {
-	float x;
-	int i;
-
-	if ( !hdr_aces2_gui_ready || v <= 0.0f ) {
-		return v;
-	}
-	if ( v >= 1.0f ) {
-		return hdr_aces2_gui[ACES2_GUI_LUT_SIZE - 1];
-	}
-	x = v * (float)( ACES2_GUI_LUT_SIZE - 1 );
-	i = (int)x;
-	return hdr_aces2_gui[i] + ( hdr_aces2_gui[i+1] - hdr_aces2_gui[i] ) * ( x - (float)i );
-}
 
 static void hdr_aces2_set_env( void ) {
 	static const double AP0_TO_AP1[9] = {
@@ -7274,6 +7255,8 @@ static bool hdr_ensure_target( int w, int h ) {
 		hdr_loc_parms = glGetUniformLocation( hdr_prog, "uParms" );
 		hdr_loc_film  = glGetUniformLocation( hdr_prog, "uFilm" );
 		hdr_loc_film_lut = glGetUniformLocation( hdr_prog, "uFilmLut" );
+		hdr_loc_aces = glGetUniformLocation( hdr_prog, "uAces" );
+		hdr_loc_gt = glGetUniformLocation( hdr_prog, "uGt" );
 		hdr_loc_film_desat = glGetUniformLocation( hdr_prog, "uFilmDesat" );
 		{
 			/* ACES 2.0's own uniforms.  Absent from every other mode's
@@ -8709,16 +8692,25 @@ static void hdr_present( GLuint dstFbo ) {
 	if ( LR_GLSL() ) {
 	glUniform1i( hdr_loc_tex, 0 );
 	glUniform1i( hdr_loc_bloomT, 1 );
-	if ( hdr_rolloff_mode == HDR_ROLLOFF_ACES2FULL && hdr_aces2_lut != 0
-			&& hdr_aces2_loc_lut >= 0 ) {
-		/* same reason as the ARB path: the peak can move after the
+	if ( hdr_rolloff_mode == HDR_ROLLOFF_ACES2FULL ) {
+		/* the tables, built here because the peak can move after the
 		 * program is built, and only this runs every frame */
-		hdr_aces2_build( hdr_aces2_wanted_peak > 0.0f
-				? hdr_aces2_wanted_peak : 1000.0f );
-		hdr_aces2_set_uniforms();
-		glActiveTexture( GL_TEXTURE3 );
-		glBindTexture( GL_TEXTURE_2D, hdr_aces2_lut );
-		glActiveTexture( GL_TEXTURE0 );
+		if ( hdr_aces2_loc_lut < 0 || !hdr_aces2_build( hdr_aces2_wanted_peak > 0.0f
+				? hdr_aces2_wanted_peak : 1000.0f ) ) {
+			if ( log_cb ) {
+				log_cb( RETRO_LOG_WARN,
+					"[boom3] HDR: ACES 2.0 tables unavailable, using the tone scale\n" );
+			}
+			hdr_rolloff_mode = HDR_ROLLOFF_ACES2;
+		} else {
+			/* an absolute transform in units of 100 nits: paper white
+			 * is its exposure, as on the ARB path */
+			hdr_aces2_exposure = paperWhite / 100.0f;
+			hdr_aces2_set_uniforms();
+			glActiveTexture( GL_TEXTURE3 );
+			glBindTexture( GL_TEXTURE_2D, hdr_aces2_lut );
+			glActiveTexture( GL_TEXTURE0 );
+		}
 	}
 	glUniform1i( hdr_loc_bloomW, 2 );
 	glUniform1f( hdr_loc_bloomAmt, haveBloom ? hdr_bloom_amount : 0.0f );
@@ -8786,9 +8778,21 @@ static void hdr_present( GLuint dstFbo ) {
 		glUniform3f( hdr_loc_film, ft[0], 0.0f, ft[1] );
 	}
 	glUniform1f( hdr_loc_frame, frameN );
-	glUniformMatrix3fv( hdr_loc_mat, 1, GL_FALSE, mat );
-	glUniform4f( hdr_loc_parms, hdr_pq_output ? paperWhite / 10000.0f : 1.0f, H,
-			(float)hdr_rolloff_mode, 0.75f /* Reinhard knee */ );
+	{
+		/* ACES 2.0 is an absolute transform in units of 100 nits, and it
+		 * lands in its own limiting gamut: the scale into PQ is its own
+		 * unit and the gamut stage converts from that gamut, as on the
+		 * ARB path. */
+		const bool aces2Abs = ( hdr_rolloff_mode == HDR_ROLLOFF_ACES2FULL
+				&& hdr_aces2_lut != 0 );
+		const float *a2m = ( hdr_aces2_gamut == 0 ) ? hdr_m709to2020
+						 : ( hdr_aces2_gamut == 1 ) ? hdr_mP3to2020
+						 : hdr_mIdentity;
+		glUniformMatrix3fv( hdr_loc_mat, 1, GL_FALSE, aces2Abs ? a2m : mat );
+		glUniform4f( hdr_loc_parms, hdr_pq_output
+					? ( aces2Abs ? 100.0f : paperWhite ) / 10000.0f : 1.0f, H,
+				(float)hdr_rolloff_mode, 0.75f /* Reinhard knee */ );
+	}
 	/* Same 0.75 knee as the Reinhard roll-off: expansion starts where
 	 * the diffuse range ends, so the two meet at the same place. */
 	glUniform2f( hdr_loc_expand, (float)hdr_expand_mode, 0.75f );
