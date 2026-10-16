@@ -652,7 +652,7 @@ static GLint  hdr_down_k_loc_texel = -1;
 #ifdef LR_ARB_PASSES
 static GLuint hdr_arb_vp, hdr_arb_down, hdr_arb_down_karis, hdr_arb_up;
 static GLuint hdr_arb_bright, hdr_arb_blur;
-static GLuint hdr_arb_comp1, hdr_arb_comp2;
+static GLuint hdr_arb_comp0, hdr_arb_comp1, hdr_arb_comp2;  /* no bloom, one band, two bands */
 static int    hdr_arb_comp_mode = -1;   /* roll-off curve baked into the pair above */
 static int    hdr_arb_comp_halation = -1;
 static int    hdr_arb_comp_chroma = -1;
@@ -2788,7 +2788,7 @@ static void context_reset(void)
 #ifdef LR_ARB_PASSES
    hdr_arb_vp = hdr_arb_down = hdr_arb_down_karis = hdr_arb_up = 0;
    hdr_arb_bright = hdr_arb_blur = 0;
-   hdr_arb_comp1 = hdr_arb_comp2 = 0;
+   hdr_arb_comp0 = hdr_arb_comp1 = hdr_arb_comp2 = 0;
    hdr_arb_comp_mode = -1;
    hdr_arb_pyramid = false;
 #endif
@@ -6037,9 +6037,9 @@ static const char hdr_karis_fetch[] =
 	"END\n"
 
 /* One band: the second bloom fetch is skipped entirely rather than
-   multiplied by a zero weight.  The GLSL does this with a branch on a
-   uniform; ARB has no branches, so it is two programs and the choice
-   moves to bind time. */
+   multiplied by a zero weight, and with bloom off both are.  The GLSL
+   does this with branches on uniforms; ARB has no branches, so it is
+   three programs and the choice moves to bind time. */
 /* The composite is assembled rather than declared, because the roll-off
    curve is chosen when the program is built.  Everything else is the
    same text as before; only the curve block varies. */
@@ -6072,15 +6072,15 @@ static const char *hdr_arb_curve_src( int mode ) {
 	}
 }
 
-static const char *hdr_arb_composite_src( int mode, bool twoBand ) {
-	static char buf[2][16384];
-	char *p = buf[twoBand ? 1 : 0];
+static const char *hdr_arb_composite_src( int mode, int bands ) {
+	static char buf[3][16384];
+	char *p = buf[bands];
 
-	/* Eight pieces, eight specifiers.  Miscount this and the composite
+	/* Eleven pieces, eleven specifiers.  Miscount this and the composite
 	 * silently loses its tail - the gamut matrix, the scale to the
 	 * display and the PQ encode - which does not fail to assemble and
 	 * does not warn; it just renders a picture with no output stage. */
-	idStr::snPrintf( p, sizeof( buf[0] ), "%s%s%s%s%s%s%s%s%s%s",
+	idStr::snPrintf( p, sizeof( buf[0] ), "%s%s%s%s%s%s%s%s%s%s%s",
 			"!!ARBfp1.0\n"
 			"OPTION ARB_precision_hint_nicest;\n",
 			/* ACES 2.0 brings its own registers; every other curve uses
@@ -6101,10 +6101,10 @@ static const char *hdr_arb_composite_src( int mode, bool twoBand ) {
 			: hdr_chroma_ab == 2 ? "PARAM kCa = { 0.0044200, 0, 0, 0 };\n"
 			: hdr_chroma_ab == 1 ? "PARAM kCa = { 0.0022100, 0, 0, 0 };\n"
 			: "PARAM kCa = { 0.0, 0, 0, 0 };\n",
-			HDR_ARB_COMPOSITE_BODY
-			"TEX bl, fragment.texcoord[0], texture[1], 2D;\n"
-			"MUL bl, bl, program.env[2].z;\n",
-			twoBand ? "TEX t, fragment.texcoord[0], texture[2], 2D;\n"
+			HDR_ARB_COMPOSITE_BODY,
+			bands ? "TEX bl, fragment.texcoord[0], texture[1], 2D;\n"
+					"MUL bl, bl, program.env[2].z;\n" : "",
+			bands == 2 ? "TEX t, fragment.texcoord[0], texture[2], 2D;\n"
 					  "MAD bl, t, program.env[2].w, bl;\n" : "",
 			HDR_ARB_COMPOSITE_TAIL,
 			hdr_arb_curve_src( mode ),
@@ -6230,11 +6230,7 @@ static const char *hdr_arb_composite_src( int mode, bool twoBand ) {
 	 * two closing CMPs hand lin back unchanged, bit for bit, and nothing
 	 * after it reads what else it wrote, so it goes - some forty
 	 * instructions a pixel that every pixel ran.  Checked program
-	 * against program on every curve and splice, float for float.
-	 * The same reasoning does not carry to the shoulder at H = 1: its
-	 * result is min(t, 1) there too, but dropping it changes how a
-	 * driver compiles the curve before it (which multiplies it fuses
-	 * into multiply-adds), and the output moves by an ulp. */
+	 * against program on every curve and splice, float for float. */
 	if ( hdr_expand_mode == 0 || !hdr_pq_output ) {
 		static const char from[] = "SUB t, lin, program.env[1].y;\n";
 		static const char last[] = "CMP lin, a.x, lin, e;\n";
@@ -6243,6 +6239,33 @@ static const char *hdr_arb_composite_src( int mode, bool twoBand ) {
 		if ( at && end ) {
 			end += sizeof( last ) - 1;
 			memmove( at, end, strlen( end ) + 1 );
+		}
+	}
+	/* Without bloom the bloom fetches go and so does adding them: a zero
+	 * amount times the bloom texture adds exactly nothing while those
+	 * texels are finite, which they are short of an FP16 overflow. */
+	if ( !bands ) {
+		static const char add[] = "MUL bl, bl, program.env[2].y;\nMAD lin, bl, kHal, lin;\n";
+		char *at = strstr( p, add );
+		if ( at ) {
+			memmove( at, at + sizeof( add ) - 1, strlen( at + sizeof( add ) - 1 ) + 1 );
+		}
+	}
+	/* Tone-mapped 24-bit output has no headroom: the shoulder's closing
+	 * CMP takes min(t, 1), so the shoulder it computed goes.  Not bit for
+	 * bit - a driver compiles the curve before it differently once its
+	 * result has one use fewer, which can move the output by an ulp, or
+	 * one 8-bit code value on the odd pixel. */
+	if ( !hdr_pq_output && mode != HDR_ROLLOFF_ACES2FULL ) {
+		static const char from[] = "SUB v, lin, 1.0;\nMAX v, v, 0.0;\nADD u, v, program.env[7].x;\n";
+		static const char last[] = "CMP lin, v.x, t, r;\n";
+		static const char clamp[] = "MIN t, t, 1.0;\nMOV lin, t;\n";
+		char *at = strstr( p, from );
+		char *end = at ? strstr( at, last ) : NULL;
+		if ( at && end ) {
+			end += sizeof( last ) - 1;
+			memmove( at + sizeof( clamp ) - 1, end, strlen( end ) + 1 );
+			memcpy( at, clamp, sizeof( clamp ) - 1 );
 		}
 	}
 	/* With chromatic aberration off its gather goes, with or without
@@ -7107,15 +7130,18 @@ static bool hdr_arb_ready( void ) {
 			|| hdr_arb_comp_pqout != (int)hdr_pq_output
 			|| hdr_arb_comp_expand != (int)( hdr_expand_mode != 0 ) ) {
 		if ( hdr_arb_comp1 ) {
-			GLuint dead[2] = { hdr_arb_comp1, hdr_arb_comp2 };
-			glDeleteProgramsARB( 2, dead );
-			hdr_arb_comp1 = hdr_arb_comp2 = 0;
+			GLuint dead[3] = { hdr_arb_comp0, hdr_arb_comp1, hdr_arb_comp2 };
+			glDeleteProgramsARB( 3, dead );
+			hdr_arb_comp0 = hdr_arb_comp1 = hdr_arb_comp2 = 0;
 		}
 		if ( !hdr_arb_load( GL_FRAGMENT_PROGRAM_ARB,
-					hdr_arb_composite_src( hdr_rolloff_mode, false ),
+					hdr_arb_composite_src( hdr_rolloff_mode, 0 ),
+					&hdr_arb_comp0, "hdr composite program (no bloom)" )
+				|| !hdr_arb_load( GL_FRAGMENT_PROGRAM_ARB,
+					hdr_arb_composite_src( hdr_rolloff_mode, 1 ),
 					&hdr_arb_comp1, "hdr composite program (one band)" )
 				|| !hdr_arb_load( GL_FRAGMENT_PROGRAM_ARB,
-					hdr_arb_composite_src( hdr_rolloff_mode, true ),
+					hdr_arb_composite_src( hdr_rolloff_mode, 2 ),
 					&hdr_arb_comp2, "hdr composite program (two bands)" ) ) {
 			return false;
 		}
@@ -8208,7 +8234,7 @@ static void hdr_shoulder_params( int mode, float H, float *A, float *slopeOut ) 
 #define HDR_GLSL_COMPOSITE_READY	( hdr_prog != 0 )
 #define HDR_GLSL_BLOOM_READY		( hdr_prog_bright != 0 && hdr_prog_blur != 0 )
 #ifdef LR_ARB_PASSES
-#define HDR_ARB_COMPOSITE_READY		( hdr_arb_vp != 0 && hdr_arb_comp1 != 0 && hdr_arb_comp2 != 0 )
+#define HDR_ARB_COMPOSITE_READY		( hdr_arb_vp != 0 && hdr_arb_comp0 != 0 && hdr_arb_comp1 != 0 && hdr_arb_comp2 != 0 )
 #define HDR_ARB_BLOOM_READY			( hdr_arb_bright != 0 && hdr_arb_blur != 0 \
 									  && hdr_arb_down != 0 && hdr_arb_up != 0 )
 #endif
@@ -8864,7 +8890,7 @@ static void hdr_present( GLuint dstFbo ) {
 			qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 35, p10 );
 		}
 		qglBindProgramARB( GL_FRAGMENT_PROGRAM_ARB,
-				bandW1 > 0.0f ? hdr_arb_comp2 : hdr_arb_comp1 );
+				!haveBloom ? hdr_arb_comp0 : bandW1 > 0.0f ? hdr_arb_comp2 : hdr_arb_comp1 );
 		qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 0, p0 );
 		qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 1, p1 );
 		qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 2, p2 );
