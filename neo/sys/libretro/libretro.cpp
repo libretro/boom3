@@ -4406,6 +4406,7 @@ static const char *hdr_fs_src =
 	"uniform vec4 uCc;\n"
 	"uniform vec4 uCc2;         /* compr, ccScale, mid_J, focus_dist */\n"
 	"uniform vec4 uGm;          /* lower_hull_gamma_inv, forward_limit, 0, 0 */\n"
+	"uniform sampler2D uLut;\n"
 	"uniform vec4 uLutScale;    /* cuspJ, cuspM, reachM, gammaInv */\n"
 	"\n"
 	"float coneFwd(float v){ float a=abs(v); float f=pow(a,0.42); float r=f/(27.13+f); return v<0.0?-r:r; }\n"
