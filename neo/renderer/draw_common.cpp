@@ -1114,30 +1114,18 @@ void RB_STD_T_RenderShaderPasses( const drawSurf_t *surf ) {
 			qglBindProgramARB( GL_FRAGMENT_PROGRAM_ARB, newStage->fragmentProgram );
 			qglEnable( GL_FRAGMENT_PROGRAM_ARB );
 
-			/*
-			   Pin env[21] (the injected gamma epilogue's parameter) for
-			   this stage explicitly. It used to be safe to inherit the
-			   last interaction's value - there was only ever one value -
-			   but the fixed-function routing now writes env[21] per
-			   stage with blend-aware encoding scale, so inheriting is
-			   order-dependent: a custom-shader stage drawn after a
-			   filter stage would pick up the unfolded value and render
-			   too bright under scene headroom. Setting it here with the
-			   same blend-aware logic also closes the previously
-			   documented blind spot: a custom-shader material using a
-			   filter blend now gets the correct unscaled source too.
-			*/
+			// the epilogue's brightness and gamma, blend-aware like the other stages
 			if ( r_gammaInShader.GetBool() ) {
-				int nsrcB = pStage->drawStateBits & GLS_SRCBLEND_BITS;
-				int ndstB = pStage->drawStateBits & GLS_DSTBLEND_BITS;
-				bool nFilter =
-					nsrcB == GLS_SRCBLEND_DST_COLOR ||
-					nsrcB == GLS_SRCBLEND_ONE_MINUS_DST_COLOR ||
-					ndstB == GLS_DSTBLEND_SRC_COLOR ||
-					ndstB == GLS_DSTBLEND_ONE_MINUS_SRC_COLOR;
 				float nparm[4];
-				nparm[0] = nparm[1] = nparm[2] = RB_HDRGammaBrightness( nFilter );
-				nparm[3] = 1.0f / r_gamma.GetFloat();
+				if ( surf->material->GetSort() >= SS_POST_PROCESS ) {
+					/* a post-process stage reads the scene back, which
+					   already carries the brightness and the encoding:
+					   neither applies a second time */
+					nparm[0] = nparm[1] = nparm[2] = nparm[3] = 1.0f;
+				} else {
+					nparm[0] = nparm[1] = nparm[2] = RB_HDRGammaBrightness( RB_FilterBlend( pStage->drawStateBits ) );
+					nparm[3] = 1.0f / r_gamma.GetFloat();
+				}
 				qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, PP_GAMMA_BRIGHTNESS, nparm );
 			}
 
