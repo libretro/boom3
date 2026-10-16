@@ -2505,13 +2505,19 @@ void idImage::Bind() {
 	if ( tmu->textureType != type && ( backEnd.glState.currenttmu <	glConfig.maxTextureUnits ) ) {
 #ifdef BOOM3_GLSL_RENDERERS
 		if ( R_GLSLRenderer() ) {
-			if ( tmu->textureType == TT_CUBIC )
+			// the unit's other target is unbound, so its cache goes with it
+			if ( tmu->textureType == TT_CUBIC ) {
 				qglBindTexture( GL_TEXTURE_CUBE_MAP_EXT, 0 );
-			else if ( tmu->textureType == TT_2D )
+				tmu->currentCubeMap = -1;
+			} else if ( tmu->textureType == TT_2D ) {
 				qglBindTexture( GL_TEXTURE_2D, 0 );
+				tmu->current2DMap = -1;
+			}
 #ifndef HAVE_OPENGLES2
-			else if ( tmu->textureType == TT_3D )
+			else if ( tmu->textureType == TT_3D ) {
 				qglBindTexture( GL_TEXTURE_3D, 0 );
+				tmu->current3DMap = -1;
+			}
 #endif
 		}
 #endif
