@@ -667,12 +667,22 @@ smp extensions, or asyncronously by another thread.
 ====================
 */
 int		backEndStartTime, backEndFinishTime;
+#ifdef BOOM3_VULKAN_RENDERER
+void RB_VK_ExecuteBackEndCommands( const emptyCommand_t *cmds );
+#endif
 void RB_ExecuteBackEndCommands( const emptyCommand_t *cmds ) {
 	int	c_draw3d = 0, c_draw2d = 0, c_setBuffers = 0, c_swapBuffers = 0, c_copyRenders = 0;
 
 	if ( cmds->commandId == RC_NOP && !cmds->next ) {
 		return;
 	}
+
+#ifdef BOOM3_VULKAN_RENDERER
+	if ( R_VulkanRenderer() ) {
+		RB_VK_ExecuteBackEndCommands( cmds );
+		return;
+	}
+#endif
 
 	backEndStartTime = Core_Milliseconds();
 

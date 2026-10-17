@@ -334,6 +334,20 @@ static bool FormatIsDXT(int internalFormat) {
 #endif
 }
 
+#ifdef BOOM3_VULKAN_RENDERER
+// draw_vulkan.cpp: the images on the Vulkan device
+bool R_VK_GenerateImage( idImage *image, const byte *rgba, int width, int height, bool preserveBorder );
+bool R_VK_GenerateCubeImage( idImage *image, const byte *pic[6], int size );
+bool R_VK_GenerateImageLevels( idImage *image, int format, int width, int height,
+							   const byte *const *levels, const int *levelBytes, int numLevels );
+bool R_VK_GenerateRampImage16( idImage *image, const unsigned short *pic, int width, int height, bool luminanceAlpha );
+void R_VK_UploadScratch( idImage *image, const byte *data, int cols, int rows );
+void R_VK_PurgeImage( idImage *image );
+void R_VK_CopyFramebuffer( idImage *image, int x, int y, int width, int height );
+void R_VK_CopyDepthbuffer( idImage *image, int x, int y, int width, int height );
+void R_VK_UploadPrecompressed( idImage *image, const ddsFileHeader_t *header, const byte *data );
+#endif
+
 int MakePowerOfTwo( int num ) {
 	int		pot;
 	for (pot = 1 ; pot < num ; pot<<=1) {
@@ -918,6 +932,12 @@ bool idImage::GenerateRampImage16( const unsigned short *pic, int width, int hei
 	uploadHeight = height;
 	uploadWidth = width;
 
+#ifdef BOOM3_VULKAN_RENDERER
+	if ( R_VulkanRenderer() ) {
+		return R_VK_GenerateRampImage16( this, pic, width, height, luminanceAlpha );
+	}
+#endif
+
 	/* Two shapes are needed.  A single-channel ramp reads back on every
 	 * channel, which is what the specular falloff wants.  A fog ramp
 	 * carries white in colour and the falloff in alpha, so it needs a
@@ -1115,6 +1135,13 @@ void idImage::GenerateImage( const byte *pic, int width, int height,
 			scaledBuffer[ i ] = 0;
 		}
 	}
+#ifdef BOOM3_VULKAN_RENDERER
+	if ( R_VulkanRenderer() ) {
+		R_VK_GenerateImage( this, scaledBuffer, scaled_width, scaled_height, preserveBorder );
+		R_StaticFree( scaledBuffer );
+		return;
+	}
+#endif
 	// upload the main image level
 	Bind();
 
@@ -1394,6 +1421,12 @@ void idImage::GenerateCubeImage( const byte *pic[6], int size,
 	uploadHeight = scaled_height;
 	uploadWidth = scaled_width;
 
+#ifdef BOOM3_VULKAN_RENDERER
+	if ( R_VulkanRenderer() ) {
+		R_VK_GenerateCubeImage( this, pic, size );
+		return;
+	}
+#endif
 	Bind();
 
 	// no other clamp mode makes sense
@@ -2120,6 +2153,12 @@ void idImage::UploadPrecompressedImage( byte *data, int len ) {
 	uploadWidth = header->dwWidth;
 	uploadHeight = header->dwHeight;
 	size_t additionalHeaderOffset = 0; // used if the DDS has a DDS_HEADER_DXT10
+#ifdef BOOM3_VULKAN_RENDERER
+	if ( R_VulkanRenderer() ) {
+		R_VK_UploadPrecompressed( this, header, data );
+		return;
+	}
+#endif
 	if ( header->ddspf.dwFlags & DDSF_FOURCC ) {
 #ifdef HAVE_OPENGLES3
 		switch ( header->ddspf.dwFourCC ) {
@@ -2454,6 +2493,11 @@ PurgeImage
 ===============
 */
 void idImage::PurgeImage() {
+#ifdef BOOM3_VULKAN_RENDERER
+	if ( R_VulkanRenderer() ) {
+		R_VK_PurgeImage( this );
+	} else
+#endif
 	if ( texnum != TEXTURE_NOT_LOADED ) {
 		qglDeleteTextures( 1, &texnum );	// this should be the ONLY place it is ever called!
 		texnum = TEXTURE_NOT_LOADED;
@@ -2702,6 +2746,12 @@ CopyFramebuffer
 ====================
 */
 void idImage::CopyFramebuffer( int x, int y, int imageWidth, int imageHeight, bool useOversizedBuffer ) {
+#ifdef BOOM3_VULKAN_RENDERER
+	if ( R_VulkanRenderer() ) {
+		R_VK_CopyFramebuffer( this, x, y, imageWidth, imageHeight );
+		return;
+	}
+#endif
 	Bind();
 
 	/* the game's cvar, found once it exists rather than looked up by name
@@ -2818,6 +2868,14 @@ This should just be part of copyFramebuffer once we have a proper image type fie
 */
 void idImage::CopyDepthbuffer( int x, int y, int imageWidth, int imageHeight, bool useOversizedBuffer, bool copyPixels )
 {
+#ifdef BOOM3_VULKAN_RENDERER
+	if ( R_VulkanRenderer() ) {
+		if ( copyPixels ) {
+			R_VK_CopyDepthbuffer( this, x, y, imageWidth, imageHeight );
+		}
+		return;
+	}
+#endif
 	// the copy's size: the scene's, or the next power of two
 	int	potWidth, potHeight;
 
@@ -2905,6 +2963,13 @@ if rows = cols * 6, assume it is a cube map animation
 */
 void idImage::UploadScratch( const byte *data, int cols, int rows ) {
 	int			i;
+
+#ifdef BOOM3_VULKAN_RENDERER
+	if ( R_VulkanRenderer() ) {
+		R_VK_UploadScratch( this, data, cols, rows );
+		return;
+	}
+#endif
 
 	// if rows = cols * 6, assume it is a cube map animation
 	if ( rows == cols * 6 ) {

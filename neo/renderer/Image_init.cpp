@@ -38,6 +38,9 @@ If you have questions concerning this license or the applicable additional terms
 #endif
 
 #include "framework/GameCallbacks_local.h"
+#ifdef BOOM3_VULKAN_RENDERER
+void R_VK_ChangeTextureFilter( idImage *image );
+#endif
 
 const char *imageFilter[] = {
 	"GL_LINEAR_MIPMAP_NEAREST",
@@ -1045,6 +1048,12 @@ static const filterName_t textureFilters[] = {
 		if ( glt->texnum == idImage::TEXTURE_NOT_LOADED ) {
 			continue;
 		}
+#ifdef BOOM3_VULKAN_RENDERER
+		if ( R_VulkanRenderer() ) {
+			R_VK_ChangeTextureFilter( glt );
+			continue;
+		}
+#endif
 		glt->Bind();
 		if ( glt->filter == TF_DEFAULT ) {
 			qglTexParameterf(texEnum, GL_TEXTURE_MIN_FILTER, globalImages->textureMinFilter );

@@ -226,6 +226,10 @@ private:
 	int				ringSegment;			// the segment this frame writes
 	int				ringUsed;				// bytes of it handed out
 	bool			streaming;
+	// the Vulkan renderer's memory: the device's shared buffers and its
+	// frame ring, through vk_backend.h
+	bool			vulkan;
+	bool			VulkanAlloc( vertCache_t *block, const void *data, int size, bool indexBuffer );
 };
 
 extern	idVertexCache	vertexCache;

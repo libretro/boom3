@@ -36,6 +36,9 @@ If you have questions concerning this license or the applicable additional terms
 #include "renderer/RenderWorld_local.h"
 #include "renderer/GuiModel.h"
 #include "sound/sound.h"
+#ifdef BOOM3_VULKAN_RENDERER
+#include "renderer/vk/vk_backend.h"
+#endif
 #include "ui/UserInterface.h"
 
 #include "renderer/tr_local.h"
@@ -486,6 +489,60 @@ static void R_CheckGLSLDesktopExtensions( void ) {
 		glConfig.maxTextureAnisotropy = 1;
 	}
 
+	tr.stencilIncr = GL_INCR_WRAP;
+	tr.stencilDecr = GL_DECR_WRAP;
+}
+#endif
+
+#ifdef BOOM3_VULKAN_RENDERER
+/*
+==================
+R_CheckVulkanConfig
+
+The Vulkan renderer's glConfig: what the device offers, as the GLSL
+renderers report theirs.  No GL entry point is ever called.
+==================
+*/
+static void R_CheckVulkanConfig( void ) {
+	glConfig.renderer                       = R_RENDERER_VULKAN;
+	glConfig.multitextureAvailable          = true;
+	glConfig.cubeMapAvailable               = true;
+	glConfig.textureNonPowerOfTwoAvailable  = true;
+	glConfig.ARBVertexBufferObjectAvailable = true;
+	glConfig.textureEnvCombineAvailable     = false;
+	glConfig.envDot3Available               = false;
+	glConfig.textureEnvAddAvailable         = false;
+	glConfig.sharedTexturePaletteAvailable  = false;
+	glConfig.texture3DAvailable             = false;
+	glConfig.ARBVertexProgramAvailable      = false;
+	glConfig.ARBFragmentProgramAvailable    = false;
+	glConfig.twoSidedStencilAvailable       = true;
+	glConfig.depthBoundsTestAvailable       = false;
+	glConfig.glDebugOutputAvailable         = false;
+	glConfig.textureLODBiasAvailable        = false;
+	glConfig.maxTextureImageUnits           = 6;
+	glConfig.maxTextureUnits                = 6;
+	glConfig.maxTextureCoords               = 6;
+	glConfig.textureCompressionAvailable    = vkb_has_bc() != 0;
+	glConfig.bptcTextureCompressionAvailable = glConfig.textureCompressionAvailable;
+	glConfig.anisotropicAvailable           = vkb_has_anisotropy() != 0;
+	glConfig.maxTextureAnisotropy           = glConfig.anisotropicAvailable ? 8.0f : 1.0f;
+	glConfig.stencilBits                    = 8;
+	glConfig.depthBits                      = 24;
+	glConfig.colorBits                      = 24;
+	glConfig.glVersion                      = 4.5f;
+	qglActiveTextureARB = R_GLNoOpTexture;
+	qglClientActiveTextureARB = R_GLNoOpTexture;
+	qglMultiTexCoord2fARB = R_GLNoOpMultiTexCoord2f;
+	qglMultiTexCoord2fvARB = R_GLNoOpMultiTexCoord2fv;
+	qglProgramStringARB = (PFNGLPROGRAMSTRINGARBPROC)R_GLNoOpProgramString;
+	qglBindProgramARB = (PFNGLBINDPROGRAMARBPROC)R_GLNoOpBindProgram;
+	qglGenProgramsARB = (PFNGLGENPROGRAMSARBPROC)R_GLNoOpGenPrograms;
+	qglProgramEnvParameter4fvARB = (PFNGLPROGRAMENVPARAMETER4FVARBPROC)R_GLNoOpProgramParameter;
+	qglProgramLocalParameter4fvARB = (PFNGLPROGRAMLOCALPARAMETER4FVARBPROC)R_GLNoOpProgramParameter;
+	qglColorTableEXT = R_GLNoOpColorTable;
+	qglActiveStencilFaceEXT = (PFNGLACTIVESTENCILFACEEXTPROC)R_GLNoOpTexture;
+	qglDepthBoundsEXT = (PFNGLDEPTHBOUNDSEXTPROC)R_GLNoOpDepthBounds;
 	tr.stencilIncr = GL_INCR_WRAP;
 	tr.stencilDecr = GL_DECR_WRAP;
 }
@@ -1079,10 +1136,11 @@ void R_InitOpenGL( void ) {
 
 #ifndef HAVE_OPENGLES
 #ifdef BOOM3_GLSL_RENDERERS
-	// a GLSL renderer's shared code calls no GL 1.x
+	// a GLSL renderer's shared code calls no GL 1.x; the Vulkan renderer no GL at all
 	const bool glslProcs = GLimp_RequestedRenderer() != R_RENDERER_ARB2;
+	const bool noProcs = GLimp_RequestedRenderer() == R_RENDERER_VULKAN;
 #define QGLPROC(name, rettype, args) \
-	q##name = glslProcs && !R_IsCoreGLProc( #name ) ? R_GLNoOp_##name \
+	q##name = noProcs || ( glslProcs && !R_IsCoreGLProc( #name ) ) ? R_GLNoOp_##name \
 		: (rettype(APIENTRYP)args)GLimp_ExtensionPointer(#name); \
 	if (!q##name) \
 		common->FatalError("Unable to initialize OpenGL (%s)", #name);
@@ -1100,6 +1158,25 @@ void R_InitOpenGL( void ) {
 	// input and sound systems need to be tied to the new window
 	Sys_InitInput();
 	soundSystem->InitHW();
+
+#ifdef BOOM3_VULKAN_RENDERER
+	if ( GLimp_RequestedRenderer() == R_RENDERER_VULKAN ) {
+		glConfig.vendor_string = "Vulkan";
+		glConfig.renderer_string = vkb_device_name();
+		glConfig.version_string = "1.1";
+		glConfig.extensions_string = "";
+		glConfig.maxTextureSize = (int)vkb_max_texture_size();
+		glConfig.isInitialized = true;
+		common->Printf("Vulkan device: %s\n", glConfig.renderer_string );
+		R_CheckVulkanConfig();
+		vertexCache.Init();
+		r_renderer.SetModified();
+		tr.SetBackEndRenderer();
+		R_InitFrameData();
+		r_gammaInShader.ClearModified();
+		return;
+	}
+#endif
 
 	// get our config strings
 	glConfig.vendor_string = (const char *)qglGetString(GL_VENDOR);
@@ -1168,6 +1245,25 @@ void R_ReinitOpenGL( void ) {
 
     Sys_InitInput();
     soundSystem->InitHW();
+
+#ifdef BOOM3_VULKAN_RENDERER
+	if ( GLimp_RequestedRenderer() == R_RENDERER_VULKAN ) {
+		glConfig.renderer_string = vkb_device_name();
+		glConfig.maxTextureSize = (int)vkb_max_texture_size();
+		glConfig.isInitialized = true;
+		R_CheckVulkanConfig();
+		vertexCache.PurgeAll();
+		vertexCache.Shutdown();
+		vertexCache.Init();
+		renderModelManager->FreeModelVertexCaches();
+		r_renderer.SetModified();
+		tr.SetBackEndRenderer();
+		r_gammaInShader.ClearModified();
+		globalImages->PurgeAllImages();
+		globalImages->ReloadAllImages();
+		return;
+	}
+#endif
 
     glConfig.vendor_string = (const char *)qglGetString(GL_VENDOR);
     glConfig.renderer_string = (const char *)qglGetString(GL_RENDERER);

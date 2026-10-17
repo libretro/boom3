@@ -8,6 +8,8 @@ GLES_VER       ?= 2
 HAVE_VR        ?= 0
 # the GLSL renderers (ES 2, ES 3, ES 3.1) in desktop cores, beside ARB2
 HAVE_GLSL_RENDERERS ?= 1
+# the Vulkan renderer, on desktop builds; the frontend serves it a Vulkan context
+HAVE_VULKAN_RENDERER ?= 1
 
 ifneq ($(SANITIZER),)
    CFLAGS   := -fsanitize=$(SANITIZER) $(CFLAGS)
@@ -335,6 +337,10 @@ ifneq ($(GLES),1)
 ifeq ($(HAVE_GLSL_RENDERERS),1)
    CFLAGS += -DHAVE_GLSL_RENDERERS
    CXXFLAGS += -DHAVE_GLSL_RENDERERS
+endif
+ifeq ($(HAVE_VULKAN_RENDERER),1)
+   CFLAGS += -DHAVE_VULKAN_RENDERER
+   CXXFLAGS += -DHAVE_VULKAN_RENDERER
 endif
 endif
 

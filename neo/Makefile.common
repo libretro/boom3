@@ -396,6 +396,17 @@ ifeq ($(HAVE_GLSL_RENDERERS),1)
 	# the GLSL renderers on desktop GL contexts, chosen at load
 	SRC_RENDERER += $(GLSL_ES2_RENDERER) $(GLSL_ES3_RENDERER)
 endif
+ifeq ($(HAVE_VULKAN_RENDERER),1)
+	# the Vulkan renderer: the engine side, and the device side in C
+	SRC_RENDERER += $(CORE_DIR)/renderer/draw_vulkan.cpp
+	SRC_VULKAN := \
+		$(CORE_DIR)/renderer/vk/vk_device.c \
+		$(CORE_DIR)/renderer/vk/vk_memory.c \
+		$(CORE_DIR)/renderer/vk/vk_image.c \
+		$(CORE_DIR)/renderer/vk/vk_buffer.c \
+		$(CORE_DIR)/renderer/vk/vk_pipeline.c \
+		$(CORE_DIR)/renderer/vk/vk_draw.c
+endif
 endif
 
 SOURCES_DIR =
@@ -427,6 +438,7 @@ SOURCES_C	:=\
 	$(CORE_DIR)/renderer/glsl_translate.c \
 	$(CORE_DIR)/renderer/range_alloc.c \
 	$(CORE_DIR)/renderer/gles_pack.c \
+	$(SRC_VULKAN) \
 	$(LIBRETRO_COMM_DIR)/formats/data_transfer.c \
 	$(LIBRETRO_COMM_DIR)/memmap/memmap.c \
 	$(SRC_GLAD) \

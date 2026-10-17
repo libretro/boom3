@@ -59,6 +59,9 @@ as well, run on the desktop GL contexts that match their GLES versions.
 #define BOOM3_GLSL_ES2_RENDERER
 #define BOOM3_GLSL_ES3_RENDERER
 #endif
+#if defined(HAVE_VULKAN_RENDERER)
+#define BOOM3_VULKAN_RENDERER
+#endif
 #endif
 #if defined(BOOM3_GLSL_ES2_RENDERER) || defined(BOOM3_GLSL_ES3_RENDERER)
 #define BOOM3_GLSL_RENDERERS
@@ -73,13 +76,22 @@ as well, run on the desktop GL contexts that match their GLES versions.
 #define R_GLSLRenderer()	false
 #endif
 
-// the renderer a context runs: the ARB2 path, or one of the GLSL ones
+// the renderer a context runs: the ARB2 path, one of the GLSL ones, or Vulkan
 typedef enum {
 	R_RENDERER_ARB2,
 	R_RENDERER_ES2,
 	R_RENDERER_ES3,
-	R_RENDERER_ES31		// ES 3.1 on GLES, GL 4.3 on the desktop
+	R_RENDERER_ES31,	// ES 3.1 on GLES, GL 4.3 on the desktop
+	R_RENDERER_VULKAN
 } rendererKind_t;
+
+// whether the renderer running is the Vulkan one; it counts as a GLSL one
+// to the code the GLSL renderers share, which calls no GL of its own
+#if defined(BOOM3_VULKAN_RENDERER)
+#define R_VulkanRenderer()	( glConfig.renderer == R_RENDERER_VULKAN )
+#else
+#define R_VulkanRenderer()	false
+#endif
 
 typedef struct glconfig_s {
 	const char			*renderer_string;

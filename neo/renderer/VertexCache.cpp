@@ -29,6 +29,9 @@ If you have questions concerning this license or the applicable additional terms
 #include "sys/platform.h"
 #include "framework/Common.h"
 #include "renderer/tr_local.h"
+#ifdef BOOM3_VULKAN_RENDERER
+#include "renderer/vk/vk_backend.h"
+#endif
 
 #include "renderer/VertexCache.h"
 
@@ -116,6 +119,12 @@ void idVertexCache::ActuallyFree( vertCache_t *block ) {
 			block->arena = -1;
 			block->vbo = block->ownVbo;
 			block->offset = 0;
+#ifdef BOOM3_VULKAN_RENDERER
+		} else if ( vulkan && block->vbo ) {
+			vkb_static_free( block->vbo, (unsigned)block->offset, (size_t)block->size );
+			block->vbo = 0;
+			block->offset = 0;
+#endif
 		} else if ( block->vbo ) {
 		} else if ( block->virtMem ) {
 			Mem_Free( block->virtMem );
@@ -261,6 +270,17 @@ void idVertexCache::Init() {
 	frameBytes = FRAME_MEMORY_BYTES;
 	staticAllocTotal = 0;
 
+#ifdef BOOM3_VULKAN_RENDERER
+	vulkan = R_VulkanRenderer();
+	if ( vulkan ) {
+		// the device's memory: nothing of GL here
+		virtualMemory = false;
+		streaming = false;
+		tempBuffers[0] = tempBuffers[1] = NULL;
+		EndFrame();
+		return;
+	}
+#endif
 	InitStreaming();
 	if ( streaming ) {
 		// the frame's data goes through the ring, not the temp buffers
@@ -336,7 +356,7 @@ void idVertexCache::Alloc( void *data, int size, vertCache_t **buffer, bool inde
 			block->prev->next = block;
 
 			block->vbo = 0;
-			if( !virtualMemory ) {
+			if( !virtualMemory && !vulkan ) {
 				qglGenBuffersARB( 1, & block->vbo );
 			}
 			block->ownVbo = block->vbo;
@@ -379,6 +399,15 @@ void idVertexCache::Alloc( void *data, int size, vertCache_t **buffer, bool inde
 	if ( streaming && !allocatingTempBuffer && ArenaAlloc( block, data, size, indexBuffer ) ) {
 		return;
 	}
+#ifdef BOOM3_VULKAN_RENDERER
+	if ( vulkan ) {
+		if ( !VulkanAlloc( block, data, size, indexBuffer ) ) {
+			block->virtMem = Mem_Alloc( size );
+			SIMDProcessor->Memcpy( block->virtMem, data, size );
+		}
+		return;
+	}
+#endif
 
 	// copy the data
 	if ( block->vbo ) {
@@ -508,7 +537,7 @@ vertCache_t	*idVertexCache::AllocFrameTemp( void *data, int size ) {
 	// in the ring a vertex block starts at a multiple of every stride, for
 	// base-vertex draws
 	const int ringBytes = streaming ? ( ( size + VERTEX_ALIGN - 1 ) / VERTEX_ALIGN ) * VERTEX_ALIGN : size;
-	if ( streaming ? ringUsed + ringBytes > ringSegmentBytes : dynamicAllocThisFrame + size > frameBytes ) {
+	if ( !vulkan && ( streaming ? ringUsed + ringBytes > ringSegmentBytes : dynamicAllocThisFrame + size > frameBytes ) ) {
 		// if we don't have enough room in the temp block, allocate a static block,
 		// but immediately free it so it will get freed at the next frame
 		tempOverflow = true;
@@ -520,6 +549,20 @@ vertCache_t	*idVertexCache::AllocFrameTemp( void *data, int size ) {
 		Free( block);
 		return block;
 	}
+
+#ifdef BOOM3_VULKAN_RENDERER
+	void *ringPtr = NULL;
+	unsigned ringBuf = 0, ringOff = 0;
+	if ( vulkan ) {
+		ringPtr = vkb_ring_alloc( (size_t)size, VERTEX_ALIGN, &ringBuf, &ringOff );
+		if ( !ringPtr ) {
+			tempOverflow = true;
+			Alloc( data, size, &block );
+			Free( block );
+			return block;
+		}
+	}
+#endif
 
 	// this data is just going on the shared dynamic list
 
@@ -565,6 +608,15 @@ vertCache_t	*idVertexCache::AllocFrameTemp( void *data, int size ) {
 		RingRelease();
 		return block;
 	}
+#ifdef BOOM3_VULKAN_RENDERER
+	if ( vulkan ) {
+		block->virtMem = NULL;
+		block->vbo = ringBuf;
+		block->offset = ringOff;
+		SIMDProcessor->Memcpy( ringPtr, data, size );
+		return block;
+	}
+#endif
 
 	// copy the data
 	block->virtMem = tempBuffers[listNum]->virtMem;
@@ -614,6 +666,8 @@ void idVertexCache::EndFrame() {
 		RingEndFrame();
 		ForceBindArray( 0 );
 		ForceBindElement( 0 );
+	} else if ( vulkan ) {
+		// the device's ring turns with its frames
 	} else if( !virtualMemory ) {
 		/* The temp buffer this frame streams into was last drawn from
 		 * NUM_VERTEX_FRAMES frames ago and may still be in flight: orphan
@@ -1043,3 +1097,57 @@ bool idVertexCache::ArenaAlloc( vertCache_t *block, const void *data, int size, 
 	}
 	return true;
 }
+
+#ifdef BOOM3_VULKAN_RENDERER
+/*
+==============
+idVertexCache::VulkanAlloc
+
+A static block into the device's shared buffers, indexes in 16 bits when
+they fit; false when the device has no room.
+==============
+*/
+bool idVertexCache::VulkanAlloc( vertCache_t *block, const void *data, int size, bool indexBuffer ) {
+	unsigned buffer = 0, offset = 0;
+	int bytes = size;
+	bool shortIndexes = false;
+	if ( indexBuffer ) {
+		const glIndex_t *src = (const glIndex_t *)data;
+		const int count = size / (int)sizeof( glIndex_t );
+		int i;
+		shortIndexes = ( size % (int)sizeof( glIndex_t ) ) == 0;
+		for ( i = 0; i < count && shortIndexes; i++ ) {
+			shortIndexes = (unsigned int)src[i] <= 0xffffu;
+		}
+		if ( shortIndexes ) {
+			bytes = count * (int)sizeof( unsigned short );
+		}
+		bytes = ( bytes + 3 ) & ~3;
+	} else {
+		bytes = ( ( size + VERTEX_ALIGN - 1 ) / VERTEX_ALIGN ) * VERTEX_ALIGN;
+	}
+	if ( !vkb_static_alloc( (size_t)bytes, indexBuffer, &buffer, &offset ) ) {
+		return false;
+	}
+	if ( shortIndexes ) {
+		const glIndex_t *src = (const glIndex_t *)data;
+		const int count = size / (int)sizeof( glIndex_t );
+		unsigned short *dst = (unsigned short *)Mem_Alloc( bytes );
+		int i;
+		for ( i = 0; i < count; i++ ) {
+			dst[i] = (unsigned short)src[i];
+		}
+		vkb_static_upload( buffer, offset, dst, (size_t)( count * (int)sizeof( unsigned short ) ) );
+		Mem_Free( dst );
+		block->indexType = GL_UNSIGNED_SHORT;
+	} else {
+		vkb_static_upload( buffer, offset, data, (size_t)size );
+	}
+	staticAllocTotal += bytes - block->size;
+	block->size = bytes;
+	block->vbo = buffer;
+	block->offset = offset;
+	block->virtMem = NULL;
+	return true;
+}
+#endif
