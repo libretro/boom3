@@ -343,11 +343,6 @@ ifeq ($(HAVE_GLSL_RENDERERS),1)
    CFLAGS += -DHAVE_GLSL_RENDERERS
    CXXFLAGS += -DHAVE_GLSL_RENDERERS
 endif
-ifeq ($(HAVE_VULKAN_RENDERER),1)
-   # the vendored Vulkan headers: no SDK on the build machine
-   CFLAGS += -DHAVE_VULKAN_RENDERER -I$(CORE_DIR)/renderer/vk/include
-   CXXFLAGS += -DHAVE_VULKAN_RENDERER -I$(CORE_DIR)/renderer/vk/include
-endif
 endif
 
 CFLAGS += -DD3_OSTYPE=\"$(D3_OSTYPE)\" -DD3_SIZEOFPTR=$(D3_SIZEOFPTR) -DD3_ARCH=\"$(D3_ARCH)\"
@@ -364,11 +359,18 @@ endif
 # webOS
 ifneq (,$(or $(findstring webos,$(CROSS_COMPILE)),$(findstring starfish,$(CROSS_COMPILE))))
    GLES = 1
+   HAVE_VULKAN_RENDERER = 0
    # CORE is for OpenGL or GLES 3.x
    CORE =
    GL_LIB := -lGLESv2
    CFLAGS += -DHAVE_OPENGLES -DHAVE_OPENGLES2
    CXXFLAGS += -DHAVE_OPENGLES -DHAVE_OPENGLES2
+endif
+
+ifeq ($(HAVE_VULKAN_RENDERER),1)
+   # the vendored Vulkan headers: no SDK on the build machine
+   CFLAGS += -DHAVE_VULKAN_RENDERER -I$(CORE_DIR)/renderer/vk/include
+   CXXFLAGS += -DHAVE_VULKAN_RENDERER -I$(CORE_DIR)/renderer/vk/include
 endif
 
 LDFLAGS += $(LIBM)
