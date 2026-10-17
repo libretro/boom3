@@ -29,6 +29,7 @@ precision mediump float;
 // In
 in vec4 var_ColorScale;
 in vec4 var_LumaScale;
+flat in mediump float var_ViewHalf;
 
 // Uniforms
 uniform sampler2D u_fragmentMap0;
@@ -64,6 +65,7 @@ vec3 dhewm3Epilogue(vec3 c)
 void main()
 {
   vec2 screen = gl_FragCoord.xy * u_screenParms.xy * u_screenParms.zw;
+  screen.y += var_ViewHalf;
   vec4 src = texture(u_fragmentMap0, screen);
   float luma = (src.x + src.y + src.z) * 0.33;
   vec3 c = src.xyz * var_ColorScale.xyz + luma * var_LumaScale.xyz;

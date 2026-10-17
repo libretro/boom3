@@ -65,6 +65,7 @@ out vec2 var_TexCoord0;
 out vec2 var_TexCoord1;
 out vec2 var_Deform;
 out lowp vec4 var_Color;
+flat out mediump float var_ViewHalf;
 
 void main()
 {
@@ -80,6 +81,8 @@ void main()
   var_Deform = min(r1 / r2, 0.02) * u_vertexParms[1].xy;
 
   var_Color = attr_Color;
+
+  var_ViewHalf = float(VIEW_ID) * 0.5;
 
   highp vec4 worldPos = u_modelMatrix * attr_Vertex;
   gl_Position = u_viewProjectionMatrices[VIEW_ID] * worldPos;

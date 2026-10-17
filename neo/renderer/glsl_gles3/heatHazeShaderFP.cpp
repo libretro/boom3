@@ -31,6 +31,7 @@ in vec2 var_TexCoord0;
 in vec2 var_TexCoord1;
 in vec2 var_Deform;
 in lowp vec4 var_Color;
+flat in mediump float var_ViewHalf;
 
 // Uniforms
 uniform sampler2D u_fragmentMap0;
@@ -75,6 +76,7 @@ void main()
   // the copied render's power-of-two extent
   vec2 screen = gl_FragCoord.xy * u_screenParms.xy;
   screen = clamp(localNormal.xy * var_Deform + screen, 0.0, 1.0) * u_screenParms.zw;
+  screen.y += var_ViewHalf;
   fragColor = vec4(dhewm3Epilogue(texture(u_fragmentMap0, screen).xyz), 1.0);
 }
 )";
