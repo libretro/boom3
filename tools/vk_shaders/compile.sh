@@ -48,6 +48,12 @@ colorprocess_vert colorprocess.vert
 colorprocess_frag colorprocess.frag
 bumpyenv_vert bumpyenv.vert
 bumpyenv_frag bumpyenv.frag
+hdr_bright_frag hdr_bright.frag
+hdr_down_frag hdr_down.frag
+hdr_down_karis_frag hdr_down_karis.frag
+hdr_up_frag hdr_up.frag
+hdr_blur_frag hdr_blur.frag
+hdr_composite_frag hdr_composite.frag
 "
 echo "$variants" | while read -r name file defines; do
 	[ -z "$name" ] && continue
