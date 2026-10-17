@@ -24,6 +24,12 @@ extern bool  HDR_GuiCorrectionActive( unsigned int *tex );
 /* the view's block for the draws that follow */
 static vkb_view_block_t rbVkView;
 static bool rbVkViewSet;
+static bool rbVkDepthCopied;    /* this view's depth is in _currentDepth */
+extern float hdr_scene_encode_scale;
+
+static void RB_VK_DrawStageProgram( const drawSurf_t *surf, const shaderStage_t *pStage, int programId,
+	idImage *const *images, int numImages );
+static void RB_VK_DrawSoftParticle( const drawSurf_t *surf, const shaderStage_t *pStage, const float color[4] );
 
 /*
 ====================
@@ -531,9 +537,9 @@ RB_VK_Scissor
 The surface's scissor, as the GL backends set it.
 ====================
 */
-static void RB_VK_Scissor( const drawSurf_t *surf ) {
-	if ( r_useScissor.GetBool() && !backEnd.currentScissor.Equals( surf->scissorRect ) ) {
-		backEnd.currentScissor = surf->scissorRect;
+static void RB_VK_ScissorRect( const idScreenRect &rect ) {
+	if ( r_useScissor.GetBool() && !backEnd.currentScissor.Equals( rect ) ) {
+		backEnd.currentScissor = rect;
 		if ( ( backEnd.currentScissor.x2 + 1 - backEnd.currentScissor.x1 ) < 0.0f
 				|| ( backEnd.currentScissor.y2 + 1 - backEnd.currentScissor.y1 ) < 0.0f ) {
 			backEnd.currentScissor = backEnd.viewDef->scissor;
@@ -543,6 +549,16 @@ static void RB_VK_Scissor( const drawSurf_t *surf ) {
 			backEnd.currentScissor.x2 + 1 - backEnd.currentScissor.x1,
 			backEnd.currentScissor.y2 + 1 - backEnd.currentScissor.y1 );
 	}
+}
+
+static void RB_VK_Scissor( const drawSurf_t *surf ) {
+	RB_VK_ScissorRect( surf->scissorRect );
+}
+
+/* the engine's polygon offset, as the depth bias takes it */
+static void RB_VK_PolygonOffset( vkb_draw_t *draw, float offset ) {
+	draw->depthBias[0] = r_offsetUnits.GetFloat() * offset;
+	draw->depthBias[1] = r_offsetFactor.GetFloat();
 }
 
 /*
@@ -692,7 +708,9 @@ static void RB_VK_T_FillDepthBuffer( const drawSurf_t *surf ) {
 	RB_VK_Scissor( surf );
 	depthRange = RB_VK_WeaponDepthRange( surf );
 	draw.cull = RB_VK_Cull( shader->GetCullType() );
-	draw.polygonOffset = shader->TestMaterialFlag( MF_POLYGONOFFSET ) ? (unsigned char)shader->GetPolygonOffset() : 0;
+	if ( shader->TestMaterialFlag( MF_POLYGONOFFSET ) ) {
+		RB_VK_PolygonOffset( &draw, shader->GetPolygonOffset() );
+	}
 	draw.stateBits = GLS_DEPTHFUNC_LESS;
 	block.glColor[0] = block.glColor[1] = block.glColor[2] = 0.0f;
 	if ( shader->GetSort() == SS_SUBVIEW ) {
@@ -753,6 +771,7 @@ static void RB_VK_T_FillDepthBuffer( const drawSurf_t *surf ) {
 
 static void RB_VK_FillDepthBuffer( drawSurf_t **drawSurfs, int numDrawSurfs ) {
 	int i;
+	rbVkDepthCopied = false;
 	if ( !backEnd.viewDef->viewEntitys ) {
 		return;
 	}
@@ -770,6 +789,13 @@ static void RB_VK_FillDepthBuffer( drawSurf_t **drawSurfs, int numDrawSurfs ) {
 		}
 		RB_VK_T_FillDepthBuffer( drawSurfs[i] );
 	}
+	/* the early depth, for the stages that read it (#3877) */
+	rbVkDepthCopied = RB_DepthCaptureWanted();
+	if ( rbVkDepthCopied ) {
+		R_VK_CopyDepthbuffer( globalImages->currentDepthImage, backEnd.viewDef->viewport.x1,
+			backEnd.viewDef->viewport.y1, backEnd.viewDef->viewport.x2 - backEnd.viewDef->viewport.x1 + 1,
+			backEnd.viewDef->viewport.y2 - backEnd.viewDef->viewport.y1 + 1 );
+	}
 }
 
 /*
@@ -785,7 +811,7 @@ static void RB_VK_T_RenderShaderPasses( const drawSurf_t *surf ) {
 	const float *regs = surf->shaderRegisters;
 	unsigned guiLut = 0;
 	int stage;
-	bool depthRange;
+	bool depthRange, softParticle;
 
 	if ( !shader->HasAmbient() || shader->IsPortalSky() || !surf->geo->numIndexes || !surf->geo->ambientCache ) {
 		return;
@@ -797,6 +823,9 @@ static void RB_VK_T_RenderShaderPasses( const drawSurf_t *surf ) {
 	}
 	RB_VK_Scissor( surf );
 	depthRange = RB_VK_WeaponDepthRange( surf );
+	/* softened particles: flagged by the front end, with the view's depth captured (#3878) */
+	softParticle = ( surf->dsFlags & DSF_SOFT_PARTICLE ) != 0 && surf->particle_radius > 0.0f
+		&& rbVkDepthCopied && !r_skipNewAmbient.GetBool();
 
 	for ( stage = 0; stage < shader->GetNumStages(); stage++ ) {
 		const shaderStage_t *pStage = shader->GetStage( stage );
@@ -812,13 +841,30 @@ static void RB_VK_T_RenderShaderPasses( const drawSurf_t *surf ) {
 			continue;
 		}
 		if ( pStage->newStage ) {
-			/* the custom stage programs follow with the lights */
+			const newShaderStage_t *newStage = pStage->newStage;
+			if ( r_skipNewAmbient.GetBool() || newStage->glslProgram == GLSL_STAGE_NONE ) {
+				continue;
+			}
+			RB_VK_DrawStageProgram( surf, pStage, newStage->glslProgram, newStage->fragmentProgramImages,
+				newStage->numFragmentProgramImages );
 			continue;
 		}
 		color[0] = regs[pStage->color.registers[0]];
 		color[1] = regs[pStage->color.registers[1]];
 		color[2] = regs[pStage->color.registers[2]];
 		color[3] = regs[pStage->color.registers[3]];
+		if ( softParticle && ( ( pStage->drawStateBits & GLS_SRCBLEND_BITS ) == GLS_SRCBLEND_ONE
+				|| ( pStage->drawStateBits & GLS_SRCBLEND_BITS ) == GLS_SRCBLEND_SRC_ALPHA ) ) {
+			const deform_t dfm = shader->Deform();
+			const float gain = ( dfm == DFRM_PARTICLE || dfm == DFRM_PARTICLE2 ) ? hdr_particle_gain : hdr_emissive_gain;
+			if ( hdr_output_active && gain != 1.0f && ( pStage->drawStateBits & GLS_DSTBLEND_BITS ) == GLS_DSTBLEND_ONE ) {
+				color[0] *= gain;
+				color[1] *= gain;
+				color[2] *= gain;
+			}
+			RB_VK_DrawSoftParticle( surf, pStage, color );
+			continue;
+		}
 		if ( ( pStage->drawStateBits & ( GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS ) ) == ( GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE )
 				&& color[0] <= 0 && color[1] <= 0 && color[2] <= 0 ) {
 			continue;
@@ -839,11 +885,10 @@ static void RB_VK_T_RenderShaderPasses( const drawSurf_t *surf ) {
 			draw.stateBits = ( draw.stateBits & ~(unsigned)( GLS_DEPTHFUNC_ALWAYS | GLS_DEPTHFUNC_EQUAL ) )
 				| GLS_DEPTHFUNC_ALWAYS | GLS_DEPTHMASK;
 		}
-		draw.polygonOffset = 0;
 		if ( pStage->privatePolygonOffset ) {
-			draw.polygonOffset = (unsigned char)pStage->privatePolygonOffset;
+			RB_VK_PolygonOffset( &draw, pStage->privatePolygonOffset );
 		} else if ( shader->TestMaterialFlag( MF_POLYGONOFFSET ) ) {
-			draw.polygonOffset = (unsigned char)shader->GetPolygonOffset();
+			RB_VK_PolygonOffset( &draw, shader->GetPolygonOffset() );
 		}
 
 		switch ( pStage->texture.texgen ) {
@@ -879,10 +924,20 @@ static void RB_VK_T_RenderShaderPasses( const drawSurf_t *surf ) {
 		case TG_SCREEN2:
 		case TG_GLASSWARP:
 			continue;
-		case TG_REFLECT_CUBE:
+		case TG_REFLECT_CUBE: {
+			/* with a bump map: per-pixel through the normal map, as ARB2's bumpy environment */
+			const shaderStage_t *bumpStage = shader->GetBumpStage();
+			if ( bumpStage ) {
+				idImage *images[2];
+				images[0] = pStage->texture.image;
+				images[1] = bumpStage->texture.image;
+				RB_VK_DrawStageProgram( surf, pStage, GLSL_STAGE_BUMPY_ENVIRONMENT, images, 2 );
+				continue;
+			}
 			draw.program = VKB_PROGRAM_REFLECT;
 			R_TransposeGLMatrix( backEnd.viewDef->worldSpace.modelViewMatrix, block.textureMatrix );
 			break;
+		}
 		default:
 			draw.program = guiLut ? VKB_PROGRAM_DIFFUSE_GUI : VKB_PROGRAM_DIFFUSE;
 			draw.image[1] = guiLut;
@@ -923,6 +978,664 @@ static void RB_VK_T_RenderShaderPasses( const drawSurf_t *surf ) {
 	}
 	if ( depthRange ) {
 		vkb_depth_range( 0.0f, 1.0f );
+	}
+}
+
+/*
+====================
+RB_VK_DrawStageProgram
+
+A stage through one of the custom stage programs: the stage's images on
+their units, its vertex parms, the view's projection and _currentRender
+placement.  A post-process stage reads the scene back, so its epilogue
+leaves the encoding alone.
+====================
+*/
+static void RB_VK_DrawStageProgram( const drawSurf_t *surf, const shaderStage_t *pStage, int programId,
+	idImage *const *images, int numImages ) {
+	static const unsigned char programs[GLSL_STAGE_COUNT] = {
+		VKB_PROGRAM_COUNT, VKB_PROGRAM_HEAT_HAZE, VKB_PROGRAM_HEAT_HAZE_MASK, VKB_PROGRAM_HEAT_HAZE_MASK_VERTEX,
+		VKB_PROGRAM_COLOR_PROCESS, VKB_PROGRAM_BUMPY_ENVIRONMENT
+	};
+	const float *regs = surf->shaderRegisters;
+	const newShaderStage_t *newStage = pStage->newStage;
+	vkb_draw_t draw;
+	vkb_draw_block_t block;
+	float hp[4];
+	int i;
+
+	if ( programId <= GLSL_STAGE_NONE || programId >= GLSL_STAGE_COUNT ) {
+		return;
+	}
+	RB_VK_DrawBegin( &draw, &block, surf );
+	if ( !RB_VK_Geometry( surf->geo, &draw ) ) {
+		return;
+	}
+	draw.program = programs[programId];
+	draw.cull = RB_VK_Cull( surf->material->GetCullType() );
+	draw.stateBits = (unsigned)pStage->drawStateBits;
+	if ( pStage->privatePolygonOffset ) {
+		RB_VK_PolygonOffset( &draw, pStage->privatePolygonOffset );
+	} else if ( surf->material->TestMaterialFlag( MF_POLYGONOFFSET ) ) {
+		RB_VK_PolygonOffset( &draw, surf->material->GetPolygonOffset() );
+	}
+	R_GlobalPointToLocal( surf->space->modelMatrix, backEnd.viewDef->renderView.vieworg, *(idVec3 *)block.localViewOrigin );
+	block.localViewOrigin[3] = 1.0f;
+	if ( newStage ) {
+		for ( i = 0; i < newStage->numVertexParms && i < 4; i++ ) {
+			block.vertexParms[i][0] = regs[newStage->vertexParms[i][0]];
+			block.vertexParms[i][1] = regs[newStage->vertexParms[i][1]];
+			block.vertexParms[i][2] = regs[newStage->vertexParms[i][2]];
+			block.vertexParms[i][3] = regs[newStage->vertexParms[i][3]];
+		}
+	}
+	{
+		const float w = (float)( backEnd.viewDef->viewport.x2 - backEnd.viewDef->viewport.x1 + 1 );
+		const float h = (float)( backEnd.viewDef->viewport.y2 - backEnd.viewDef->viewport.y1 + 1 );
+		block.screenParms[0] = 1.0f / w;
+		block.screenParms[1] = 1.0f / h;
+		block.screenParms[2] = w / globalImages->currentRenderImage->uploadWidth;
+		block.screenParms[3] = h / globalImages->currentRenderImage->uploadHeight;
+	}
+	if ( surf->material->GetSort() >= SS_POST_PROCESS ) {
+		RB_GLSLEpilogueParms( true, hp );
+		hp[0] = hp[2] = hp[3] = 1.0f;
+	} else {
+		RB_GLSLEpilogueParms( RB_FilterBlend( pStage->drawStateBits ), hp );
+	}
+	memcpy( block.hdrParms, hp, sizeof( block.hdrParms ) );
+	for ( i = 0; i < numImages && i < 6; i++ ) {
+		draw.image[i] = images[i] ? RB_VK_Image( images[i] ) : 0;
+	}
+	vkb_draw( &draw );
+}
+
+/*
+==================
+RB_VK_DrawSoftParticle
+
+A particle stage through the softening program (#3878), with the fade
+the ARB2 path gives it: over the particle's diameter for an alpha blend,
+its radius for an additive one, on the channels the blend reads.
+==================
+*/
+static void RB_VK_DrawSoftParticle( const drawSurf_t *surf, const shaderStage_t *pStage, const float color[4] ) {
+	const int srcBlend = pStage->drawStateBits & GLS_SRCBLEND_BITS;
+	const float radius = surf->particle_radius;
+	const float fadeRange = srcBlend == GLS_SRCBLEND_SRC_ALPHA ? radius * 2.0f : radius;
+	const float p14 = backEnd.viewDef->projectionMatrix[14];
+	vkb_draw_t draw;
+	vkb_draw_block_t block;
+
+	RB_VK_DrawBegin( &draw, &block, surf );
+	if ( !RB_VK_Geometry( surf->geo, &draw ) ) {
+		return;
+	}
+	/* the softening replaces the model depth hack; the weapon's stays */
+	block.colorModulateAdd[2] = surf->space->weaponDepthHack ? p14 * 0.25f - p14 : 0.0f;
+	draw.program = VKB_PROGRAM_SOFT_PARTICLE;
+	draw.cull = RB_VK_Cull( surf->material->GetCullType() );
+	/* the program decides the depth test, so the particle can overdraw */
+	draw.stateBits = (unsigned)pStage->drawStateBits | GLS_DEPTHFUNC_ALWAYS;
+	if ( pStage->texture.hasMatrix ) {
+		RB_GetShaderTextureMatrix( surf->shaderRegisters, &pStage->texture, block.textureMatrix );
+	}
+	/* the particle system fades through the vertex colour; a stage that
+	 * ignores it takes the material's colour instead */
+	if ( pStage->vertexColor == SVC_IGNORE ) {
+		memcpy( block.glColor, color, sizeof( block.glColor ) );
+	} else {
+		block.colorModulateAdd[0] = pStage->vertexColor == SVC_INVERSE_MODULATE ? -1.0f : 1.0f;
+		block.colorModulateAdd[1] = pStage->vertexColor == SVC_INVERSE_MODULATE ? 1.0f : 0.0f;
+	}
+	block.vertexParms[0][0] = radius;
+	block.vertexParms[0][1] = 1.0f / fadeRange;
+	block.vertexParms[0][2] = 1.0f / radius;
+	block.vertexParms[0][3] = 0.0f;
+	/* an alpha blend fades its alpha, an additive one its colour */
+	block.vertexParms[1][0] = block.vertexParms[1][1] = block.vertexParms[1][2] = srcBlend == GLS_SRCBLEND_SRC_ALPHA ? 1.0f : 0.0f;
+	block.vertexParms[1][3] = srcBlend == GLS_SRCBLEND_SRC_ALPHA ? 0.0f : 1.0f;
+	block.screenParms[0] = 1.0f / globalImages->currentDepthImage->uploadWidth;
+	block.screenParms[1] = 1.0f / globalImages->currentDepthImage->uploadHeight;
+	/* the scene encoding fold alone: no gamma or clamp on a blended particle */
+	block.hdrParms[0] = block.hdrParms[1] = block.hdrParms[2] = hdr_scene_encode_scale;
+	block.hdrParms[3] = 1.0f;
+	draw.image[0] = RB_VK_StageImage( &pStage->texture );
+	draw.image[1] = RB_VK_Image( globalImages->currentDepthImage );
+	vkb_draw( &draw );
+}
+
+/*
+=====================
+RB_VK_DrawInteraction
+
+One light stage on one surface's maps, as RB_SubmittInteraction hands
+them over.
+=====================
+*/
+static struct {
+	vkb_draw_t draw;
+	vkb_draw_block_t block;
+} rbVkInter;
+
+static void RB_VK_DrawInteraction( const drawInteraction_t *din ) {
+	vkb_draw_t *draw = &rbVkInter.draw;
+	vkb_draw_block_t *block = &rbVkInter.block;
+	const float specBoost = RB_HDRSpecularBoost();
+	float hp[4];
+
+	memcpy( block->localLightOrigin, din->localLightOrigin.ToFloatPtr(), sizeof( block->localLightOrigin ) );
+	memcpy( block->localViewOrigin, din->localViewOrigin.ToFloatPtr(), sizeof( block->localViewOrigin ) );
+	memcpy( block->lightProjection, din->lightProjection.ToFloatPtr(), sizeof( block->lightProjection ) );
+	memcpy( block->bumpMatrixS, din->bumpMatrix[0].ToFloatPtr(), sizeof( block->bumpMatrixS ) );
+	memcpy( block->bumpMatrixT, din->bumpMatrix[1].ToFloatPtr(), sizeof( block->bumpMatrixT ) );
+	memcpy( block->diffuseMatrixS, din->diffuseMatrix[0].ToFloatPtr(), sizeof( block->diffuseMatrixS ) );
+	memcpy( block->diffuseMatrixT, din->diffuseMatrix[1].ToFloatPtr(), sizeof( block->diffuseMatrixT ) );
+	memcpy( block->specularMatrixS, din->specularMatrix[0].ToFloatPtr(), sizeof( block->specularMatrixS ) );
+	memcpy( block->specularMatrixT, din->specularMatrix[1].ToFloatPtr(), sizeof( block->specularMatrixT ) );
+	switch ( din->vertexColor ) {
+	case SVC_MODULATE:
+		block->colorModulateAdd[0] = 1.0f;
+		block->colorModulateAdd[1] = 0.0f;
+		break;
+	case SVC_INVERSE_MODULATE:
+		block->colorModulateAdd[0] = -1.0f;
+		block->colorModulateAdd[1] = 1.0f;
+		break;
+	default:
+		block->colorModulateAdd[0] = 0.0f;
+		block->colorModulateAdd[1] = 1.0f;
+		break;
+	}
+	memcpy( block->diffuseColor, din->diffuseColor.ToFloatPtr(), sizeof( block->diffuseColor ) );
+	/* the HDR specular boost, folded into the constant as the GL paths do */
+	block->specularColor[0] = din->specularColor[0] * specBoost;
+	block->specularColor[1] = din->specularColor[1] * specBoost;
+	block->specularColor[2] = din->specularColor[2] * specBoost;
+	block->specularColor[3] = din->specularColor[3];
+	RB_GLSLEpilogueParms( false, hp );
+	memcpy( block->hdrParms, hp, sizeof( block->hdrParms ) );
+
+	draw->image[0] = RB_VK_Image( din->bumpImage );
+	draw->image[1] = RB_VK_Image( din->lightFalloffImage );
+	draw->image[2] = RB_VK_Image( din->lightImage );
+	draw->image[3] = RB_VK_Image( din->diffuseImage );
+	draw->image[4] = RB_VK_Image( din->specularImage );
+	vkb_draw( draw );
+}
+
+/*
+=============
+RB_VK_CreateSingleDrawInteractions
+
+A light's stages against a surface's bump, diffuse and specular stages,
+as RB_CreateSingleDrawInteractions decomposes them.
+=============
+*/
+static void RB_VK_CreateSingleDrawInteractions( const drawSurf_t *surf, const viewLight_t *vLight ) {
+	const idMaterial *surfaceShader = surf->material;
+	const float *surfaceRegs = surf->shaderRegisters;
+	const idMaterial *lightShader = vLight->lightShader;
+	const float *lightRegs = vLight->shaderRegisters;
+	drawInteraction_t inter;
+	idPlane lightProject[4];
+	int i, lightStageNum, surfaceStageNum;
+
+	if ( r_skipInteractions.GetBool() || !surf->geo || !surf->geo->ambientCache ) {
+		return;
+	}
+	RB_VK_Scissor( surf );
+	inter.diffuseMatrix[0].Zero();
+	inter.diffuseMatrix[1].Zero();
+	inter.specularMatrix[0].Zero();
+	inter.specularMatrix[1].Zero();
+	inter.surf = surf;
+	inter.lightFalloffImage = vLight->falloffImage;
+	R_GlobalPointToLocal( surf->space->modelMatrix, vLight->globalLightOrigin, inter.localLightOrigin.ToVec3() );
+	R_GlobalPointToLocal( surf->space->modelMatrix, backEnd.viewDef->renderView.vieworg, inter.localViewOrigin.ToVec3() );
+	inter.localLightOrigin[3] = 0;
+	inter.localViewOrigin[3] = 1;
+	inter.ambientLight = lightShader->IsAmbientLight();
+	for ( i = 0; i < 4; i++ ) {
+		R_GlobalPlaneToLocal( surf->space->modelMatrix, vLight->lightProject[i], lightProject[i] );
+	}
+
+	for ( lightStageNum = 0; lightStageNum < lightShader->GetNumStages(); lightStageNum++ ) {
+		const shaderStage_t *lightStage = lightShader->GetStage( lightStageNum );
+		const float lightscale = r_lightScale.GetFloat();
+		float lightColor[4];
+		if ( !lightRegs[lightStage->conditionRegister] ) {
+			continue;
+		}
+		inter.lightImage = lightStage->texture.image;
+		inter.lightProjection[0] = lightProject[0].ToVec4();
+		inter.lightProjection[1] = lightProject[1].ToVec4();
+		inter.lightProjection[2] = lightProject[3].ToVec4();   /* the falloff: the 4th plane */
+		inter.lightProjection[3] = lightProject[2].ToVec4();   /* q: the 3rd */
+		if ( lightStage->texture.hasMatrix ) {
+			float lightTextureMatrix[16];
+			RB_GetShaderTextureMatrix( lightRegs, &lightStage->texture, lightTextureMatrix );
+			RB_BakeTextureMatrixIntoTexgen( inter.lightProjection, lightTextureMatrix );
+		}
+		inter.bumpImage = NULL;
+		inter.specularImage = NULL;
+		inter.diffuseImage = NULL;
+		inter.diffuseColor[0] = inter.diffuseColor[1] = inter.diffuseColor[2] = inter.diffuseColor[3] = 0;
+		inter.specularColor[0] = inter.specularColor[1] = inter.specularColor[2] = inter.specularColor[3] = 0;
+		lightColor[0] = lightscale * lightRegs[lightStage->color.registers[0]];
+		lightColor[1] = lightscale * lightRegs[lightStage->color.registers[1]];
+		lightColor[2] = lightscale * lightRegs[lightStage->color.registers[2]];
+		lightColor[3] = lightRegs[lightStage->color.registers[3]];
+
+		for ( surfaceStageNum = 0; surfaceStageNum < surfaceShader->GetNumStages(); surfaceStageNum++ ) {
+			const shaderStage_t *surfaceStage = surfaceShader->GetStage( surfaceStageNum );
+			switch ( surfaceStage->lighting ) {
+			case SL_AMBIENT:
+				break;
+			case SL_BUMP:
+				if ( !surfaceRegs[surfaceStage->conditionRegister] ) {
+					break;
+				}
+				RB_SubmittInteraction( &inter, RB_VK_DrawInteraction );
+				inter.diffuseImage = NULL;
+				inter.specularImage = NULL;
+				RB_SetDrawInteraction( surfaceStage, surfaceRegs, &inter.bumpImage, inter.bumpMatrix, NULL );
+				break;
+			case SL_DIFFUSE:
+				if ( !surfaceRegs[surfaceStage->conditionRegister] ) {
+					break;
+				}
+				if ( inter.diffuseImage ) {
+					RB_SubmittInteraction( &inter, RB_VK_DrawInteraction );
+				}
+				RB_SetDrawInteraction( surfaceStage, surfaceRegs, &inter.diffuseImage, inter.diffuseMatrix,
+					inter.diffuseColor.ToFloatPtr() );
+				inter.diffuseColor[0] *= lightColor[0];
+				inter.diffuseColor[1] *= lightColor[1];
+				inter.diffuseColor[2] *= lightColor[2];
+				inter.diffuseColor[3] *= lightColor[3];
+				inter.vertexColor = surfaceStage->vertexColor;
+				break;
+			case SL_SPECULAR:
+				if ( !surfaceRegs[surfaceStage->conditionRegister] ) {
+					break;
+				}
+				if ( inter.specularImage ) {
+					RB_SubmittInteraction( &inter, RB_VK_DrawInteraction );
+				}
+				RB_SetDrawInteraction( surfaceStage, surfaceRegs, &inter.specularImage, inter.specularMatrix,
+					inter.specularColor.ToFloatPtr() );
+				inter.specularColor[0] *= lightColor[0];
+				inter.specularColor[1] *= lightColor[1];
+				inter.specularColor[2] *= lightColor[2];
+				inter.specularColor[3] *= lightColor[3];
+				inter.vertexColor = surfaceStage->vertexColor;
+				break;
+			}
+		}
+		RB_SubmittInteraction( &inter, RB_VK_DrawInteraction );
+	}
+}
+
+/*
+=============
+RB_VK_CreateDrawInteractions
+
+The surfaces of a light: additive, against the depth already filled,
+through the stencil the shadow volumes left.
+=============
+*/
+static void RB_VK_CreateDrawInteractions( const drawSurf_t *surf, const viewLight_t *vLight, bool shadowed, int depthFunc ) {
+	for ( ; surf; surf = surf->nextOnLight ) {
+		vkb_draw_t *draw = &rbVkInter.draw;
+		vkb_draw_block_t *block = &rbVkInter.block;
+		bool depthRange;
+		if ( !surf->geo || !surf->geo->ambientCache ) {
+			continue;
+		}
+		RB_VK_DrawBegin( draw, block, surf );
+		if ( !RB_VK_Geometry( surf->geo, draw ) ) {
+			continue;
+		}
+		depthRange = RB_VK_WeaponDepthRange( surf );
+		draw->program = r_usePhong.GetBool() ? VKB_PROGRAM_INTERACTION_PHONG : VKB_PROGRAM_INTERACTION;
+		block->vertexParms[0][0] = r_specularExponent.GetFloat();
+		draw->stateBits = GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE | GLS_DEPTHMASK | depthFunc;
+		draw->cull = RB_VK_Cull( surf->material->GetCullType() );
+		draw->stencil = shadowed ? VKB_STENCIL_TEST : VKB_STENCIL_OFF;
+		draw->stencilRef = 128;
+		draw->stencilMask = 255;
+		RB_VK_CreateSingleDrawInteractions( surf, vLight );
+		if ( depthRange ) {
+			vkb_depth_range( 0.0f, 1.0f );
+		}
+	}
+}
+
+/*
+=====================
+RB_VK_StencilShadowPass
+
+The light's shadow volumes into the stencil: depth-fail where the view
+may be inside a volume, depth-pass elsewhere.
+=====================
+*/
+static void RB_VK_StencilShadowPass( const drawSurf_t *surf, const viewLight_t *vLight ) {
+	if ( !r_shadows.GetBool() ) {
+		return;
+	}
+	for ( ; surf; surf = surf->nextOnLight ) {
+		const srfTriangles_t *tri = surf->geo;
+		vkb_draw_t draw;
+		vkb_draw_block_t block;
+		const vertCache_t *vc = tri->shadowCache;
+		idVec4 localLight;
+		int numIndexes;
+		bool external = false;
+		bool depthRange;
+
+		if ( !vc || vc->virtMem ) {
+			continue;
+		}
+		RB_VK_DrawBegin( &draw, &block, surf );
+		draw.vertexBuffer = vc->vbo;
+		draw.vertexOffset = (unsigned)vc->offset;
+		draw.layout = VKB_VERTEX_SHADOW;
+		if ( tri->indexCache && !tri->indexCache->virtMem ) {
+			draw.indexBuffer = tri->indexCache->vbo;
+			draw.indexOffset = (unsigned)tri->indexCache->offset;
+			draw.shortIndexes = tri->indexCache->indexType == GL_UNSIGNED_SHORT;
+		} else if ( !RB_VK_FrameIndexes( tri, &draw ) ) {
+			continue;
+		}
+		RB_VK_Scissor( surf );
+		depthRange = RB_VK_WeaponDepthRange( surf );
+
+		R_GlobalPointToLocal( surf->space->modelMatrix, vLight->globalLightOrigin, localLight.ToVec3() );
+		localLight.w = 0.0f;
+		memcpy( block.localLightOrigin, localLight.ToFloatPtr(), sizeof( block.localLightOrigin ) );
+
+		/* the sil planes always; the caps only where they can show */
+		if ( !r_useExternalShadows.GetInteger() ) {
+			numIndexes = tri->numIndexes;
+		} else if ( r_useExternalShadows.GetInteger() == 2 ) {
+			numIndexes = tri->numShadowIndexesNoCaps;
+		} else if ( !( surf->dsFlags & DSF_VIEW_INSIDE_SHADOW ) ) {
+			numIndexes = tri->numShadowIndexesNoCaps;
+			external = true;
+		} else if ( !vLight->viewInsideLight && !( tri->shadowCapPlaneBits & SHADOW_CAP_INFINITE ) ) {
+			if ( vLight->viewSeesShadowPlaneBits & tri->shadowCapPlaneBits ) {
+				numIndexes = tri->numShadowIndexesNoFrontCaps;
+			} else {
+				numIndexes = tri->numShadowIndexesNoCaps;
+			}
+			external = true;
+		} else {
+			numIndexes = tri->numIndexes;
+		}
+		draw.indexCount = (unsigned)numIndexes;
+		draw.program = VKB_PROGRAM_SHADOW;
+		draw.cull = VKB_CULL_NONE;
+		draw.stateBits = GLS_DEPTHMASK | GLS_COLORMASK | GLS_ALPHAMASK | GLS_DEPTHFUNC_LESS;
+		draw.stencil = external ? VKB_STENCIL_SHADOW_PASS : VKB_STENCIL_SHADOW_FAIL;
+		draw.stencilRef = 1;
+		draw.stencilMask = 255;
+		if ( r_shadowPolygonFactor.GetFloat() || r_shadowPolygonOffset.GetFloat() ) {
+			draw.depthBias[0] = -r_shadowPolygonOffset.GetFloat();
+			draw.depthBias[1] = r_shadowPolygonFactor.GetFloat();
+		}
+		vkb_draw( &draw );
+		if ( depthRange ) {
+			vkb_depth_range( 0.0f, 1.0f );
+		}
+	}
+}
+
+/*
+==================
+RB_VK_DrawInteractions
+
+Every light's shadows and interactions, as RB_GLSL_DrawInteractions.
+==================
+*/
+static void RB_VK_DrawInteractions( void ) {
+	const viewLight_t *vLight;
+	for ( vLight = backEnd.viewDef->viewLights; vLight; vLight = vLight->next ) {
+		bool shadowed = false;
+		if ( vLight->lightShader->IsFogLight() || vLight->lightShader->IsBlendLight() ) {
+			continue;
+		}
+		if ( !vLight->localInteractions && !vLight->globalInteractions && !vLight->translucentInteractions ) {
+			continue;
+		}
+		if ( vLight->globalShadows || vLight->localShadows ) {
+			/* the stencil cleared for this light's volumes, within its scissor */
+			RB_VK_ScissorRect( vLight->scissorRect );
+			vkb_clear( 0, 0, 1, NULL, 1u << ( glConfig.stencilBits - 1 ) );
+			shadowed = true;
+		}
+		RB_VK_StencilShadowPass( vLight->globalShadows, vLight );
+		RB_VK_CreateDrawInteractions( vLight->localInteractions, vLight, shadowed, GLS_DEPTHFUNC_EQUAL );
+		RB_VK_StencilShadowPass( vLight->localShadows, vLight );
+		RB_VK_CreateDrawInteractions( vLight->globalInteractions, vLight, shadowed, GLS_DEPTHFUNC_EQUAL );
+		/* translucent surfaces never get stencil shadowed */
+		if ( r_skipTranslucent.GetBool() ) {
+			continue;
+		}
+		RB_VK_CreateDrawInteractions( vLight->translucentInteractions, vLight, false, GLS_DEPTHFUNC_LESS );
+	}
+}
+
+/*
+==================
+RB_VK_FogPass
+
+A fog light: its surfaces through the fog and enter maps, then the
+light's frustum from inside.
+==================
+*/
+static idPlane rbVkFogPlanes[4];
+
+static void RB_VK_T_BasicFog( const drawSurf_t *surf, const viewLight_t *vLight, unsigned stateBits, unsigned char cull ) {
+	vkb_draw_t draw;
+	vkb_draw_block_t block;
+	idPlane local[4];
+	const float *regs = vLight->shaderRegisters;
+	const shaderStage_t *stage = vLight->lightShader->GetStage( 0 );
+	bool depthRange;
+
+	if ( !surf->geo || !surf->geo->ambientCache ) {
+		return;
+	}
+	RB_VK_DrawBegin( &draw, &block, surf );
+	if ( !RB_VK_Geometry( surf->geo, &draw ) ) {
+		return;
+	}
+	RB_VK_Scissor( surf );
+	depthRange = RB_VK_WeaponDepthRange( surf );
+	R_GlobalPlaneToLocal( surf->space->modelMatrix, rbVkFogPlanes[0], local[0] );
+	local[0][3] += 0.5f;
+	local[1][0] = local[1][1] = local[1][2] = 0.0f;
+	local[1][3] = 0.5f;
+	R_GlobalPlaneToLocal( surf->space->modelMatrix, rbVkFogPlanes[2], local[2] );
+	local[2][3] += FOG_ENTER;
+	R_GlobalPlaneToLocal( surf->space->modelMatrix, rbVkFogPlanes[3], local[3] );
+	memcpy( &block.lightProjection[0], local[0].ToFloatPtr(), 4 * sizeof( float ) );
+	memcpy( &block.lightProjection[4], local[1].ToFloatPtr(), 4 * sizeof( float ) );
+	memcpy( &block.lightProjection[8], local[2].ToFloatPtr(), 4 * sizeof( float ) );
+	memcpy( &block.lightProjection[12], local[3].ToFloatPtr(), 4 * sizeof( float ) );
+	block.fogColor[0] = regs[stage->color.registers[0]];
+	block.fogColor[1] = regs[stage->color.registers[1]];
+	block.fogColor[2] = regs[stage->color.registers[2]];
+	block.fogColor[3] = regs[stage->color.registers[3]];
+	draw.program = VKB_PROGRAM_FOG;
+	draw.stateBits = stateBits;
+	draw.cull = cull;
+	draw.image[0] = RB_VK_Image( globalImages->fogImage );
+	draw.image[1] = RB_VK_Image( globalImages->fogEnterImage );
+	vkb_draw( &draw );
+	if ( depthRange ) {
+		vkb_depth_range( 0.0f, 1.0f );
+	}
+}
+
+static void RB_VK_FogPass( const drawSurf_t *drawSurfs, const drawSurf_t *drawSurfs2, const viewLight_t *vLight ) {
+	const srfTriangles_t *frustumTris = vLight->frustumTris;
+	const float *regs = vLight->shaderRegisters;
+	const shaderStage_t *stage = vLight->lightShader->GetStage( 0 );
+	const float *mv = backEnd.viewDef->worldSpace.modelViewMatrix;
+	const float alpha = regs[stage->color.registers[3]];
+	const float a = ( alpha <= 1.0f ) ? -0.5f / DEFAULT_FOG_DISTANCE : -0.5f / alpha;
+	const unsigned surfaceBits = GLS_DEPTHMASK | GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA | GLS_DEPTHFUNC_EQUAL;
+	drawSurf_t ds;
+	float s;
+	const drawSurf_t *surf;
+
+	if ( !frustumTris->ambientCache ) {
+		return;
+	}
+	memset( &ds, 0, sizeof( ds ) );
+	ds.space = &backEnd.viewDef->worldSpace;
+	ds.geo = frustumTris;
+	ds.scissorRect = backEnd.viewDef->scissor;
+
+	rbVkFogPlanes[0][0] = a * mv[2];
+	rbVkFogPlanes[0][1] = a * mv[6];
+	rbVkFogPlanes[0][2] = a * mv[10];
+	rbVkFogPlanes[0][3] = a * mv[14];
+	rbVkFogPlanes[1][0] = a * mv[0];
+	rbVkFogPlanes[1][1] = a * mv[4];
+	rbVkFogPlanes[1][2] = a * mv[8];
+	rbVkFogPlanes[1][3] = a * mv[12];
+	/* T: the fade plane, the "top" plane on unrotated lights */
+	rbVkFogPlanes[2][0] = 0.001f * vLight->fogPlane[0];
+	rbVkFogPlanes[2][1] = 0.001f * vLight->fogPlane[1];
+	rbVkFogPlanes[2][2] = 0.001f * vLight->fogPlane[2];
+	rbVkFogPlanes[2][3] = 0.001f * vLight->fogPlane[3];
+	/* S: by the view origin */
+	s = backEnd.viewDef->renderView.vieworg * rbVkFogPlanes[2].Normal() + rbVkFogPlanes[2][3];
+	rbVkFogPlanes[3][0] = 0;
+	rbVkFogPlanes[3][1] = 0;
+	rbVkFogPlanes[3][2] = 0;
+	rbVkFogPlanes[3][3] = FOG_ENTER + s;
+
+	for ( surf = drawSurfs; surf; surf = surf->nextOnLight ) {
+		RB_VK_T_BasicFog( surf, vLight, surfaceBits, RB_VK_Cull( CT_FRONT_SIDED ) );
+	}
+	for ( surf = drawSurfs2; surf; surf = surf->nextOnLight ) {
+		RB_VK_T_BasicFog( surf, vLight, surfaceBits, RB_VK_Cull( CT_FRONT_SIDED ) );
+	}
+	/* the light frustum's planes aren't in the depth buffer: less, from inside */
+	RB_VK_T_BasicFog( &ds, vLight,
+		GLS_DEPTHMASK | GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA | GLS_DEPTHFUNC_LESS,
+		RB_VK_Cull( CT_BACK_SIDED ) );
+}
+
+/*
+=====================
+RB_VK_BlendLight
+
+The falloff and projection maps blended onto the surfaces, in the
+light's colour, without the surface's own maps.
+=====================
+*/
+static void RB_VK_T_BlendLight( const drawSurf_t *surf, const viewLight_t *vLight, const shaderStage_t *stage,
+	const float lightColor[4] ) {
+	const srfTriangles_t *tri = surf->geo;
+	vkb_draw_t draw;
+	vkb_draw_block_t block;
+	idPlane lightProject[4];
+	bool depthRange;
+	int i;
+
+	RB_VK_DrawBegin( &draw, &block, surf );
+	if ( tri->ambientCache ) {
+		if ( !RB_VK_Geometry( tri, &draw ) ) {
+			return;
+		}
+	} else if ( tri->shadowCache && !tri->shadowCache->virtMem ) {
+		draw.vertexBuffer = tri->shadowCache->vbo;
+		draw.vertexOffset = (unsigned)tri->shadowCache->offset;
+		draw.layout = VKB_VERTEX_SHADOW;
+		draw.indexCount = (unsigned)tri->numIndexes;
+		if ( tri->indexCache && !tri->indexCache->virtMem ) {
+			draw.indexBuffer = tri->indexCache->vbo;
+			draw.indexOffset = (unsigned)tri->indexCache->offset;
+			draw.shortIndexes = tri->indexCache->indexType == GL_UNSIGNED_SHORT;
+		} else if ( !RB_VK_FrameIndexes( tri, &draw ) ) {
+			return;
+		}
+	} else {
+		return;
+	}
+	RB_VK_Scissor( surf );
+	depthRange = RB_VK_WeaponDepthRange( surf );
+	for ( i = 0; i < 4; i++ ) {
+		R_GlobalPlaneToLocal( surf->space->modelMatrix, vLight->lightProject[i], lightProject[i] );
+		memcpy( &block.lightProjection[i * 4], lightProject[i].ToFloatPtr(), 4 * sizeof( float ) );
+	}
+	memcpy( block.fogColor, lightColor, sizeof( block.fogColor ) );
+	draw.program = VKB_PROGRAM_BLEND_LIGHT;
+	draw.stateBits = GLS_DEPTHMASK | (unsigned)stage->drawStateBits | GLS_DEPTHFUNC_EQUAL;
+	draw.cull = RB_VK_Cull( CT_FRONT_SIDED );
+	draw.image[0] = RB_VK_Image( stage->texture.image );
+	draw.image[1] = RB_VK_Image( vLight->falloffImage );
+	vkb_draw( &draw );
+	if ( depthRange ) {
+		vkb_depth_range( 0.0f, 1.0f );
+	}
+}
+
+static void RB_VK_BlendLight( const drawSurf_t *drawSurfs, const drawSurf_t *drawSurfs2, const viewLight_t *vLight ) {
+	const idMaterial *lightShader = vLight->lightShader;
+	const float *regs = vLight->shaderRegisters;
+	int i;
+	if ( !drawSurfs || r_skipBlendLights.GetBool() ) {
+		return;
+	}
+	for ( i = 0; i < lightShader->GetNumStages(); i++ ) {
+		const shaderStage_t *stage = lightShader->GetStage( i );
+		const drawSurf_t *surf;
+		float lightColor[4];
+		if ( !regs[stage->conditionRegister] ) {
+			continue;
+		}
+		lightColor[0] = regs[stage->color.registers[0]];
+		lightColor[1] = regs[stage->color.registers[1]];
+		lightColor[2] = regs[stage->color.registers[2]];
+		lightColor[3] = regs[stage->color.registers[3]];
+		/* an additive blend light is a glow the volume emits: the emissive headroom */
+		if ( hdr_output_active && hdr_emissive_gain != 1.0f
+				&& ( stage->drawStateBits & GLS_DSTBLEND_BITS ) == GLS_DSTBLEND_ONE ) {
+			lightColor[0] *= hdr_emissive_gain;
+			lightColor[1] *= hdr_emissive_gain;
+			lightColor[2] *= hdr_emissive_gain;
+		}
+		for ( surf = drawSurfs; surf; surf = surf->nextOnLight ) {
+			RB_VK_T_BlendLight( surf, vLight, stage, lightColor );
+		}
+		for ( surf = drawSurfs2; surf; surf = surf->nextOnLight ) {
+			RB_VK_T_BlendLight( surf, vLight, stage, lightColor );
+		}
+	}
+}
+
+/*
+==================
+RB_VK_FogAllLights
+==================
+*/
+static void RB_VK_FogAllLights( void ) {
+	const viewLight_t *vLight;
+	if ( r_skipFogLights.GetBool() || backEnd.viewDef->isXraySubview ) {
+		return;
+	}
+	for ( vLight = backEnd.viewDef->viewLights; vLight; vLight = vLight->next ) {
+		if ( vLight->lightShader->IsFogLight() ) {
+			RB_VK_FogPass( vLight->globalInteractions, vLight->localInteractions, vLight );
+		} else if ( vLight->lightShader->IsBlendLight() ) {
+			RB_VK_BlendLight( vLight->globalInteractions, vLight->localInteractions, vLight );
+		}
 	}
 }
 
@@ -1002,7 +1715,9 @@ static void RB_VK_DrawView( const void *data ) {
 	numDrawSurfs = viewDef->numDrawSurfs;
 
 	RB_VK_FillDepthBuffer( drawSurfs, numDrawSurfs );
+	RB_VK_DrawInteractions();
 	processed = RB_VK_DrawShaderPasses( drawSurfs, numDrawSurfs );
+	RB_VK_FogAllLights();
 	if ( processed < numDrawSurfs ) {
 		RB_VK_DrawShaderPasses( drawSurfs + processed, numDrawSurfs - processed );
 	}
