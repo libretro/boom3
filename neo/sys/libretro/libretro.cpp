@@ -4506,17 +4506,17 @@ contract in libretro.h:
    ST 2084) absolute luminance; presenting sRGB numbers on a PQ
    swapchain is the classic washed-out-and-dim mismatch. The pass
    linearizes with the exact inverse-sRGB EOTF, anchors 1.0 at the
-   frontend's paper-white nits (RETRO_ENVIRONMENT_GET_HDR_PAPER_WHITE_
-   NITS, default 200), and PQ-encodes over the 0..10000 nit range.
+   frontend's paper-white nits (retro_hdr_metadata.paper_white_nits,
+   default 200), and PQ-encodes over the 0..10000 nit range.
  - Gamut: Rec.709 -> Rec.2020 rotation on linear values, honouring the
-   frontend's Colour Boost setting (GET_HDR_EXPAND_GAMUT): Accurate is
+   frontend's Colour Boost setting (retro_hdr_metadata.expand_gamut): Accurate is
    the true colorimetric matrix, Super skips rotation so the display's
    Rec.2020 interpretation provides the boost, Wide reinterprets the
    709 coordinates as DCI-P3, Expanded sits halfway between Accurate
    and Wide. The middle modes approximate the frontend's SDR
    treatment; flagged for verification against RetroArch's own tables.
  - Highlight roll-off (doom_hdr_rolloff): the headroom between paper
-   white and the display peak (GET_HDR_MAX_NITS, default 1000) is
+   white and the display peak (retro_hdr_metadata.max_nits, default 1000) is
    where highlights may expand. Reinhard (Soft-Knee) is mid-tone
    exact - identity up to the knee, then the same slope-continuous
    rational approach the audio saturator uses, toward the peak
@@ -4530,7 +4530,7 @@ contract in libretro.h:
    quantizes - the sRGB->PQ curve remap otherwise bands visibly in
    dark gradients, which is the classic 10-bit HDR quantization
    artifact.
- - Output mode (GET_HDR_OUTPUT_MODE): HDR10 and scRGB swapchains both
+ - Output mode (retro_hdr_metadata.output_mode): HDR10 and scRGB swapchains both
    receive the same PQ Rec.2020 frame here. The colorimetric argument:
    every gamut intent above is expressed as actual Rec.2020
    coordinates, and a conversion to scRGB that respects colorimetry
@@ -8793,17 +8793,23 @@ static void hdr_present_vk( float paperWhite, float H, const float mat[9] ) {
 }
 #endif
 
-/* The frontend's HDR state, re-queried per present as the contract
- * asks: on the thread that runs retro_run, which the render thread is
- * not, so the Vulkan present reads a copy taken before the frame. */
+/* The frontend's HDR presentation contract (GET_HDR_METADATA), re-queried
+ * per present as it asks: on the thread that runs retro_run, which the
+ * render thread is not, so the Vulkan present reads a copy taken before
+ * the frame.  A frontend without the call leaves the defaults. */
 static void hdr_fe_query( hdr_frontend_t *fe ) {
-	unsigned outMode = 1;
+	struct retro_hdr_metadata md;
+	bool have;
 	fe->paperWhite = 200.0f;
 	fe->maxNits = 1000.0f;
 	fe->gamutMode = 0;
 	if ( !hdr_output_active ) {
 		return;
 	}
+	memset( &md, 0, sizeof( md ) );
+	md.version = 1;
+	md.size = sizeof( md );
+	have = environ_cb( RETRO_ENVIRONMENT_GET_HDR_METADATA, &md );
 	if ( !hdr_pq_output ) {
 		/* SDR tone-mapped: the display is the 100-nit Rec.709 reference
 		 * - ACES 2.0's own SDR output-transform convention, which its
@@ -8813,28 +8819,35 @@ static void hdr_fe_query( hdr_frontend_t *fe ) {
 		fe->paperWhite = 100.0f;
 		fe->maxNits = 100.0f;
 	} else {
-		environ_cb( RETRO_ENVIRONMENT_GET_HDR_PAPER_WHITE_NITS, &fe->paperWhite );
-		environ_cb( RETRO_ENVIRONMENT_GET_HDR_MAX_NITS, &fe->maxNits );
+		if ( have ) {
+			if ( md.paper_white_nits > 0.0f ) {
+				fe->paperWhite = md.paper_white_nits;
+			}
+			if ( md.max_nits > 0.0f ) {
+				fe->maxNits = md.max_nits;
+			}
+		}
 		/* the ACES 2.0 tables are solved for this, and rebuilt when it
 		 * moves */
 		if ( hdr_peak_override > 0.0f ) {
 			fe->maxNits = hdr_peak_override;
 		}
 	}
-	environ_cb( RETRO_ENVIRONMENT_GET_HDR_EXPAND_GAMUT, &fe->gamutMode );
-	if ( environ_cb( RETRO_ENVIRONMENT_GET_HDR_OUTPUT_MODE, &outMode ) ) {
-		if ( outMode == 0 && !hdr_warned_sdr && log_cb ) {
-			log_cb( RETRO_LOG_WARN, "[boom3] Color Format is 30-bit HDR but frontend HDR output is off; switch the core option to 24-bit for correct SDR colors\n" );
-			hdr_warned_sdr = true;
-		}
+	if ( !have ) {
+		return;
 	}
-	{
-		bool native10 = false;
-		if ( environ_cb( RETRO_ENVIRONMENT_GET_SCREEN_10BPC_CAPABLE, &native10 )
-				&& !native10 && !hdr_warned_narrow && log_cb ) {
-			log_cb( RETRO_LOG_WARN, "[boom3] video driver narrows 10-bit to 8-bit; 30-bit mode gains nothing here\n" );
-			hdr_warned_narrow = true;
-		}
+	fe->gamutMode = md.expand_gamut;
+	if ( md.output_mode == 0 && !hdr_warned_sdr && log_cb ) {
+		log_cb( RETRO_LOG_WARN, "[boom3] Color Format is 30-bit HDR but frontend HDR output is off; switch the core option to 24-bit for correct SDR colors\n" );
+		hdr_warned_sdr = true;
+	}
+	/* the frame is PQ-encoded here, final: a frontend that applies its
+	 * own curve, paper-white scale or gamut expansion on top of it, or
+	 * narrows it to 8 bits, undoes that */
+	if ( md.output_mode && !md.passthrough && !hdr_warned_narrow && log_cb ) {
+		log_cb( RETRO_LOG_WARN, "[boom3] frontend does not pass the HDR10 frame through as is (%s); 30-bit mode gains nothing here\n",
+				md.screen_10bpc ? "it re-processes it" : "it narrows 10-bit to 8-bit" );
+		hdr_warned_narrow = true;
 	}
 }
 

@@ -551,6 +551,24 @@ static int16_t input_state(unsigned a, unsigned b, unsigned c, unsigned d)
    return 0;
 }
 
+/* the HDR presentation contract a frontend with HDR output on hands the
+ * core: a PQ swapchain, paper white 200 nits, peak 1000, accurate gamut */
+static bool hdr_metadata(void *data)
+{
+   struct retro_hdr_metadata *md = (struct retro_hdr_metadata *)data;
+   if (md->version != 1 || md->size < sizeof(*md))
+      return false;
+   md->output_mode      = 1;
+   md->screen_10bpc     = true;
+   md->paper_white_nits = 200.0f;
+   md->max_nits         = 1000.0f;
+   md->min_nits         = 0.0f;
+   md->expand_gamut     = 0;
+   md->color_primaries  = 9;
+   md->transfer_function = 16;
+   return true;
+}
+
 static bool env_cb(unsigned cmd_id, void *data)
 {
    int i;
@@ -580,6 +598,8 @@ static bool env_cb(unsigned cmd_id, void *data)
    case RETRO_ENVIRONMENT_GET_PREFERRED_HW_RENDER:
       *(unsigned *)data = RETRO_HW_CONTEXT_VULKAN;
       return true;
+   case RETRO_ENVIRONMENT_GET_HDR_METADATA:
+      return hdr_metadata(data);
    case RETRO_ENVIRONMENT_SET_HW_RENDER:
    {
       struct retro_hw_render_callback *cb = (struct retro_hw_render_callback *)data;

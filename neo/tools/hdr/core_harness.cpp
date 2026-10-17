@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include "libretro.h"
 #include <GL/osmesa.h>
 #include <GL/gl.h>
 #include <GL/glext.h>
@@ -80,14 +81,21 @@ extern "C" void _ZL11ldr_presentj(unsigned int dstFbo);
 #define hdr_bind_scene    _ZL14hdr_bind_scenev
 #define hdr_present       _ZL11hdr_presentj
 
-/* the frontend callback hdr_present asks for paper white and peak nits */
+/* the frontend callback hdr_present asks for its HDR presentation contract */
 static bool env_cb(unsigned cmd, void *data)
 {
-	switch (cmd) {
-	case 68: /* GET_HDR_PAPER_WHITE_NITS */ *(float *)data = 200.0f; return true;
-	case 69: /* GET_HDR_MAX_NITS */         *(float *)data = 1000.0f; return true;
-	default: return false;
+	if (cmd == RETRO_ENVIRONMENT_GET_HDR_METADATA) {
+		struct retro_hdr_metadata *md = (struct retro_hdr_metadata *)data;
+		if (md->version != 1 || md->size < sizeof(*md))
+			return false;
+		md->output_mode = 1;
+		md->screen_10bpc = true;
+		md->paper_white_nits = 200.0f;
+		md->max_nits = 1000.0f;
+		md->expand_gamut = 0;
+		return true;
 	}
+	return false;
 }
 
 /* a world with real range, drawn into whatever target is bound */
