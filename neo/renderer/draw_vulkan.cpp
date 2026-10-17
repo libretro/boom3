@@ -15,6 +15,7 @@ do; the device side is all in C under vk/.
 
 #include "tr_local.h"
 #include "vk/vk_backend.h"
+#include "vk/vk_thread.h"
 
 extern bool  hdr_output_active;
 extern float hdr_emissive_gain;
@@ -25,6 +26,7 @@ extern bool  HDR_GuiCorrectionActive( unsigned int *tex );
 static vkb_view_block_t rbVkView;
 static bool rbVkViewSet;
 static bool rbVkDepthCopied;    /* this view's depth is in _currentDepth */
+static int rbVkSceneWidth, rbVkSceneHeight;   /* glConfig's at hand-over: the render thread reads these */
 extern float hdr_scene_encode_scale;
 
 static void RB_VK_DrawStageProgram( const drawSurf_t *surf, const shaderStage_t *pStage, int programId,
@@ -461,7 +463,18 @@ static unsigned RB_VK_Image( idImage *image ) {
 		return 0;
 	}
 	if ( image->texnum == idImage::TEXTURE_NOT_LOADED ) {
-		image->Bind();
+		/* the render thread draws what RB_VK_Prepare loaded; loading is the
+		 * main thread's */
+		if ( vkt_running() ) {
+			if ( image->partialImage ) {
+				return RB_VK_Image( image->partialImage );
+			}
+			return 0;
+		}
+		image->Touch();
+		if ( image->texnum == idImage::TEXTURE_NOT_LOADED && image->partialImage ) {
+			return RB_VK_Image( image->partialImage );
+		}
 	}
 	if ( image->texnum == idImage::TEXTURE_NOT_LOADED ) {
 		return 0;
@@ -584,7 +597,7 @@ static bool RB_VK_FrameIndexes( const srfTriangles_t *tri, vkb_draw_t *draw ) {
 	if ( vkFrameIndexes.tri != tri ) {
 		const bool shortIndexes = tri->numVerts <= 0xffff;
 		const size_t bytes = (size_t)tri->numIndexes * ( shortIndexes ? 2 : 4 );
-		void *p = vkb_ring_alloc( bytes, 4, &vkFrameIndexes.buffer, &vkFrameIndexes.offset );
+		void *p = vkb_ring_alloc_frame( bytes, 4, &vkFrameIndexes.buffer, &vkFrameIndexes.offset );
 		if ( !p ) {
 			return false;
 		}
@@ -1751,7 +1764,7 @@ static void RB_VK_SetBuffer( const void *data ) {
 		c[1] = 0.0f;
 		c[2] = 0.25f;
 	}
-	vkb_scissor( 0, 0, glConfig.vidWidth, glConfig.vidHeight );
+	vkb_scissor( 0, 0, rbVkSceneWidth, rbVkSceneHeight );
 	vkb_clear( 1, 0, 0, c, 0 );
 }
 
@@ -1765,13 +1778,72 @@ and closes at the swap.
 */
 void RB_VK_BeginFrame( void );
 extern int backEndStartTime, backEndFinishTime;
-void RB_VK_ExecuteBackEndCommands( const emptyCommand_t *cmds ) {
-	int c_draw3d = 0, c_draw2d = 0;
-	if ( cmds->commandId == RC_NOP && !cmds->next ) {
+
+/*
+====================
+RB_VK_Prepare
+
+On the main thread before the hand-over: every image the frame samples
+is loaded, so the render thread only reads the image table.
+====================
+*/
+static void RB_VK_PrepareMaterial( const idMaterial *shader ) {
+	int i, j;
+	if ( !shader ) {
 		return;
 	}
-	backEndStartTime = Core_Milliseconds();
+	for ( i = 0; i < shader->GetNumStages(); i++ ) {
+		const shaderStage_t *pStage = shader->GetStage( i );
+		if ( pStage->texture.image ) {
+			pStage->texture.image->Touch();
+		}
+		if ( pStage->newStage ) {
+			for ( j = 0; j < pStage->newStage->numFragmentProgramImages; j++ ) {
+				if ( pStage->newStage->fragmentProgramImages[j] ) {
+					pStage->newStage->fragmentProgramImages[j]->Touch();
+				}
+			}
+		}
+	}
+}
+
+static void RB_VK_PrepareSurfs( const drawSurf_t *surf ) {
+	for ( ; surf; surf = surf->nextOnLight ) {
+		RB_VK_PrepareMaterial( surf->material );
+	}
+}
+
+static void RB_VK_Prepare( const emptyCommand_t *cmds ) {
 	globalImages->CompleteBackgroundImageLoads();
+	for ( ; cmds; cmds = (const emptyCommand_t *)cmds->next ) {
+		const viewDef_t *viewDef;
+		const viewLight_t *vLight;
+		int i;
+		if ( cmds->commandId != RC_DRAW_VIEW ) {
+			continue;
+		}
+		viewDef = ( (const drawSurfsCommand_t *)cmds )->viewDef;
+		for ( i = 0; i < viewDef->numDrawSurfs; i++ ) {
+			RB_VK_PrepareMaterial( viewDef->drawSurfs[i]->material );
+		}
+		for ( vLight = viewDef->viewLights; vLight; vLight = vLight->next ) {
+			RB_VK_PrepareMaterial( vLight->lightShader );
+			if ( vLight->falloffImage ) {
+				vLight->falloffImage->Touch();
+			}
+			RB_VK_PrepareSurfs( vLight->globalShadows );
+			RB_VK_PrepareSurfs( vLight->localShadows );
+			RB_VK_PrepareSurfs( vLight->localInteractions );
+			RB_VK_PrepareSurfs( vLight->globalInteractions );
+			RB_VK_PrepareSurfs( vLight->translucentInteractions );
+		}
+	}
+}
+
+static void RB_VK_RunCommands( void *job ) {
+	const emptyCommand_t *cmds = (const emptyCommand_t *)job;
+	int c_draw3d = 0, c_draw2d = 0;
+	backEndStartTime = Core_Milliseconds();
 	vkFrameIndexes.tri = NULL;
 	for ( ; cmds; cmds = (const emptyCommand_t *)cmds->next ) {
 		switch ( cmds->commandId ) {
@@ -1779,12 +1851,16 @@ void RB_VK_ExecuteBackEndCommands( const emptyCommand_t *cmds ) {
 			break;
 		case RC_DRAW_VIEW:
 			RB_VK_BeginFrame();
-			RB_VK_DrawView( cmds );
 			if ( ( (const drawSurfsCommand_t *)cmds )->viewDef->viewEntitys ) {
 				c_draw3d++;
 			} else {
+				/* the 3D views are done: the GPU takes them while the 2D views record */
+				if ( c_draw3d && !c_draw2d ) {
+					vkb_flush();
+				}
 				c_draw2d++;
 			}
+			RB_VK_DrawView( cmds );
 			break;
 		case RC_SET_BUFFER:
 			RB_VK_BeginFrame();
@@ -1809,4 +1885,70 @@ void RB_VK_ExecuteBackEndCommands( const emptyCommand_t *cmds ) {
 	}
 	backEndFinishTime = Core_Milliseconds();
 	backEnd.pc.msec = backEndFinishTime - backEndStartTime;
+}
+
+/*
+====================
+The render thread
+
+The frame's commands go to the render thread once the front end is
+done with them, and the engine goes on with the frame's sound while
+they record and submit.  RB_VK_Sync waits for it: before the next
+command list, before the frame's memory is recycled, and before the
+frame is handed to the frontend.
+====================
+*/
+static bool rbVkThreadWanted;
+static bool rbVkPending;      /* a frame is on the thread, its memory still in use */
+
+void RB_VK_SceneSize( int *width, int *height ) {
+	*width = rbVkSceneWidth;
+	*height = rbVkSceneHeight;
+}
+
+void RB_VK_SetThreaded( bool threaded ) {
+	rbVkThreadWanted = threaded;
+	if ( !threaded && vkt_running() ) {
+		RB_VK_Sync();
+		vkt_stop();
+	}
+}
+
+bool RB_VK_Deferred( void ) {
+	return rbVkPending;
+}
+
+void RB_VK_Sync( void ) {
+	if ( !rbVkPending ) {
+		return;
+	}
+	vkt_join();
+	rbVkPending = false;
+	/* what EndFrame left to the join: the frame's memory and its vertexes */
+	R_ToggleSmpFrame();
+	vertexCache.EndFrame();
+}
+
+void RB_VK_ExecuteBackEndCommands( const emptyCommand_t *cmds ) {
+	if ( cmds->commandId == RC_NOP && !cmds->next ) {
+		return;
+	}
+	rbVkSceneWidth = glConfig.vidWidth;
+	rbVkSceneHeight = glConfig.vidHeight;
+	RB_VK_Prepare( cmds );
+	vkb_frame_handoff();
+	if ( rbVkThreadWanted && !vkt_running() ) {
+		vkt_start( RB_VK_RunCommands );
+	}
+	if ( vkt_running() ) {
+		vkt_submit( (void *)cmds );
+		rbVkPending = true;
+		return;
+	}
+	RB_VK_RunCommands( (void *)cmds );
+}
+
+void RB_VK_Shutdown( void ) {
+	RB_VK_Sync();
+	vkt_stop();
 }

@@ -1782,6 +1782,15 @@ void R_InitFrameData( void );
 void R_ShutdownFrameData( void );
 int R_CountFrameData( void );
 void R_ToggleSmpFrame( void );
+
+#ifdef BOOM3_VULKAN_RENDERER
+// the Vulkan renderer's render thread (draw_vulkan.cpp)
+void RB_VK_SetThreaded( bool threaded );
+bool RB_VK_Deferred( void );   // a frame is on the thread: EndFrame leaves its memory alone
+void RB_VK_Sync( void );
+void RB_VK_Shutdown( void );
+void RB_VK_SceneSize( int *width, int *height );   // the frame's scene size, as handed over
+#endif
 void *R_FrameAlloc( int bytes );
 void *R_ClearedFrameAlloc( int bytes );
 void R_FrameFree( void *data );

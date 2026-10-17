@@ -346,6 +346,7 @@ SRC_LIBRETRO := \
 HAVE_THREADS ?= 1
 ifeq ($(HAVE_THREADS), 1)
 CXXFLAGS  += -DHAVE_THREADS
+CFLAGS    += -DHAVE_THREADS
 SRC_LIBRETRO += \
 	$(LIBRETRO_COMM_DIR)/queues/retro_spsc.c \
 	$(LIBRETRO_COMM_DIR)/rthreads/rthreads.c \
@@ -405,7 +406,8 @@ ifeq ($(HAVE_VULKAN_RENDERER),1)
 		$(CORE_DIR)/renderer/vk/vk_image.c \
 		$(CORE_DIR)/renderer/vk/vk_buffer.c \
 		$(CORE_DIR)/renderer/vk/vk_pipeline.c \
-		$(CORE_DIR)/renderer/vk/vk_draw.c
+		$(CORE_DIR)/renderer/vk/vk_draw.c \
+		$(CORE_DIR)/renderer/vk/vk_thread.c
 endif
 endif
 

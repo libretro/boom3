@@ -253,10 +253,17 @@ static int vkb_image_make(vkb_image_t *im, unsigned width, unsigned height, int 
 unsigned vkb_image_create(unsigned width, unsigned height, int levels, int cube,
       enum vkb_format format, enum vkb_filter filter, enum vkb_wrap wrap, int anisotropy)
 {
-   unsigned id = vkb_image_slot();
+   unsigned id;
    vkb_image_t *im;
-   if (!id || !width || !height)
+   if (!width || !height)
       return 0;
+   vkt_lock();
+   id = vkb_image_slot();
+   if (!id)
+   {
+      vkt_unlock();
+      return 0;
+   }
    im = &vkb.images[id];
    memset(im, 0, sizeof(*im));
    im->used = 1;
@@ -264,18 +271,27 @@ unsigned vkb_image_create(unsigned width, unsigned height, int levels, int cube,
             VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, 0))
    {
       vkb_image_release(im);
+      vkt_unlock();
       return 0;
    }
    im->sampler = vkb_sampler(filter, wrap, anisotropy, im->levels > 1);
+   vkt_unlock();
    return id;
 }
 
 unsigned vkb_image_create_target(unsigned width, unsigned height, enum vkb_format format)
 {
-   unsigned id = vkb_image_slot();
+   unsigned id;
    vkb_image_t *im;
-   if (!id || !width || !height)
+   if (!width || !height)
       return 0;
+   vkt_lock();
+   id = vkb_image_slot();
+   if (!id)
+   {
+      vkt_unlock();
+      return 0;
+   }
    im = &vkb.images[id];
    memset(im, 0, sizeof(*im));
    im->used   = 1;
@@ -286,10 +302,12 @@ unsigned vkb_image_create_target(unsigned width, unsigned height, enum vkb_forma
                : VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT), 0))
    {
       vkb_image_release(im);
+      vkt_unlock();
       return 0;
    }
    im->sampler = vkb_sampler(format == VKB_FORMAT_DEPTH ? VKB_FILTER_NEAREST : VKB_FILTER_LINEAR_NOMIP,
          VKB_WRAP_CLAMP, 0, 0);
+   vkt_unlock();
    return id;
 }
 
@@ -299,7 +317,9 @@ void vkb_image_filter(unsigned image, enum vkb_filter filter, enum vkb_wrap wrap
    if (image < VKB_IMAGE_FIRST || image >= VKB_MAX_IMAGES || !vkb.images[image].used)
       return;
    im = &vkb.images[image];
+   vkt_lock();
    im->sampler = vkb_sampler(filter, wrap, anisotropy, im->levels > 1);
+   vkt_unlock();
 }
 
 /* An image goes when the frames that may sample it are off the GPU: the
@@ -320,6 +340,7 @@ void vkb_image_destroy(unsigned image)
    if (image < VKB_IMAGE_FIRST || image >= VKB_MAX_IMAGES || !vkb.images[image].used)
       return;
    im = &vkb.images[image];
+   vkt_lock();
    /* an upload still queued for it is dropped */
    for (i = 0; i < vkb.uploadCount; )
       if (vkb.uploads[i].image == image)
@@ -335,6 +356,7 @@ void vkb_image_destroy(unsigned image)
       {
          vk.vkDeviceWaitIdle(vkb.device);
          vkb_image_release(im);
+         vkt_unlock();
          return;
       }
       graves        = n;
@@ -344,12 +366,14 @@ void vkb_image_destroy(unsigned image)
    graves[numGraves].frame = vkb.frameCount;
    numGraves++;
    memset(im, 0, sizeof(*im));
+   vkt_unlock();
 }
 
 /* at the start of a frame: what the frames in flight have let go */
 void vkb_images_frame_done(void)
 {
    unsigned i;
+   vkt_lock();
    for (i = 0; i < numGraves; )
    {
       if (vkb.frameCount >= graves[i].frame + VKB_FRAMES)
@@ -366,6 +390,7 @@ void vkb_images_frame_done(void)
       graves = NULL;
       graveCapacity = 0;
    }
+   vkt_unlock();
 }
 
 /* --- uploads ------------------------------------------------------------------- */
@@ -374,14 +399,19 @@ int vkb_image_upload(unsigned image, int level, int face, const void *data, size
 {
    vkb_upload_t *u;
    unsigned char *p;
+   int flush;
    if (image < VKB_IMAGE_FIRST || image >= VKB_MAX_IMAGES || !vkb.images[image].used || !data || !bytes)
       return 0;
+   vkt_lock();
    if (vkb.uploadCount == vkb.uploadCapacity)
    {
       unsigned cap = vkb.uploadCapacity ? vkb.uploadCapacity * 2 : 1024;
       vkb_upload_t *n = (vkb_upload_t *)realloc(vkb.uploads, cap * sizeof(*n));
       if (!n)
+      {
+         vkt_unlock();
          return 0;
+      }
       vkb.uploads        = n;
       vkb.uploadCapacity = cap;
    }
@@ -389,7 +419,10 @@ int vkb_image_upload(unsigned image, int level, int face, const void *data, size
    memset(u, 0, sizeof(*u));
    p = vkb_staging_alloc(bytes, &u->staging, &u->stagingOffset);
    if (!p)
+   {
+      vkt_unlock();
       return 0;
+   }
    memcpy(p, data, bytes);
    u->image = image;
    u->bytes = (unsigned)bytes;
@@ -399,7 +432,9 @@ int vkb_image_upload(unsigned image, int level, int face, const void *data, size
    vkb.images[image].uploadPending = 1;
    /* a load between frames that has filled the arena goes to the device
     * now rather than growing it */
-   if (!vkb.frameOpen && vkb_staging_should_flush())
+   flush = !vkb.frameOpen && vkb_staging_should_flush();
+   vkt_unlock();
+   if (flush)
       vkb_transfer_now();
    return 1;
 }
@@ -429,6 +464,13 @@ static void vkb_whole_image_barrier(VkCommandBuffer cmd, vkb_image_t *im, VkImag
  * transfer, takes its copies, and comes back readable.  The staging
  * chunks retire with the frame. */
 void vkb_images_flush_uploads(VkCommandBuffer cmd)
+{
+   vkt_lock();
+   vkb_images_flush_uploads_locked(cmd);
+   vkt_unlock();
+}
+
+void vkb_images_flush_uploads_locked(VkCommandBuffer cmd)
 {
    unsigned i;
    if (!vkb.uploadCount)

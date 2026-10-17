@@ -142,6 +142,10 @@ Called by R_EndFrame each frame
 ====================
 */
 static void R_IssueRenderCommands( void ) {
+#ifdef BOOM3_VULKAN_RENDERER
+	// the render thread's last frame, whose memory the next one reuses
+	RB_VK_Sync();
+#endif
 	if ( frameData->cmdHead->commandId == RC_NOP
 		&& !frameData->cmdHead->next ) {
 		// nothing to issue
@@ -752,13 +756,19 @@ void idRenderSystemLocal::EndFrame( int *frontEndMsec, int *backEndMsec ) {
 	// start the back end up again with the new command list
 	R_IssueRenderCommands();
 
-	// use the other buffers next frame, because another CPU
-	// may still be rendering into the current buffers
+#ifdef BOOM3_VULKAN_RENDERER
+	// on the render thread the frame is still being drawn from this
+	// memory: RB_VK_Sync recycles it when the thread is done
+	if ( !RB_VK_Deferred() )
+#endif
+	{
+		// use the other buffers next frame, because another CPU
+		// may still be rendering into the current buffers
+		R_ToggleSmpFrame();
 
-	R_ToggleSmpFrame();
-
-	// we can now release the vertexes used this frame
-	vertexCache.EndFrame();
+		// we can now release the vertexes used this frame
+		vertexCache.EndFrame();
+	}
 
 	if ( session->writeDemo ) {
 		session->writeDemo->WriteInt( DS_RENDER );

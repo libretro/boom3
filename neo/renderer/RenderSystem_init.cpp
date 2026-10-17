@@ -2623,6 +2623,10 @@ idRenderSystemLocal::Shutdown
 void idRenderSystemLocal::Shutdown( void ) {
 	common->Printf( "idRenderSystem::Shutdown()\n" );
 
+#ifdef BOOM3_VULKAN_RENDERER
+	RB_VK_Shutdown();   // the render thread, before anything it draws from goes
+#endif
+
 	common->SetRefreshOnPrint( false ); // without a renderer there's nothing to refresh
 
 	R_DoneFreeType( );

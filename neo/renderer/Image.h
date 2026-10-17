@@ -239,6 +239,7 @@ public:
 	void		PrefetchFiles();
 	void		UploadPrecompressedImage( byte *data, int len );
 	void		ActuallyLoadImage( bool checkForPrecompressed, bool fromBackEnd );
+	void		Touch();			// loads it if it isn't, as Bind does
 
 	// ActuallyLoadImage's 2D path is split into a decode half
 	// (DecodeImageData - CPU/file only) and an upload half

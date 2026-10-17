@@ -248,6 +248,11 @@ void R_ShutdownFrameData( void ) {
 	frameData_t *frame;
 	frameMemoryBlock_t *block;
 
+#ifdef BOOM3_VULKAN_RENDERER
+	// the render thread may still be drawing from this memory
+	RB_VK_Sync();
+#endif
+
 	// free any current data
 	frame = frameData;
 	if ( !frame ) {

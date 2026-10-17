@@ -208,11 +208,12 @@ static int vkb_frames_init(void)
       cai.commandPool        = f->pool;
       cai.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
       cai.commandBufferCount = 1;
-      if (vk.vkAllocateCommandBuffers(vkb.device, &cai, &f->cmd) != VK_SUCCESS)
+      if (vk.vkAllocateCommandBuffers(vkb.device, &cai, &f->cmds[0]) != VK_SUCCESS)
          return 0;
+      f->numCmds = 1;
       memset(&fci, 0, sizeof(fci));
       fci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-      fci.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+      fci.flags = 0;             /* waited only after a submit */
       if (vk.vkCreateFence(vkb.device, &fci, NULL, &f->fence) != VK_SUCCESS)
          return 0;
       memset(&sci, 0, sizeof(sci));
@@ -309,10 +310,10 @@ static void vkb_ring_shutdown(void)
    vkb.ringMapped = NULL;
 }
 
-void *vkb_ring_alloc(size_t bytes, size_t align, unsigned *buffer, unsigned *offset)
+static void *vkb_ring_alloc_slot(unsigned slot, size_t bytes, size_t align, unsigned *buffer, unsigned *offset)
 {
-   vkb_frame_t *f = &vkb.frames[vkb.frameIndex];
-   unsigned base = vkb.frameIndex * VKB_RING_SEGMENT_BYTES;
+   vkb_frame_t *f = &vkb.frames[slot];
+   unsigned base = slot * VKB_RING_SEGMENT_BYTES;
    unsigned at;
    if (!vkb.ready || !align)
       return NULL;
@@ -327,26 +328,44 @@ void *vkb_ring_alloc(size_t bytes, size_t align, unsigned *buffer, unsigned *off
    return vkb.ringMapped + base + at;
 }
 
+void *vkb_ring_alloc(size_t bytes, size_t align, unsigned *buffer, unsigned *offset)
+{
+   return vkb_ring_alloc_slot(vkb.allocIndex, bytes, align, buffer, offset);
+}
+
+void *vkb_ring_alloc_frame(size_t bytes, size_t align, unsigned *buffer, unsigned *offset)
+{
+   return vkb_ring_alloc_slot(vkb.frameIndex, bytes, align, buffer, offset);
+}
+
 /* --- init and shutdown ------------------------------------------------------ */
 
-/* The slot the next frame records into, taken as soon as the last one
- * was submitted: its ring segment is written by the engine's front end
- * before the backend opens the frame, so the slot's last frame has to be
- * off the GPU by then.  The ring segment, the command buffer and the
- * descriptor sets are reused from here. */
-static void vkb_acquire_slot(void)
+/* A slot for the front end to write into: its last frame off the GPU,
+ * its ring segment, command buffers and descriptor sets reused from
+ * here.  Then what the frames in flight let go. */
+static void vkb_acquire_slot(unsigned slot)
 {
-   vkb_frame_t *f;
-   vkb.frameIndex = vkb.frameCount % VKB_FRAMES;
-   f = &vkb.frames[vkb.frameIndex];
-   vk.vkWaitForFences(vkb.device, 1, &f->fence, VK_TRUE, (uint64_t)-1);
-   vk.vkResetFences(vkb.device, 1, &f->fence);
+   vkb_frame_t *f = &vkb.frames[slot];
+   if (f->submitted)
+   {
+      vk.vkWaitForFences(vkb.device, 1, &f->fence, VK_TRUE, (uint64_t)-1);
+      vk.vkResetFences(vkb.device, 1, &f->fence);
+      f->submitted = 0;
+   }
    vk.vkResetCommandPool(vkb.device, f->pool, 0);
    vk.vkResetDescriptorPool(vkb.device, f->descriptors, 0);
-   f->ringUsed  = 0;
-   f->submitted = 0;
-   vkb_buffers_frame_begin(vkb.frameIndex);
+   f->ringUsed = 0;
+   vkb_buffers_frame_begin(slot);
    vkb_images_frame_done();
+}
+
+void vkb_frame_handoff(void)
+{
+   if (!vkb.ready || vkb.frameOpen)
+      return;
+   vkb.frameIndex = vkb.allocIndex;
+   vkb.allocIndex = (vkb.allocIndex + 1) % VKB_FRAMES;
+   vkb_acquire_slot(vkb.allocIndex);
 }
 
 int vkb_init(const struct retro_hw_render_interface_vulkan *iface, unsigned width, unsigned height)
@@ -383,7 +402,7 @@ int vkb_init(const struct retro_hw_render_interface_vulkan *iface, unsigned widt
       vk.vkCreatePipelineCache(vkb.device, &pci, NULL, &vkb.pipelineCache);
    }
 
-   if (!vkb_frames_init() || !vkb_memory_init() || !vkb_ring_init() || !vkb_images_init()
+   if (!vkt_lock_init() || !vkb_frames_init() || !vkb_memory_init() || !vkb_ring_init() || !vkb_images_init()
          || !vkb_buffers_init() || !vkb_pipelines_init())
    {
       vkb_shutdown();
@@ -404,7 +423,8 @@ int vkb_init(const struct retro_hw_render_interface_vulkan *iface, unsigned widt
       vkb.whiteImage = vkb_image_create(1, 1, 1, 0, VKB_FORMAT_RGBA8, VKB_FILTER_LINEAR_NOMIP, VKB_WRAP_REPEAT, 0);
       vkb_image_upload(vkb.whiteImage, 0, 0, white, sizeof(white));
    }
-   vkb_acquire_slot();
+   vkb.frameIndex = 0;
+   vkb.allocIndex = 0;
    return 1;
 }
 
@@ -424,6 +444,7 @@ void vkb_shutdown(void)
    vkb_frames_shutdown();
    if (vkb.pipelineCache)
       vk.vkDestroyPipelineCache(vkb.device, vkb.pipelineCache, NULL);
+   vkt_lock_free();
    memset(&vkb, 0, sizeof(vkb));
 }
 
@@ -617,7 +638,8 @@ int vkb_begin_frame(enum vkb_target target, unsigned width, unsigned height,
    if (!vkb.target->color)
       return 0;
 
-   vkb.cmd = f->cmd;
+   f->cmdUsed = 1;
+   vkb.cmd = f->cmds[0];
    memset(&bi, 0, sizeof(bi));
    bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
    bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
@@ -670,11 +692,69 @@ static void vkb_composite(void)
    vkb_render_pass_end();
 }
 
+/* The frame's commands so far onto the queue, so the GPU starts on the
+ * scene while the rest of the frame is recorded.  The render pass
+ * resumes in a fresh command buffer; the last submit's fence covers
+ * every earlier one, the queue running them in order. */
+void vkb_flush(void)
+{
+   vkb_frame_t *f = &vkb.frames[vkb.frameIndex];
+   VkSubmitInfo si;
+   VkCommandBufferBeginInfo bi;
+   int viewport[4], scissor[4];
+   if (!vkb.frameOpen || !vkb.drawn)
+      return;
+   if (f->cmdUsed == f->numCmds)
+   {
+      VkCommandBufferAllocateInfo cai;
+      if (f->numCmds == VKB_FRAME_CMDS)
+         return;
+      memset(&cai, 0, sizeof(cai));
+      cai.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+      cai.commandPool        = f->pool;
+      cai.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+      cai.commandBufferCount = 1;
+      if (vk.vkAllocateCommandBuffers(vkb.device, &cai, &f->cmds[f->numCmds]) != VK_SUCCESS)
+         return;
+      f->numCmds++;
+   }
+   memcpy(viewport, vkb.viewport, sizeof(viewport));
+   scissor[0] = vkb.scissor[0];
+   scissor[1] = (int)vkb.target->height - vkb.scissor[1] - vkb.scissor[3];
+   scissor[2] = vkb.scissor[2];
+   scissor[3] = vkb.scissor[3];
+   vkb_render_pass_end();
+   vk.vkEndCommandBuffer(vkb.cmd);
+   memset(&si, 0, sizeof(si));
+   si.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+   si.commandBufferCount = 1;
+   si.pCommandBuffers    = &vkb.cmd;
+   vkb.iface->lock_queue(vkb.iface->handle);
+   vk.vkQueueSubmit(vkb.queue, 1, &si, VK_NULL_HANDLE);
+   vkb.iface->unlock_queue(vkb.iface->handle);
+
+   vkb.cmd = f->cmds[f->cmdUsed++];
+   memset(&bi, 0, sizeof(bi));
+   bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+   bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+   vk.vkBeginCommandBuffer(vkb.cmd, &bi);
+   vkb_render_pass_begin();
+   vkb_viewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+   vkb_scissor(scissor[0], scissor[1], scissor[2], scissor[3]);
+}
+
+/* the frontend took the last frame handed to it: its semaphore is theirs */
+void vkb_presented(void)
+{
+   vkb.unpresented = VK_NULL_HANDLE;
+}
+
 int vkb_end_frame(void)
 {
    vkb_frame_t *f = &vkb.frames[vkb.frameIndex];
    VkSubmitInfo si;
    vkb_target_t *frame;
+   VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
    if (!vkb.frameOpen)
       return 0;
    vkb_render_pass_end();
@@ -689,6 +769,14 @@ int vkb_end_frame(void)
    si.pCommandBuffers      = &vkb.cmd;
    si.signalSemaphoreCount = 1;
    si.pSignalSemaphores    = &f->done;
+   /* a frame the frontend was never shown - more than one swap in a
+    * retro_run - left its semaphore signaled: this submit takes it */
+   if (vkb.unpresented)
+   {
+      si.waitSemaphoreCount = 1;
+      si.pWaitSemaphores    = &vkb.unpresented;
+      si.pWaitDstStageMask  = &waitStage;
+   }
    vkb.iface->lock_queue(vkb.iface->handle);
    vk.vkQueueSubmit(vkb.queue, 1, &si, f->fence);
    vkb.iface->unlock_queue(vkb.iface->handle);
@@ -700,11 +788,13 @@ int vkb_end_frame(void)
    vkb_target_view_info(frame, &vkb.frameInfo[vkb.syncIndex].create_info);
    vkb.iface->set_image(vkb.iface->handle, &vkb.frameInfo[vkb.syncIndex], 1, &f->done,
          VK_QUEUE_FAMILY_IGNORED);
+   vkb.unpresented = f->done;
 
    vkb.frameOpen = 0;
    vkb.cmd       = VK_NULL_HANDLE;
+   vkt_lock();
    vkb.frameCount++;
-   vkb_acquire_slot();
+   vkt_unlock();
    return 1;
 }
 

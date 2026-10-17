@@ -493,15 +493,21 @@ void vkb_transfer_now(void)
 {
    VkCommandBufferBeginInfo bi;
    VkSubmitInfo si;
-   if (!vkb.ready || vkb.frameOpen || !vkb.uploadPool)
+   if (!vkb.ready || !vkb.uploadPool)
       return;
+   vkt_lock();
+   if (!vkb.uploadCount && !vkb_buffers_pending())
+   {
+      vkt_unlock();
+      return;
+   }
    vk.vkResetCommandPool(vkb.device, vkb.uploadPool, 0);
    memset(&bi, 0, sizeof(bi));
    bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
    bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
    vk.vkBeginCommandBuffer(vkb.uploadCmd, &bi);
-   vkb_images_flush_uploads(vkb.uploadCmd);
-   vkb_buffers_flush(vkb.uploadCmd);
+   vkb_images_flush_uploads_locked(vkb.uploadCmd);
+   vkb_buffers_flush_locked(vkb.uploadCmd);
    vk.vkEndCommandBuffer(vkb.uploadCmd);
    memset(&si, 0, sizeof(si));
    si.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -514,6 +520,7 @@ void vkb_transfer_now(void)
    vk.vkWaitForFences(vkb.device, 1, &vkb.uploadFence, VK_TRUE, (uint64_t)-1);
    vkb_staging_retire(1);
    vkb_staging_frame_done();
+   vkt_unlock();
 }
 
 int vkb_memory_init(void)

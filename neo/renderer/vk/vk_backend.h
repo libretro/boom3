@@ -109,9 +109,16 @@ void vkb_static_upload(unsigned buffer, unsigned offset, const void *data, size_
 void vkb_static_free(unsigned buffer, unsigned offset, size_t bytes);
 
 /* The frame's ring: host-visible memory the GPU reads as written.  The
- * pointer is written until vkb_end_frame; the buffer/offset name it for
- * a draw.  NULL when the frame's segment is full. */
+ * front end's allocations go to the segment of the frame it is building;
+ * the buffer/offset name it for a draw.  NULL when the segment is full.
+ * vkb_ring_alloc_frame is the backend's, during a frame's recording. */
 void *vkb_ring_alloc(size_t bytes, size_t align, unsigned *buffer, unsigned *offset);
+void *vkb_ring_alloc_frame(size_t bytes, size_t align, unsigned *buffer, unsigned *offset);
+
+/* Before a frame's commands run: the frame takes the slot the front end
+ * wrote into, and the front end moves on to the next, which waits for
+ * the GPU to be done with it.  On the engine's thread. */
+void vkb_frame_handoff(void);
 
 /* --- the frame ----------------------------------------------------------- */
 
@@ -133,6 +140,11 @@ int  vkb_begin_frame(enum vkb_target target, unsigned width, unsigned height,
  * drawn (compositeProgram with its parms), submits, and hands the frame
  * image to the frontend.  Returns 0 when nothing was drawn. */
 int  vkb_end_frame(void);
+/* submits what the frame has recorded so far, and records on: after the
+ * 3D view, so the GPU draws it while the 2D views are recorded */
+void vkb_flush(void);
+/* after the frontend was given the frame (video_cb) */
+void vkb_presented(void);
 /* the frame image's format: the frontend reads it as it is, so a PQ
  * frame is 10-bit.  A change remakes the frame images. */
 int  vkb_frame_format(enum vkb_format format);

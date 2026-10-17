@@ -72,6 +72,17 @@ extern "C" {
 static bool lr_vulkan( void );
 #define LR_VULKAN() lr_vulkan()
 
+/* the frontend's HDR state, queried on retro_run's thread (hdr_fe_query) */
+typedef struct hdr_frontend {
+	float paperWhite, maxNits;
+	unsigned gamutMode;
+} hdr_frontend_t;
+static hdr_frontend_t hdr_fe;
+static void hdr_fe_query( hdr_frontend_t *fe );
+#ifdef BOOM3_VULKAN_RENDERER
+static void vk_present( void );
+#endif
+
 #include <locale.h>
 
 /*
@@ -2693,6 +2704,15 @@ static void update_variables(bool startup)
 	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
 		hdr_bloom_convolution = !strcmp(var.value, "enabled");
 
+#ifdef BOOM3_VULKAN_RENDERER
+	if (LR_VULKAN()) {
+		var.key = "doom_vulkan_render_thread";
+		var.value = NULL;
+		RB_VK_SetThreaded(!(environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value
+				&& !strcmp(var.value, "disabled")));
+	}
+#endif
+
 	/* Float output only; the s16 pipeline shares no output code with it. */
 	var.key = "doom_audio_limiter";
 	var.value = NULL;
@@ -3047,8 +3067,10 @@ static void context_destroy(void)
         R_FreeDerivedData();
     }
 #ifdef BOOM3_VULKAN_RENDERER
-    if (LR_VULKAN())
+    if (LR_VULKAN()) {
+        RB_VK_Shutdown();
         vkb_shutdown();
+    }
 #endif
 }
 
@@ -4373,6 +4395,12 @@ void retro_run(void)
 		if (Com_InitIncremental( fake_argc, fake_argv )) {
 			if (!libretro_shared_context && !LR_VULKAN())
 				glsm_ctl(GLSM_CTL_STATE_UNBIND, NULL);
+#ifdef BOOM3_VULKAN_RENDERER
+			if (LR_VULKAN()) {
+				vk_present();
+				return;
+			}
+#endif
 #ifdef BOOM3_VR
 			video_cb( NULL, vr_active ? vr_eye_w * 2 : scr_width, vr_active ? vr_eye_h : scr_height, 0 );
 #else
@@ -4399,14 +4427,23 @@ void retro_run(void)
 
 	if (!LR_VULKAN())
 		hdr_bind_scene();
+#ifdef BOOM3_VULKAN_RENDERER
+	else
+		hdr_fe_query( &hdr_fe );
+#endif
 
 	common->Frame();
 
    if (!libretro_shared_context && !LR_VULKAN())
       glsm_ctl(GLSM_CTL_STATE_UNBIND, NULL);
 	
+	/* the sound mix overlaps the render thread's recording of the frame */
 	audio_process();
 	audio_upload_frame();
+#ifdef BOOM3_VULKAN_RENDERER
+	if (LR_VULKAN())
+		vk_present();
+#endif
 }
 
 /*
@@ -8515,9 +8552,8 @@ static void hdr_vk_pass( unsigned target, int w, int h, int program, unsigned im
 }
 
 static void hdr_present_vk( float paperWhite, float H, const float mat[9] ) {
-	const int hw = glConfig.vidWidth, hh = glConfig.vidHeight;
-	const int convN = hdr_bloom_convolution ? hdr_conv_levels( hw, hh ) : 0;
-	const bool haveBloom = hdr_bloom_amount > 0.0f && hdr_vk_targets( hw, hh, convN );
+	int hw, hh, convN;
+	bool haveBloom;
 	const float frameN = (float)( hdr_frame_counter++ & 63u );
 	float bandW0, bandW1;
 	float p0[4], p1[4];
@@ -8527,6 +8563,9 @@ static void hdr_present_vk( float paperWhite, float H, const float mat[9] ) {
 	float m[9];
 	int i;
 
+	RB_VK_SceneSize( &hw, &hh );
+	convN = hdr_bloom_convolution ? hdr_conv_levels( hw, hh ) : 0;
+	haveBloom = hdr_bloom_amount > 0.0f && hdr_vk_targets( hw, hh, convN );
 	if ( haveBloom ) {
 		int qw = hw / 4 < 1 ? 1 : hw / 4,  qh = hh / 4 < 1 ? 1 : hh / 4;
 		int sw = hw / 16 < 1 ? 1 : hw / 16, sh = hh / 16 < 1 ? 1 : hh / 16;
@@ -8713,34 +8752,35 @@ static void hdr_present_vk( float paperWhite, float H, const float mat[9] ) {
 }
 #endif
 
-static void hdr_present( GLuint dstFbo ) {
-	if ( !hdr_output_active )
+/* The frontend's HDR state, re-queried per present as the contract
+ * asks: on the thread that runs retro_run, which the render thread is
+ * not, so the Vulkan present reads a copy taken before the frame. */
+static void hdr_fe_query( hdr_frontend_t *fe ) {
+	unsigned outMode = 1;
+	fe->paperWhite = 200.0f;
+	fe->maxNits = 1000.0f;
+	fe->gamutMode = 0;
+	if ( !hdr_output_active ) {
 		return;
-	if ( !LR_VULKAN() && ( !HDR_COMPOSITE_READY || hdr_fbo == 0 ) )
-		return;
-
-	/* frontend HDR state, re-queried per present as the contract asks */
-	float paperWhite = 200.0f, maxNits = 1000.0f;
-	unsigned gamutMode = 0, outMode = 1;
+	}
 	if ( !hdr_pq_output ) {
 		/* SDR tone-mapped: the display is the 100-nit Rec.709 reference
 		 * - ACES 2.0's own SDR output-transform convention, which its
 		 * surround option still modulates per spec.  H becomes 1, the
 		 * curves solve for unity headroom, and the frontend's HDR
 		 * metadata is not consulted because there is none. */
-		paperWhite = 100.0f;
-		maxNits = 100.0f;
+		fe->paperWhite = 100.0f;
+		fe->maxNits = 100.0f;
 	} else {
-		environ_cb( RETRO_ENVIRONMENT_GET_HDR_PAPER_WHITE_NITS, &paperWhite );
-		environ_cb( RETRO_ENVIRONMENT_GET_HDR_MAX_NITS, &maxNits );
+		environ_cb( RETRO_ENVIRONMENT_GET_HDR_PAPER_WHITE_NITS, &fe->paperWhite );
+		environ_cb( RETRO_ENVIRONMENT_GET_HDR_MAX_NITS, &fe->maxNits );
 		/* the ACES 2.0 tables are solved for this, and rebuilt when it
 		 * moves */
 		if ( hdr_peak_override > 0.0f ) {
-			maxNits = hdr_peak_override;
+			fe->maxNits = hdr_peak_override;
 		}
 	}
-	hdr_aces2_wanted_peak = maxNits;
-	environ_cb( RETRO_ENVIRONMENT_GET_HDR_EXPAND_GAMUT, &gamutMode );
+	environ_cb( RETRO_ENVIRONMENT_GET_HDR_EXPAND_GAMUT, &fe->gamutMode );
 	if ( environ_cb( RETRO_ENVIRONMENT_GET_HDR_OUTPUT_MODE, &outMode ) ) {
 		if ( outMode == 0 && !hdr_warned_sdr && log_cb ) {
 			log_cb( RETRO_LOG_WARN, "[boom3] Color Format is 30-bit HDR but frontend HDR output is off; switch the core option to 24-bit for correct SDR colors\n" );
@@ -8755,6 +8795,20 @@ static void hdr_present( GLuint dstFbo ) {
 			hdr_warned_narrow = true;
 		}
 	}
+}
+
+static void hdr_present( GLuint dstFbo ) {
+	if ( !hdr_output_active )
+		return;
+	if ( !LR_VULKAN() && ( !HDR_COMPOSITE_READY || hdr_fbo == 0 ) )
+		return;
+
+	if ( !LR_VULKAN() ) {
+		hdr_fe_query( &hdr_fe );
+	}
+	float paperWhite = hdr_fe.paperWhite, maxNits = hdr_fe.maxNits;
+	unsigned gamutMode = hdr_fe.gamutMode;
+	hdr_aces2_wanted_peak = maxNits;
 
 	/* Only the Expanded midpoint costs anything to build, and all four
 	   change only when the user touches a frontend setting, so keep the
@@ -9474,6 +9528,19 @@ static void hdr_present( GLuint dstFbo ) {
 }
 
 #ifdef BOOM3_VULKAN_RENDERER
+static bool vk_presented;   /* the render thread handed a frame image to the frontend */
+
+/* the end of retro_run: the render thread's frame, then the frontend's
+ * turn with it */
+static void vk_present( void ) {
+	RB_VK_Sync();
+	video_cb( vk_presented ? RETRO_HW_FRAME_BUFFER_VALID : NULL, scr_width, scr_height, 0 );
+	if ( vk_presented ) {
+		vkb_presented();
+	}
+	vk_presented = false;
+}
+
 /* The Vulkan frame opens on its first draw: straight into the frontend's
  * image when nothing comes between the scene and the screen, else into a
  * scene image the composite resolves (the supersample, the HDR curves). */
@@ -9484,7 +9551,9 @@ void RB_VK_BeginFrame( void ) {
 	/* a PQ frame is 10-bit; the frontend reads the image as it is */
 	vkb_frame_format( hdr_output_active && hdr_pq_output ? VKB_FORMAT_RGB10A2 : VKB_FORMAT_RGBA8 );
 	if ( hdr_output_active || hdr_ssaa == 2 ) {
-		if ( vkb_begin_frame( VKB_TARGET_SCENE, glConfig.vidWidth, glConfig.vidHeight, RB_VK_SceneFormat() ) ) {
+		int sw, sh;
+		RB_VK_SceneSize( &sw, &sh );
+		if ( vkb_begin_frame( VKB_TARGET_SCENE, sw, sh, RB_VK_SceneFormat() ) ) {
 			/* the 24-bit supersample resolves through the plain blit; the
 			 * display transform draws the frame itself (hdr_present_vk) */
 			float parms[4][4];
@@ -9500,9 +9569,10 @@ void RB_VK_BeginFrame( void ) {
 void GLimp_SwapBuffers() {
 #ifdef BOOM3_VULKAN_RENDERER
    if ( LR_VULKAN() ) {
+      /* on the render thread: the frame goes to the frontend's image here
+       * and to the frontend itself at the end of retro_run (vk_present) */
       hdr_present( 0 );
-      vkb_end_frame();
-      video_cb( RETRO_HW_FRAME_BUFFER_VALID, scr_width, scr_height, 0 );
+      vk_presented = vkb_end_frame() != 0;
       return;
    }
 #endif

@@ -27,7 +27,7 @@ static size_t vkb_block_bytes(const vkb_draw_t *draw)
 void vkb_set_view(const vkb_view_block_t *view)
 {
    unsigned buffer, offset;
-   void *p = vkb_ring_alloc(sizeof(*view), VKB_DRAW_BLOCK_ALIGN, &buffer, &offset);
+   void *p = vkb_ring_alloc_frame(sizeof(*view), VKB_DRAW_BLOCK_ALIGN, &buffer, &offset);
    if (!p)
       return;
    memcpy(p, view, sizeof(*view));
@@ -46,12 +46,14 @@ static void vkb_uploads_mid_frame(const vkb_draw_t *draw)
 {
    unsigned i;
    int pending = 0;
+   vkt_lock();
    for (i = 0; i < VKB_MAX_TEXTURE_UNITS; i++)
    {
       const vkb_image_t *im = draw->image[i] ? vkb_image_get(draw->image[i]) : NULL;
       if (im && im->uploadPending)
          pending = 1;
    }
+   vkt_unlock();
    if (!pending || !vkb.frameOpen)
       return;
    vkb_render_pass_end();
@@ -69,6 +71,8 @@ static VkDescriptorSet vkb_descriptor_set(const vkb_draw_t *draw)
    VkDescriptorImageInfo images[VKB_MAX_TEXTURE_UNITS];
    unsigned i, same = 1;
 
+   /* the image table is the main thread's to change while this records */
+   vkt_lock();
    for (i = 0; i < VKB_MAX_TEXTURE_UNITS; i++)
    {
       const vkb_image_t *im = draw->image[i] ? vkb_image_get(draw->image[i]) : NULL;
@@ -77,7 +81,10 @@ static VkDescriptorSet vkb_descriptor_set(const vkb_draw_t *draw)
          same = 0;
    }
    if (same && vkb.boundSet)
+   {
+      vkt_unlock();
       return vkb.boundSet;
+   }
 
    memset(&ai, 0, sizeof(ai));
    ai.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
@@ -85,7 +92,10 @@ static VkDescriptorSet vkb_descriptor_set(const vkb_draw_t *draw)
    ai.descriptorSetCount = 1;
    ai.pSetLayouts        = &vkb.setLayout;
    if (vk.vkAllocateDescriptorSets(vkb.device, &ai, &set) != VK_SUCCESS)
+   {
+      vkt_unlock();
       return VK_NULL_HANDLE;
+   }
 
    memset(writes, 0, sizeof(writes));
    buffers[0].buffer = vkb.ring;
@@ -117,7 +127,10 @@ static VkDescriptorSet vkb_descriptor_set(const vkb_draw_t *draw)
       if (!im || !im->view)
          im = vkb_image_get(vkb.whiteImage);
       if (!im || !im->view)
+      {
+         vkt_unlock();
          return VK_NULL_HANDLE;
+      }
       images[i].sampler     = im->sampler;
       images[i].imageView   = im->view;
       images[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
@@ -130,6 +143,7 @@ static VkDescriptorSet vkb_descriptor_set(const vkb_draw_t *draw)
       vkb.boundImages[i]   = draw->image[i];
       vkb.boundSamplers[i] = (unsigned)(size_t)im->sampler;
    }
+   vkt_unlock();
    vk.vkUpdateDescriptorSets(vkb.device, 2 + VKB_MAX_TEXTURE_UNITS, writes, 0, NULL);
    vkb.boundSet = set;
    return set;
@@ -181,7 +195,7 @@ void vkb_draw(const vkb_draw_t *draw)
    VkBuffer vb, ib;
    if (!vkb.inRenderPass || !draw->block || !draw->indexCount)
       return;
-   p = vkb_ring_alloc(vkb_block_bytes(draw), VKB_DRAW_BLOCK_ALIGN, &buffer, &offset);
+   p = vkb_ring_alloc_frame(vkb_block_bytes(draw), VKB_DRAW_BLOCK_ALIGN, &buffer, &offset);
    if (!p)
       return;
    memcpy(p, draw->block, vkb_block_bytes(draw));
@@ -221,7 +235,7 @@ void vkb_draw_fullscreen(const vkb_draw_t *draw)
    VkDescriptorSet set;
    if (!vkb.inRenderPass || !draw->block)
       return;
-   p = vkb_ring_alloc(vkb_block_bytes(draw), VKB_DRAW_BLOCK_ALIGN, &buffer, &offset);
+   p = vkb_ring_alloc_frame(vkb_block_bytes(draw), VKB_DRAW_BLOCK_ALIGN, &buffer, &offset);
    if (!p)
       return;
    memcpy(p, draw->block, vkb_block_bytes(draw));

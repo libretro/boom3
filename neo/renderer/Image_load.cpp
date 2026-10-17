@@ -2519,7 +2519,7 @@ Bind
 Automatically enables 2D mapping, cube mapping, or 3D texturing if needed
 ==============
 */
-void idImage::Bind() {
+void idImage::Touch() {
 	// if this is an image that we are caching, move it to the front of the LRU chain
 	if ( partialImage ) {
 		if ( cacheUsageNext ) {
@@ -2539,7 +2539,7 @@ void idImage::Bind() {
 	if ( texnum == TEXTURE_NOT_LOADED ) {
 		if ( partialImage ) {
 			// if we have a partial image, go ahead and use that
-			this->partialImage->Bind();
+			this->partialImage->Touch();
 
 			// start a background load of the full thing if it isn't already in the queue
 			if ( !backgroundLoadInProgress ) {
@@ -2550,6 +2550,15 @@ void idImage::Bind() {
 
 		// load the image on demand here, which isn't our normal game operating mode
 		ActuallyLoadImage( true, true );	// check for precompressed, load is from back end
+	}
+	frameUsed = backEnd.frameCount;
+}
+
+void idImage::Bind() {
+	Touch();
+	if ( texnum == TEXTURE_NOT_LOADED && partialImage ) {
+		this->partialImage->Bind();
+		return;
 	}
 
 

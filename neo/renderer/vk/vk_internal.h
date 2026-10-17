@@ -11,6 +11,7 @@
 
 #include "../../sys/libretro-common/include/libretro.h"
 #include "../../sys/libretro-common/include/libretro_vulkan.h"
+#include "vk_thread.h"
 #include "../range_alloc.h"
 #include "vk_backend.h"
 
@@ -192,10 +193,14 @@ typedef struct vkb_deferred_free
    unsigned frame;
 } vkb_deferred_free_t;
 
+#define VKB_FRAME_CMDS 8          /* command buffers a frame may submit in turn */
+
 typedef struct vkb_frame
 {
    VkCommandPool pool;
-   VkCommandBuffer cmd;
+   VkCommandBuffer cmds[VKB_FRAME_CMDS];
+   unsigned numCmds;           /* allocated */
+   unsigned cmdUsed;           /* taken this frame */
    VkFence fence;
    VkSemaphore done;           /* signalled when the frame's rendering is done */
    VkDescriptorPool descriptors;
@@ -271,9 +276,11 @@ typedef struct vkb_state
    vkb_target_t scene;
 
    vkb_frame_t frames[VKB_FRAMES];
-   unsigned frameIndex;         /* frames % VKB_FRAMES */
+   unsigned frameIndex;         /* the slot the frame records into */
+   unsigned allocIndex;         /* the slot the engine's front end writes into: the next frame's */
    unsigned frameCount;
    unsigned syncIndex;          /* the frontend's, this frame */
+   VkSemaphore unpresented;     /* handed to set_image, not yet shown: the next submit waits it */
 
    /* the ring: one host-visible buffer, VKB_FRAMES segments */
    VkBuffer ring;
@@ -365,6 +372,7 @@ VkFormat vkb_depth_stencil_format(void);
 int  vkb_images_init(void);
 void vkb_images_shutdown(void);
 void vkb_images_flush_uploads(VkCommandBuffer cmd);
+void vkb_images_flush_uploads_locked(VkCommandBuffer cmd);
 void vkb_images_frame_done(void);
 VkSampler vkb_sampler(enum vkb_filter filter, enum vkb_wrap wrap, int anisotropy, int mips);
 int  vkb_target_create(vkb_target_t *t, unsigned width, unsigned height, enum vkb_format format,
@@ -380,6 +388,8 @@ int  vkb_buffers_init(void);
 void vkb_buffers_shutdown(void);
 void vkb_buffers_frame_begin(unsigned frameIndex);
 void vkb_buffers_flush(VkCommandBuffer cmd);
+void vkb_buffers_flush_locked(VkCommandBuffer cmd);
+int  vkb_buffers_pending(void);
 VkBuffer vkb_static_vk_buffer(unsigned buffer);
 
 /* vk_device.c: the render pass on the current target */

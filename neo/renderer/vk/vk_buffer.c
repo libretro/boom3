@@ -109,13 +109,14 @@ int vkb_static_alloc(size_t bytes, int indexes, unsigned *buffer, unsigned *offs
    unsigned at;
    if (!vkb.ready || !bytes)
       return 0;
+   vkt_lock();
    for (i = 0; i < VKB_MAX_STATIC_BUFFERS; i++)
    {
       vkb_static_buffer_t *b = &vkb.statics[i];
       if (!b->used)
       {
          if (!vkb_static_make(i, indexes, bytes))
-            return 0;
+            break;
       }
       else if ((int)b->indexes != (indexes ? 1 : 0))
          continue;
@@ -125,9 +126,11 @@ int vkb_static_alloc(size_t bytes, int indexes, unsigned *buffer, unsigned *offs
       {
          *buffer = i + 1;
          *offset = at;
+         vkt_unlock();
          return 1;
       }
    }
+   vkt_unlock();
    return 0;
 }
 
@@ -147,12 +150,17 @@ void vkb_static_upload(unsigned buffer, unsigned offset, const void *data, size_
    {
       vkb_buffer_upload_t *u;
       unsigned char *p;
+      int flush;
+      vkt_lock();
       if (numUploads == uploadCapacity)
       {
          unsigned cap = uploadCapacity ? uploadCapacity * 2 : 256;
          vkb_buffer_upload_t *n = (vkb_buffer_upload_t *)realloc(uploads, cap * sizeof(*n));
          if (!n)
+         {
+            vkt_unlock();
             return;
+         }
          uploads        = n;
          uploadCapacity = cap;
       }
@@ -160,13 +168,18 @@ void vkb_static_upload(unsigned buffer, unsigned offset, const void *data, size_
       memset(u, 0, sizeof(*u));
       p = vkb_staging_alloc(bytes, &u->staging, &u->stagingOffset);
       if (!p)
+      {
+         vkt_unlock();
          return;
+      }
       memcpy(p, data, bytes);
       u->buffer = buffer;
       u->offset = offset;
       u->bytes  = (unsigned)bytes;
       numUploads++;
-      if (!vkb.frameOpen && vkb_staging_should_flush())
+      flush = !vkb.frameOpen && vkb_staging_should_flush();
+      vkt_unlock();
+      if (flush)
          vkb_transfer_now();
    }
 }
@@ -175,6 +188,7 @@ void vkb_static_free(unsigned buffer, unsigned offset, size_t bytes)
 {
    if (!buffer || buffer > VKB_MAX_STATIC_BUFFERS || !vkb.statics[buffer - 1].used)
       return;
+   vkt_lock();
    if (vkb.deferredCount == vkb.deferredCapacity)
    {
       unsigned cap = vkb.deferredCapacity ? vkb.deferredCapacity * 2 : 256;
@@ -183,6 +197,7 @@ void vkb_static_free(unsigned buffer, unsigned offset, size_t bytes)
       {
          vk.vkDeviceWaitIdle(vkb.device);
          range_alloc_free(&vkb.statics[buffer - 1].ranges, offset, (unsigned)bytes);
+         vkt_unlock();
          return;
       }
       vkb.deferred         = n;
@@ -193,6 +208,7 @@ void vkb_static_free(unsigned buffer, unsigned offset, size_t bytes)
    vkb.deferred[vkb.deferredCount].size   = (unsigned)bytes;
    vkb.deferred[vkb.deferredCount].frame  = vkb.frameCount;
    vkb.deferredCount++;
+   vkt_unlock();
 }
 
 /* At a frame's start: the frees the frames in flight have let go, and
@@ -201,6 +217,7 @@ void vkb_buffers_frame_begin(unsigned frameIndex)
 {
    unsigned i;
    (void)frameIndex;
+   vkt_lock();
    for (i = 0; i < vkb.deferredCount; )
    {
       if (vkb.frameCount >= vkb.deferred[i].frame + VKB_FRAMES)
@@ -214,9 +231,22 @@ void vkb_buffers_frame_begin(unsigned frameIndex)
          i++;
    }
    vkb_staging_frame_done();
+   vkt_unlock();
+}
+
+int vkb_buffers_pending(void)
+{
+   return numUploads != 0;
 }
 
 void vkb_buffers_flush(VkCommandBuffer cmd)
+{
+   vkt_lock();
+   vkb_buffers_flush_locked(cmd);
+   vkt_unlock();
+}
+
+void vkb_buffers_flush_locked(VkCommandBuffer cmd)
 {
    unsigned i;
    if (!numUploads)

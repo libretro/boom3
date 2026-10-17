@@ -86,6 +86,22 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       },
       "arb2"
    },
+#if defined(BOOM3_VULKAN_RENDERER)
+   {
+      "doom_vulkan_render_thread",
+      "Vulkan Render Thread",
+      NULL,
+      "Records and submits the Vulkan renderer's frame on a thread of its own while the core mixes the frame's sound, and hands the GPU the 3D views as soon as they are recorded. The frame is still presented within the same call, so no latency is added. Vulkan renderer only.",
+      NULL,
+      NULL,
+      {
+         { "enabled",  "Enabled" },
+         { "disabled", "Disabled" },
+         { NULL, NULL },
+      },
+      "enabled"
+   },
+#endif
 #endif
 	{
       "doom_shadow_smoothing",
