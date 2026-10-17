@@ -339,8 +339,9 @@ ifeq ($(HAVE_GLSL_RENDERERS),1)
    CXXFLAGS += -DHAVE_GLSL_RENDERERS
 endif
 ifeq ($(HAVE_VULKAN_RENDERER),1)
-   CFLAGS += -DHAVE_VULKAN_RENDERER
-   CXXFLAGS += -DHAVE_VULKAN_RENDERER
+   # the vendored Vulkan headers: no SDK on the build machine
+   CFLAGS += -DHAVE_VULKAN_RENDERER -I$(CORE_DIR)/renderer/vk/include
+   CXXFLAGS += -DHAVE_VULKAN_RENDERER -I$(CORE_DIR)/renderer/vk/include
 endif
 endif
 

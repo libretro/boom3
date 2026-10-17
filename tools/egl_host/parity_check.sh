@@ -1,9 +1,10 @@
 #!/bin/sh
-# parity_check.sh: the GLSL renderers against ARB2 on one frame.  The
-# content's autoexec.cfg sets up the view (a map, a save or a demo); every
-# renderer runs it for the given number of frames under egl_host and the
-# last frame is compared with ARB2's by ppmdiff.  A renderer whose mean
-# absolute difference is over the threshold fails.
+# parity_check.sh: the GLSL and Vulkan renderers against ARB2 on one
+# frame.  The content's autoexec.cfg sets up the view (a map, a save or a
+# demo); every renderer runs it for the given number of frames - the GL
+# ones under egl_host, the Vulkan one under vk_host when it is built -
+# and the last frame is compared with ARB2's by ppmdiff.  A renderer
+# whose mean absolute difference is over the threshold fails.
 #
 #   ./parity_check.sh <core.so> <content> <frames> [threshold] [key=value ...]
 #
@@ -11,11 +12,14 @@
 # (the view must be up by then), the threshold a mean difference in 8-bit
 # code values (default 1.5).  Further key=value pairs are core options for
 # every run, say doom_color_format=24bit-tonemapped.  The build must be a
-# desktop one with the renderer option.
+# desktop one with the renderer option.  The Vulkan run takes the device
+# the loader picks: VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json
+# for lavapipe.
 
 set -u
 here=$(cd "$(dirname "$0")" && pwd)
 host="$here/egl_host"
+vkhost="$here/../vk_host/vk_host"
 diff="$here/ppmdiff"
 core=$1
 content=$2
@@ -25,9 +29,13 @@ threshold=${4:-1.5}
 out=$(mktemp -d)
 last=$((frames - 1))
 fail=0
+renderers="arb2 es2 es3 es31"
+[ -x "$vkhost" ] && renderers="$renderers vulkan"
 
-for r in arb2 es2 es3 es31; do
-	"$host" "$core" "$content" "$frames" doom_resolution=640x480 doom_renderer=$r \
+for r in $renderers; do
+	h=$host
+	[ "$r" = vulkan ] && h=$vkhost
+	"$h" "$core" "$content" "$frames" doom_resolution=640x480 doom_renderer=$r \
 		ppm="$out/$r" shots=$last "$@" > "$out/$r.log" 2>&1
 	if [ ! -f "$out/${r}_$last.ppm" ]; then
 		echo "FAIL $r: no frame $last"
@@ -35,7 +43,8 @@ for r in arb2 es2 es3 es31; do
 		fail=$((fail + 1))
 	fi
 done
-for r in es2 es3 es31; do
+for r in $renderers; do
+	[ "$r" = arb2 ] && continue
 	[ -f "$out/${r}_$last.ppm" ] || continue
 	if res=$("$diff" "$out/arb2_$last.ppm" "$out/${r}_$last.ppm" "$threshold"); then
 		echo "pass $r: $res"

@@ -7,7 +7,7 @@
 #define VK_INTERNAL_H
 
 #define VK_NO_PROTOTYPES
-#include "include/vulkan/vulkan.h"
+#include <vulkan/vulkan.h>
 
 #include "../../sys/libretro-common/include/libretro.h"
 #include "../../sys/libretro-common/include/libretro_vulkan.h"

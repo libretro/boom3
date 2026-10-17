@@ -2,7 +2,8 @@
 # core presents, for comparing the Vulkan renderer with the GL ones.  See
 # vk_host.c.
 #
-# Linux: the Vulkan loader (libvulkan-dev); runs on lavapipe without a GPU
+# Linux: the Vulkan loader (libvulkan1; the headers are the vendored ones);
+# runs on lavapipe without a GPU
 # (mesa-vulkan-drivers, VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json).
 #
 #   make
@@ -10,9 +11,9 @@
 
 CC      ?= cc
 CFLAGS  ?= -O1 -g
-override CFLAGS += -std=c89 -pedantic -Wall
+override CFLAGS += -std=c89 -pedantic -Wall -Wno-long-long
 LIBS     = -ldl -lvulkan -lm
-override CFLAGS += -I../../neo/sys/libretro-common/include
+override CFLAGS += -I../../neo/sys/libretro-common/include -I../../neo/renderer/vk/include
 
 TARGET = vk_host
 
