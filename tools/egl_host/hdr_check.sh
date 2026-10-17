@@ -11,17 +11,22 @@
 #   ./hdr_check.sh <core.so> <content> [renderer ...]
 #
 # <content> is a Doom 3 .pk4 in a base/ directory.  The renderers default
-# to the desktop build's (arb2 es2 es3 es31); for a GLES build, which has
-# no renderer option, pass gles.
+# to the desktop build's (arb2 es2 es3 es31, and vulkan when vk_host is
+# built - on the device the loader picks, lavapipe with
+# VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json); for a GLES
+# build, which has no renderer option, pass gles.
 
 set -u
 here=$(cd "$(dirname "$0")" && pwd)
 host="$here/egl_host"
+vkhost="$here/../vk_host/vk_host"
 diff="$here/ppmdiff"
 core=$1
 content=$2
 shift 2
-renderers=${*:-"arb2 es2 es3 es31"}
+default="arb2 es2 es3 es31"
+[ -x "$vkhost" ] && default="$default vulkan"
+renderers=${*:-$default}
 curves="reinhard rplain rext jodie devlin aces acesfit aces2 aces2full hejl
 filmicalu filmiclog hable hable2017 lottes gt unreal neutral agx drago expo
 tumblin ward schlick"
@@ -51,7 +56,9 @@ for r in $renderers; do
 		for c in $curves; do
 			opt="doom_renderer=$r"
 			[ "$r" = gles ] && opt=
-			"$host" "$core" "$content" 60 doom_resolution=320x240 $opt \
+			h=$host
+			[ "$r" = vulkan ] && h=$vkhost
+			"$h" "$core" "$content" 60 doom_resolution=320x240 $opt \
 				doom_color_format=$fmt doom_hdr_rolloff=$c \
 				ppm="$shots/${r}_${fmt}_$c" shots=59 > "$log" 2>&1
 			runs=$((runs + 1))
