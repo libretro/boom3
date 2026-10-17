@@ -226,11 +226,10 @@ idBlockAlloc<idSampleDecoderLocal, 64>		sampleDecoderAllocator;
    rate differs from the output - with 22 kHz assets that is nearly every
    stream start, a recurring mid-play frame-time spike. Retired handles
    park here instead of being freed; adoption resets the stream state to
-   the exact post-init state (see rarch_sinc_resampler_reset_state), so a
+   the exact post-init state (the resampler's own reset), so a
    pooled handle is bit-identical to a fresh one and the output is
    independent of pool history. All use is on the mixer thread.
 */
-extern "C" void rarch_sinc_resampler_reset_state(void *re_);
 #define RS_POOL_SIZE 8
 static struct { void *handle; int srcRate, dstRate; } rsPool[RS_POOL_SIZE];
 
@@ -239,7 +238,7 @@ static void *RsPool_Acquire( int srcRate, int dstRate ) {
 		if ( rsPool[i].handle && rsPool[i].srcRate == srcRate && rsPool[i].dstRate == dstRate ) {
 			void *h = rsPool[i].handle;
 			rsPool[i].handle = NULL;
-			rarch_sinc_resampler_reset_state( h );
+			sinc_resampler.reset( h );
 			return h;
 		}
 	}

@@ -987,22 +987,67 @@ void image_transfer_anim_stream_set_catchup(void *stream,
    }
 }
 
-bool image_transfer_anim_stream_set_output(void *stream,
-      enum image_type_enum type, uint32_t *out)
+bool image_transfer_anim_stream_set_hw(void *stream,
+      enum image_type_enum type, bool enable)
+{
+   if (!stream)
+      return false;
+   switch (type)
+   {
+#ifdef HAVE_RWEBM
+      case IMAGE_TYPE_WEBM:
+         return rwebm_video_stream_set_hw((rwebm_video_stream_t*)stream,
+               enable ? 1 : 0) != 0;
+#endif
+#ifdef HAVE_RMP4
+      case IMAGE_TYPE_MP4:
+         return rmp4_video_stream_set_hw((rmp4_video_stream_t*)stream,
+               enable ? 1 : 0) != 0;
+#endif
+      default:
+         break;
+   }
+   return false;
+}
+
+bool image_transfer_anim_stream_hw_frame(void *stream,
+      enum image_type_enum type, video_hw_frame_t *out)
+{
+   if (!stream)
+      return false;
+   switch (type)
+   {
+#ifdef HAVE_RWEBM
+      case IMAGE_TYPE_WEBM:
+         return rwebm_video_stream_hw_frame((rwebm_video_stream_t*)stream, out) != 0;
+#endif
+#ifdef HAVE_RMP4
+      case IMAGE_TYPE_MP4:
+         return rmp4_video_stream_hw_frame((rmp4_video_stream_t*)stream,
+               out) != 0;
+#endif
+      default:
+         break;
+   }
+   return false;
+}
+
+bool image_transfer_anim_stream_set_output_stride(void *stream,
+      enum image_type_enum type, uint32_t *out, unsigned stride)
 {
    switch (type)
    {
       case IMAGE_TYPE_WEBM:
 #ifdef HAVE_RWEBM
-         rwebm_video_stream_set_output((rwebm_video_stream_t*)stream, out);
-         return true;
+         return rwebm_video_stream_set_output_stride(
+               (rwebm_video_stream_t*)stream, out, stride) != 0;
 #else
          break;
 #endif
       case IMAGE_TYPE_MP4:
 #ifdef HAVE_RMP4
-         rmp4_video_stream_set_output((rmp4_video_stream_t*)stream, out);
-         return true;
+         return rmp4_video_stream_set_output_stride(
+               (rmp4_video_stream_t*)stream, out, stride) != 0;
 #else
          break;
 #endif
@@ -1013,6 +1058,12 @@ bool image_transfer_anim_stream_set_output(void *stream,
          break;
    }
    return false;
+}
+
+bool image_transfer_anim_stream_set_output(void *stream,
+      enum image_type_enum type, uint32_t *out)
+{
+   return image_transfer_anim_stream_set_output_stride(stream, type, out, 0);
 }
 
 /* The video streams give an HDR source as linear scRGB half floats
@@ -1348,6 +1399,62 @@ void *image_transfer_anim_stream_new_avail(void *buf, size_t len,
          break;
    }
    return NULL;
+}
+
+void *image_transfer_anim_stream_new_hw_avail(void *buf, size_t len,
+      size_t avail, enum image_type_enum type, int *need_more,
+      size_t *need_lo, size_t *need_hi)
+{
+   int more = 0;
+   void *stream = image_transfer_anim_stream_new_avail(buf, len, avail,
+         type, &more, need_lo, need_hi);
+   if (need_more)
+      *need_more = more;
+   if (stream || more)
+      return stream;
+#if defined(HAVE_RMP4) && defined(HAVE_RAV1)
+   if (type == IMAGE_TYPE_MP4)
+   {
+      rmp4_video_stream_t *mp4 = rmp4_video_stream_open_hw_avail(
+            (const uint8_t*)buf, len, avail, need_more, need_lo, need_hi);
+      if (mp4 && !rmp4_video_stream_set_hw(mp4, 1))
+      {
+         rmp4_video_stream_close(mp4);
+         return NULL;
+      }
+      return mp4;
+   }
+#endif
+#if defined(HAVE_RWEBM) && defined(HAVE_RAV1)
+   if (type == IMAGE_TYPE_WEBM)
+   {
+      rwebm_video_stream_t *webm = rwebm_video_stream_open_hw_avail(
+            (const uint8_t*)buf, len, avail, need_more);
+      if (webm && !rwebm_video_stream_set_hw(webm, 1))
+      {
+         rwebm_video_stream_close(webm);
+         return NULL;
+      }
+      return webm;
+   }
+#endif
+   return NULL;
+}
+
+bool image_transfer_anim_stream_waiting(const void *stream,
+      enum image_type_enum type)
+{
+#ifdef HAVE_RWEBM
+   if (type == IMAGE_TYPE_WEBM)
+      return rwebm_video_stream_waiting((const rwebm_video_stream_t*)stream) != 0;
+#endif
+#ifdef HAVE_RMP4
+   if (type == IMAGE_TYPE_MP4)
+      return rmp4_video_stream_waiting((const rmp4_video_stream_t*)stream) != 0;
+#endif
+   (void)stream;
+   (void)type;
+   return false;
 }
 
 void image_transfer_anim_stream_free(void *stream,

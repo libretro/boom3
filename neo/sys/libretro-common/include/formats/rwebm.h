@@ -6,9 +6,9 @@
  * decoder needs) and streams out the coded packets in file order, each
  * tagged with its track, timestamp and key-frame flag.
  *
- * WebM restricts Matroska to VP8/VP9 video and Vorbis/Opus audio, so the
- * codec set is small and known; the demuxer recognises those four and
- * exposes any others by their raw Matroska CodecID string.
+ * Recognises VP8/VP9/AV1 video, Vorbis/Opus audio and selected Matroska
+ * codecs. Others are exposed by their raw Matroska CodecID string.
+ * Track recognition does not imply decoder support.
  *
  * The whole input buffer is supplied up front (memory-only, like the rest
  * of libretro-common's format layer) and is borrowed, not copied: it must
@@ -21,6 +21,7 @@
 #include <stddef.h>
 
 #include <retro_common_api.h>
+#include <formats/video_color.h>
 
 RETRO_BEGIN_DECLS
 
@@ -41,9 +42,10 @@ enum rwebm_codec
    RWEBM_CODEC_OPUS,
    RWEBM_CODEC_H264,  /* V_MPEG4/ISO/AVC: CodecPrivate is the avcC box  */
    RWEBM_CODEC_AAC,   /* A_AAC*: CodecPrivate is the ASC                */
-   RWEBM_CODEC_FLAC   /* A_FLAC: CodecPrivate is a whole fLaC header -
+   RWEBM_CODEC_FLAC,  /* A_FLAC: CodecPrivate is a whole fLaC header -
                        * magic and metadata blocks - and each block is
                        * one raw FLAC frame                            */
+   RWEBM_CODEC_AV1    /* V_AV1: CodecPrivate is the av1C record         */
 };
 
 typedef struct
@@ -57,7 +59,8 @@ typedef struct
    unsigned               sample_rate; /* rounded from the float element   */
    unsigned               channels;
    /* Decoder setup data (Vorbis: the xiph-laced 3 headers; Opus: the
-    * OpusHead; VP8/VP9: usually empty).  Aliases into the input buffer. */
+    * OpusHead; VP8/VP9: usually empty; AV1: av1C configuration record).
+    * Aliases into the input buffer. */
    const uint8_t         *codec_private;
    size_t                 codec_private_size;
    /* CodecDelay: nanoseconds of decoded output to drop from the stream
@@ -76,6 +79,7 @@ typedef struct
    unsigned               primaries;
    unsigned               colour_range;
    /* HDR static metadata (0 = absent) */
+   video_mastering_display_t mastering;
    unsigned               max_cll;     /* MaxCLL, nits                     */
    unsigned               max_fall;    /* MaxFALL, nits                    */
    /* Raw Matroska CodecID string, NUL-terminated (e.g. "V_VP8"). */
@@ -113,6 +117,9 @@ int                rwebm_num_tracks(const rwebm_t *webm);
  * and the packet walk's current byte position. */
 size_t             rwebm_media_floor(const rwebm_t *m);
 size_t             rwebm_tell(const rwebm_t *m);
+/* Earliest byte still needed by the next read, including pending laces.
+ * Callers retaining a returned packet must also pin its borrowed data. */
+size_t             rwebm_consumed(const rwebm_t *m);
 const rwebm_track *rwebm_get_track(const rwebm_t *webm, int index);
 
 /* Total duration in nanoseconds (Duration * TimestampScale), or 0 if the

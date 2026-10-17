@@ -342,7 +342,8 @@ CXXFLAGS += $(ARCH_FP_FLAGS)
 # libretro convention: MSB_FIRST is defined (with no value) only on
 # big-endian targets
 ifeq ($(MSB_FIRST), 1)
-CFLAGS += -DMSB_FIRST
+CFLAGS   += -DMSB_FIRST
+CXXFLAGS += -DMSB_FIRST
 endif
 
 # webOS
