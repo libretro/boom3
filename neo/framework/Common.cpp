@@ -1056,38 +1056,6 @@ static void Com_Error_f( const idCmdArgs &args ) {
 	}
 }
 
-/*
-==================
-Com_Freeze_f
-
-Just freeze in place for a given number of seconds to test error recovery.
-==================
-*/
-static void Com_Freeze_f( const idCmdArgs &args ) {
-	float	s;
-	int		start, now;
-
-	if ( args.Argc() != 2 ) {
-		commonLocal.Printf( "freeze <seconds>\n" );
-		return;
-	}
-
-	if ( !com_developer.GetBool() ) {
-		commonLocal.Printf( "freeze may only be used in developer mode\n" );
-		return;
-	}
-
-	s = atof( args.Argv(1) );
-
-	start = eventLoop->Milliseconds();
-
-	while ( 1 ) {
-		now = eventLoop->Milliseconds();
-		if ( ( now - start ) * 0.001f > s ) {
-			break;
-		}
-	}
-}
 
 /*
 =================
@@ -2077,7 +2045,6 @@ idCommonLocal::InitCommands
 void idCommonLocal::InitCommands( void ) {
 	cmdSystem->AddCommand( "error", Com_Error_f, CMD_FL_SYSTEM|CMD_FL_CHEAT, "causes an error" );
 	cmdSystem->AddCommand( "crash", Com_Crash_f, CMD_FL_SYSTEM|CMD_FL_CHEAT, "causes a crash" );
-	cmdSystem->AddCommand( "freeze", Com_Freeze_f, CMD_FL_SYSTEM|CMD_FL_CHEAT, "freezes the game for a number of seconds" );
 	cmdSystem->AddCommand( "quit", Com_Quit_f, CMD_FL_SYSTEM, "quits the game" );
 	cmdSystem->AddCommand( "exit", Com_Quit_f, CMD_FL_SYSTEM, "exits the game" );
 	cmdSystem->AddCommand( "writeConfig", Com_WriteConfig_f, CMD_FL_SYSTEM, "writes a config file" );

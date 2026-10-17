@@ -1461,11 +1461,6 @@ idSessionLocal::DownloadProgressBox
 =================
 */
 void idSessionLocal::DownloadProgressBox( backgroundDownload_t *bgl, const char *title, int progress_start, int progress_end ) {
-	int dlnow = 0, dltotal = 0;
-	int startTime = Core_Milliseconds();
-	int lapsed;
-	idStr sNow, sTotal, sBW, sETA, sMsg;
-
 	if ( !BoxDialogSanityCheck() ) {
 		return;
 	}
@@ -1501,57 +1496,6 @@ void idSessionLocal::DownloadProgressBox( backgroundDownload_t *bgl, const char 
 	msgRunning = false;
 	guiActive = guiMsgRestore;
 	guiMsgRestore = NULL;
-	return;
-
-	while ( 1 ) {
-		while ( msgRunning ) {
-			common->GUIFrame( true, false );
-			if ( bgl->completed ) {
-				guiActive = guiMsgRestore;
-				guiMsgRestore = NULL;
-				return;
-			} else if ( bgl->url.dltotal != dltotal || bgl->url.dlnow != dlnow ) {
-				dltotal = bgl->url.dltotal;
-				dlnow = bgl->url.dlnow;
-				lapsed = Core_Milliseconds() - startTime;
-				sNow.BestUnit( "%.2f", dlnow, MEASURE_SIZE );
-				if ( lapsed > 2000 ) {
-					sBW.BestUnit( "%.1f", ( 1000.0f * dlnow ) / lapsed, MEASURE_BANDWIDTH );
-				} else {
-					sBW = "-- KB/s";
-				}
-				if ( dltotal ) {
-					sTotal.BestUnit( "%.2f", dltotal, MEASURE_SIZE );
-					if ( lapsed < 2000 ) {
-						sprintf( sMsg, "%s / %s", sNow.c_str(), sTotal.c_str() );
-					} else {
-						sprintf( sETA, "%.0f sec", ( (float)dltotal / (float)dlnow - 1.0f ) * lapsed / 1000 );
-						sprintf( sMsg, "%s / %s ( %s - %s )", sNow.c_str(), sTotal.c_str(), sBW.c_str(), sETA.c_str() );
-					}
-				} else {
-					if ( lapsed < 2000 ) {
-						sMsg = sNow;
-					} else {
-						sprintf( sMsg, "%s - %s", sNow.c_str(), sBW.c_str() );
-					}
-				}
-				if ( dltotal ) {
-					guiMsg->SetStateString( "progress", va( "%d", progress_start + dlnow * ( progress_end - progress_start ) / dltotal ) );
-				} else {
-					guiMsg->SetStateString( "progress", "0" );
-				}
-				guiMsg->SetStateString( "message", sMsg.c_str() );
-			}
-		}
-		// abort was used - tell the downloader and wait till final stop
-		bgl->url.status = DL_ABORTING;
-		guiMsg->SetStateString( "title", "Aborting.." );
-		guiMsg->SetStateString( "visible_mid", "0" );
-		// continue looping
-		guiMsgRestore = guiActive;
-		guiActive = guiMsg;
-		msgRunning = true;
-	}
 }
 
 /*

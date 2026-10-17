@@ -29,7 +29,9 @@ If you have questions concerning this license or the applicable additional terms
 #include "sys/platform.h"
 
 // libretro-common headers go before the idlib ones (see File.cpp)
+#ifdef HAVE_THREADS
 #include <rthreads/rthreads.h>
+#endif
 
 #include "framework/Common.h"
 
@@ -39,10 +41,15 @@ If you have questions concerning this license or the applicable additional terms
 ==================
 Sys_CreateThread
 
-Leaves info.threadHandle at 0 if the thread could not be started.
+Leaves info.threadHandle at 0 if the thread could not be started, and
+always without HAVE_THREADS: callers then do the work in place.
 ==================
 */
 void Sys_CreateThread( xthread_t function, void *parms, xthreadInfo &info, const char *name ) {
+#ifndef HAVE_THREADS
+	info.name = NULL;
+	info.threadHandle = 0;
+#else
 	sthread_t *t = sthread_create( function, parms );
 
 	if ( !t ) {
@@ -52,6 +59,7 @@ void Sys_CreateThread( xthread_t function, void *parms, xthreadInfo &info, const
 
 	info.name = name;
 	info.threadHandle = (uintptr_t)t;
+#endif
 }
 
 /*
@@ -66,7 +74,9 @@ void Sys_DestroyThread( xthreadInfo &info ) {
 		return;
 	}
 
+#ifdef HAVE_THREADS
 	sthread_join( (sthread_t *)info.threadHandle );
+#endif
 
 	info.name = NULL;
 	info.threadHandle = 0;

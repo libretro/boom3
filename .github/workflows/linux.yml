@@ -37,6 +37,9 @@ jobs:
     - name: Sinc resampler stream state test
       run: |
         make -C tools/sinc_state check
+    - name: Background reader read-step test
+      run: |
+        make -C tools/bgread check
     - name: Stage artifact
       run: |
         export PKGDIR="boom3_libretro-linux-${{ matrix.arch }}-$(git rev-parse --short HEAD)"
@@ -46,6 +49,13 @@ jobs:
         cp COPYING.txt publish/$PKGDIR/ 2>/dev/null || true
         echo "boom3_libretro for ${{ matrix.arch }} Linux, built $(date)" > publish/$PKGDIR/README.txt
         echo "from ${{ github.ref_name }} commit ${{ github.sha }}" >> publish/$PKGDIR/README.txt
+    - name: Build and link without threads
+      run: |
+        make -C neo -j$(nproc) HAVE_THREADS=0
+        if nm -D neo/boom3_libretro.so | grep -qE 'pthread|sthread_|retro_spsc|retro_eventcount'; then
+          echo "thread symbols in a HAVE_THREADS=0 build"; exit 1
+        fi
+        make -C neo clean
     - name: Upload testbuild package
       uses: actions/upload-artifact@v7
       with:

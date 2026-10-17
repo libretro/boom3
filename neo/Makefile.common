@@ -327,9 +327,6 @@ SRC_LIBRETRO := \
 	$(LIBRETRO_COMM_DIR)/streams/file_stream.c \
 	$(LIBRETRO_COMM_DIR)/vfs/vfs_implementation.c \
 	$(LIBRETRO_COMM_DIR)/vfs/vfs_hybrid.c \
-	$(LIBRETRO_COMM_DIR)/queues/retro_spsc.c \
-	$(LIBRETRO_COMM_DIR)/rthreads/rthreads.c \
-	$(LIBRETRO_COMM_DIR)/rthreads/retro_eventcount.c \
 	$(LIBRETRO_COMM_DIR)/net/net_compat.c \
 	$(LIBRETRO_COMM_DIR)/net/net_socket.c \
 	$(LIBRETRO_COMM_DIR)/glsym/rglgen.c \
@@ -344,6 +341,16 @@ SRC_LIBRETRO := \
 	$(LIBRETRO_COMM_DIR)/audio/resampler/drivers/sinc_resampler_int16.c \
 	$(LIBRETRO_COMM_DIR)/memmap/memalign.c \
 	$(LIBRETRO_COMM_DIR)/glsm/glsm.c
+
+# The background file reader. Without it every read happens in place.
+HAVE_THREADS ?= 1
+ifeq ($(HAVE_THREADS), 1)
+CXXFLAGS  += -DHAVE_THREADS
+SRC_LIBRETRO += \
+	$(LIBRETRO_COMM_DIR)/queues/retro_spsc.c \
+	$(LIBRETRO_COMM_DIR)/rthreads/rthreads.c \
+	$(LIBRETRO_COMM_DIR)/rthreads/retro_eventcount.c
+endif
 
 # The float sinc resampler has an optional hand-written NEON assembly inner
 # loop. It's only used on 32-bit ARM when HAVE_ARM_NEON_ASM_OPTIMIZATIONS is
@@ -414,6 +421,7 @@ SOURCES_CXX	:=\
 	$(SRC_GAME) \
 
 SOURCES_C	:=\
+	$(CORE_DIR)/framework/bgread.c \
 	$(CORE_DIR)/renderer/gl_caps.c \
 	$(CORE_DIR)/renderer/glsl_blocks.c \
 	$(CORE_DIR)/renderer/glsl_translate.c \

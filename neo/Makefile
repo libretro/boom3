@@ -65,7 +65,10 @@ ifneq (,$(findstring unix,$(platform)))
    TARGET := $(TARGET_NAME)_libretro.$(EXT)
    fpic := -fPIC
    SHARED := -shared -Wl,--version-script=$(CORE_DIR)/link.T -Wl,--no-undefined
-   LIBS := -ldl -lpthread
+   LIBS := -ldl
+   ifneq ($(HAVE_THREADS), 0)
+      LIBS += -lpthread
+   endif
    # libretro-common's memmap.c calls shm_open, which glibc before 2.34
    # keeps in librt
    ifneq (,$(findstring Linux,$(shell uname -s)))

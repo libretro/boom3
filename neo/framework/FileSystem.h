@@ -256,9 +256,6 @@ public:
 	virtual void			BackgroundDownload( backgroundDownload_t *bgl ) = 0;
 							// marks finished background reads as completed; main thread
 	virtual void			CompleteBackgroundDownloads( void ) = 0;
-							// completes every background read now, doing the ones the thread
-							// has not reached in place; for teardown, not for a frame
-	virtual void			FlushBackgroundDownloads( void ) = 0;
 							// Starts reading a whole file in the background, so that the
 							// ReadFile of it that is known to be coming finds it already
 							// read. A hint: returns at once and may do nothing. False if the

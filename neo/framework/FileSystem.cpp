@@ -38,8 +38,11 @@ If you have questions concerning this license or the applicable additional terms
 #include <libretro.h>
 // before the idlib headers, for the reason File.cpp gives: retro_atomic.h
 // reaches <atomic>, and Str.h's strcmp macros break libc++'s <cstring>
+#include <retro_atomic.h>
+#ifdef HAVE_THREADS
 #include <retro_spsc.h>
 #include <rthreads/retro_eventcount.h>
+#endif
 
 #include "sys/platform.h"
 
@@ -47,6 +50,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "idlib/hashing/MD4.h"
 #include "framework/Licensee.h"
 #include "framework/rzip.h"
+#include "framework/bgread.h"
 #include "framework/EventLoop.h"
 #include "framework/DeclEntityDef.h"
 #include "framework/DeclManager.h"
@@ -375,7 +379,6 @@ public:
 	virtual void			CloseFile( idFile *f );
 	virtual void			BackgroundDownload( backgroundDownload_t *bgl );
 	virtual void			CompleteBackgroundDownloads( void );
-	virtual void			FlushBackgroundDownloads( void );
 	virtual bool			PrefetchFile( const char *relativePath );
 	virtual void			ClearPrefetches( void );
 	virtual int				GetPrefetchHits( void ) { return prefetchHits; }
@@ -459,9 +462,9 @@ private:
 		rzip_file_t *			zipFile;
 		retro_atomic_int_t *	cancel;		// optional: nonzero means skip the read
 		int *					result;		// optional: where the main thread wants bytes
-		int						bytes;		// read; set by whoever did the read
+		int						bytes;		// read so far; set by whoever did the read
 	};
-	static void				BackgroundRead( backgroundRead_t &r );
+	static void				BackgroundRead( backgroundRead_t &r, retro_atomic_int_t *stop );
 	void					BackgroundReadDone( const backgroundRead_t &r );
 	bool					QueueBackgroundRead( backgroundDownload_t *bgl, retro_atomic_int_t *cancel, int *result );
 	void					StopBackgroundDownloadThread( void );
@@ -483,14 +486,17 @@ private:
 	enum { MAX_PREFETCH = 16, MAX_PREFETCH_BYTES = 32 * 1024 * 1024 };
 	prefetch_t				prefetches[MAX_PREFETCH];
 	int						prefetchCount;			// slots in use
+	int						prefetchAbandoned;		// given up on, not yet freed
 	int						prefetchBytes;
 	int						prefetchHits;
 	prefetch_t *			FindPrefetch( const char *relativePath );
 	void					FreePrefetch( prefetch_t &p );
 	void					ReclaimPrefetches( void );
+#ifdef HAVE_THREADS
 	retro_spsc_t			backgroundRequests;		// main -> reader
 	retro_spsc_t			backgroundResults;		// reader -> main
 	retro_eventcount_t		backgroundWake;			// reader parks here
+#endif
 	retro_atomic_int_t		backgroundThread_exit;	// main sets, reader reads
 	int						backgroundInFlight;		// main thread only
 	bool					backgroundReady;		// rings and eventcount exist
@@ -584,6 +590,7 @@ idFileSystemLocal::idFileSystemLocal( void ) {
 	backgroundInFlight = 0;
 	backgroundReady = false;
 	prefetchCount = 0;
+	prefetchAbandoned = 0;
 	prefetchBytes = 0;
 	prefetchHits = 0;
 	for ( int i = 0; i < MAX_PREFETCH; i++ ) {
@@ -1247,6 +1254,7 @@ int idFileSystemLocal::ReadFile( const char *relativePath, void **buffer, ID_TIM
 			// comes back.
 			retro_atomic_store_release_int( &p->cancel, 1 );
 			p->name[ 0 ] = 0;
+			prefetchAbandoned++;
 		}
 	}
 
@@ -3008,12 +3016,16 @@ void idFileSystemLocal::Shutdown( bool reloading ) {
 	// every read still in flight completes here, before its pak is closed
 	ClearPrefetches();
 	StopBackgroundDownloadThread();
+	// the reader is joined: the slots still out are back now
+	ReclaimPrefetches();
+#ifdef HAVE_THREADS
 	if ( backgroundReady && !reloading ) {
 		retro_spsc_free( &backgroundRequests );
 		retro_spsc_free( &backgroundResults );
 		retro_eventcount_free( &backgroundWake );
 		backgroundReady = false;
 	}
+#endif
 
 	gameFolder.Clear();
 
@@ -3718,20 +3730,13 @@ idFileSystemLocal::BackgroundRead
 
 The read itself, on whichever thread does it. Uses the low level read
 functions: the idFile ones count bytes on the filesystem and can reach
-the engine's heap and console, none of which the reader may touch.
+the engine's heap and console, none of which the reader may touch. See
+bgread_read for the chunking that lets a cancel or the reader's exit
+take effect mid-file.
 ===================
 */
-void idFileSystemLocal::BackgroundRead( backgroundRead_t &r ) {
-	if ( r.cancel && retro_atomic_load_acquire_int( r.cancel ) ) {
-		// the main thread has read the file itself in the meantime
-		r.bytes = -1;
-		return;
-	}
-	if ( r.zipFile ) {
-		r.bytes = rzip_file_read( r.zipFile, r.bgl->file.buffer, r.bgl->file.length );
-	} else {
-		r.bytes = (int)filestream_read( r.osFile, r.bgl->file.buffer, r.bgl->file.length );
-	}
+void idFileSystemLocal::BackgroundRead( backgroundRead_t &r, retro_atomic_int_t *stop ) {
+	bgread_read( r.osFile, r.zipFile, r.bgl->file.buffer, r.bgl->file.length, &r.bytes, r.cancel, stop );
 }
 
 /*
@@ -3751,6 +3756,7 @@ MAX_BACKGROUND_READS entries and the main thread never has more than that
 in flight.
 ===================
 */
+#ifdef HAVE_THREADS
 void BackgroundDownloadThread( void *parm ) {
 	idFileSystemLocal *fs = (idFileSystemLocal *)parm;
 
@@ -3764,7 +3770,7 @@ void BackgroundDownloadThread( void *parm ) {
 
 		if ( retro_spsc_read_avail( &fs->backgroundRequests ) >= sizeof( r ) ) {
 			retro_spsc_read( &fs->backgroundRequests, &r, sizeof( r ) );
-			idFileSystemLocal::BackgroundRead( r );
+			idFileSystemLocal::BackgroundRead( r, &fs->backgroundThread_exit );
 			retro_spsc_write( &fs->backgroundResults, &r, sizeof( r ) );
 			continue;
 		}
@@ -3779,6 +3785,7 @@ void BackgroundDownloadThread( void *parm ) {
 		retro_eventcount_commit_wait( &fs->backgroundWake, key );
 	}
 }
+#endif
 
 /*
 =================
@@ -3786,6 +3793,7 @@ idFileSystemLocal::StartBackgroundReadThread
 =================
 */
 void idFileSystemLocal::StartBackgroundDownloadThread() {
+#ifdef HAVE_THREADS
 	if ( backgroundThread.threadHandle ) {
 		common->Printf( "background thread already running\n" );
 		return;
@@ -3808,17 +3816,20 @@ void idFileSystemLocal::StartBackgroundDownloadThread() {
 	}
 	// Without the thread (or the rings) BackgroundDownload reads in place.
 	Sys_CreateThread( BackgroundDownloadThread, this, backgroundThread, "backgroundDownload" );
+#endif
 }
 
 /*
 =================
 idFileSystemLocal::StopBackgroundDownloadThread
 
-Joins the reader, which returns after the read it is on, and then does
-the reads it had not reached in place. No request is in flight afterwards.
+Joins the reader, which returns within one chunk of the read it is on,
+and then finishes that read and does the ones it had not reached in
+place. No request is in flight afterwards. For teardown only.
 =================
 */
 void idFileSystemLocal::StopBackgroundDownloadThread( void ) {
+#ifdef HAVE_THREADS
 	backgroundRead_t r;
 
 	if ( backgroundThread.threadHandle ) {
@@ -3830,13 +3841,19 @@ void idFileSystemLocal::StopBackgroundDownloadThread( void ) {
 	if ( !backgroundReady ) {
 		return;
 	}
-	// the reader is joined, so both ends of both rings are ours
-	while ( retro_spsc_read_avail( &backgroundRequests ) >= sizeof( r ) ) {
-		retro_spsc_read( &backgroundRequests, &r, sizeof( r ) );
-		BackgroundRead( r );
+	// the reader is joined, so both ends of both rings are ours: finish
+	// the read it stopped in, then the ones it had not reached
+	while ( retro_spsc_read_avail( &backgroundResults ) >= sizeof( r ) ) {
+		retro_spsc_read( &backgroundResults, &r, sizeof( r ) );
+		BackgroundRead( r, NULL );
 		BackgroundReadDone( r );
 	}
-	CompleteBackgroundDownloads();
+	while ( retro_spsc_read_avail( &backgroundRequests ) >= sizeof( r ) ) {
+		retro_spsc_read( &backgroundRequests, &r, sizeof( r ) );
+		BackgroundRead( r, NULL );
+		BackgroundReadDone( r );
+	}
+#endif
 }
 
 /*
@@ -3859,6 +3876,9 @@ bool idFileSystemLocal::QueueBackgroundRead( backgroundDownload_t *bgl, retro_at
 	if ( !backgroundThread.threadHandle || backgroundInFlight >= MAX_BACKGROUND_READS ) {
 		return false;
 	}
+#ifndef HAVE_THREADS
+	return false;
+#else
 
 	idFile_InZip *zip = dynamic_cast<idFile_InZip *>(bgl->f);
 	idFile_Permanent *os = dynamic_cast<idFile_Permanent *>(bgl->f);
@@ -3880,6 +3900,7 @@ bool idFileSystemLocal::QueueBackgroundRead( backgroundDownload_t *bgl, retro_at
 	backgroundInFlight++;
 	retro_eventcount_notify( &backgroundWake );
 	return true;
+#endif
 }
 
 /*
@@ -3938,42 +3959,34 @@ void idFileSystemLocal::BackgroundReadDone( const backgroundRead_t &r ) {
 =================
 idFileSystemLocal::CompleteBackgroundDownloads
 
-Marks the reads the thread has finished as completed. The completed flag
-is only ever written and read on the main thread; call this before
-looking at it.
+Marks the reads the thread has finished as completed, and frees the
+prefetch slots given up on whose read is back. The completed flag is
+only ever written and read on the main thread; call this before looking
+at it. Runs every frame from the image loader's pump.
 =================
 */
 void idFileSystemLocal::CompleteBackgroundDownloads( void ) {
+#ifdef HAVE_THREADS
 	backgroundRead_t r;
 
-	if ( !backgroundInFlight ) {
-		return;
+	if ( backgroundInFlight ) {
+		while ( retro_spsc_read_avail( &backgroundResults ) >= sizeof( r ) ) {
+			retro_spsc_read( &backgroundResults, &r, sizeof( r ) );
+			BackgroundReadDone( r );
+		}
 	}
-	while ( retro_spsc_read_avail( &backgroundResults ) >= sizeof( r ) ) {
-		retro_spsc_read( &backgroundResults, &r, sizeof( r ) );
-		BackgroundReadDone( r );
+	if ( prefetchAbandoned ) {
+		for ( int i = 0; i < MAX_PREFETCH; i++ ) {
+			prefetch_t &p = prefetches[ i ];
+			if ( p.f && !p.name[ 0 ] && p.bgl.completed ) {
+				FreePrefetch( p );
+				prefetchAbandoned--;
+			}
+		}
 	}
+#endif
 }
 
-/*
-=================
-idFileSystemLocal::FlushBackgroundDownloads
-
-Completes every read in flight before returning: waits for the one the
-reader is on and does the rest in place. For teardown - a caller about to
-free the buffers and close the files its requests name - not for a frame.
-=================
-*/
-void idFileSystemLocal::FlushBackgroundDownloads( void ) {
-	if ( !backgroundInFlight ) {
-		return;
-	}
-	bool running = backgroundThread.threadHandle != 0;
-	StopBackgroundDownloadThread();
-	if ( running ) {
-		StartBackgroundDownloadThread();
-	}
-}
 
 /*
 =================
@@ -4024,12 +4037,6 @@ void idFileSystemLocal::ReclaimPrefetches( void ) {
 		return;
 	}
 	CompleteBackgroundDownloads();
-	for ( int i = 0; i < MAX_PREFETCH; i++ ) {
-		prefetch_t &p = prefetches[ i ];
-		if ( p.f && !p.name[ 0 ] && p.bgl.completed ) {
-			FreePrefetch( p );
-		}
-	}
 }
 
 /*
@@ -4101,37 +4108,24 @@ bool idFileSystemLocal::PrefetchFile( const char *relativePath ) {
 =================
 idFileSystemLocal::ClearPrefetches
 
-Frees every prefetch no ReadFile came for. Normally there are none; if
-some are still with the reader, this takes them back first.
+Gives up every prefetch no ReadFile came for. Never waits: a slot still
+with the reader is cancelled, which it sees within one chunk, and is
+freed by CompleteBackgroundDownloads on a later frame once it is back.
 =================
 */
 void idFileSystemLocal::ClearPrefetches( void ) {
-	bool out = false;
-
 	if ( !prefetchCount ) {
 		return;
 	}
 	for ( int i = 0; i < MAX_PREFETCH; i++ ) {
 		prefetch_t &p = prefetches[ i ];
-		if ( p.f ) {
+		if ( p.f && p.name[ 0 ] ) {
 			retro_atomic_store_release_int( &p.cancel, 1 );
 			p.name[ 0 ] = 0;
+			prefetchAbandoned++;
 		}
 	}
 	CompleteBackgroundDownloads();
-	for ( int i = 0; i < MAX_PREFETCH; i++ ) {
-		if ( prefetches[ i ].f && !prefetches[ i ].bgl.completed ) {
-			out = true;
-		}
-	}
-	if ( out ) {
-		FlushBackgroundDownloads();
-	}
-	for ( int i = 0; i < MAX_PREFETCH; i++ ) {
-		if ( prefetches[ i ].f ) {
-			FreePrefetch( prefetches[ i ] );
-		}
-	}
 }
 
 /*
