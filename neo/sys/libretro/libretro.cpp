@@ -64,6 +64,10 @@ extern "C" {
 #include "libretro_core_options.h"
 #include "renderer/gl_caps.h"
 #include "renderer/glsl_translate.h"
+#ifdef BOOM3_VULKAN_RENDERER
+#include "../libretro-common/include/libretro_vulkan.h"
+#include "renderer/vk/vk_backend.h"
+#endif
 
 #include <locale.h>
 
@@ -1002,8 +1006,20 @@ static idCVar vr_turnangle( "vr_turnangle", "45", CVAR_SYSTEM | CVAR_ARCHIVE | C
  * the session: changing it needs a restart. */
 static rendererKind_t libretro_renderer = R_RENDERER_ARB2;
 
+/* the Vulkan renderer owns the frame: no GL context, no glsm, and the
+ * present passes are its own */
+#ifdef BOOM3_VULKAN_RENDERER
+#define LR_VULKAN() ( libretro_renderer == R_RENDERER_VULKAN )
+#else
+#define LR_VULKAN() false
+#endif
+
 static retro_hw_context_type get_hw_context_type(void)
 {
+#ifdef BOOM3_VULKAN_RENDERER
+   if (LR_VULKAN())
+      return RETRO_HW_CONTEXT_VULKAN;
+#endif
 #ifdef HAVE_OPENGLES
 #if defined(HAVE_OPENGLES_3_2)
    return RETRO_HW_CONTEXT_OPENGLES_VERSION;   // major=3, minor=2
@@ -2788,6 +2804,32 @@ static void extract_directory(char *buf, const char *path, size_t size)
 
 static void context_reset(void)
 {
+#ifdef BOOM3_VULKAN_RENDERER
+   if (LR_VULKAN())
+   {
+      const struct retro_hw_render_interface_vulkan *iface = NULL;
+      if (!environ_cb(RETRO_ENVIRONMENT_GET_HW_RENDER_INTERFACE, (void *)&iface) || !iface
+            || iface->interface_type != RETRO_HW_RENDER_INTERFACE_VULKAN
+            || iface->interface_version != RETRO_HW_RENDER_INTERFACE_VULKAN_VERSION)
+      {
+         log_cb(RETRO_LOG_ERROR, "boom3: the frontend has no Vulkan render interface.\n");
+         return;
+      }
+      if (!vkb_init(iface, scr_width, scr_height))
+      {
+         log_cb(RETRO_LOG_ERROR, "boom3: the Vulkan backend did not come up.\n");
+         return;
+      }
+      if (!first_boot)
+      {
+         R_ReinitOpenGL();
+         tr.viewCount++;
+         tr.viewDef = NULL;
+         R_RegenerateWorld_f( idCmdArgs() );
+      }
+      return;
+   }
+#endif
    /* previous context's HDR objects are gone with it */
    hdr_fbo = hdr_tex = hdr_rbo = hdr_prog = 0;
    hdr_prog_bright = hdr_prog_blur = 0;
@@ -2918,6 +2960,10 @@ static void context_destroy(void)
         renderModelManager->FreeModelVertexCaches();
         R_FreeDerivedData();
     }
+#ifdef BOOM3_VULKAN_RENDERER
+    if (LR_VULKAN())
+        vkb_shutdown();
+#endif
 }
 
 char g_game_dir_name[256];	// real name of the directory holding the paks
@@ -3731,6 +3777,10 @@ static rendererKind_t renderer_option(void)
          return R_RENDERER_ES3;
       if (!strcmp(var.value, "es31"))
          return R_RENDERER_ES31;
+#ifdef BOOM3_VULKAN_RENDERER
+      if (!strcmp(var.value, "vulkan"))
+         return R_RENDERER_VULKAN;
+#endif
    }
    return R_RENDERER_ARB2;
 #else
@@ -3746,6 +3796,27 @@ rendererKind_t GLimp_RequestedRenderer(void)
 static bool initialize_opengl(void)
 {
    glsm_ctx_params_t params = {0};
+
+#ifdef BOOM3_VULKAN_RENDERER
+   if (LR_VULKAN())
+   {
+      const struct retro_hw_render_context_negotiation_interface_vulkan *neg = vkb_negotiation();
+      hw_render.context_type    = RETRO_HW_CONTEXT_VULKAN;
+      hw_render.version_major   = 1;
+      hw_render.version_minor   = 1;
+      hw_render.context_reset   = context_reset;
+      hw_render.context_destroy = context_destroy;
+      hw_render.cache_context   = false;
+      environ_cb(RETRO_ENVIRONMENT_SET_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE, (void *)neg);
+      if (!environ_cb(RETRO_ENVIRONMENT_SET_HW_RENDER, &hw_render))
+      {
+         log_cb(RETRO_LOG_ERROR, "boom3: no Vulkan context from the frontend.\n");
+         return false;
+      }
+      libretro_shared_context = false;
+      return true;
+   }
+#endif
 
 #if defined(HAVE_OPENGLES3)
    /* ES 3.1 is asked for by version, which glsm's GLES set-up cannot do;
@@ -3798,6 +3869,8 @@ static bool initialize_opengl(void)
 
 void destroy_opengl(void)
 {
+   if (LR_VULKAN())
+      return;
    if (!glsm_ctl(GLSM_CTL_STATE_CONTEXT_DESTROY, NULL))
    {
       log_cb(RETRO_LOG_ERROR, "Could not destroy glsm context.\n");
@@ -4197,7 +4270,7 @@ void retro_run(void)
     * fast-forward or frame stepping. */
    Core_AdvanceFrame();
 
-   if (!libretro_shared_context)
+   if (!libretro_shared_context && !LR_VULKAN())
       glsm_ctl(GLSM_CTL_STATE_BIND, NULL);
 
 	if (first_boot) {
@@ -4212,7 +4285,7 @@ void retro_run(void)
 			boot_started = true;
 		}
 		if (Com_InitIncremental( fake_argc, fake_argv )) {
-			if (!libretro_shared_context)
+			if (!libretro_shared_context && !LR_VULKAN())
 				glsm_ctl(GLSM_CTL_STATE_UNBIND, NULL);
 #ifdef BOOM3_VR
 			video_cb( NULL, vr_active ? vr_eye_w * 2 : scr_width, vr_active ? vr_eye_h : scr_height, 0 );
@@ -4238,11 +4311,12 @@ void retro_run(void)
 	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, &updated) && updated)
 		update_variables(false);
 
-	hdr_bind_scene();
+	if (!LR_VULKAN())
+		hdr_bind_scene();
 
 	common->Frame();
 
-   if (!libretro_shared_context)
+   if (!libretro_shared_context && !LR_VULKAN())
       glsm_ctl(GLSM_CTL_STATE_UNBIND, NULL);
 	
 	audio_process();
@@ -8996,7 +9070,35 @@ static void hdr_present( GLuint dstFbo ) {
 	glDepthMask( GL_TRUE );
 }
 
+#ifdef BOOM3_VULKAN_RENDERER
+/* The Vulkan frame opens on its first draw: straight into the frontend's
+ * image when nothing comes between the scene and the screen, else into a
+ * scene image the composite resolves (the supersample, the HDR curves). */
+void RB_VK_BeginFrame( void ) {
+	if ( !vkb_ready() ) {
+		return;
+	}
+	if ( hdr_output_active || hdr_ssaa == 2 ) {
+		enum vkb_format format = ( hdr_fp16_scene || hdr_fp32_scene ) ? VKB_FORMAT_RGBA16F : VKB_FORMAT_RGBA8;
+		if ( vkb_begin_frame( VKB_TARGET_SCENE, glConfig.vidWidth, glConfig.vidHeight, format ) ) {
+			float parms[4][4];
+			memset( parms, 0, sizeof( parms ) );
+			vkb_set_composite( VKB_PROGRAM_BLIT, parms, 0 );
+		}
+		return;
+	}
+	vkb_begin_frame( VKB_TARGET_FRAME, scr_width, scr_height, VKB_FORMAT_RGBA8 );
+}
+#endif
+
 void GLimp_SwapBuffers() {
+#ifdef BOOM3_VULKAN_RENDERER
+   if ( LR_VULKAN() ) {
+      vkb_end_frame();
+      video_cb( RETRO_HW_FRAME_BUFFER_VALID, scr_width, scr_height, 0 );
+      return;
+   }
+#endif
    /*
       Frame-time fix: flush only when the frontend reads our FBO from a
       DIFFERENT context - cross-context visibility genuinely needs it.

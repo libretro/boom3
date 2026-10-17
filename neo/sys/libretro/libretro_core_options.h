@@ -71,7 +71,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "doom_renderer",
       "Renderer (Restart Required)",
       NULL,
-      "Which renderer draws the game, and the OpenGL context it asks for. 'ARB2' is the classic desktop path on a compatibility context. 'ES2', 'ES3' and 'ES3.1' are the GLSL renderers of the mobile builds on the desktop context matching their GLES version: OpenGL 2.1, OpenGL 3.3 Core and OpenGL 4.3 Core. 'ES3.1' packs static geometry into shared buffers drawn with base-vertex draws, streams each frame's data through one persistently mapped ring and gives each light interaction its parameters in a uniform buffer. It falls back to 'ES3' where the context lacks what it needs.",
+      "Which renderer draws the game, and the OpenGL context it asks for. 'ARB2' is the classic desktop path on a compatibility context. 'ES2', 'ES3' and 'ES3.1' are the GLSL renderers of the mobile builds on the desktop context matching their GLES version: OpenGL 2.1, OpenGL 3.3 Core and OpenGL 4.3 Core. 'ES3.1' packs static geometry into shared buffers drawn with base-vertex draws, streams each frame's data through one persistently mapped ring and gives each light interaction its parameters in a uniform buffer. It falls back to 'ES3' where the context lacks what it needs. 'Vulkan' draws straight into the frontend's image on a Vulkan device.",
       NULL,
       NULL,
       {
@@ -79,6 +79,9 @@ struct retro_core_option_v2_definition option_defs_us[] = {
          { "es2",  "ES2 (OpenGL 2.1)" },
          { "es3",  "ES3 (OpenGL 3.3 Core)" },
          { "es31", "ES3.1 (OpenGL 4.3 Core)" },
+#if defined(BOOM3_VULKAN_RENDERER)
+         { "vulkan", "Vulkan" },
+#endif
          { NULL, NULL },
       },
       "arb2"
