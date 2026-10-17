@@ -1988,14 +1988,18 @@ void idImageManager::BindNull() {
 
 #ifdef BOOM3_GLSL_RENDERERS
 	if ( R_GLSLRenderer() ) {
+		// the unit's target is unbound, so its bind cache goes with it
 		if ( tmu->textureType == TT_CUBIC ) {
 			qglBindTexture( GL_TEXTURE_CUBE_MAP_EXT, 0 );
+			tmu->currentCubeMap = -1;
 #ifndef HAVE_OPENGLES2
 		} else if ( tmu->textureType == TT_3D ) {
 			qglBindTexture( GL_TEXTURE_3D, 0 );
+			tmu->current3DMap = -1;
 #endif
 		} else if ( tmu->textureType == TT_2D ) {
 			qglBindTexture( GL_TEXTURE_2D, 0 );
+			tmu->current2DMap = -1;
 		}
 		tmu->textureType = TT_DISABLED;
 		return;
