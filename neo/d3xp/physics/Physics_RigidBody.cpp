@@ -467,6 +467,7 @@ idPhysics_RigidBody::idPhysics_RigidBody( void ) {
 	integrator = new idODE_Euler( sizeof(rigidBodyIState_t) / sizeof(float), RigidBodyDerivatives, this );
 
 	dropToFloor = false;
+	testSolid = false;
 	noImpact = false;
 	noContact = false;
 

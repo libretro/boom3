@@ -146,7 +146,10 @@ typedef enum {
 	DM_CONTINUOUS	// must be recreated for every single view (time dependent things like particles)
 } dynamicModel_t;
 
-typedef enum {
+// a joint index, or INVALID_JOINT; the fixed underlying type makes
+// every index a value of the type (not only -1, which is all a bare
+// enumerator list declares) and keeps it an int for the savegame
+typedef enum : int {
 	INVALID_JOINT				= -1
 } jointHandle_t;
 

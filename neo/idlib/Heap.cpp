@@ -1101,7 +1101,9 @@ Mem_ClearedAlloc
 */
 void *Mem_ClearedAlloc( const int size ) {
 	void *mem = Mem_Alloc( size );
-	SIMDProcessor->Memset( mem, 0, size );
+	if ( mem ) {
+		SIMDProcessor->Memset( mem, 0, size );
+	}
 	return mem;
 }
 

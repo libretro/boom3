@@ -70,8 +70,8 @@ private:
 
 template< class type, int dimension >
 ID_INLINE idVectorSet<type,dimension>::idVectorSet( void ) {
-	hash.Clear( idMath::IPow( boxHashSize, dimension ), 128 );
 	boxHashSize = 16;
+	hash.Clear( idMath::IPow( boxHashSize, dimension ), 128 );
 	memset( boxInvSize, 0, dimension * sizeof( boxInvSize[0] ) );
 	memset( boxHalfSize, 0, dimension * sizeof( boxHalfSize[0] ) );
 }
@@ -172,8 +172,10 @@ public:
 							idVectorSubset( void );
 							idVectorSubset( const type &mins, const type &maxs, const int boxHashSize, const int initialSize );
 
-							// returns total size of allocated memory
-	size_t					Allocated( void ) const { return idList<type>::Allocated() + hash.Allocated(); }
+							// returns total size of allocated memory (the subset
+							// holds no vectors of its own, only the hash over
+							// the caller's list)
+	size_t					Allocated( void ) const { return hash.Allocated(); }
 							// returns total size of allocated memory including size of type
 	size_t					Size( void ) const { return sizeof( *this ) + Allocated(); }
 
@@ -194,8 +196,8 @@ private:
 
 template< class type, int dimension >
 ID_INLINE idVectorSubset<type,dimension>::idVectorSubset( void ) {
-	hash.Clear( idMath::IPow( boxHashSize, dimension ), 128 );
 	boxHashSize = 16;
+	hash.Clear( idMath::IPow( boxHashSize, dimension ), 128 );
 	memset( boxInvSize, 0, dimension * sizeof( boxInvSize[0] ) );
 	memset( boxHalfSize, 0, dimension * sizeof( boxHalfSize[0] ) );
 }

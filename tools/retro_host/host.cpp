@@ -96,6 +96,38 @@ static bool env_cb(unsigned cmd, void *data){
 	return false;
 }
 
+static bool state_mismatch = false;
+
+/* The savegame's object list: after the header strings (which end with
+   the build string, pointer size and byte order), a count and then that
+   many length-prefixed class names. Returns the count and sets *end to
+   the byte after the list, or -1 if the layout is not recognised. */
+static int object_list(const void *buf, size_t size, size_t *end) {
+	const unsigned char *p = (const unsigned char*)buf;
+	size_t off = 0;
+	int n, i;
+	/* [int version]["dhewm 3"][int internal][string map][dict][...]: walk by
+	   searching for the fixed byte-order marker (short 1234 after short
+	   sizeof(void*)) that the game header ends with */
+	for (off = 0; off + 4 <= size; off++) {
+		if (p[off] == 8 && p[off+1] == 0 && p[off+2] == 0xd2 && p[off+3] == 0x04) break;
+		if (p[off] == 4 && p[off+1] == 0 && p[off+2] == 0xd2 && p[off+3] == 0x04) break;
+	}
+	if (off + 8 > size) return -1;
+	off += 4;
+	memcpy(&n, p + off, 4); off += 4;
+	if (n < 0 || n > 1000000) return -1;
+	for (i = 0; i < n; i++) {
+		int len;
+		if (off + 4 > size) return -1;
+		memcpy(&len, p + off, 4); off += 4;
+		if (len < 0 || off + (size_t)len > size) return -1;
+		off += len;
+	}
+	*end = off;
+	return n;
+}
+
 typedef void (*fv)(void);
 int main(int argc, char **argv){
 	want_float = argc > 2 && atoi(argv[2]) == 1;
@@ -169,6 +201,47 @@ int main(int argc, char **argv){
 		if (state_buf && i == state_at + 120) {
 			bool ok = r_unser(state_buf, state_size);
 			fprintf(stderr, "[host] unserialize: %s\n", ok?"OK":"FAIL");
+			/* a state built right after its own restore must describe the
+			   same objects: the object list (class names, in order) at the
+			   head of the game section is compared and must match; anything
+			   the restore spawns anew (or fails to carry) shows there. The
+			   whole state is compared too and reported, but not gated: the
+			   script heap is not yet rebuilt bit-exactly by a restore. */
+			if (ok) {
+				size_t again_size = r_ssize();
+				void *again = malloc(again_size ? again_size : 1);
+				bool ok2 = again_size > 0 && r_ser(again, again_size);
+				if (getenv("HOST_DUMP_STATES")) {
+					/* HOST_DUMP_STATES=<prefix>: writes <prefix>a.bin and <prefix>b.bin */
+					char dump[1024];
+					snprintf(dump, sizeof dump, "%sa.bin", getenv("HOST_DUMP_STATES"));
+					FILE *f = fopen(dump,"wb"); fwrite(state_buf,1,state_size,f); fclose(f);
+					snprintf(dump, sizeof dump, "%sb.bin", getenv("HOST_DUMP_STATES"));
+					f = fopen(dump,"wb"); fwrite(again,1,again_size,f); fclose(f);
+				}
+				if (!ok2) {
+					fprintf(stderr, "[host] state rebuild after restore: FAIL (size %zu)\n", again_size);
+					state_mismatch = true;
+				} else {
+					size_t ea = 0, eb = 0;
+					int na = object_list(state_buf, state_size, &ea);
+					int nb = object_list(again, again_size, &eb);
+					if (na < 0 || na != nb || ea != eb || memcmp(state_buf, again, ea)) {
+						fprintf(stderr, "[host] object list after restore differs: %d vs %d objects\n", na, nb);
+						state_mismatch = true;
+					} else {
+						fprintf(stderr, "[host] object list after restore: identical (%d objects)\n", na);
+					}
+					if (again_size != state_size || memcmp(again, state_buf, state_size)) {
+						size_t n = again_size < state_size ? again_size : state_size, d = 0;
+						while (d < n && ((char*)again)[d] == ((char*)state_buf)[d]) d++;
+						fprintf(stderr, "[host] whole state after restore differs: %zu vs %zu bytes, first at byte %zu (not gated)\n", again_size, state_size, d);
+					} else {
+						fprintf(stderr, "[host] whole state after restore: identical\n");
+					}
+				}
+				free(again);
+			}
 		}
 	}
 
@@ -191,5 +264,6 @@ int main(int argc, char **argv){
 		negotiated_float?"FLOAT":"S16", frames_run,
 		(unsigned long long)audio_frames, (double)audio_frames/frames_run);
 	r_unload(); r_deinit();
-	return 0;
+	free(state_buf);
+	return state_mismatch ? 3 : 0;
 }

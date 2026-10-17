@@ -9618,11 +9618,18 @@ void retro_set_video_refresh(retro_video_refresh_t cb)
    video_cb = cb;
 }
 
+static void RetroReleaseState(void);
+
 void retro_unload_game(void)
 {
 	// common->Init() only runs on the first retro_run(); if the frontend
 	// unloads before ever running a frame, shutting down an uninitialized
 	// engine would touch unconstructed subsystems.
+	// the built state's buffer belongs to the engine heap, which
+	// common->Shutdown() takes down: release it now rather than from
+	// the static file's destructor at process exit
+	RetroReleaseState();
+
 	if (common && !first_boot)
 		common->Shutdown();
 
@@ -9714,6 +9721,13 @@ public:
 static idFile_Memory retro_state_file( RETRO_STATE_NAME ".save" );
 static int retro_state_len;
 static int retro_state_cache_tic = -1;
+
+static void RetroReleaseState(void)
+{
+	retro_state_file.Clear( true );
+	retro_state_len = 0;
+	retro_state_cache_tic = -1;
+}
 
 static bool RetroBuildState(void)
 {

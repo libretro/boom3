@@ -132,9 +132,6 @@ idGrabber::Restore
 ==============
 */
 void idGrabber::Restore( idRestoreGame *savefile ) {
-	//Spawn the beams
-	Initialize();
-
 	dragEnt.Restore( savefile );
 	savefile->ReadStaticObject( drag );
 
@@ -165,6 +162,11 @@ void idGrabber::Restore( idRestoreGame *savefile ) {
 	savefile->ReadObject( reinterpret_cast<idClass *&>(beamTarget) );
 
 	savefile->ReadInt( warpId );
+
+	// the beams the save carried are back; spawn only what is missing.
+	// Spawning first, as this used to, made a fresh pair that the reads
+	// then orphaned: two entities leaked per restore.
+	SpawnBeams();
 }
 
 /*
@@ -173,6 +175,20 @@ idGrabber::Initialize
 ==============
 */
 void idGrabber::Initialize( void ) {
+	SpawnBeams();
+	endTime = 0;
+	dragTraceDist = MAX_DRAG_TRACE_DISTANCE;
+}
+
+/*
+==============
+idGrabber::SpawnBeams
+
+The beams a single player game draws, for whichever of the two is
+missing; Restore has them from the save.
+==============
+*/
+void idGrabber::SpawnBeams( void ) {
 	if ( !gameLocal.isMultiplayer ) {
 		idDict args;
 
@@ -193,16 +209,10 @@ void idGrabber::Initialize( void ) {
 			beam = ( idBeam * )gameLocal.SpawnEntityType( idBeam::Type, &args );
 			beam->SetShaderParm( 6, 1.0f );
 		}
-
-		endTime = 0;
-		dragTraceDist = MAX_DRAG_TRACE_DISTANCE;
-	}
-	else {
+	} else {
 		beam = NULL;
 		beamTarget = NULL;
-		endTime = 0;
-		dragTraceDist = MAX_DRAG_TRACE_DISTANCE;
-	};
+	}
 }
 
 /*

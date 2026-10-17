@@ -702,7 +702,7 @@ ID_INLINE idEntityPtr<type> &idEntityPtr<type>::operator=( type *ent ) {
 	if ( ent == NULL ) {
 		spawnId = 0;
 	} else {
-		spawnId = ( gameLocal.spawnIds[ent->entityNumber] << GENTITYNUM_BITS ) | ent->entityNumber;
+		spawnId = (int)( ( (unsigned)gameLocal.spawnIds[ent->entityNumber] << GENTITYNUM_BITS ) | (unsigned)ent->entityNumber );
 	}
 	return *this;
 }

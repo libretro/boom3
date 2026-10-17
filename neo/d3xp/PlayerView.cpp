@@ -87,6 +87,15 @@ idPlayerView::idPlayerView() {
 
 /*
 ==============
+idPlayerView::~idPlayerView
+==============
+*/
+idPlayerView::~idPlayerView() {
+	delete fxManager;
+}
+
+/*
+==============
 idPlayerView::Save
 ==============
 */
@@ -1632,7 +1641,7 @@ FullscreenFXManager::~FullscreenFXManager
 ==================
 */
 FullscreenFXManager::~FullscreenFXManager() {
-
+	fx.DeleteContents( true );
 }
 
 /*

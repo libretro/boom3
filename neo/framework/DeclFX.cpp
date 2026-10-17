@@ -138,6 +138,7 @@ void idDeclFX::ParseSingleFXAction( idLexer &src, idFXSingleAction& FXAction ) {
 	FXAction.particleTrackVelocity = false;
 	FXAction.trackOrigin = false;
 	FXAction.soundStarted = false;
+	FXAction.shakeStarted = false;
 
 	while (1) {
 		if ( !src.ReadToken( &token ) ) {

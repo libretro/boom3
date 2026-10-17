@@ -332,6 +332,7 @@ public:
 class idPlayerView {
 public:
 					idPlayerView();
+					~idPlayerView();
 
 	void			Save( idSaveGame *savefile ) const;
 	void			Restore( idRestoreGame *savefile );

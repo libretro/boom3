@@ -54,6 +54,7 @@ public:
 	void					Restore( idRestoreGame *savefile );
 
 	void					Initialize( void );
+	void					SpawnBeams( void );
 	void					SetDragDistance( float dist );
 	int						Update( idPlayer *player, bool hide );
 

@@ -17,7 +17,12 @@ audio capture, savestate round-trip, and a framebuffer luminance probe.
   builds: `cmp` against a reference capture is the regression oracle for
   "did this change alter the simulation".
 - state_test_frame N: retro_serialize at frame N, retro_unserialize at
-  N+120, verifying the savestate round trip in-game.
+  N+120, then retro_serialize again. The object list at the head of the
+  rebuilt state (every entity and thread, by class, in order) must equal
+  the restored one: anything the restore spawns anew or fails to carry
+  shows there; exit code 3 if not. The whole state is compared and
+  reported too, but not gated (the script heap is not yet rebuilt
+  bit-exactly). HOST_DUMP_STATES=<prefix> writes both states out.
 - framerate: served to the core's doom_framerate option (e.g. 120).
 - probe window: after each video_cb, reads the viewmodel region of the
   default framebuffer and reports mean luminance plus an alternation
