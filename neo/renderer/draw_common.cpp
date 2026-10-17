@@ -250,6 +250,81 @@ bool RB_FilterBlend( int drawStateBits ) {
 		|| dst == GLS_DSTBLEND_SRC_COLOR || dst == GLS_DSTBLEND_ONE_MINUS_SRC_COLOR;
 }
 
+/*
+=====================
+RB_MaterialReadsCurrentDepth / RB_ViewReadsCurrentDepth
+
+What reads _currentDepth: soft particles (a surface flagged
+DSF_SOFT_PARTICLE with a softening radius), any material stage or
+fragment program image that is the image itself (surfaces and lights
+alike), and r_showDepth.  A view with none of them never samples the copy.
+=====================
+*/
+bool RB_MaterialReadsCurrentDepth( const idMaterial *material ) {
+	int i, j;
+	if ( material == NULL ) {
+		return false;
+	}
+	for ( i = 0; i < material->GetNumStages(); i++ ) {
+		const shaderStage_t *stage = material->GetStage( i );
+		if ( stage->texture.image == globalImages->currentDepthImage ) {
+			return true;
+		}
+		if ( stage->newStage ) {
+			for ( j = 0; j < stage->newStage->numFragmentProgramImages; j++ ) {
+				if ( stage->newStage->fragmentProgramImages[j] == globalImages->currentDepthImage ) {
+					return true;
+				}
+			}
+		}
+	}
+	return false;
+}
+
+bool RB_ViewReadsCurrentDepth( void ) {
+	const viewDef_t *view = backEnd.viewDef;
+	const viewLight_t *vLight;
+	const idMaterial *last = NULL;
+	int i;
+	if ( r_showDepth.GetBool() ) {
+		return true;
+	}
+	for ( i = 0; i < view->numDrawSurfs; i++ ) {
+		const drawSurf_t *surf = view->drawSurfs[i];
+		if ( ( surf->dsFlags & DSF_SOFT_PARTICLE ) && surf->particle_radius > 0.0f ) {
+			return true;
+		}
+		// surfaces sharing a material sit together in the sorted list
+		if ( surf->material != last ) {
+			last = surf->material;
+			if ( RB_MaterialReadsCurrentDepth( last ) ) {
+				return true;
+			}
+		}
+	}
+	for ( vLight = view->viewLights; vLight; vLight = vLight->next ) {
+		if ( RB_MaterialReadsCurrentDepth( vLight->lightShader ) ) {
+			return true;
+		}
+	}
+	return false;
+}
+
+/*
+=====================
+RB_DepthCaptureWanted
+
+Whether the view's depth is copied into _currentDepth after the depth
+fill: capture on, or soft particles asking for it, in a view that is not
+the lightgem's and that reads the copy.
+=====================
+*/
+bool RB_DepthCaptureWanted( void ) {
+	const bool capture = r_enableDepthCapture.GetInteger() == 1
+		|| ( r_enableDepthCapture.GetInteger() == -1 && r_useSoftParticles.GetBool() );
+	return capture && backEnd.viewDef->renderView.viewID >= 0 && RB_ViewReadsCurrentDepth();
+}
+
 #ifdef BOOM3_ARB2_RENDERER
 
 /*
@@ -693,65 +768,6 @@ void RB_T_FillDepthBuffer( const drawSurf_t *surf ) {
 
 void RB_SetProgramEnvironment( bool isPostProcess ); // so RB_STD_FillDepthBuffer() can use it
 
-/*
-=====================
-RB_MaterialReadsCurrentDepth / RB_ViewReadsCurrentDepth
-
-What reads _currentDepth: soft particles (a surface flagged
-DSF_SOFT_PARTICLE with a softening radius), any material stage or
-fragment program image that is the image itself (surfaces and lights
-alike), and r_showDepth.  A view with none of them never samples the copy.
-=====================
-*/
-static bool RB_MaterialReadsCurrentDepth( const idMaterial *material ) {
-	int i, j;
-	if ( material == NULL ) {
-		return false;
-	}
-	for ( i = 0; i < material->GetNumStages(); i++ ) {
-		const shaderStage_t *stage = material->GetStage( i );
-		if ( stage->texture.image == globalImages->currentDepthImage ) {
-			return true;
-		}
-		if ( stage->newStage ) {
-			for ( j = 0; j < stage->newStage->numFragmentProgramImages; j++ ) {
-				if ( stage->newStage->fragmentProgramImages[j] == globalImages->currentDepthImage ) {
-					return true;
-				}
-			}
-		}
-	}
-	return false;
-}
-
-static bool RB_ViewReadsCurrentDepth( void ) {
-	const viewDef_t *view = backEnd.viewDef;
-	const viewLight_t *vLight;
-	const idMaterial *last = NULL;
-	int i;
-	if ( r_showDepth.GetBool() ) {
-		return true;
-	}
-	for ( i = 0; i < view->numDrawSurfs; i++ ) {
-		const drawSurf_t *surf = view->drawSurfs[i];
-		if ( ( surf->dsFlags & DSF_SOFT_PARTICLE ) && surf->particle_radius > 0.0f ) {
-			return true;
-		}
-		// surfaces sharing a material sit together in the sorted list
-		if ( surf->material != last ) {
-			last = surf->material;
-			if ( RB_MaterialReadsCurrentDepth( last ) ) {
-				return true;
-			}
-		}
-	}
-	for ( vLight = view->viewLights; vLight; vLight = vLight->next ) {
-		if ( RB_MaterialReadsCurrentDepth( vLight->lightShader ) ) {
-			return true;
-		}
-	}
-	return false;
-}
 
 /*
 =====================
@@ -807,7 +823,7 @@ void RB_STD_FillDepthBuffer( drawSurf_t **drawSurfs, int numDrawSurfs ) {
 														  backEnd.viewDef->viewport.y1,
 														  backEnd.viewDef->viewport.x2 - backEnd.viewDef->viewport.x1 + 1,
 														  backEnd.viewDef->viewport.y2 - backEnd.viewDef->viewport.y1 + 1,
-														  true, RB_ViewReadsCurrentDepth() );
+														  true, RB_DepthCaptureWanted() );
 		bool isPostProcess = false;
 		RB_SetProgramEnvironment( isPostProcess );
 	}
