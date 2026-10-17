@@ -979,7 +979,7 @@ void idRenderSystemLocal::CaptureRenderToFile( const char *fileName, bool fixAlp
 	guiModel->Clear();
 	R_IssueRenderCommands();
 
-#ifdef BOOM3_ARB2_RENDERER
+#if defined(BOOM3_ARB2_RENDERER) && !defined(LIBRETRO)
 	if ( !R_GLSLRenderer() ) {
 		qglReadBuffer( GL_BACK );
 	}

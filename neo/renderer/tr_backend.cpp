@@ -482,7 +482,7 @@ static void	RB_SetBuffer( const void *data ) {
 	cmd = (const setBufferCommand_t *)data;
 
 	backEnd.frameCount = cmd->frameCount;
-#ifdef BOOM3_ARB2_RENDERER
+#if defined(BOOM3_ARB2_RENDERER) && !defined(LIBRETRO)
 	if ( !R_GLSLRenderer() ) {
 		qglDrawBuffer( cmd->buffer );
 	}
