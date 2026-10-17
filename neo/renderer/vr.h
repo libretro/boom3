@@ -22,6 +22,9 @@ void VR_SetScreenFade( const float rgba[4] );
 // go through one layer of the bound target between these two.
 void VR_BeginLayerRead( int layer );
 void VR_BeginSceneRead( void );
+// A copy from that layer into level 0 of the bound 2D texture tex, with
+// CopyTexSubImage2D's source rectangle and destination offset
+void VR_CopyLayerRead( unsigned int tex, int x, int y, int w, int h, int dstX, int dstY );
 void VR_EndLayerRead( void );
 #endif
 #else

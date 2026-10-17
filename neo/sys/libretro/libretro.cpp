@@ -1252,6 +1252,7 @@ bool VR_GetHandPose( int hand, bool aim, const idVec3 &viewOrigin, const idMat3 
  * so the UI target has two layers as well; both get the same picture. */
 static GLuint vr_depth;
 static GLuint vr_read_fbo, vr_read_restore;   /* VR_BeginLayerRead */
+static GLuint vr_blit_fbo;                     /* VR_CopyLayerRead's destination */
 static bool   vr_read_redirected;             /* restore vr_read_restore, which may be 0 */
 
 static void vr_destroy_targets( void ) {
@@ -1264,6 +1265,8 @@ static void vr_destroy_targets( void ) {
 	vr_depth = 0;
 	if ( vr_read_fbo ) glDeleteFramebuffers( 1, &vr_read_fbo );
 	vr_read_fbo = 0;
+	if ( vr_blit_fbo ) glDeleteFramebuffers( 1, &vr_blit_fbo );
+	vr_blit_fbo = 0;
 }
 
 static void vr_clear_target( int i );
@@ -1365,6 +1368,26 @@ void VR_BeginSceneRead( void ) {
 	/* back to whatever was bound for reading, the frontend's 0 included */
 	vr_read_restore = (GLuint)read;
 	vr_read_redirected = true;
+}
+
+/* A copy from the layer VR_BeginLayerRead selected into level 0 of the
+ * bound 2D texture tex.  Some drivers take a copy from layer 0 whatever
+ * layer is attached, so it is a blit, which reads the layer it is given. */
+void VR_CopyLayerRead( unsigned int tex, int x, int y, int w, int h, int dstX, int dstY ) {
+	if ( !vr_read_redirected ) {
+		glCopyTexSubImage2D( GL_TEXTURE_2D, 0, dstX, dstY, x, y, w, h );
+		return;
+	}
+	if ( !vr_blit_fbo ) glGenFramebuffers( 1, &vr_blit_fbo );
+	glBindFramebuffer( GL_DRAW_FRAMEBUFFER, vr_blit_fbo );
+	glFramebufferTexture2D( GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, (GLuint)tex, 0 );
+	/* a blit is scissored like a draw; the renderer draws with it on */
+	glDisable( GL_SCISSOR_TEST );
+	glBlitFramebuffer( x, y, x + w, y + h, dstX, dstY, dstX + w, dstY + h,
+			GL_COLOR_BUFFER_BIT, GL_NEAREST );
+	glEnable( GL_SCISSOR_TEST );
+	glFramebufferTexture2D( GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0 );
+	glBindFramebuffer( GL_DRAW_FRAMEBUFFER, vr_read_restore );
 }
 
 void VR_EndLayerRead( void ) {
@@ -2888,6 +2911,7 @@ static void context_reset(void)
 #ifdef HAVE_OPENGLES3
    vr_depth = 0;
    vr_read_fbo = vr_read_restore = 0;
+   vr_blit_fbo = 0;
    vr_layer_prog = 0;
    vr_layer_loc_tex = vr_layer_loc_layer = -1;
 #endif
