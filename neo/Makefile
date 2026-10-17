@@ -333,6 +333,11 @@ endif
 ifeq ($(platform), libnx)
    HAVE_GLSL_RENDERERS := 0
 endif
+# the Vulkan renderer shares the GLSL renderers' engine side (renderer
+# option, GL no-op entry points): it goes where they go
+ifneq ($(HAVE_GLSL_RENDERERS),1)
+   HAVE_VULKAN_RENDERER := 0
+endif
 ifneq ($(GLES),1)
 ifeq ($(HAVE_GLSL_RENDERERS),1)
    CFLAGS += -DHAVE_GLSL_RENDERERS
