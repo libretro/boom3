@@ -30,6 +30,24 @@ diffuse_cube_vert cube.vert -DMODE=2
 cube_frag cube.frag
 blit_vert blit.vert
 blit_frag blit.frag
+interaction_vert interaction.vert -DPHONG=0
+interaction_frag interaction.frag -DPHONG=0
+interaction_phong_vert interaction.vert -DPHONG=1
+interaction_phong_frag interaction.frag -DPHONG=1
+shadow_vert shadow.vert
+shadow_frag shadow.frag
+fog_vert fog.vert -DBLEND=0
+blendlight_vert fog.vert -DBLEND=1
+fog_frag fog.frag
+softparticle_frag softparticle.frag
+heathaze_vert heathaze.vert
+heathaze_frag heathaze.frag -DMASK=0
+heathaze_mask_frag heathaze.frag -DMASK=1
+heathaze_mask_vertex_frag heathaze.frag -DMASK=2
+colorprocess_vert colorprocess.vert
+colorprocess_frag colorprocess.frag
+bumpyenv_vert bumpyenv.vert
+bumpyenv_frag bumpyenv.frag
 "
 echo "$variants" | while read -r name file defines; do
 	[ -z "$name" ] && continue
