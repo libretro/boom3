@@ -65,6 +65,7 @@ shaderProgram_t softParticleShader;
 // _currentDepth's framebuffer, the view's depth blitted into it after the depth fill
 static GLuint		depthCopyFbo;
 static bool		depthCopied;		// this view's depth is in _currentDepth
+static bool		depthBlitRefused;	// the driver refused the blit at this size
 
 GLuint		viewMatricesBuffer;
 // ViewMatrices block (std140): mat4 u_viewProjectionMatrices[2], projection
@@ -1254,6 +1255,7 @@ void R_ReloadGLSLPrograms_f(const idCmdArgs& args) {
 		memset(stageShaders, 0, sizeof(stageShaders));
 		memset(&softParticleShader, 0, sizeof(softParticleShader));
 		depthCopyFbo = 0;
+		depthBlitRefused = false;
 		viewMatricesBuffer = 0;
 		drawBlockFallback[0] = drawBlockFallback[1] = 0;
 	}
@@ -2775,12 +2777,13 @@ static void RB_GLSL_CaptureDepth(void) {
 	int potWidth, potHeight;
 
 	depthCopied = false;
-	if ( !glCaps.blit || glslMultiview || !RB_DepthCaptureWanted() ) {
+	if ( !glCaps.blit || glslMultiview || depthBlitRefused || !RB_DepthCaptureWanted() ) {
 		return;
 	}
 	potWidth = R_CopySize(w);
 	potHeight = R_CopySize(h);
 	if ( image->texnum == idImage::TEXTURE_NOT_LOADED || image->uploadWidth < potWidth || image->uploadHeight < potHeight ) {
+		bool fresh = true;
 		if ( image->texnum == idImage::TEXTURE_NOT_LOADED ) {
 			qglGenTextures(1, &image->texnum);
 		}
@@ -2807,25 +2810,34 @@ static void RB_GLSL_CaptureDepth(void) {
 			common->Warning("_currentDepth: no framebuffer for the depth copy");
 			return;
 		}
-	} else {
-		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, depthCopyFbo);
+		// Whether the driver takes a depth blit between these two
+		// framebuffers is settled by their formats and sizes, so ask
+		// once per allocation: glGetError is a round trip to the driver
+		// thread, not something for every frame.
+		glBindFramebuffer(GL_READ_FRAMEBUFFER, view);
+		while ( qglGetError() != GL_NO_ERROR ) {
+		}
+		qglDisable(GL_SCISSOR_TEST);
+		glCaps.BlitFramebuffer(x, y, x + w, y + h, 0, 0, w, h, GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+		qglEnable(GL_SCISSOR_TEST);
+		fresh = qglGetError() == GL_NO_ERROR;
+		glBindFramebuffer(GL_FRAMEBUFFER, view);
+		if ( !fresh ) {
+			depthBlitRefused = true;
+			common->Warning("_currentDepth: the driver refused the depth blit; particles stay hard");
+			return;
+		}
+		depthCopied = true;
+		return;
 	}
+	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, depthCopyFbo);
 	glBindFramebuffer(GL_READ_FRAMEBUFFER, view);
-	while ( qglGetError() != GL_NO_ERROR ) {
-	}
 	// the blit is scissored like a draw, and the last surface's scissor is set
 	qglDisable(GL_SCISSOR_TEST);
 	glCaps.BlitFramebuffer(x, y, x + w, y + h, 0, 0, w, h, GL_DEPTH_BUFFER_BIT, GL_NEAREST);
 	qglEnable(GL_SCISSOR_TEST);
-	depthCopied = qglGetError() == GL_NO_ERROR;
 	glBindFramebuffer(GL_FRAMEBUFFER, view);
-	if ( !depthCopied ) {
-		static bool warned;
-		if ( !warned ) {
-			warned = true;
-			common->Warning("_currentDepth: the driver refused the depth blit; particles stay hard");
-		}
-	}
+	depthCopied = true;
 }
 
 /*

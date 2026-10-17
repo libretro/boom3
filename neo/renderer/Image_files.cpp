@@ -75,6 +75,29 @@ static void R_FreeImageFile( byte *buf, bool borrowed ) {
 }
 
 /*
+================
+R_PackedRGBAToBytes
+
+image_transfer packs RGBA as (a<<24)|(b<<16)|(g<<8)|r. On little-endian
+those words already lie as r,g,b,a bytes, so the move is one memcpy;
+big-endian extracts by shift.
+================
+*/
+static void R_PackedRGBAToBytes( byte *dst, const uint32_t *src, unsigned count ) {
+#ifdef MSB_FIRST
+	for ( unsigned i = 0; i < count; i++ ) {
+		uint32_t p = src[i];
+		dst[i*4+0] = (byte)( p         & 0xff );
+		dst[i*4+1] = (byte)( ( p >> 8 )  & 0xff );
+		dst[i*4+2] = (byte)( ( p >> 16 ) & 0xff );
+		dst[i*4+3] = (byte)( ( p >> 24 ) & 0xff );
+	}
+#else
+	memcpy( dst, src, (size_t)count * 4 );
+#endif
+}
+
+/*
 =================
 R_PrefetchImage
 
@@ -646,27 +669,24 @@ static void LoadJPG( const char *filename, unsigned char **pic, int *width, int 
 		*pic = NULL;		// until proven otherwise
 	}
 
-	idFile *f = fileSystem->OpenFileRead( filename );
-	if ( !f ) {
+	// timestamp-only probe - early-out
+	if ( !pic ) {
+		fileSystem->ReadFile( filename, NULL, timestamp );
 		return;
 	}
-	int len = f->Length();
-	if ( timestamp ) {
-		*timestamp = f->Timestamp();
+
+	byte *fbuffer = NULL;
+	bool fbufferBorrowed = false;
+	int len = R_ReadImageFile( filename, &fbuffer, timestamp, &fbufferBorrowed );
+	if ( !fbuffer ) {
+		return;
 	}
-	if ( !pic ) {
-		fileSystem->CloseFile( f );
-		return;	// just getting timestamp
-	}
-	byte *fbuffer = (byte *)Mem_ClearedAlloc( len );
-	f->Read( fbuffer, len );
-	fileSystem->CloseFile( f );
 
 	// decode through libretro-common's image_transfer (rjpeg), the same path
 	// LoadTGA() uses for TGA, so the core has one image backend
 	void *img = image_transfer_new( IMAGE_TYPE_JPEG );
 	if ( img == NULL ) {
-		Mem_Free( fbuffer );
+		R_FreeImageFile( fbuffer, fbufferBorrowed );
 		common->Warning( "Couldn't create JPEG decoder for %s\n", filename );
 		return;
 	}
@@ -675,7 +695,7 @@ static void LoadJPG( const char *filename, unsigned char **pic, int *width, int 
 
 	if ( !image_transfer_start( img, IMAGE_TYPE_JPEG ) ) {
 		image_transfer_free( img, IMAGE_TYPE_JPEG );
-		Mem_Free( fbuffer );
+		R_FreeImageFile( fbuffer, fbufferBorrowed );
 		common->Warning( "rjpeg was unable to start decoding JPG %s\n", filename );
 		return;
 	}
@@ -685,7 +705,7 @@ static void LoadJPG( const char *filename, unsigned char **pic, int *width, int 
 
 	if ( !image_transfer_is_valid( img, IMAGE_TYPE_JPEG ) ) {
 		image_transfer_free( img, IMAGE_TYPE_JPEG );
-		Mem_Free( fbuffer );
+		R_FreeImageFile( fbuffer, fbufferBorrowed );
 		common->Warning( "rjpeg was unable to load JPG %s\n", filename );
 		return;
 	}
@@ -698,7 +718,7 @@ static void LoadJPG( const char *filename, unsigned char **pic, int *width, int 
 				&decoded, len, &w, &h, 1 );
 	} while ( process == IMAGE_PROCESS_NEXT );
 
-	Mem_Free( fbuffer );
+	R_FreeImageFile( fbuffer, fbufferBorrowed );
 
 	if ( process == IMAGE_PROCESS_ERROR || process == IMAGE_PROCESS_ERROR_END
 			|| decoded == NULL || w == 0 || h == 0 ) {
@@ -710,19 +730,8 @@ static void LoadJPG( const char *filename, unsigned char **pic, int *width, int 
 	// image_transfer hands back 32bpp pixels as 0xAARRGGBB in native order;
 	// the engine wants RGBA byte order, so swap R and B while copying into
 	// the R_StaticAlloc() buffer it requires.
-	int size = w * h * 4;
-	*pic = (byte *)R_StaticAlloc( size );
-	{
-		const uint32_t *src = decoded;
-		byte *dst = *pic;
-		for ( unsigned i = 0; i < w * h; i++ ) {
-			uint32_t px = src[i];
-			dst[i*4 + 0] = (byte)( px         & 0xFF );	// R
-			dst[i*4 + 1] = (byte)( ( px >>  8 ) & 0xFF );	// G
-			dst[i*4 + 2] = (byte)( ( px >> 16 ) & 0xFF );	// B
-			dst[i*4 + 3] = (byte)( ( px >> 24 ) & 0xFF );	// A
-		}
-	}
+	*pic = (byte *)R_StaticAlloc( w * h * 4 );
+	R_PackedRGBAToBytes( *pic, decoded, w * h );
 	*width  = w;
 	*height = h;
 
@@ -837,15 +846,8 @@ static void LoadTGA( const char *name, byte **pic, int *width, int *height, ID_T
 	// the channels by shift rather than memcpy'ing the raw uint32 buffer,
 	// otherwise the byte order would flip on big-endian. 
         // Extracting by shift is correct on both endians.
-	int		numPixels = (int)( w * h );
-	byte	*out = (byte *)R_StaticAlloc( numPixels * 4 );
-	for ( int i = 0; i < numPixels; i++ ) {
-		uint32_t p = transferPixels[i];
-		out[i*4+0] = (byte)( p         & 0xff );	// r
-		out[i*4+1] = (byte)( ( p >> 8 )  & 0xff );	// g
-		out[i*4+2] = (byte)( ( p >> 16 ) & 0xff );	// b
-		out[i*4+3] = (byte)( ( p >> 24 ) & 0xff );	// a
-	}
+	byte	*out = (byte *)R_StaticAlloc( w * h * 4 );
+	R_PackedRGBAToBytes( out, transferPixels, w * h );
 	free( transferPixels );
 
 	*pic = out;

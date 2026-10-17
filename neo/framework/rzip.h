@@ -54,6 +54,9 @@ typedef struct rzip_entry_s {
 /* open/parse; NULL on any refusal (message via warnFn if set) */
 rzip_t *            rzip_open( const char *path );
 void                rzip_close( rzip_t *z );
+/* frees the inflate states parked between deflated entries; for
+   teardown, with no entry open on any thread */
+void                rzip_drain_pool( void );
 
 int                 rzip_num_entries( const rzip_t *z );
 const rzip_entry_t *rzip_entry_at( const rzip_t *z, int index );

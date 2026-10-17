@@ -8,6 +8,7 @@
 #include <vfs/vfs.h>
 #include <encodings/deflate.h>
 #include <encodings/crc32.h>
+#include <retro_atomic.h>
 
 #ifdef HAVE_MMAP
 #include <sys/mman.h>
@@ -24,6 +25,44 @@
 static rzip_warn_fn rzip_warn = NULL;
 void rzip_set_warn( rzip_warn_fn fn ) { rzip_warn = fn; }
 #define WARN if ( rzip_warn ) rzip_warn
+
+/* Inflate states parked between deflated entries: a fresh one is a
+   ~42 KiB calloc, a reset is a few words, and a map load opens
+   thousands. Lock-free: a slot is taken or left by atomic exchange, so
+   the main thread and the background reader each find one and never
+   wait; a miss just allocates. */
+#define RZIP_INF_SLOTS 4
+static retro_atomic_ptr_t rzip_infPool[RZIP_INF_SLOTS];
+
+static void *rzip_inf_acquire( void ) {
+	int i;
+	for ( i = 0; i < RZIP_INF_SLOTS; i++ ) {
+		void *inf = retro_atomic_exchange_ptr( &rzip_infPool[i], NULL );
+		if ( inf ) {
+			rinflate_reset( inf, -15 );
+			return inf;
+		}
+	}
+	return rinflate_new( -15 );   /* raw DEFLATE, per the zip format */
+}
+
+void rzip_drain_pool( void ) {
+	int i;
+	for ( i = 0; i < RZIP_INF_SLOTS; i++ ) {
+		void *inf = retro_atomic_exchange_ptr( &rzip_infPool[i], NULL );
+		if ( inf )
+			rinflate_free( inf );
+	}
+}
+
+static void rzip_inf_release( void *inf ) {
+	int i;
+	for ( i = 0; i < RZIP_INF_SLOTS; i++ ) {
+		if ( retro_atomic_cas_ptr( &rzip_infPool[i], NULL, inf ) )
+			return;
+	}
+	rinflate_free( inf );
+}
 
 struct rzip_s {
 	char          *path;
@@ -352,7 +391,7 @@ rzip_file_t *rzip_file_open( rzip_t *z, int index ) {
 	}
 
 	if ( e->method == 8 ) {
-		f->inf = rinflate_new( -15 );   /* raw DEFLATE, per the zip format */
+		f->inf = rzip_inf_acquire();
 		if ( !f->inf ) {
 			if ( f->rf )
 				filestream_close( f->rf );
@@ -365,7 +404,7 @@ rzip_file_t *rzip_file_open( rzip_t *z, int index ) {
 		} else {
 			f->inBuf = (uint8_t *)malloc( RZIP_IN_CHUNK );
 			if ( !f->inBuf ) {
-				rinflate_free( f->inf );
+				rzip_inf_release( f->inf );
 				filestream_close( f->rf );
 				free( f );
 				return NULL;
@@ -498,7 +537,7 @@ void rzip_file_close( rzip_file_t *f ) {
 	if ( !f )
 		return;
 	if ( f->inf )
-		rinflate_free( f->inf );
+		rzip_inf_release( f->inf );
 	if ( f->rf )
 		filestream_close( f->rf );
 	free( f->inBuf );

@@ -3018,6 +3018,9 @@ void idFileSystemLocal::Shutdown( bool reloading ) {
 	StopBackgroundDownloadThread();
 	// the reader is joined: the slots still out are back now
 	ReclaimPrefetches();
+	if ( !reloading ) {
+		rzip_drain_pool();
+	}
 #ifdef HAVE_THREADS
 	if ( backgroundReady && !reloading ) {
 		retro_spsc_free( &backgroundRequests );
