@@ -10,6 +10,8 @@
 vkb_procs_t vk;
 vkb_state_t vkb;
 
+static int vkb_frame_images_make(enum vkb_format format);
+
 /* --- negotiation ----------------------------------------------------------- */
 
 static VkApplicationInfo appInfo;
@@ -315,7 +317,9 @@ void *vkb_ring_alloc(size_t bytes, size_t align, unsigned *buffer, unsigned *off
    if (!vkb.ready || !align)
       return NULL;
    at = (unsigned)((f->ringUsed + align - 1) / align * align);
-   if (at + bytes > VKB_RING_SEGMENT_BYTES)
+   /* a block's descriptor reads VKB_BLOCK_RANGE from its offset, so the
+    * segment keeps that much past every allocation */
+   if (at + bytes + VKB_BLOCK_RANGE > VKB_RING_SEGMENT_BYTES)
       return NULL;
    f->ringUsed = (unsigned)(at + bytes);
    *buffer = 0;              /* buffer 0 is the ring */
@@ -347,7 +351,6 @@ static void vkb_acquire_slot(void)
 
 int vkb_init(const struct retro_hw_render_interface_vulkan *iface, unsigned width, unsigned height)
 {
-   unsigned i, mask;
    memset(&vkb, 0, sizeof(vkb));
    if (!iface || iface->interface_type != RETRO_HW_RENDER_INTERFACE_VULKAN
          || iface->interface_version < 5)
@@ -390,15 +393,11 @@ int vkb_init(const struct retro_hw_render_interface_vulkan *iface, unsigned widt
    /* the frame images, one per sync index the frontend can hand out */
    vkb.frameWidth  = width;
    vkb.frameHeight = height;
-   vkb.frameFormat = VKB_FORMAT_RGBA8;
-   mask = iface->get_sync_index_mask(iface->handle);
-   for (i = 0; i < 8; i++)
-      if (mask & (1u << i))
-         if (!vkb_target_create(&vkb.frameImage[i], width, height, VKB_FORMAT_RGBA8, 1))
-         {
-            vkb_shutdown();
-            return 0;
-         }
+   if (!vkb_frame_images_make(VKB_FORMAT_RGBA8))
+   {
+      vkb_shutdown();
+      return 0;
+   }
    vkb.ready = 1;
    {
       static const unsigned char white[4] = { 255, 255, 255, 255 };
@@ -469,7 +468,7 @@ void vkb_render_pass_begin(void)
          VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
          VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
          VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
-   if (!t->depthReady)
+   if (!t->depthReady && t->depth)
    {
       vkb_image_barrier(vkb.cmd, t->depth, VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT,
             VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
@@ -507,6 +506,84 @@ void vkb_render_pass_end(void)
          VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
          VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
    vkb.target->layoutReady = 1;
+   if (vkb.targetKind == VKB_TARGET_POST && vkb.postImage)
+      vkb.images[vkb.postImage].layoutReady = 1;
+}
+
+/* --- the post chain --------------------------------------------------------- */
+
+int vkb_post_begin(unsigned target, unsigned width, unsigned height)
+{
+   if (!vkb.frameOpen)
+      return 0;
+   vkb_render_pass_end();
+   if (target == 0)
+   {
+      vkb_target_t *frame = &vkb.frameImage[vkb.syncIndex];
+      if (!frame->color)
+         return 0;
+      vkb.target     = frame;
+      vkb.targetKind = VKB_TARGET_FRAME;
+      vkb.postImage  = 0;
+      vkb.frameComposited = 1;
+   }
+   else
+   {
+      VkFramebuffer fb;
+      vkb_image_t *im;
+      if (!vkb_image_post_framebuffer(target, &fb, &im))
+         return 0;
+      memset(&vkb.postTarget, 0, sizeof(vkb.postTarget));
+      vkb.postTarget.color       = im->image;
+      vkb.postTarget.colorView   = im->view;
+      vkb.postTarget.framebuffer = fb;
+      vkb.postTarget.renderPass  = vkb_post_render_pass((enum vkb_format)im->format);
+      vkb.postTarget.width       = im->width;
+      vkb.postTarget.height      = im->height;
+      vkb.postTarget.format      = im->format;
+      vkb.postTarget.layoutReady = im->layoutReady;
+      vkb.target     = &vkb.postTarget;
+      vkb.targetKind = VKB_TARGET_POST;
+      vkb.postImage  = target;
+   }
+   vkb_render_pass_begin();
+   if (width && height)
+   {
+      vkb_viewport(0, 0, (int)width, (int)height);
+      vkb_scissor(0, 0, (int)width, (int)height);
+   }
+   return 1;
+}
+
+void vkb_post_end(void)
+{
+   vkb_render_pass_end();
+}
+
+/* the frame images in a format: remade when it changes */
+static int vkb_frame_images_make(enum vkb_format format)
+{
+   unsigned mask = vkb.iface->get_sync_index_mask(vkb.iface->handle);
+   unsigned i;
+   for (i = 0; i < 8; i++)
+      if (mask & (1u << i))
+         if (!vkb_target_create(&vkb.frameImage[i], vkb.frameWidth, vkb.frameHeight, format, 1))
+            return 0;
+   vkb.frameFormat = (unsigned char)format;
+   return 1;
+}
+
+int vkb_frame_format(enum vkb_format format)
+{
+   unsigned i;
+   if (!vkb.ready || vkb.frameOpen)
+      return 0;
+   if (vkb.frameFormat == (unsigned char)format)
+      return 1;
+   vk.vkDeviceWaitIdle(vkb.device);
+   for (i = 0; i < 8; i++)
+      vkb_target_destroy(&vkb.frameImage[i]);
+   return vkb_frame_images_make(format);
 }
 
 int vkb_begin_frame(enum vkb_target target, unsigned width, unsigned height,
@@ -548,6 +625,7 @@ int vkb_begin_frame(enum vkb_target target, unsigned width, unsigned height,
       return 0;
    vkb.frameOpen = 1;
    vkb.drawn     = 0;
+   vkb.frameComposited = 0;
    vkb.compositeProgram = VKB_PROGRAM_BLIT;
    vkb.compositeLut     = 0;
 
@@ -600,7 +678,7 @@ int vkb_end_frame(void)
    if (!vkb.frameOpen)
       return 0;
    vkb_render_pass_end();
-   if (vkb.targetKind == VKB_TARGET_SCENE)
+   if (vkb.targetKind == VKB_TARGET_SCENE && !vkb.frameComposited)
       vkb_composite();
    frame = &vkb.frameImage[vkb.syncIndex];
    vk.vkEndCommandBuffer(vkb.cmd);

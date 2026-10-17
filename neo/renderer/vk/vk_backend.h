@@ -60,6 +60,8 @@ enum vkb_format
    VKB_FORMAT_BC7,
    VKB_FORMAT_RGBA16F,
    VKB_FORMAT_RGB10A2,
+   VKB_FORMAT_RGBA32F,
+   VKB_FORMAT_RGBA16,        /* 16-bit normalised: the tone curves' tables */
    VKB_FORMAT_DEPTH,         /* the scene's depth-stencil format */
    VKB_FORMAT_COUNT
 };
@@ -91,6 +93,9 @@ unsigned vkb_image_create(unsigned width, unsigned height, int levels, int cube,
 int  vkb_image_upload(unsigned image, int level, int face, const void *data, size_t bytes);
 /* a texture the frame renders into or copies from: _currentRender, _currentDepth */
 unsigned vkb_image_create_target(unsigned width, unsigned height, enum vkb_format format);
+/* the scene image, as a texture the post passes sample; 0 when the frame
+ * draws straight into the frontend's image */
+unsigned vkb_image_scene_ref(void);
 void vkb_image_destroy(unsigned image);
 void vkb_image_filter(unsigned image, enum vkb_filter filter, enum vkb_wrap wrap, int anisotropy);
 
@@ -128,6 +133,16 @@ int  vkb_begin_frame(enum vkb_target target, unsigned width, unsigned height,
  * drawn (compositeProgram with its parms), submits, and hands the frame
  * image to the frontend.  Returns 0 when nothing was drawn. */
 int  vkb_end_frame(void);
+/* the frame image's format: the frontend reads it as it is, so a PQ
+ * frame is 10-bit.  A change remakes the frame images. */
+int  vkb_frame_format(enum vkb_format format);
+
+/* The post chain, after the scene and before the frame image: passes
+ * on target images (vkb_image_create_target), or on the frame image
+ * itself (target 0), each drawn with fullscreen triangles.  Beginning a
+ * pass ends the one before it, so its image can be sampled. */
+int  vkb_post_begin(unsigned target, unsigned width, unsigned height);
+void vkb_post_end(void);
 
 /* clears, scissored to the current scissor: colour, depth and stencil to
  * the given value */
@@ -164,6 +179,12 @@ enum vkb_program
    VKB_PROGRAM_HEAT_HAZE_MASK_VERTEX,
    VKB_PROGRAM_COLOR_PROCESS, /* colorProcess.vfp */
    VKB_PROGRAM_BUMPY_ENVIRONMENT, /* bumpyEnvironment.vfp */
+   VKB_PROGRAM_HDR_BRIGHT,    /* the bloom's bright pass */
+   VKB_PROGRAM_HDR_DOWN,      /* the convolution pyramid down, plain and Karis-weighted */
+   VKB_PROGRAM_HDR_DOWN_KARIS,
+   VKB_PROGRAM_HDR_UP,        /* the pyramid up, additive */
+   VKB_PROGRAM_HDR_BLUR,      /* the two-band blur */
+   VKB_PROGRAM_HDR_COMPOSITE, /* the display transform: its block is vkb_hdr_block_t */
    VKB_PROGRAM_COUNT
 };
 
@@ -234,7 +255,8 @@ typedef struct vkb_view_block
  * draw. */
 typedef struct vkb_draw
 {
-   const vkb_draw_block_t *block;
+   const void *block;           /* vkb_draw_block_t, or a program's own block */
+   unsigned blockBytes;         /* 0: sizeof(vkb_draw_block_t) */
    unsigned image[6];           /* the units the program samples; 0 unbound */
    unsigned vertexBuffer;
    unsigned vertexOffset;       /* bytes; the base vertex is derived from the stride */
@@ -256,6 +278,8 @@ typedef struct vkb_draw
 
 void vkb_set_view(const vkb_view_block_t *view);
 void vkb_draw(const vkb_draw_t *draw);
+/* a post pass's fullscreen triangle: no geometry, the block and textures */
+void vkb_draw_fullscreen(const vkb_draw_t *draw);
 
 /* the frame's scene copies for the stages that read them */
 void vkb_copy_color(unsigned image, int x, int y, int w, int h);

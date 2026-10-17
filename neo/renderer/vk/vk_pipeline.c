@@ -39,6 +39,12 @@
 #include "spirv/colorprocess_frag.h"
 #include "spirv/bumpyenv_vert.h"
 #include "spirv/bumpyenv_frag.h"
+#include "spirv/hdr_bright_frag.h"
+#include "spirv/hdr_down_frag.h"
+#include "spirv/hdr_down_karis_frag.h"
+#include "spirv/hdr_up_frag.h"
+#include "spirv/hdr_blur_frag.h"
+#include "spirv/hdr_composite_frag.h"
 
 /* the engine's state bits (tr_local.h) */
 #define GLS_SRCBLEND_BITS      0x0000000f
@@ -82,7 +88,13 @@ static const vkb_program_source_t sources[VKB_PROGRAM_COUNT] = {
    { SPV(heathaze_vert), SPV(heathaze_mask_frag) },
    { SPV(heathaze_vert), SPV(heathaze_mask_vertex_frag) },
    { SPV(colorprocess_vert), SPV(colorprocess_frag) },
-   { SPV(bumpyenv_vert), SPV(bumpyenv_frag) }
+   { SPV(bumpyenv_vert), SPV(bumpyenv_frag) },
+   { SPV(blit_vert), SPV(hdr_bright_frag) },
+   { SPV(blit_vert), SPV(hdr_down_frag) },
+   { SPV(blit_vert), SPV(hdr_down_karis_frag) },
+   { SPV(blit_vert), SPV(hdr_up_frag) },
+   { SPV(blit_vert), SPV(hdr_blur_frag) },
+   { SPV(blit_vert), SPV(hdr_composite_frag) }
 };
 
 static VkShaderModule vkb_module(const unsigned int *code, size_t bytes)
@@ -173,6 +185,61 @@ VkRenderPass vkb_render_pass(enum vkb_format colorFormat, int frontend)
    return *slot;
 }
 
+/* a colour-only pass for the post chain's targets: loaded, stored,
+ * readable by the next pass */
+VkRenderPass vkb_post_render_pass(enum vkb_format colorFormat)
+{
+   VkAttachmentDescription att;
+   VkAttachmentReference colorRef;
+   VkSubpassDescription sub;
+   VkSubpassDependency deps[2];
+   VkRenderPassCreateInfo rci;
+   VkRenderPass *slot = &vkb.postPass[colorFormat];
+   if (*slot)
+      return *slot;
+   memset(&att, 0, sizeof(att));
+   att.format         = vkb_vk_format(colorFormat);
+   att.samples        = VK_SAMPLE_COUNT_1_BIT;
+   att.loadOp         = VK_ATTACHMENT_LOAD_OP_LOAD;
+   att.storeOp        = VK_ATTACHMENT_STORE_OP_STORE;
+   att.stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+   att.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+   att.initialLayout  = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+   att.finalLayout    = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+   colorRef.attachment = 0;
+   colorRef.layout     = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+   memset(&sub, 0, sizeof(sub));
+   sub.pipelineBindPoint    = VK_PIPELINE_BIND_POINT_GRAPHICS;
+   sub.colorAttachmentCount = 1;
+   sub.pColorAttachments    = &colorRef;
+   memset(deps, 0, sizeof(deps));
+   deps[0].srcSubpass    = VK_SUBPASS_EXTERNAL;
+   deps[0].dstSubpass    = 0;
+   deps[0].srcStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT
+      | VK_PIPELINE_STAGE_TRANSFER_BIT;
+   deps[0].dstStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+   deps[0].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
+   deps[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT
+      | VK_ACCESS_SHADER_READ_BIT;
+   deps[1].srcSubpass    = 0;
+   deps[1].dstSubpass    = VK_SUBPASS_EXTERNAL;
+   deps[1].srcStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+   deps[1].dstStageMask  = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+   deps[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+   deps[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+   memset(&rci, 0, sizeof(rci));
+   rci.sType           = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+   rci.attachmentCount = 1;
+   rci.pAttachments    = &att;
+   rci.subpassCount    = 1;
+   rci.pSubpasses      = &sub;
+   rci.dependencyCount = 2;
+   rci.pDependencies   = deps;
+   if (vk.vkCreateRenderPass(vkb.device, &rci, NULL, slot) != VK_SUCCESS)
+      *slot = VK_NULL_HANDLE;
+   return *slot;
+}
+
 int vkb_pipelines_init(void)
 {
    VkDescriptorSetLayoutBinding bindings[2 + VKB_MAX_TEXTURE_UNITS];
@@ -234,11 +301,18 @@ void vkb_pipelines_shutdown(void)
       vkb.modules[i][0] = vkb.modules[i][1] = VK_NULL_HANDLE;
    }
    for (i = 0; i < VKB_FORMAT_COUNT; i++)
+   {
       if (vkb.renderPass[i])
       {
          vk.vkDestroyRenderPass(vkb.device, vkb.renderPass[i], NULL);
          vkb.renderPass[i] = VK_NULL_HANDLE;
       }
+      if (vkb.postPass[i])
+      {
+         vk.vkDestroyRenderPass(vkb.device, vkb.postPass[i], NULL);
+         vkb.postPass[i] = VK_NULL_HANDLE;
+      }
+   }
    if (vkb.pipelineLayout)
       vk.vkDestroyPipelineLayout(vkb.device, vkb.pipelineLayout, NULL);
    if (vkb.setLayout)
@@ -280,6 +354,7 @@ static VkBlendFactor vkb_dst_factor(unsigned bits)
 
 static VkPipeline vkb_pipeline_make(const vkb_pipeline_key_t *key)
 {
+   const int post = (key->target & VKB_TARGET_POST) != 0;
    VkPipelineShaderStageCreateInfo stages[2];
    VkVertexInputBindingDescription binding;
    VkVertexInputAttributeDescription attrs[6];
@@ -384,11 +459,11 @@ static VkPipeline vkb_pipeline_make(const vkb_pipeline_key_t *key)
 
    memset(&ds, 0, sizeof(ds));
    ds.sType            = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-   ds.depthTestEnable  = VK_TRUE;
-   ds.depthWriteEnable = (stateBits & GLS_DEPTHMASK) ? VK_FALSE : VK_TRUE;
+   ds.depthTestEnable  = post ? VK_FALSE : VK_TRUE;
+   ds.depthWriteEnable = (stateBits & GLS_DEPTHMASK) || post ? VK_FALSE : VK_TRUE;
    ds.depthCompareOp   = (stateBits & GLS_DEPTHFUNC_ALWAYS) ? VK_COMPARE_OP_ALWAYS
       : (stateBits & GLS_DEPTHFUNC_EQUAL) ? VK_COMPARE_OP_EQUAL : VK_COMPARE_OP_LESS_OR_EQUAL;
-   if (key->stencil != VKB_STENCIL_OFF)
+   if (key->stencil != VKB_STENCIL_OFF && !post)
    {
       VkStencilOpState front, back;
       memset(&front, 0, sizeof(front));
@@ -470,7 +545,7 @@ static VkPipeline vkb_pipeline_make(const vkb_pipeline_key_t *key)
    gci.pColorBlendState    = &cb;
    gci.pDynamicState       = &dy;
    gci.layout              = vkb.pipelineLayout;
-   gci.renderPass          = vkb.renderPass[key->target];
+   gci.renderPass          = post ? vkb.postPass[key->target & ~VKB_TARGET_POST] : vkb.renderPass[key->target];
    gci.subpass             = 0;
    if (vk.vkCreateGraphicsPipelines(vkb.device, vkb.pipelineCache, 1, &gci, NULL, &pipeline) != VK_SUCCESS)
       return VK_NULL_HANDLE;

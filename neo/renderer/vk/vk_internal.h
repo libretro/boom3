@@ -126,6 +126,8 @@ extern vkb_procs_t vk;
 #define VKB_RING_SEGMENT_BYTES (8738u * 3840u)
 #define VKB_STAGING_BYTES (32u * 1024u * 1024u)
 #define VKB_DRAW_BLOCK_ALIGN 256
+#define VKB_BLOCK_RANGE 1024          /* the largest block a program reads */
+#define VKB_TARGET_POST 0x40          /* a pipeline key's target: a colour-only pass */
 #define VKB_MAX_TEXTURE_UNITS 6
 #define VKB_PIPELINE_SLOTS 1024
 
@@ -153,6 +155,7 @@ typedef struct vkb_image
    unsigned char target;       /* a render target: colour attachment, transfer dst */
    unsigned char layoutReady;  /* transitioned to shader read once */
    unsigned char used;
+   VkFramebuffer framebuffer;  /* a target's, for the post passes */
    unsigned char inTransfer;   /* during a flush: already moved to transfer */
    unsigned char uploadPending; /* an upload queued for the next flush */
 } vkb_image_t;
@@ -252,6 +255,9 @@ typedef struct vkb_state
    VkDescriptorSetLayout setLayout;
    VkShaderModule modules[VKB_PROGRAM_COUNT][2];
    VkRenderPass renderPass[VKB_FORMAT_COUNT];   /* by colour format */
+   VkRenderPass postPass[VKB_FORMAT_COUNT];     /* colour only, for the post chain */
+   vkb_target_t postTarget;                     /* the post pass's target image, as a target */
+   unsigned postImage;
    VkSampler samplers[VKB_FILTER_COUNT][4][2];   /* filter, wrap, anisotropy */
 
    /* the frame images handed to the frontend, one per sync index */
@@ -298,7 +304,8 @@ typedef struct vkb_state
    /* the frame being recorded */
    VkCommandBuffer cmd;
    vkb_target_t *target;
-   unsigned char targetKind;    /* enum vkb_target */
+   unsigned char targetKind;    /* enum vkb_target, or VKB_TARGET_POST */
+   unsigned char frameComposited; /* the post chain drew the frame image */
    unsigned char inRenderPass;
    unsigned char frameOpen;
    unsigned char drawn;
@@ -352,6 +359,8 @@ void vkb_transfer_now(void);
 
 /* vk_image.c */
 VkFormat vkb_vk_format(enum vkb_format format);
+VkRenderPass vkb_post_render_pass(enum vkb_format colorFormat);
+int  vkb_image_post_framebuffer(unsigned image, VkFramebuffer *framebuffer, vkb_image_t **im);
 VkFormat vkb_depth_stencil_format(void);
 int  vkb_images_init(void);
 void vkb_images_shutdown(void);
@@ -363,7 +372,6 @@ int  vkb_target_create(vkb_target_t *t, unsigned width, unsigned height, enum vk
 void vkb_target_destroy(vkb_target_t *t);
 void vkb_target_view_info(const vkb_target_t *t, VkImageViewCreateInfo *info);
 /* the image ids that wrap the scene target's colour and depth */
-unsigned vkb_image_scene_ref(void);
 unsigned vkb_image_scene_depth_ref(void);
 const vkb_image_t *vkb_image_get(unsigned image);
 
@@ -379,7 +387,6 @@ void vkb_render_pass_begin(void);
 void vkb_render_pass_end(void);
 
 /* vk_draw.c */
-void vkb_draw_fullscreen(const vkb_draw_t *draw);
 /* around a copy out of the target: the pass closes and reopens with the
  * viewport and scissor kept */
 void vkb_leave_render_pass(void);

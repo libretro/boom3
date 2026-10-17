@@ -31,6 +31,8 @@ VkFormat vkb_vk_format(enum vkb_format format)
       case VKB_FORMAT_BC7:        return VK_FORMAT_BC7_UNORM_BLOCK;
       case VKB_FORMAT_RGBA16F:    return VK_FORMAT_R16G16B16A16_SFLOAT;
       case VKB_FORMAT_RGB10A2:    return VK_FORMAT_A2B10G10R10_UNORM_PACK32;
+      case VKB_FORMAT_RGBA32F:    return VK_FORMAT_R32G32B32A32_SFLOAT;
+      case VKB_FORMAT_RGBA16:     return VK_FORMAT_R16G16B16A16_UNORM;
       case VKB_FORMAT_DEPTH:      return vkb_depth_stencil_format();
       default:                    return VK_FORMAT_UNDEFINED;
    }
@@ -108,6 +110,8 @@ int vkb_images_init(void)
 
 static void vkb_image_release(vkb_image_t *im)
 {
+   if (im->framebuffer)
+      vk.vkDestroyFramebuffer(vkb.device, im->framebuffer, NULL);
    if (im->view)
       vk.vkDestroyImageView(vkb.device, im->view, NULL);
    if (im->image)
@@ -472,6 +476,41 @@ void vkb_images_flush_uploads(VkCommandBuffer cmd)
    }
    vkb.uploadCount = 0;
    vkb_staging_retire(0);
+}
+
+/* a target image's framebuffer for the post chain, made on first use */
+int vkb_image_post_framebuffer(unsigned image, VkFramebuffer *framebuffer, vkb_image_t **out)
+{
+   vkb_image_t *im;
+   VkFramebufferCreateInfo fci;
+   VkRenderPass pass;
+   if (image < VKB_IMAGE_FIRST || image >= VKB_MAX_IMAGES || !vkb.images[image].used || !vkb.images[image].target)
+      return 0;
+   im = &vkb.images[image];
+   if (im->format == VKB_FORMAT_DEPTH)
+      return 0;
+   if (!im->framebuffer)
+   {
+      pass = vkb_post_render_pass((enum vkb_format)im->format);
+      if (!pass)
+         return 0;
+      memset(&fci, 0, sizeof(fci));
+      fci.sType           = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+      fci.renderPass      = pass;
+      fci.attachmentCount = 1;
+      fci.pAttachments    = &im->view;
+      fci.width           = im->width;
+      fci.height          = im->height;
+      fci.layers          = 1;
+      if (vk.vkCreateFramebuffer(vkb.device, &fci, NULL, &im->framebuffer) != VK_SUCCESS)
+      {
+         im->framebuffer = VK_NULL_HANDLE;
+         return 0;
+      }
+   }
+   *framebuffer = im->framebuffer;
+   *out = im;
+   return 1;
 }
 
 /* --- render targets ------------------------------------------------------------- */

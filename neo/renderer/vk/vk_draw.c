@@ -17,6 +17,12 @@ static unsigned ringOffsetOf(unsigned buffer, unsigned offset)
    return offset;
 }
 
+static size_t vkb_block_bytes(const vkb_draw_t *draw)
+{
+   size_t bytes = draw->blockBytes ? draw->blockBytes : sizeof(vkb_draw_block_t);
+   return bytes > VKB_BLOCK_RANGE ? VKB_BLOCK_RANGE : bytes;
+}
+
 /* the view block into the ring; every draw of the view binds it */
 void vkb_set_view(const vkb_view_block_t *view)
 {
@@ -87,7 +93,7 @@ static VkDescriptorSet vkb_descriptor_set(const vkb_draw_t *draw)
    buffers[0].range  = sizeof(vkb_view_block_t);
    buffers[1].buffer = vkb.ring;
    buffers[1].offset = 0;
-   buffers[1].range  = sizeof(vkb_draw_block_t);
+   buffers[1].range  = VKB_BLOCK_RANGE;
    for (i = 0; i < 2; i++)
    {
       writes[i].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -141,7 +147,7 @@ static void vkb_bind(const vkb_draw_t *draw, VkDescriptorSet set, unsigned block
    key.layout        = draw->layout;
    key.cull          = draw->cull;
    key.stencil       = draw->stencil;
-   key.target        = vkb.target->format;
+   key.target        = vkb.target->format | (vkb.targetKind == VKB_TARGET_POST ? VKB_TARGET_POST : 0);
    key.lineMode      = draw->lineMode;
    key.polygonOffset = (draw->depthBias[0] != 0.0f || draw->depthBias[1] != 0.0f) ? 1 : 0;
    key.mirror        = draw->mirror;
@@ -175,10 +181,10 @@ void vkb_draw(const vkb_draw_t *draw)
    VkBuffer vb, ib;
    if (!vkb.inRenderPass || !draw->block || !draw->indexCount)
       return;
-   p = vkb_ring_alloc(sizeof(vkb_draw_block_t), VKB_DRAW_BLOCK_ALIGN, &buffer, &offset);
+   p = vkb_ring_alloc(vkb_block_bytes(draw), VKB_DRAW_BLOCK_ALIGN, &buffer, &offset);
    if (!p)
       return;
-   memcpy(p, draw->block, sizeof(vkb_draw_block_t));
+   memcpy(p, draw->block, vkb_block_bytes(draw));
    vkb_uploads_mid_frame(draw);
    set = vkb_descriptor_set(draw);
    if (!set)
@@ -207,7 +213,7 @@ void vkb_draw(const vkb_draw_t *draw)
    vkb.drawn = 1;
 }
 
-/* the composite's triangle: no vertex data, three vertexes */
+/* a post pass's triangle: no vertex data, three vertexes */
 void vkb_draw_fullscreen(const vkb_draw_t *draw)
 {
    unsigned buffer, offset;
@@ -215,10 +221,11 @@ void vkb_draw_fullscreen(const vkb_draw_t *draw)
    VkDescriptorSet set;
    if (!vkb.inRenderPass || !draw->block)
       return;
-   p = vkb_ring_alloc(sizeof(vkb_draw_block_t), VKB_DRAW_BLOCK_ALIGN, &buffer, &offset);
+   p = vkb_ring_alloc(vkb_block_bytes(draw), VKB_DRAW_BLOCK_ALIGN, &buffer, &offset);
    if (!p)
       return;
-   memcpy(p, draw->block, sizeof(vkb_draw_block_t));
+   memcpy(p, draw->block, vkb_block_bytes(draw));
+   vkb_uploads_mid_frame(draw);
    set = vkb_descriptor_set(draw);
    if (!set)
       return;
