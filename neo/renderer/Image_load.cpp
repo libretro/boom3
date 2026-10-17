@@ -343,6 +343,20 @@ int MakePowerOfTwo( int num ) {
 
 /*
 ================
+R_CopySize
+
+The size of a scene copy's texture: the scene's own where the GL takes
+a non-power-of-two texture, else the next power of two.  A 4K scene
+with 2x2 supersampling copies into 7680x4320 rather than 8192x8192, half
+the memory and no padding to fill.
+================
+*/
+int R_CopySize( int num ) {
+	return glConfig.textureNonPowerOfTwoAvailable ? num : MakePowerOfTwo( num );
+}
+
+/*
+================
 BitsForInternalFormat
 
 Used for determining memory utilization
@@ -2701,11 +2715,11 @@ void idImage::CopyFramebuffer( int x, int y, int imageWidth, int imageHeight, bo
 		imageHeight = 512;
 	}
 
-	// if the size isn't a power of 2, the image must be increased in size
+	// the copy's size: the scene's, or the next power of two
 	int	potWidth, potHeight;
 
-	potWidth = MakePowerOfTwo( imageWidth );
-	potHeight = MakePowerOfTwo( imageHeight );
+	potWidth = R_CopySize( imageWidth );
+	potHeight = R_CopySize( imageHeight );
 
 #ifndef HAVE_OPENGLES
 	GetDownsize( imageWidth, imageHeight );
@@ -2762,20 +2776,9 @@ void idImage::CopyFramebuffer( int x, int y, int imageWidth, int imageHeight, bo
 #endif
 			qglCopyTexImage2D( GL_TEXTURE_2D, 0, copyInternal, x, y, imageWidth, imageHeight, 0 );
 		} else {
-			// we need to create a dummy image with power of two dimensions,
-			// then do a qglCopyTexSubImage2D of the data we want.
-			//
-			// This is the branch a normal desktop run actually takes:
-			// MakePowerOfTwo has no NPOT short-circuit, so any render size
-			// that is not itself a power of two (1920x1080, 2560x1440, ...)
-			// lands here. It has to follow the scene depth for the same
-			// reason the POT branch does.
-			//
-			// The contents are overwritten by the CopyTexSubImage below, so
-			// there is nothing to upload - id allocated and zeroed up to
-			// potW*potH*4 bytes (~16 MB at 2048^2, ~67 MB at 4096^2) to
-			// hand the driver a buffer it immediately discards. NULL does
-			// the same job.
+			// a power-of-two texture larger than the scene, filled by the
+			// CopyTexSubImage below; it has to follow the scene depth for
+			// the same reason the other branch does
 			copyInternal = R_CurrentRenderCopyFormat( GL_RGB, &copyFormat, &copyType );
 			qglTexImage2D( GL_TEXTURE_2D, 0, copyInternal, potWidth, potHeight, 0,
 					copyFormat, copyType, NULL );
@@ -2820,11 +2823,11 @@ This should just be part of copyFramebuffer once we have a proper image type fie
 */
 void idImage::CopyDepthbuffer( int x, int y, int imageWidth, int imageHeight, bool useOversizedBuffer, bool copyPixels )
 {
-	// if the size isn't a power of 2, the image must be increased in size
+	// the copy's size: the scene's, or the next power of two
 	int	potWidth, potHeight;
 
-	potWidth = MakePowerOfTwo( imageWidth );
-	potHeight = MakePowerOfTwo( imageHeight );
+	potWidth = R_CopySize( imageWidth );
+	potHeight = R_CopySize( imageHeight );
 	GetDownsize( imageWidth, imageHeight );
 	GetDownsize( potWidth, potHeight );
 	/* No read buffer to set: a depth copy reads the depth buffer whatever

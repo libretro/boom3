@@ -2778,8 +2778,8 @@ static void RB_GLSL_CaptureDepth(void) {
 	if ( !glCaps.blit || glslMultiview || !RB_DepthCaptureWanted() ) {
 		return;
 	}
-	potWidth = MakePowerOfTwo(w);
-	potHeight = MakePowerOfTwo(h);
+	potWidth = R_CopySize(w);
+	potHeight = R_CopySize(h);
 	if ( image->texnum == idImage::TEXTURE_NOT_LOADED || image->uploadWidth < potWidth || image->uploadHeight < potHeight ) {
 		if ( image->texnum == idImage::TEXTURE_NOT_LOADED ) {
 			qglGenTextures(1, &image->texnum);
