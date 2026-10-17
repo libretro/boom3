@@ -8941,7 +8941,7 @@ static void hdr_fe_query( hdr_frontend_t *fe ) {
 	 * narrows it to 8 bits, undoes that */
 	if ( md.output_mode && !md.passthrough && !hdr_warned_narrow && log_cb ) {
 		log_cb( RETRO_LOG_WARN, "[boom3] frontend does not pass the HDR10 frame through as is (%s); 30-bit mode gains nothing here\n",
-				md.screen_10bpc ? "it re-processes it" : "it narrows 10-bit to 8-bit" );
+				( md.source_formats & RETRO_HDR_SOURCE_FORMAT_HDR10_2101010 ) ? "it re-processes it" : "it narrows 10-bit to 8-bit" );
 		hdr_warned_narrow = true;
 	}
 }

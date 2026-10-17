@@ -89,7 +89,7 @@ static bool env_cb(unsigned cmd, void *data)
 		if (md->version != 1 || md->size < sizeof(*md))
 			return false;
 		md->output_mode = 1;
-		md->screen_10bpc = true;
+		md->source_formats = RETRO_HDR_SOURCE_FORMAT_HDR10_2101010;
 		md->paper_white_nits = 200.0f;
 		md->max_nits = 1000.0f;
 		md->expand_gamut = 0;
