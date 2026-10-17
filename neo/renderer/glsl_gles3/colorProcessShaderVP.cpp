@@ -58,11 +58,14 @@ uniform vec4 u_vertexParms[4];
 // gl_Position
 out vec4 var_ColorScale;
 out vec4 var_LumaScale;
+flat out mediump float var_ViewHalf;
 
 void main()
 {
   var_ColorScale = 1.0 - u_vertexParms[0];
   var_LumaScale = u_vertexParms[1] * u_vertexParms[0];
+
+  var_ViewHalf = float(VIEW_ID) * 0.5;
 
   highp vec4 worldPos = u_modelMatrix * attr_Vertex;
   gl_Position = u_viewProjectionMatrices[VIEW_ID] * worldPos;

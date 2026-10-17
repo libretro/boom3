@@ -2748,57 +2748,120 @@ void idImage::CopyFramebuffer( int x, int y, int imageWidth, int imageHeight, bo
 	}
 #endif
 
+	/*
+	   In VR, _currentRender holds both eyes, stacked with the left one at
+	   the bottom. The eyes see the scene from different places, so a heat
+	   haze in the right eye refracting the left eye's copy showed the left
+	   eye's view of whatever was behind it - the shuttle's exhaust over
+	   Mars City came out as a displaced ghost in the right eye only. The
+	   post-process programs add half the texture's height for the right
+	   eye. The other copies (mirrors, remote cameras) are of a subview,
+	   drawn the same into both layers, so one layer is enough for them.
+	*/
+	int layers = 1;
 #ifdef BOOM3_VR_MULTIVIEW
-	// both eyes share the copy: take the left one
-	if ( VR_Active() ) {
-		VR_BeginLayerRead( 0 );
+	if ( VR_Active() && this == globalImages->currentRenderImage ) {
+		layers = 2;
 	}
 #endif
+	const int needHeight = potHeight * layers;
 
 	// only resize if the current dimensions can't hold it at all,
-	// otherwise subview renderings could thrash this
-	if ( ( useOversizedBuffer && ( uploadWidth < potWidth || uploadHeight < potHeight ) )
-		|| ( !useOversizedBuffer && ( uploadWidth != potWidth || uploadHeight != potHeight ) ) ) {
+	// otherwise subview renderings could thrash this; stacked eyes also
+	// need an even height, the right one starting exactly halfway
+	bool whole = false;
+	if ( ( useOversizedBuffer && ( uploadWidth < potWidth || uploadHeight < needHeight || ( layers > 1 && ( uploadHeight & 1 ) ) ) )
+		|| ( !useOversizedBuffer && ( uploadWidth != potWidth || uploadHeight != needHeight ) ) ) {
 		uploadWidth = potWidth;
-		uploadHeight = potHeight;
+		uploadHeight = needHeight;
 		GLenum	copyFormat, copyType, copyInternal;
 
 		if ( potWidth == imageWidth && potHeight == imageHeight ) {
-#ifdef HAVE_OPENGLES
-			copyInternal = R_CurrentRenderCopyFormat( GL_RGBA, &copyFormat, &copyType );
-#else
-			copyInternal = R_CurrentRenderCopyFormat( GL_RGB8, &copyFormat, &copyType );
-#endif
-			qglCopyTexImage2D( GL_TEXTURE_2D, 0, copyInternal, x, y, imageWidth, imageHeight, 0 );
+			/*
+			   the copy below allocates it, which takes the format from
+			   the framebuffer. With the eyes stacked the first copy is
+			   the whole texture tall: the part above the scene is
+			   undefined until the second eye's copy fills it.
+			   Allocating them with TexImage2D instead failed on GLES -
+			   an unsized GL_RGB needs GL_RGB data, not GL_RGBA - and
+			   left an empty texture, the haze drawing black.
+			*/
+			whole = true;
 		} else {
 			// a power-of-two texture larger than the scene, filled by the
 			// CopyTexSubImage below; it has to follow the scene depth for
 			// the same reason the other branch does
 			copyInternal = R_CurrentRenderCopyFormat( GL_RGB, &copyFormat, &copyType );
-			qglTexImage2D( GL_TEXTURE_2D, 0, copyInternal, potWidth, potHeight, 0,
+			qglTexImage2D( GL_TEXTURE_2D, 0, copyInternal, potWidth, uploadHeight, 0,
 					copyFormat, copyType, NULL );
-
-			qglCopyTexSubImage2D( GL_TEXTURE_2D, 0, 0, 0, x, y, imageWidth, imageHeight );
 		}
-	} else {
-		// otherwise, just subimage upload it so that drivers can tell we are going to be changing
-		// it and don't try and do a texture compression or some other silliness
-		qglCopyTexSubImage2D( GL_TEXTURE_2D, 0, 0, 0, x, y, imageWidth, imageHeight );
 	}
 
-	// if the image isn't a full power of two, duplicate an extra row and/or column to fix bilerps
-	if ( imageWidth != potWidth ) {
-		qglCopyTexSubImage2D( GL_TEXTURE_2D, 0, imageWidth, 0, x+imageWidth-1, y, 1, imageHeight );
-	}
-	if ( imageHeight != potHeight ) {
-		qglCopyTexSubImage2D( GL_TEXTURE_2D, 0, 0, imageHeight, x, y+imageHeight-1, imageWidth, 1 );
-	}
+	for ( int layer = 0; layer < layers; layer++ ) {
+		const int dstY = layer ? uploadHeight / 2 : 0;
 
 #ifdef BOOM3_VR_MULTIVIEW
-	if ( VR_Active() ) {
-		VR_EndLayerRead();
-	}
+		// reads from a multiview target go through one of its layers
+		if ( VR_Active() ) {
+			VR_BeginLayerRead( layer );
+		}
 #endif
+
+#ifdef BOOM3_VR_MULTIVIEW
+		if ( layer > 0 ) {
+			/*
+			   The Quest's driver ignores the attached layer in a copy:
+			   CopyTexSubImage2D from the right eye's layer silently
+			   copies the left one, though ReadPixels on the same
+			   framebuffer returns the right eye. A blit reads the layer
+			   it is given.
+			*/
+			static GLuint blitFbo = 0;
+			if ( !blitFbo ) {
+				glGenFramebuffers( 1, &blitFbo );
+			}
+			glBindFramebuffer( GL_DRAW_FRAMEBUFFER, blitFbo );
+			glFramebufferTexture2D( GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texnum, 0 );
+			// a blit is scissored like a draw
+			const bool scissor = qglIsEnabled( GL_SCISSOR_TEST );
+			qglDisable( GL_SCISSOR_TEST );
+			glBlitFramebuffer( x, y, x + imageWidth, y + imageHeight, 0, dstY, imageWidth, dstY + imageHeight,
+					GL_COLOR_BUFFER_BIT, GL_NEAREST );
+			if ( scissor ) {
+				qglEnable( GL_SCISSOR_TEST );
+			}
+			glFramebufferTexture2D( GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0 );
+			glBindFramebuffer( GL_DRAW_FRAMEBUFFER, GLimp_ViewFramebuffer() );
+		} else
+#endif
+		if ( whole && layer == 0 ) {
+			GLenum	copyFormat, copyType, copyInternal;
+#ifdef HAVE_OPENGLES
+			copyInternal = R_CurrentRenderCopyFormat( GL_RGBA, &copyFormat, &copyType );
+#else
+			copyInternal = R_CurrentRenderCopyFormat( GL_RGB8, &copyFormat, &copyType );
+#endif
+			qglCopyTexImage2D( GL_TEXTURE_2D, 0, copyInternal, x, y, imageWidth, uploadHeight, 0 );
+		} else {
+			// otherwise, just subimage upload it so that drivers can tell we are going to be changing
+			// it and don't try and do a texture compression or some other silliness
+			qglCopyTexSubImage2D( GL_TEXTURE_2D, 0, 0, dstY, x, y, imageWidth, imageHeight );
+		}
+
+		// if the image isn't a full power of two, duplicate an extra row and/or column to fix bilerps
+		if ( imageWidth != potWidth ) {
+			qglCopyTexSubImage2D( GL_TEXTURE_2D, 0, imageWidth, dstY, x+imageWidth-1, y, 1, imageHeight );
+		}
+		if ( imageHeight != potHeight ) {
+			qglCopyTexSubImage2D( GL_TEXTURE_2D, 0, 0, dstY+imageHeight, x, y+imageHeight-1, imageWidth, 1 );
+		}
+
+#ifdef BOOM3_VR_MULTIVIEW
+		if ( VR_Active() ) {
+			VR_EndLayerRead();
+		}
+#endif
+	}
 
 	qglTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
 	qglTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
