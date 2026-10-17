@@ -342,6 +342,7 @@ static const struct pairing gles2_programs[] = {
    { "heatHazeMaskVertex", "heatHazeShaderVP.cpp", "heatHazeShaderVP", "heatHazeMaskVertexShaderFP.cpp", "heatHazeMaskVertexShaderFP", WANT_HDR },
    { "colorProcess", "colorProcessShaderVP.cpp", "colorProcessShaderVP", "colorProcessShaderFP.cpp", "colorProcessShaderFP", WANT_HDR },
    { "bumpyEnvironment", "bumpyEnvironmentShaderVP.cpp", "bumpyEnvironmentShaderVP", "bumpyEnvironmentShaderFP.cpp", "bumpyEnvironmentShaderFP", WANT_HDR },
+   { "softParticle", "diffuseMapShaderVP.cpp", "diffuseMapShaderVP", "softParticleShaderFP.cpp", "softParticleShaderFP", WANT_HDR },
    { NULL, NULL, NULL, NULL, NULL, 0 }
 };
 

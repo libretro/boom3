@@ -32,6 +32,7 @@
 extern bool  hdr_output_active;
 extern float hdr_emissive_gain;
 extern float hdr_particle_gain;
+extern float hdr_scene_encode_scale;
 extern bool  HDR_GuiCorrectionActive( unsigned int *tex );
 
 // the ES 2 renderer, beside the others in a desktop core
@@ -54,6 +55,8 @@ shaderProgram_t reflectionCubeShader;
 shaderProgram_t stencilShadowShader;
 // the custom stage programs, by glslStageProgram_t; GLSL_STAGE_NONE unused
 shaderProgram_t stageShaders[GLSL_STAGE_COUNT];
+shaderProgram_t softParticleShader;
+static bool depthCopied;    // this view's depth is in _currentDepth
 
 
 #define ATTR_VERTEX     0   // Don't change this, as WebGL require the vertex attrib 0 to be always bound
@@ -463,6 +466,20 @@ static bool RB_GLSL_InitShaders(void) {
     RB_GLSL_GetUniformLocations(&diffuseMapGuiShader);
   }
 
+  // soft particles: the diffuse vertex program with the softening fragment program
+  common->Printf("Loading soft particle shader\n");
+  memset(&softParticleShader, 0, sizeof(shaderProgram_t));
+
+  R_LoadGLSLShader(diffuseMapShaderVP, &softParticleShader, GL_VERTEX_SHADER);
+  R_LoadGLSLShader(softParticleShaderFP, &softParticleShader, GL_FRAGMENT_SHADER);
+
+  if ( !R_LinkGLSLShader(&softParticleShader, "softParticle") && !R_ValidateGLSLProgram(&softParticleShader)) {
+    return false;
+  }
+  else {
+    RB_GLSL_GetUniformLocations(&softParticleShader);
+  }
+
   // Skybox cubemap shader
   common->Printf("Loading skybox cubemap shader\n");
   memset(&skyboxCubeShader, 0, sizeof(shaderProgram_t));
@@ -637,7 +654,22 @@ RB_ComputeMVP
 Compute the model view matrix, with eventually required projection matrix depth hacks
 =================
 */
+void RB_ComputeMVPHack( const drawSurf_t * const surf, bool modelHack, float mvp[16] );
+
 void RB_ComputeMVP( const drawSurf_t * const surf, float mvp[16] )
+{
+  RB_ComputeMVPHack( surf, true, mvp );
+}
+
+/*
+=================
+RB_ComputeMVPHack
+
+The same, with the model depth hack left out when modelHack is false: a
+softened particle takes its depth from the fade instead (#3878).
+=================
+*/
+void RB_ComputeMVPHack( const drawSurf_t * const surf, bool modelHack, float mvp[16] )
 {
   // Get the projection matrix
   float localProjectionMatrix[16];
@@ -647,7 +679,7 @@ void RB_ComputeMVP( const drawSurf_t * const surf, float mvp[16] )
   if ( surf->space->weaponDepthHack ) {
     localProjectionMatrix[14] = backEnd.viewDef->projectionMatrix[14] * 0.25;
   }
-  if ( surf->space->modelDepthHack != 0.0 ) {
+  if ( modelHack && surf->space->modelDepthHack != 0.0 ) {
     localProjectionMatrix[14] = backEnd.viewDef->projectionMatrix[14] - surf->space->modelDepthHack;
   }
 
@@ -1878,6 +1910,22 @@ void RB_GLSL_FillDepthBuffer(drawSurf_t** drawSurfs, int numDrawSurfs) {
   // TexCoord attribute is always enabled
   // Re-enable Color attribute (as it is enabled by default)
   GL_EnableVertexAttribArray(ATTR_COLOR);
+
+  // the early depth, for the stages that read it (#3877): a copy into a
+  // depth texture, which GLES 2 cannot make
+#ifdef HAVE_OPENGLES2
+  depthCopied = false;
+#else
+  depthCopied = RB_DepthCaptureWanted();
+  if ( depthCopied ) {
+    globalImages->currentDepthImage->CopyDepthbuffer( backEnd.viewDef->viewport.x1,
+                                                      backEnd.viewDef->viewport.y1,
+                                                      backEnd.viewDef->viewport.x2 - backEnd.viewDef->viewport.x1 + 1,
+                                                      backEnd.viewDef->viewport.y2 - backEnd.viewDef->viewport.y1 + 1,
+                                                      true, true );
+    GL_SelectTexture(0);
+  }
+#endif
 }
 
 /*
@@ -1981,6 +2029,94 @@ static void RB_GLSL_DrawStageProgram(const drawSurf_t* surf, const shaderStage_t
 
 /*
 ==================
+RB_GLSL_DrawSoftParticle
+
+A particle stage through the softening program (#3878), with the fade the
+ARB2 path gives it: over the particle's diameter for an alpha blend, its
+radius for an additive one, on the channels the blend reads.
+==================
+*/
+static void RB_GLSL_DrawSoftParticle(const drawSurf_t* surf, const shaderStage_t* pStage, const idDrawVert* ac,
+                                     const float color[4]) {
+  static const GLfloat zero[1] = { 0 };
+  static const GLfloat one[1] = { 1 };
+  static const GLfloat oneScaled[1] = { 1 / 255.0f };
+  static const GLfloat negOneScaled[1] = { -1.0f / 255.0f };
+  static const float white[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+  const int srcBlend = pStage->drawStateBits & GLS_SRCBLEND_BITS;
+  const float radius = surf->particle_radius;
+  const float fadeRange = srcBlend == GLS_SRCBLEND_SRC_ALPHA ? radius * 2.0f : radius;
+  float mvp[16];
+  float parms[2][4];
+  float sp[4];
+  float hp[4];
+
+  GL_UseProgram(&softParticleShader);
+  // the softening replaces the model depth hack; the weapon's stays
+  RB_ComputeMVPHack(surf, false, mvp);
+  GL_UniformMatrix4fv(offsetof(shaderProgram_t, modelViewProjectionMatrix), mvp);
+  GL_VertexAttribPointer(offsetof(shaderProgram_t, attr_Vertex), 3, GL_FLOAT, false, sizeof(idDrawVert),
+                         RB_DRAWVERT( ac, xyz));
+  GL_VertexAttribPointer(offsetof(shaderProgram_t, attr_TexCoord), 2, GL_FLOAT, false, sizeof(idDrawVert),
+                         RB_DRAWVERT( ac, st));
+  GL_VertexAttribPointer(offsetof(shaderProgram_t, attr_Color), 4, GL_UNSIGNED_BYTE, false, sizeof(idDrawVert),
+                         RB_DRAWVERT( ac, color ));
+
+  if ( pStage->texture.hasMatrix ) {
+    float matrix[16];
+    RB_GetShaderTextureMatrix(surf->shaderRegisters, &pStage->texture, matrix);
+    GL_UniformMatrix4fv(offsetof(shaderProgram_t, textureMatrix), matrix);
+  } else {
+    GL_UniformMatrix4fv(offsetof(shaderProgram_t, textureMatrix), mat4_identity.ToFloatPtr());
+  }
+  // the particle system fades through the vertex colour; a stage that
+  // ignores it takes the material's colour instead
+  if ( pStage->vertexColor == SVC_IGNORE ) {
+    GL_Uniform4fv(offsetof(shaderProgram_t, glColor), color);
+    GL_Uniform1fv(offsetof(shaderProgram_t, colorModulate), zero);
+    GL_Uniform1fv(offsetof(shaderProgram_t, colorAdd), one);
+  } else {
+    GL_Uniform4fv(offsetof(shaderProgram_t, glColor), white);
+    GL_Uniform1fv(offsetof(shaderProgram_t, colorModulate),
+                  pStage->vertexColor == SVC_INVERSE_MODULATE ? negOneScaled : oneScaled);
+    GL_Uniform1fv(offsetof(shaderProgram_t, colorAdd), pStage->vertexColor == SVC_INVERSE_MODULATE ? one : zero);
+  }
+
+  parms[0][0] = radius;
+  parms[0][1] = 1.0f / fadeRange;
+  parms[0][2] = 1.0f / radius;
+  parms[0][3] = 0.0f;
+  // an alpha blend fades its alpha, an additive one its colour
+  parms[1][0] = parms[1][1] = parms[1][2] = srcBlend == GLS_SRCBLEND_SRC_ALPHA ? 1.0f : 0.0f;
+  parms[1][3] = srcBlend == GLS_SRCBLEND_SRC_ALPHA ? 0.0f : 1.0f;
+  qglUniform4fv(softParticleShader.vertexParms, 2, &parms[0][0]);
+
+  sp[0] = 1.0f / globalImages->currentDepthImage->uploadWidth;
+  sp[1] = 1.0f / globalImages->currentDepthImage->uploadHeight;
+  sp[2] = sp[3] = 0.0f;
+  GL_Uniform4fv(offsetof(shaderProgram_t, screenParms), sp);
+
+  // the scene encoding fold alone: no gamma or clamp on a blended particle
+  hp[0] = hp[1] = hp[2] = hdr_scene_encode_scale;
+  hp[3] = 1.0f;
+  GL_Uniform4fv(offsetof(shaderProgram_t, hdrParms), hp);
+
+  GL_SelectTexture(1);
+  globalImages->currentDepthImage->Bind();
+  GL_SelectTexture(0);
+  pStage->texture.image->Bind();
+
+  // the program decides the depth test, so the particle can overdraw
+  GL_State(pStage->drawStateBits | GLS_DEPTHFUNC_ALWAYS);
+  RB_DrawElementsWithCounters(surf->geo);
+
+  GL_SelectTexture(1);
+  globalImages->BindNull();
+  GL_SelectTexture(0);
+}
+
+/*
+==================
 RB_GLSL_T_RenderShaderPasses
 
 This is also called for the generated 2D rendering
@@ -2063,6 +2199,10 @@ void RB_GLSL_T_RenderShaderPasses(const drawSurf_t* surf, const float mvp[16]) {
   R_GlobalPointToLocal(surf->space->modelMatrix, backEnd.viewDef->renderView.vieworg, localViewOrigin.ToVec3());
   localViewOrigin.w = 1.0f;
 
+  // softened particles: flagged by the front end, with the view's depth captured (#3878)
+  const bool softParticle = ( surf->dsFlags & DSF_SOFT_PARTICLE ) != 0 && surf->particle_radius > 0.0f
+    && depthCopied && softParticleShader.program && !r_skipNewAmbient.GetBool();
+
   // the GUI correction LUT, when the surface is a GUI and the output transform asks for it
   unsigned int guiLut = 0;
   if ( shader->GetSort() == SS_GUI ) {
@@ -2109,6 +2249,26 @@ void RB_GLSL_T_RenderShaderPasses(const drawSurf_t* surf, const float mvp[16]) {
       }
       RB_GLSL_DrawStageProgram(surf, pStage, newStage->glslProgram, newStage->fragmentProgramImages,
                                newStage->numFragmentProgramImages, ac, mvp, localViewOrigin);
+    }
+    else if ( softParticle && ( ( pStage->drawStateBits & GLS_SRCBLEND_BITS ) == GLS_SRCBLEND_ONE
+        || ( pStage->drawStateBits & GLS_SRCBLEND_BITS ) == GLS_SRCBLEND_SRC_ALPHA ) ) {
+      // softened by the engine, unless the material brought its own program (above)
+      const deform_t dfm = surf->material->Deform();
+      const float gain = ( dfm == DFRM_PARTICLE || dfm == DFRM_PARTICLE2 )
+        ? hdr_particle_gain : hdr_emissive_gain;
+      float color[4];
+      color[0] = regs[pStage->color.registers[0]];
+      color[1] = regs[pStage->color.registers[1]];
+      color[2] = regs[pStage->color.registers[2]];
+      color[3] = regs[pStage->color.registers[3]];
+      // an additive particle is emitted light: the emissive headroom
+      if ( hdr_output_active && gain != 1.0f
+          && ( pStage->drawStateBits & GLS_DSTBLEND_BITS ) == GLS_DSTBLEND_ONE ) {
+        color[0] *= gain;
+        color[1] *= gain;
+        color[2] *= gain;
+      }
+      RB_GLSL_DrawSoftParticle(surf, pStage, ac, color);
     }
     else {
 

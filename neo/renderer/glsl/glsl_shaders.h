@@ -59,6 +59,7 @@ extern const char* const colorProcessShaderVP;
 extern const char* const colorProcessShaderFP;
 extern const char* const bumpyEnvironmentShaderVP;
 extern const char* const bumpyEnvironmentShaderFP;
+extern const char* const softParticleShaderFP;
 // Shadows
 extern const char* const stencilShadowShaderVP;
 extern const char* const stencilShadowShaderFP;

@@ -369,11 +369,11 @@ GLSL_SHADERS := cubeMapShaderFP diffuseMapShaderVP diffuseCubeShaderVP diffuseMa
 	interactionPhongShaderVP interactionShaderFP interactionShaderVP \
 	reflectionCubeShaderVP skyboxCubeShaderVP stencilShadowShaderFP \
 	stencilShadowShaderVP zfillClipShaderFP zfillClipShaderVP zfillShaderFP \
-	zfillShaderVP
+	zfillShaderVP softParticleShaderFP
 GLSL_ES2_RENDERER := $(CORE_DIR)/renderer/draw_gles2.cpp \
 	$(addprefix $(CORE_DIR)/renderer/glsl/,$(addsuffix .o,$(GLSL_SHADERS)))
 GLSL_ES3_RENDERER := $(CORE_DIR)/renderer/draw_gles3_multiview.cpp \
-	$(addprefix $(CORE_DIR)/renderer/glsl_gles3/,$(addsuffix .o,$(GLSL_SHADERS) softParticleShaderFP))
+	$(addprefix $(CORE_DIR)/renderer/glsl_gles3/,$(addsuffix .o,$(GLSL_SHADERS)))
 
 ifeq ($(GLES),1)
 ifeq ($(GLES_VER),3)
