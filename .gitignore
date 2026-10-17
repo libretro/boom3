@@ -26,3 +26,4 @@ boom3_libretro_android.so
 /tools/gles_pack_check/gles_pack_check
 /tools/egl_host/egl_host
 /tools/egl_host/ppmdiff
+/tools/vk_host/vk_host
