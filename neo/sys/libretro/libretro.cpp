@@ -3877,9 +3877,11 @@ static rendererKind_t renderer_auto(void)
 #elif defined(HAVE_OPENGLES)
    return R_RENDERER_ES2;
 #else
+   /* the frontend writes its driver's context whether or not it returns
+    * true: false means it cannot switch drivers, so that context is the
+    * one to use */
    unsigned preferred = RETRO_HW_CONTEXT_NONE;
-   if (!environ_cb(RETRO_ENVIRONMENT_GET_PREFERRED_HW_RENDER, &preferred))
-      preferred = RETRO_HW_CONTEXT_NONE;
+   environ_cb(RETRO_ENVIRONMENT_GET_PREFERRED_HW_RENDER, &preferred);
    switch (preferred)
    {
 #ifdef BOOM3_VULKAN_RENDERER
