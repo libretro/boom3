@@ -68,8 +68,11 @@ static const int	ARENA_BYTES = 0x1000000;
 #ifndef GL_SYNC_FLUSH_COMMANDS_BIT
 #define GL_SYNC_FLUSH_COMMANDS_BIT	0x00000001
 #endif
-#ifndef GL_TIMEOUT_EXPIRED
-#define GL_TIMEOUT_EXPIRED			0x911B
+#ifndef GL_ALREADY_SIGNALED
+#define GL_ALREADY_SIGNALED			0x911A
+#endif
+#ifndef GL_CONDITION_SATISFIED
+#define GL_CONDITION_SATISFIED		0x911C
 #endif
 
 idCVar idVertexCache::r_showVertexCache( "r_showVertexCache", "0", CVAR_INTEGER|CVAR_RENDERER, "" );
@@ -373,7 +376,7 @@ void idVertexCache::Alloc( void *data, int size, vertCache_t **buffer, bool inde
 	block->indexType = indexBuffer ? GL_INDEX_TYPE : 0;
 
 	// the streaming tier packs it into a shared buffer when it fits one
-	if ( streaming && ArenaAlloc( block, data, size, indexBuffer ) ) {
+	if ( streaming && !allocatingTempBuffer && ArenaAlloc( block, data, size, indexBuffer ) ) {
 		return;
 	}
 
@@ -509,7 +512,11 @@ vertCache_t	*idVertexCache::AllocFrameTemp( void *data, int size ) {
 		// if we don't have enough room in the temp block, allocate a static block,
 		// but immediately free it so it will get freed at the next frame
 		tempOverflow = true;
-		Alloc( data, size, &block );
+		if ( streaming ) {
+			AllocStream( data, size, &block );
+		} else {
+			Alloc( data, size, &block );
+		}
 		Free( block);
 		return block;
 	}
@@ -743,10 +750,12 @@ void idVertexCache::InitStreaming() {
 	ringMemory = NULL;
 	ringSegment = 0;
 	ringUsed = 0;
+	ringWritable = true;
 	ringPendingBytes = 0;
 	ringPendingMapped = false;
 	for ( i = 0; i < RING_SEGMENTS; i++ ) {
 		ringFences[i] = NULL;
+		ringFenceFailed[i] = false;
 	}
 	for ( i = 0; i < MAX_ARENAS; i++ ) {
 		range_alloc_deinit( &arenas[i].ranges );
@@ -840,32 +849,36 @@ void idVertexCache::RingRelease() {
 ==============
 idVertexCache::RingEndFrame
 
-The frame's segment is fenced; the next one is waited for, which is
-normally long since done.
+Fence this frame and select a completed segment. With none ready,
+the existing overflow uploads keep writes out of the live ring.
 ==============
 */
 void idVertexCache::RingEndFrame() {
-	if ( ringFences[ringSegment] ) {
-		glCaps.DeleteSync( ringFences[ringSegment] );
+	if ( ringWritable ) {
+		ringFences[ringSegment] = glCaps.FenceSync( GL_SYNC_GPU_COMMANDS_COMPLETE, 0 );
+		ringFenceFailed[ringSegment] = ringFences[ringSegment] == NULL;
 	}
-	ringFences[ringSegment] = glCaps.FenceSync( GL_SYNC_GPU_COMMANDS_COMPLETE, 0 );
 
-	ringSegment = ( ringSegment + 1 ) % RING_SEGMENTS;
-	ringUsed = 0;
-
-	gl_caps_sync_t fence = ringFences[ringSegment];
-	if ( fence ) {
-		// a second per try; a GPU that is that far behind is lost anyway,
-		// and the segment is reused rather than the frame hanging
-		int tries;
-		for ( tries = 0; tries < 4; tries++ ) {
-			const GLenum r = glCaps.ClientWaitSync( fence, GL_SYNC_FLUSH_COMMANDS_BIT, 1000000000ull );
-			if ( r != GL_TIMEOUT_EXPIRED ) {
-				break;
-			}
+	ringWritable = false;
+	ringUsed = ringSegmentBytes;
+	for ( int n = 1; n <= RING_SEGMENTS; n++ ) {
+		const int next = ( ringSegment + n ) % RING_SEGMENTS;
+		if ( ringFenceFailed[next] ) {
+			continue;
 		}
-		glCaps.DeleteSync( fence );
-		ringFences[ringSegment] = NULL;
+		gl_caps_sync_t fence = ringFences[next];
+		if ( fence ) {
+			const GLenum r = glCaps.ClientWaitSync( fence, GL_SYNC_FLUSH_COMMANDS_BIT, 0 );
+			if ( r != GL_ALREADY_SIGNALED && r != GL_CONDITION_SATISFIED ) {
+				continue;
+			}
+			glCaps.DeleteSync( fence );
+			ringFences[next] = NULL;
+		}
+		ringSegment = next;
+		ringUsed = 0;
+		ringWritable = true;
+		return;
 	}
 }
 

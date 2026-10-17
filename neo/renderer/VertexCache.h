@@ -146,7 +146,7 @@ public:
 	void *			RingReserve( int size, int align, GLuint *buffer, int *offset );
 
 private:
-	static const int RING_SEGMENTS = 3;		// frames the ring holds before it waits on the GPU
+	static const int RING_SEGMENTS = 3;		// frames the ring holds before overflow uploads
 	static const int MAX_ARENAS = 64;
 	// a vertex block in a shared buffer starts at a multiple of every stride
 	// the backends draw vertexes with (idDrawVert's 60, shadowCache_t's 16)
@@ -211,6 +211,8 @@ private:
 
 	arena_t			arenas[MAX_ARENAS];
 	gl_caps_sync_t	ringFences[RING_SEGMENTS];
+	bool			ringFenceFailed[RING_SEGMENTS];
+	bool			ringWritable;
 	byte *			ringMemory;				// the ring's persistent mapping, or NULL
 	byte *			ringScratch;			// where RingMemory writes when the ring cannot be mapped
 	int				ringScratchBytes;
