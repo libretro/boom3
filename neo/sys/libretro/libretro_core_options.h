@@ -56,25 +56,27 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "doom_renderer",
       "Renderer (Restart Required)",
       NULL,
-      "Which renderer draws the game. 'OpenGL ES 3.1' packs static geometry into a few shared buffers drawn with base-vertex draws, streams each frame's data through one persistently mapped ring and hands each light interaction its parameters in a uniform buffer: less driver work per draw, the same picture. It needs an OpenGL ES 3.1 context and falls back to 'OpenGL ES 3.0' where the device or frontend cannot provide one.",
+      "Which renderer draws the game. 'Auto' takes the most capable one the build and the frontend offer. 'OpenGL ES 3.1' packs static geometry into a few shared buffers drawn with base-vertex draws, streams each frame's data through one persistently mapped ring and hands each light interaction its parameters in a uniform buffer: less driver work per draw, the same picture. It needs an OpenGL ES 3.1 context and falls back to 'OpenGL ES 3.0' where the device or frontend cannot provide one.",
       NULL,
       NULL,
       {
+         { "auto", "Auto" },
          { "es3",  "OpenGL ES 3.0" },
          { "es31", "OpenGL ES 3.1" },
          { NULL, NULL },
       },
-      "es3"
+      "auto"
    },
 #elif defined(BOOM3_ARB2_RENDERER) && defined(BOOM3_GLSL_RENDERERS)
 	{
       "doom_renderer",
       "Renderer (Restart Required)",
       NULL,
-      "Which renderer draws the game, and the OpenGL context it asks for. 'ARB2' is the classic desktop path on a compatibility context. 'ES2', 'ES3' and 'ES3.1' are the GLSL renderers of the mobile builds on the desktop context matching their GLES version: OpenGL 2.1, OpenGL 3.3 Core and OpenGL 4.3 Core. 'ES3.1' packs static geometry into shared buffers drawn with base-vertex draws, streams each frame's data through one persistently mapped ring and gives each light interaction its parameters in a uniform buffer. It falls back to 'ES3' where the context lacks what it needs. 'Vulkan' draws straight into the frontend's image on a Vulkan device.",
+      "Which renderer draws the game, and the context it asks for. 'Auto' follows the frontend's video driver: Vulkan on a Vulkan driver, 'ES3.1' on a core-profile OpenGL driver (glcore), 'ARB2' on a compatibility one (gl). 'ARB2' is the classic desktop path on a compatibility context. 'ES2', 'ES3' and 'ES3.1' are the GLSL renderers of the mobile builds on the desktop context matching their GLES version: OpenGL 2.1, OpenGL 3.3 Core and OpenGL 4.3 Core. 'ES3.1' packs static geometry into shared buffers drawn with base-vertex draws, streams each frame's data through one persistently mapped ring and gives each light interaction its parameters in a uniform buffer. It falls back to 'ES3' where the context lacks what it needs. 'Vulkan' draws straight into the frontend's image on a Vulkan device.",
       NULL,
       NULL,
       {
+         { "auto", "Auto" },
          { "arb2", "ARB2" },
          { "es2",  "ES2 (OpenGL 2.1)" },
          { "es3",  "ES3 (OpenGL 3.3 Core)" },
@@ -84,7 +86,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
 #endif
          { NULL, NULL },
       },
-      "arb2"
+      "auto"
    },
 #if defined(BOOM3_VULKAN_RENDERER)
    {

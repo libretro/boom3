@@ -3861,39 +3861,72 @@ static bool context_framebuffer_lock(void *data)
     return false;
 }
 
-static rendererKind_t renderer_option(void)
+/* The renderer 'auto' means: the most capable one the build has for the
+ * video driver the frontend runs.  A Vulkan driver gets the Vulkan
+ * renderer; a core-profile GL driver the ES 3.1 renderer, which falls
+ * back to ES 3 and ES 2 by what the context turns out to offer; a
+ * compatibility driver ARB2, the renderer written for it. */
+static rendererKind_t renderer_auto(void)
 {
 #if defined(HAVE_OPENGLES3)
+#if defined(HAVE_OPENGLES_3_1) || defined(HAVE_OPENGLES_3_2)
+   return R_RENDERER_ES31;
+#else
+   return R_RENDERER_ES3;
+#endif
+#elif defined(HAVE_OPENGLES)
+   return R_RENDERER_ES2;
+#else
+   unsigned preferred = RETRO_HW_CONTEXT_NONE;
+   if (!environ_cb(RETRO_ENVIRONMENT_GET_PREFERRED_HW_RENDER, &preferred))
+      preferred = RETRO_HW_CONTEXT_NONE;
+   switch (preferred)
+   {
+#ifdef BOOM3_VULKAN_RENDERER
+      case RETRO_HW_CONTEXT_VULKAN:
+         return R_RENDERER_VULKAN;
+#endif
+#ifdef BOOM3_GLSL_RENDERERS
+      case RETRO_HW_CONTEXT_OPENGL_CORE:
+         return R_RENDERER_ES31;
+#endif
+      default:
+         return R_RENDERER_ARB2;
+   }
+#endif
+}
+
+static rendererKind_t renderer_option(void)
+{
    struct retro_variable var;
    var.key   = "doom_renderer";
    var.value = NULL;
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value
-         && !strcmp(var.value, "es31"))
+   if (!environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) || !var.value)
+      return renderer_auto();
+#if defined(HAVE_OPENGLES3)
+   if (!strcmp(var.value, "es31"))
       return R_RENDERER_ES31;
-   return R_RENDERER_ES3;
+   if (!strcmp(var.value, "es3"))
+      return R_RENDERER_ES3;
 #elif defined(HAVE_OPENGLES)
    return R_RENDERER_ES2;
 #elif defined(BOOM3_GLSL_RENDERERS)
-   struct retro_variable var;
-   var.key   = "doom_renderer";
-   var.value = NULL;
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
-   {
-      if (!strcmp(var.value, "es2"))
-         return R_RENDERER_ES2;
-      if (!strcmp(var.value, "es3"))
-         return R_RENDERER_ES3;
-      if (!strcmp(var.value, "es31"))
-         return R_RENDERER_ES31;
+   if (!strcmp(var.value, "arb2"))
+      return R_RENDERER_ARB2;
+   if (!strcmp(var.value, "es2"))
+      return R_RENDERER_ES2;
+   if (!strcmp(var.value, "es3"))
+      return R_RENDERER_ES3;
+   if (!strcmp(var.value, "es31"))
+      return R_RENDERER_ES31;
 #ifdef BOOM3_VULKAN_RENDERER
-      if (!strcmp(var.value, "vulkan"))
-         return R_RENDERER_VULKAN;
+   if (!strcmp(var.value, "vulkan"))
+      return R_RENDERER_VULKAN;
 #endif
-   }
-   return R_RENDERER_ARB2;
 #else
    return R_RENDERER_ARB2;
 #endif
+   return renderer_auto();
 }
 
 rendererKind_t GLimp_RequestedRenderer(void)
@@ -4085,6 +4118,12 @@ bool retro_load_game(const struct retro_game_info *info)
 	}
 
 	libretro_renderer = renderer_option();
+	if (log_cb)
+	{
+		static const char *const names[] = { "ARB2", "ES2", "ES3", "ES3.1", "Vulkan" };
+		log_cb(RETRO_LOG_INFO, "[boom3] renderer: %s\n",
+				(unsigned)libretro_renderer < sizeof(names) / sizeof(names[0]) ? names[libretro_renderer] : "?");
+	}
 
 	hw_render.context_type    = get_hw_context_type();
 	hw_render.context_reset   = context_reset;
