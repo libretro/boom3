@@ -37,7 +37,7 @@ flat in mediump float var_ViewHalf;
 uniform sampler2D u_fragmentMap0;
 uniform sampler2D u_fragmentMap1;
 uniform sampler2D u_fragmentMap2;
-uniform vec4 u_screenParms;
+uniform highp vec4 u_screenParms;
 uniform mediump vec4 u_hdrParms;
 
 // Out
@@ -74,8 +74,11 @@ void main()
   localNormal = localNormal * 2.0 - 1.0;
   // the screen texcoord, offset by the scaled local normal, then scaled to
   // the copied render's power-of-two extent
-  vec2 screen = gl_FragCoord.xy * u_screenParms.xy;
-  screen = clamp(localNormal.xy * var_Deform + screen, 0.0, 1.0) * u_screenParms.zw;
+  // clamped to the outer texel centres, so a stacked eye never filters
+  // in the other eye's edge row
+  highp vec2 screen = gl_FragCoord.xy * u_screenParms.xy;
+  highp vec2 edge = 0.5 * u_screenParms.xy;
+  screen = clamp(localNormal.xy * var_Deform + screen, edge, 1.0 - edge) * u_screenParms.zw;
   screen.y += var_ViewHalf;
   fragColor = vec4(dhewm3Epilogue(texture(u_fragmentMap0, screen).xyz), 1.0);
 }

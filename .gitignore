@@ -21,6 +21,8 @@ boom3_libretro_android.so
 *.d
 /tools/gles_shader_check/gles_shader_check
 /tools/gles_shader_check/gles_shader_check.exe
+/tools/vr_stack_check/vr_stack_check
+/tools/vr_stack_check/vr_stack_check.exe
 /tools/es31_block_check/es31_block_check
 /tools/es31_block_check/es31_block_check.exe
 /tools/gles_pack_check/gles_pack_check

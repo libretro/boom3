@@ -33,7 +33,7 @@ flat in mediump float var_ViewHalf;
 
 // Uniforms
 uniform sampler2D u_fragmentMap0;
-uniform vec4 u_screenParms;
+uniform highp vec4 u_screenParms;
 uniform mediump vec4 u_hdrParms;
 
 // Out
@@ -64,7 +64,7 @@ vec3 dhewm3Epilogue(vec3 c)
 
 void main()
 {
-  vec2 screen = gl_FragCoord.xy * u_screenParms.xy * u_screenParms.zw;
+  highp vec2 screen = gl_FragCoord.xy * u_screenParms.xy * u_screenParms.zw;
   screen.y += var_ViewHalf;
   vec4 src = texture(u_fragmentMap0, screen);
   float luma = (src.x + src.y + src.z) * 0.33;
