@@ -143,7 +143,7 @@ static void vkb_bind(const vkb_draw_t *draw, VkDescriptorSet set, unsigned block
    key.stencil       = draw->stencil;
    key.target        = vkb.target->format;
    key.lineMode      = draw->lineMode;
-   key.polygonOffset = draw->polygonOffset ? 1 : 0;
+   key.polygonOffset = (draw->depthBias[0] != 0.0f || draw->depthBias[1] != 0.0f) ? 1 : 0;
    key.mirror        = draw->mirror;
    pipeline = vkb_pipeline(&key);
    if (!pipeline)
@@ -157,8 +157,8 @@ static void vkb_bind(const vkb_draw_t *draw, VkDescriptorSet set, unsigned block
    offsets[1] = blockOffset;
    vk.vkCmdBindDescriptorSets(vkb.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkb.pipelineLayout, 0, 1, &set,
          2, offsets);
-   if (draw->polygonOffset)
-      vk.vkCmdSetDepthBias(vkb.cmd, -(float)draw->polygonOffset, 0.0f, -1.0f);
+   if (key.polygonOffset)
+      vk.vkCmdSetDepthBias(vkb.cmd, draw->depthBias[0], 0.0f, draw->depthBias[1]);
    if (draw->stencil != VKB_STENCIL_OFF)
    {
       vk.vkCmdSetStencilReference(vkb.cmd, VK_STENCIL_FACE_FRONT_AND_BACK, draw->stencilRef);

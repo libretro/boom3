@@ -21,6 +21,24 @@
 #include "spirv/cube_frag.h"
 #include "spirv/blit_vert.h"
 #include "spirv/blit_frag.h"
+#include "spirv/interaction_vert.h"
+#include "spirv/interaction_frag.h"
+#include "spirv/interaction_phong_vert.h"
+#include "spirv/interaction_phong_frag.h"
+#include "spirv/shadow_vert.h"
+#include "spirv/shadow_frag.h"
+#include "spirv/fog_vert.h"
+#include "spirv/blendlight_vert.h"
+#include "spirv/fog_frag.h"
+#include "spirv/softparticle_frag.h"
+#include "spirv/heathaze_vert.h"
+#include "spirv/heathaze_frag.h"
+#include "spirv/heathaze_mask_frag.h"
+#include "spirv/heathaze_mask_vertex_frag.h"
+#include "spirv/colorprocess_vert.h"
+#include "spirv/colorprocess_frag.h"
+#include "spirv/bumpyenv_vert.h"
+#include "spirv/bumpyenv_frag.h"
 
 /* the engine's state bits (tr_local.h) */
 #define GLS_SRCBLEND_BITS      0x0000000f
@@ -53,7 +71,18 @@ static const vkb_program_source_t sources[VKB_PROGRAM_COUNT] = {
    { SPV(skybox_vert), SPV(cube_frag) },
    { SPV(reflect_vert), SPV(cube_frag) },
    { SPV(diffuse_cube_vert), SPV(cube_frag) },
-   { SPV(blit_vert), SPV(blit_frag) }
+   { SPV(blit_vert), SPV(blit_frag) },
+   { SPV(interaction_vert), SPV(interaction_frag) },
+   { SPV(interaction_phong_vert), SPV(interaction_phong_frag) },
+   { SPV(shadow_vert), SPV(shadow_frag) },
+   { SPV(fog_vert), SPV(fog_frag) },
+   { SPV(blendlight_vert), SPV(fog_frag) },
+   { SPV(diffuse_vert), SPV(softparticle_frag) },
+   { SPV(heathaze_vert), SPV(heathaze_frag) },
+   { SPV(heathaze_vert), SPV(heathaze_mask_frag) },
+   { SPV(heathaze_vert), SPV(heathaze_mask_vertex_frag) },
+   { SPV(colorprocess_vert), SPV(colorprocess_frag) },
+   { SPV(bumpyenv_vert), SPV(bumpyenv_frag) }
 };
 
 static VkShaderModule vkb_module(const unsigned int *code, size_t bytes)
@@ -332,13 +361,15 @@ static VkPipeline vkb_pipeline_make(const vkb_pipeline_key_t *key)
    vp.viewportCount = 1;
    vp.scissorCount  = 1;
 
-   /* The engine's front faces are counter-clockwise in GL's y-up window;
-    * in Vulkan's y-down framebuffer the same picture winds clockwise.  A
-    * mirrored view inverts it. */
-   frontCCW = key->mirror;
+   /* The flipped viewport mirrors the winding: the engine's GL front
+    * faces (counter-clockwise, culled for a front-sided material) are
+    * this pipeline's back faces, and the cull modes the draws ask for
+    * name the Vulkan side.  A mirrored view asks for the other side, as
+    * the engine does under GL. */
+   frontCCW = 0;
    memset(&rs, 0, sizeof(rs));
    rs.sType            = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
-   rs.depthClampEnable = vkb.features.depthClamp;
+   rs.depthClampEnable = VK_FALSE;    /* the shadow volumes clip at the near plane, as under GL */
    rs.polygonMode      = (key->lineMode || (stateBits & GLS_POLYMODE_LINE)) && vkb.features.fillModeNonSolid
       ? VK_POLYGON_MODE_LINE : VK_POLYGON_MODE_FILL;
    rs.cullMode         = key->cull == VKB_CULL_BACK ? VK_CULL_MODE_BACK_BIT
@@ -367,22 +398,34 @@ static VkPipeline vkb_pipeline_make(const vkb_pipeline_key_t *key)
       switch (key->stencil)
       {
          case VKB_STENCIL_TEST:
-            front.compareOp = back.compareOp = VK_COMPARE_OP_EQUAL;
+            /* the reference against the stencil: 128 >= a shadowed count */
+            front.compareOp = back.compareOp = VK_COMPARE_OP_GREATER_OR_EQUAL;
             break;
+         /* the engine's GL back face is this pipeline's front (the
+          * winding note above), so the ops GL puts on the back go on
+          * the front */
          case VKB_STENCIL_SHADOW_PASS:
-            front.passOp = VK_STENCIL_OP_INCREMENT_AND_WRAP;
-            back.passOp  = VK_STENCIL_OP_DECREMENT_AND_WRAP;
+            front.passOp = VK_STENCIL_OP_INCREMENT_AND_CLAMP;
+            back.passOp  = VK_STENCIL_OP_DECREMENT_AND_CLAMP;
             break;
          case VKB_STENCIL_SHADOW_FAIL:
-            front.depthFailOp = VK_STENCIL_OP_DECREMENT_AND_WRAP;
-            back.depthFailOp  = VK_STENCIL_OP_INCREMENT_AND_WRAP;
+            front.depthFailOp = VK_STENCIL_OP_DECREMENT_AND_CLAMP;
+            back.depthFailOp  = VK_STENCIL_OP_INCREMENT_AND_CLAMP;
             break;
          default:
             break;
       }
       ds.stencilTestEnable = VK_TRUE;
-      ds.front = front;
-      ds.back  = back;
+      if (key->mirror && key->stencil != VKB_STENCIL_TEST)
+      {
+         ds.front = back;
+         ds.back  = front;
+      }
+      else
+      {
+         ds.front = front;
+         ds.back  = back;
+      }
    }
 
    memset(&blend, 0, sizeof(blend));

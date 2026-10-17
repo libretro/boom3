@@ -153,6 +153,17 @@ enum vkb_program
    VKB_PROGRAM_REFLECT,       /* a cube map by the reflection vector */
    VKB_PROGRAM_DIFFUSE_CUBE,  /* a cube map by the normal */
    VKB_PROGRAM_BLIT,          /* the composite's plain copy, scaled */
+   VKB_PROGRAM_INTERACTION,   /* a light on a surface, Blinn-Phong */
+   VKB_PROGRAM_INTERACTION_PHONG, /* with the Phong specular, exponent in vertexParms[0].x */
+   VKB_PROGRAM_SHADOW,        /* a shadow volume into the stencil */
+   VKB_PROGRAM_FOG,           /* a fog light */
+   VKB_PROGRAM_BLEND_LIGHT,   /* a blend light */
+   VKB_PROGRAM_SOFT_PARTICLE, /* a particle faded against _currentDepth */
+   VKB_PROGRAM_HEAT_HAZE,     /* heatHaze.vfp */
+   VKB_PROGRAM_HEAT_HAZE_MASK,
+   VKB_PROGRAM_HEAT_HAZE_MASK_VERTEX,
+   VKB_PROGRAM_COLOR_PROCESS, /* colorProcess.vfp */
+   VKB_PROGRAM_BUMPY_ENVIRONMENT, /* bumpyEnvironment.vfp */
    VKB_PROGRAM_COUNT
 };
 
@@ -175,9 +186,9 @@ enum vkb_cull
 enum vkb_stencil
 {
    VKB_STENCIL_OFF = 0,
-   VKB_STENCIL_TEST,          /* keep, test against the reference */
-   VKB_STENCIL_SHADOW_PASS,   /* depth-pass volumes: front incr, back decr on pass */
-   VKB_STENCIL_SHADOW_FAIL,   /* depth-fail volumes: front decr, back incr on fail */
+   VKB_STENCIL_TEST,          /* keep; passes where the stencil is at most the reference */
+   VKB_STENCIL_SHADOW_PASS,   /* depth-pass volumes: GL's back faces incr, front decr on pass */
+   VKB_STENCIL_SHADOW_FAIL,   /* depth-fail volumes: GL's back faces decr, front incr on depth fail */
    VKB_STENCIL_COUNT
 };
 
@@ -233,14 +244,14 @@ typedef struct vkb_draw
    unsigned stateBits;          /* the engine's GLS_ bits */
    unsigned stencilRef;
    unsigned stencilMask;
+   float depthBias[2];          /* polygon offset: units, slope factor */
    unsigned char program;       /* enum vkb_program */
    unsigned char layout;        /* enum vkb_vertex_layout */
    unsigned char cull;          /* enum vkb_cull */
    unsigned char stencil;       /* enum vkb_stencil */
    unsigned char shortIndexes;  /* 16-bit indexes, else 32 */
-   unsigned char polygonOffset; /* the stage's polygon offset, as units */
    unsigned char lineMode;
-   unsigned char mirror;        /* the view is mirrored: front and back swap */
+   unsigned char mirror;        /* the view is mirrored: the shadow ops swap faces */
 } vkb_draw_t;
 
 void vkb_set_view(const vkb_view_block_t *view);
