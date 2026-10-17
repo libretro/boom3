@@ -569,6 +569,41 @@ static bool hdr_metadata(void *data)
    return true;
 }
 
+/* The display behind it, for GET_DISPLAY_METADATA: HOST_DISPLAY names its
+ * primaries - p3 (the default), rec2020, rec709 - or none for a frontend
+ * that knows nothing of its display.  Peak 1000 nits, from the EDID. */
+static bool display_metadata(void *data)
+{
+   static const unsigned short prims[3][8] = {
+      { 6800, 3200, 2650, 6900, 1500,  600, 3127, 3290 },  /* P3-D65  */
+      { 7080, 2920, 1700, 7970, 1310,  460, 3127, 3290 },  /* Rec.2020 */
+      { 6400, 3300, 3000, 6000, 1500,  600, 3127, 3290 }   /* Rec.709 */
+   };
+   struct retro_display_metadata *dm = (struct retro_display_metadata *)data;
+   const char *which = getenv("HOST_DISPLAY");
+   int sel = 0;
+   unsigned i;
+   if (dm->version != 1 || dm->size < sizeof(*dm))
+      return false;
+   dm->hdr.version = 1;
+   dm->hdr.size    = sizeof(dm->hdr);
+   if (!hdr_metadata(&dm->hdr))
+      return false;
+   if (which && !strcmp(which, "none"))
+      return true;
+   if (which && !strcmp(which, "rec2020"))
+      sel = 1;
+   else if (which && !strcmp(which, "rec709"))
+      sel = 2;
+   for (i = 0; i < 8; i++)
+      dm->caps.primaries_xy[i] = prims[sel][i];
+   dm->caps.peak_nits           = 1000.0f;
+   dm->caps.max_frame_avg_nits  = 400.0f;
+   dm->caps.supported_eotf_mask = 3;
+   dm->caps.capability_source   = 2;
+   return true;
+}
+
 static bool env_cb(unsigned cmd_id, void *data)
 {
    int i;
@@ -600,6 +635,8 @@ static bool env_cb(unsigned cmd_id, void *data)
       return true;
    case RETRO_ENVIRONMENT_GET_HDR_METADATA:
       return hdr_metadata(data);
+   case RETRO_ENVIRONMENT_GET_DISPLAY_METADATA:
+      return display_metadata(data);
    case RETRO_ENVIRONMENT_SET_HW_RENDER:
    {
       struct retro_hw_render_callback *cb = (struct retro_hw_render_callback *)data;

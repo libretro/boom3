@@ -76,6 +76,11 @@ static bool lr_vulkan( void );
 typedef struct hdr_frontend {
 	float paperWhite, maxNits;
 	unsigned gamutMode;
+	/* the display, when the frontend knows it (GET_DISPLAY_METADATA):
+	 * its primaries as CIE xy, red green blue white, and its peak */
+	bool displayKnown;
+	double displayPrims[8];
+	float displayPeak;
 } hdr_frontend_t;
 static hdr_frontend_t hdr_fe;
 static void hdr_fe_query( hdr_frontend_t *fe );
@@ -320,7 +325,10 @@ static bool   hdr_aces2_warned_expand = false;
  * boundary, so the boundary wants to be the display's - aiming at
  * Rec.2020 on a P3 panel means it stops pulling colour in while the
  * panel is still going to clip, and P3 covers only 72% of Rec.2020. */
-static int    hdr_aces2_gamut = 2;
+static int    hdr_aces2_gamut = 3;        /* 0 Rec.709, 1 P3-D65, 2 Rec.2020, 3 the display's */
+static bool   hdr_aces2_display_valid;    /* hdr_aces2_display_prims hold a display */
+static double hdr_aces2_display_prims[8];
+static float  hdr_aces2_display_m2020[9]; /* those primaries to Rec.2020 */
 /* Top of the Filmic Log encode, in stops above mid grey.  Blender's 4 is
  * sized for footage where 1.0 is a nominal white; this engine's scene
  * runs past it. */
@@ -590,6 +598,7 @@ static float  hdr_aces2_gui[ACES2_GUI_LUT_SIZE];
 static bool   hdr_aces2_gui_ready = false;
 static GLuint hdr_aces2_gui_tex = 0;
 static float  hdr_peak_override = 0.0f;
+static bool   hdr_peak_display;           /* doom_hdr_peak "display": the panel's reported peak */
 static float  hdr_aces2_wanted_peak = 1000.0f;
 static float  hdr_gt_toe        = 0.22f;
 static float  hdr_gt_shoulder   = 0.40f;
@@ -2802,16 +2811,22 @@ static void update_variables(bool startup)
 	var.key = "doom_hdr_peak";
 	var.value = NULL;
 	hdr_peak_override = 0.0f;
+	hdr_peak_display = false;
 	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value
-			&& strcmp(var.value, "auto") != 0)
-		hdr_peak_override = (float)atof(var.value);
+			&& strcmp(var.value, "auto") != 0) {
+		if (!strcmp(var.value, "display"))
+			hdr_peak_display = true;
+		else
+			hdr_peak_override = (float)atof(var.value);
+	}
 
 	var.key = "doom_hdr_aces2_gamut";
 	var.value = NULL;
 	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) {
-		int want = 2;
-		if (!strcmp(var.value, "rec709"))  want = 0;
-		else if (!strcmp(var.value, "p3")) want = 1;
+		int want = 3;
+		if (!strcmp(var.value, "rec709"))        want = 0;
+		else if (!strcmp(var.value, "p3"))      want = 1;
+		else if (!strcmp(var.value, "rec2020")) want = 2;
 		if (want != hdr_aces2_gamut) {
 			hdr_aces2_gamut = want;
 			hdr_aces2_peak = 0.0f;   /* the tables are per-gamut; rebuild them */
@@ -7041,8 +7056,11 @@ static bool hdr_aces2_build( float peakLuminance ) {
 		{ 0.680, 0.320, 0.265, 0.690, 0.150, 0.060, 0.3127, 0.3290 },  /* P3-D65  */
 		{ 0.708, 0.292, 0.170, 0.797, 0.131, 0.046, 0.3127, 0.3290 }   /* Rec.2020 */
 	};
-	const double *rec2020 = prims[( hdr_aces2_gamut < 0 || hdr_aces2_gamut > 2 )
-			? 2 : hdr_aces2_gamut];
+	/* the display's own primaries when the frontend reported them, else
+	 * P3-D65, which most HDR displays are close to */
+	const double *rec2020 = hdr_aces2_gamut == 3
+			? ( hdr_aces2_display_valid ? hdr_aces2_display_prims : prims[1] )
+			: prims[( hdr_aces2_gamut < 0 || hdr_aces2_gamut > 2 ) ? 2 : hdr_aces2_gamut];
 	static unsigned short lut[ACES2_LUT_WIDTH * 4];
 	static unsigned char  lut8[ACES2_LUT_WIDTH * 4];
 
@@ -8108,6 +8126,57 @@ static const float hdr_mIdentity[9] = {
 	0.0f, 0.0f, 1.0f
 };
 
+/* ACES 2.0 lands in the gamut it was told to limit to; this takes that
+ * to the Rec.2020 the PQ encode expects */
+static const float *hdr_aces2_to_2020( void ) {
+	switch ( hdr_aces2_gamut ) {
+	case 0:  return hdr_m709to2020;
+	case 1:  return hdr_mP3to2020;
+	case 3:  return hdr_aces2_display_valid ? hdr_aces2_display_m2020 : hdr_mP3to2020;
+	default: return hdr_mIdentity;
+	}
+}
+
+/* The display the frontend reports, for the limiting gamut: new
+ * primaries re-solve the tables. */
+static void hdr_aces2_set_display( const hdr_frontend_t *fe ) {
+	double m[9];
+	int i;
+	if ( !fe->displayKnown ) {
+		if ( hdr_aces2_display_valid ) {
+			hdr_aces2_display_valid = false;
+			hdr_aces2_peak = 0.0f;
+		}
+		return;
+	}
+	if ( hdr_aces2_display_valid ) {
+		for ( i = 0; i < 8; i++ ) {
+			if ( fabs( fe->displayPrims[i] - hdr_aces2_display_prims[i] ) > 1e-6 ) {
+				break;
+			}
+		}
+		if ( i == 8 ) {
+			return;
+		}
+	}
+	{
+		static const double rec2020[8] = { 0.708, 0.292, 0.170, 0.797, 0.131, 0.046, 0.3127, 0.3290 };
+		if ( !ACES2_PrimariesMatrix( fe->displayPrims, rec2020, m ) ) {
+			hdr_aces2_display_valid = false;
+			hdr_aces2_peak = 0.0f;
+			return;
+		}
+	}
+	for ( i = 0; i < 8; i++ ) {
+		hdr_aces2_display_prims[i] = fe->displayPrims[i];
+	}
+	for ( i = 0; i < 9; i++ ) {
+		hdr_aces2_display_m2020[i] = (float)m[i];
+	}
+	hdr_aces2_display_valid = true;
+	hdr_aces2_peak = 0.0f;
+}
+
 /* ACES stretch for the current headroom.
  *
  * The curve's asymptote is (2.51/2.43) and it is normalised by aces(1)
@@ -8752,8 +8821,7 @@ static void hdr_present_vk( float paperWhite, float H, const float mat[9] ) {
 	}
 	{
 		const bool aces2Abs = ( hdr_rolloff_mode == HDR_ROLLOFF_ACES2FULL && hdr_aces2_lut != 0 );
-		const float *a2m = ( hdr_aces2_gamut == 0 ) ? hdr_m709to2020
-						 : ( hdr_aces2_gamut == 1 ) ? hdr_mP3to2020 : hdr_mIdentity;
+		const float *a2m = hdr_aces2_to_2020();
 		VKB_HDR_MAT3( block.gamut, aces2Abs ? a2m : mat );
 		block.parms[0] = hdr_pq_output ? ( aces2Abs ? 100.0f : paperWhite ) / 10000.0f : 1.0f;
 		block.parms[1] = H;
@@ -8798,18 +8866,42 @@ static void hdr_present_vk( float paperWhite, float H, const float mat[9] ) {
  * render thread is not, so the Vulkan present reads a copy taken before
  * the frame.  A frontend without the call leaves the defaults. */
 static void hdr_fe_query( hdr_frontend_t *fe ) {
+	struct retro_display_metadata dm;
 	struct retro_hdr_metadata md;
 	bool have;
 	fe->paperWhite = 200.0f;
 	fe->maxNits = 1000.0f;
 	fe->gamutMode = 0;
+	fe->displayKnown = false;
+	fe->displayPeak = 0.0f;
 	if ( !hdr_output_active ) {
 		return;
 	}
-	memset( &md, 0, sizeof( md ) );
-	md.version = 1;
-	md.size = sizeof( md );
-	have = environ_cb( RETRO_ENVIRONMENT_GET_HDR_METADATA, &md );
+	/* the display's own capabilities come with the HDR contract when the
+	 * frontend knows them; a frontend with only the HDR call is asked that */
+	memset( &dm, 0, sizeof( dm ) );
+	dm.version = 1;
+	dm.size = sizeof( dm );
+	if ( environ_cb( RETRO_ENVIRONMENT_GET_DISPLAY_METADATA, &dm ) ) {
+		have = true;
+		md = dm.hdr;
+		if ( dm.caps.capability_source != 0 ) {
+			int i;
+			fe->displayKnown = true;
+			for ( i = 0; i < 8; i++ ) {
+				fe->displayPrims[i] = dm.caps.primaries_xy[i] / 10000.0;
+				if ( dm.caps.primaries_xy[i] == 0 ) {
+					fe->displayKnown = false;
+				}
+			}
+			fe->displayPeak = dm.caps.peak_nits;
+		}
+	} else {
+		memset( &md, 0, sizeof( md ) );
+		md.version = 1;
+		md.size = sizeof( md );
+		have = environ_cb( RETRO_ENVIRONMENT_GET_HDR_METADATA, &md );
+	}
 	if ( !hdr_pq_output ) {
 		/* SDR tone-mapped: the display is the 100-nit Rec.709 reference
 		 * - ACES 2.0's own SDR output-transform convention, which its
@@ -8831,8 +8923,11 @@ static void hdr_fe_query( hdr_frontend_t *fe ) {
 		 * moves */
 		if ( hdr_peak_override > 0.0f ) {
 			fe->maxNits = hdr_peak_override;
+		} else if ( hdr_peak_display && fe->displayPeak > 0.0f ) {
+			fe->maxNits = fe->displayPeak;
 		}
 	}
+	hdr_aces2_set_display( fe );
 	if ( !have ) {
 		return;
 	}
@@ -9380,9 +9475,7 @@ static void hdr_present( GLuint dstFbo ) {
 		 * ARB path. */
 		const bool aces2Abs = ( hdr_rolloff_mode == HDR_ROLLOFF_ACES2FULL
 				&& hdr_aces2_lut != 0 );
-		const float *a2m = ( hdr_aces2_gamut == 0 ) ? hdr_m709to2020
-						 : ( hdr_aces2_gamut == 1 ) ? hdr_mP3to2020
-						 : hdr_mIdentity;
+		const float *a2m = hdr_aces2_to_2020();
 		glUniformMatrix3fv( hdr_loc_mat, 1, GL_FALSE, aces2Abs ? a2m : mat );
 		glUniform4f( hdr_loc_parms, hdr_pq_output
 					? ( aces2Abs ? 100.0f : paperWhite ) / 10000.0f : 1.0f, H,
@@ -9457,9 +9550,7 @@ static void hdr_present( GLuint dstFbo ) {
 		 * the stage after it converts from that to the Rec.2020 the PQ
 		 * encode expects - identity only when the two are the same.
 		 * The matrices already exist for the ordinary gamut modes. */
-		const float *a2m = ( hdr_aces2_gamut == 0 ) ? hdr_m709to2020
-						 : ( hdr_aces2_gamut == 1 ) ? hdr_mP3to2020
-						 : hdr_mIdentity;
+		const float *a2m = hdr_aces2_to_2020();
 		const float *gm  = aces2 ? a2m : mat;
 		const float r0[4] = { gm[0], gm[3], gm[6], 0.0f };
 		const float r1[4] = { gm[1], gm[4], gm[7], 0.0f };

@@ -177,6 +177,27 @@ static void RGB_to_XYZ_matrix( const double p[8], double out[9] ) {
 	}
 }
 
+bool ACES2_PrimariesMatrix( const double from[8], const double to[8], double out[9] ) {
+	double Mf[9], Mt[9], MtInv[9];
+	int i, j;
+	for ( i = 1; i < 8; i += 2 ) {
+		if ( from[i] <= 0.0 || to[i] <= 0.0 ) {
+			return false;
+		}
+	}
+	RGB_to_XYZ_matrix( from, Mf );
+	RGB_to_XYZ_matrix( to, Mt );
+	if ( !mat3_invert( Mt, MtInv ) ) {
+		return false;
+	}
+	for ( i = 0; i < 3; i++ ) {
+		for ( j = 0; j < 3; j++ ) {
+			out[i*3+j] = Mf[i*3+0] * MtInv[0*3+j] + Mf[i*3+1] * MtInv[1*3+j] + Mf[i*3+2] * MtInv[2*3+j];
+		}
+	}
+	return true;
+}
+
 /* ---- cone response compression ---- */
 
 static double cone_fwd_abs( double Rc ) {

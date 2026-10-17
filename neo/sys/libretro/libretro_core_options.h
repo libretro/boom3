@@ -692,7 +692,8 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "doom_hdr_peak",
       "HDR: Display Peak Luminance",
       NULL,
-      "Overrides the peak brightness the frontend reports. ACES 2.0's "
+      "Overrides the peak brightness the frontend reports. 'Display' takes "
+      "the peak the panel itself reports, when the frontend knows it. ACES 2.0's "
       "tone scale is parameterised by this single number and rebuilds "
       "when it moves, so it retargets the whole transform rather than "
       "just scaling the output - mid grey lands on 10.0 nits at a 100 "
@@ -707,6 +708,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       NULL,
       {
          { "auto",  "Auto (ask the frontend)" },
+         { "display", "Display (the panel's reported peak)" },
          { "400",   "400 nits" },
          { "600",   "600 nits" },
          { "1000",  "1000 nits" },
@@ -898,7 +900,9 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "Which gamut the full ACES 2.0 transform compresses colour toward. "
       "Its gamut compression works by pulling out-of-range colour onto a "
       "boundary, so the boundary should be the one the display actually "
-      "has. Most HDR displays are close to P3, which covers about 72% of "
+      "has. 'Auto' takes the display's own primaries when the frontend "
+      "reports them (from its EDID or the platform), else P3-D65. "
+      "Most HDR displays are close to P3, which covers about 72% of "
       "Rec.2020 - leaving this at Rec.2020 on such a panel means the "
       "compression stops short and the panel clips the difference "
       "itself, which is the harsh clipping the transform exists to "
@@ -907,12 +911,13 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       NULL,
       NULL,
       {
+         { "auto",    "Auto (the display's, else P3-D65)" },
          { "rec2020", "Rec.2020 (widest)" },
          { "p3",      "P3-D65 (most HDR displays)" },
          { "rec709",  "Rec.709 (SDR gamut)" },
          { NULL, NULL },
       },
-      "rec2020"
+      "auto"
    },
    {
       "doom_hdr_agx_look",

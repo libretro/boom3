@@ -27,6 +27,11 @@ typedef struct {
 /* prims is red xy, green xy, blue xy, white xy - the CTL's Chromaticities */
 void	ACES2_SetSurround( int mode );   /* 0 dark, 1 dim (default), 2 average */
 void	ACES2_InitJMhParams( const double prims[8], aces2JMhParams_t *p );
+/* linear RGB in one set of primaries to another, through XYZ: a 3x3 the
+ * CTL way (row vector times matrix), which is also the column-major
+ * order a GL mat3 upload takes.  False when the chromaticities are
+ * degenerate. */
+bool	ACES2_PrimariesMatrix( const double from[8], const double to[8], double out[9] );
 
 void	ACES2_RGBToJMh( const double RGB[3], const aces2JMhParams_t *p, double JMh[3] );
 void	ACES2_JMhToRGB( const double JMh[3], const aces2JMhParams_t *p, double RGB[3] );
