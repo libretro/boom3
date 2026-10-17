@@ -259,7 +259,7 @@ void R_ShutdownFrameData( void ) {
 	frameMemoryBlock_t *nextBlock;
 	for ( block = frame->memory ; block ; block = nextBlock ) {
 		nextBlock = block->next;
-		Mem_Free( block );
+		Mem_Free16( block );
 	}
 	Mem_Free( frame );
 	frameData = NULL;
@@ -280,9 +280,9 @@ void R_InitFrameData( void ) {
 	frameData = (frameData_t *)Mem_ClearedAlloc( sizeof( *frameData ));
 	frame = frameData;
 	size = MEMORY_BLOCK_SIZE;
-	block = (frameMemoryBlock_t *)Mem_Alloc( size + sizeof( *block ) );
+	block = (frameMemoryBlock_t *)Mem_Alloc16( size + sizeof( *block ) );
 	if ( !block ) {
-		common->FatalError( "R_InitFrameData: Mem_Alloc() failed" );
+		common->FatalError( "R_InitFrameData: Mem_Alloc16() failed" );
 	}
 	block->size = size;
 	block->used = 0;
@@ -413,9 +413,9 @@ void *R_FrameAlloc( int bytes ) {
 		int		size;
 
 		size = MEMORY_BLOCK_SIZE;
-		block = (frameMemoryBlock_t *)Mem_Alloc( size + sizeof( *block ) );
+		block = (frameMemoryBlock_t *)Mem_Alloc16( size + sizeof( *block ) );
 		if ( !block ) {
-			common->FatalError( "R_FrameAlloc: Mem_Alloc() failed" );
+			common->FatalError( "R_FrameAlloc: Mem_Alloc16() failed" );
 		}
 		block->size = size;
 		block->used = 0;

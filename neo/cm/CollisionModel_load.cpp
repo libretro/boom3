@@ -298,7 +298,7 @@ idCollisionModelManagerLocal::FreePolygon
 */
 void idCollisionModelManagerLocal::FreePolygon( cm_model_t *model, cm_polygon_t *poly ) {
 	model->numPolygons--;
-	model->polygonMemory -= sizeof( cm_polygon_t ) + ( poly->numEdges - 1 ) * sizeof( poly->edges[0] );
+	model->polygonMemory -= CM_PolygonSize( poly->numEdges );
 	if ( model->polygonBlock == NULL ) {
 		Mem_Free( poly );
 	}
@@ -662,7 +662,7 @@ cm_polygon_t *idCollisionModelManagerLocal::AllocPolygon( cm_model_t *model, int
 	cm_polygon_t *poly;
 	int size;
 
-	size = sizeof( cm_polygon_t ) + ( numEdges - 1 ) * sizeof( poly->edges[0] );
+	size = CM_PolygonSize( numEdges );
 	model->numPolygons++;
 	model->polygonMemory += size;
 	if ( model->polygonBlock && model->polygonBlock->bytesRemaining >= size ) {

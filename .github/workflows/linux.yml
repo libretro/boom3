@@ -40,6 +40,9 @@ jobs:
     - name: Background reader read-step test
       run: |
         make -C tools/bgread check
+    - name: Bump allocator alignment tests
+      run: |
+        make -C tools/alignment check
     - name: Stage artifact
       run: |
         export PKGDIR="boom3_libretro-linux-${{ matrix.arch }}-$(git rev-parse --short HEAD)"

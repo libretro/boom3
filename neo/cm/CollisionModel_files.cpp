@@ -88,7 +88,7 @@ int idCollisionModelManagerLocal::CountPolygonMemory( cm_node_t *node ) const {
 		}
 		p->checkcount = checkCount;
 
-		memory += sizeof( cm_polygon_t ) + ( p->numEdges - 1 ) * sizeof( p->edges[0] );
+		memory += CM_PolygonSize( p->numEdges );
 	}
 	if ( node->planeType != -1 ) {
 		memory += CountPolygonMemory( node->children[0] );

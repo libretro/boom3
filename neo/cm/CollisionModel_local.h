@@ -111,6 +111,14 @@ typedef struct cm_polygon_s {
 	int						edges[1];			// variable sized, indexes into cm_edge_t list
 } cm_polygon_t;
 
+// bytes a polygon of numEdges takes in the polygon block: the variable
+// edges[] is 4 bytes an entry, so the size is rounded to keep the next
+// polygon's pointer and bounds aligned (the block is this sum, so the
+// writer uses the same measure)
+ID_INLINE int CM_PolygonSize( int numEdges ) {
+	return ( sizeof( cm_polygon_t ) + ( numEdges - 1 ) * sizeof( int ) + 7 ) & ~7;
+}
+
 typedef struct cm_polygonRef_s {
 	cm_polygon_t *			p;					// pointer to polygon
 	struct cm_polygonRef_s *next;				// next polygon in chain

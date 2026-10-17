@@ -554,13 +554,7 @@ const int	INITIAL_DRAWSURFS =			0x4000;
 // (until malloc fails), but it may force the
 // allocation of a new memory block that will
 // be discontinuous with the existing memory
-typedef struct frameMemoryBlock_s {
-	struct frameMemoryBlock_s *next;
-	int		size;
-	int		used;
-	int		poop;			// so that base is 16 byte aligned
-	byte	base[4];	// dynamically allocated as [size]
-} frameMemoryBlock_t;
+#include "renderer/frame_block.h"
 
 // all of the information needed by the back end must be
 // contained in a frameData_t.  This entire structure is
