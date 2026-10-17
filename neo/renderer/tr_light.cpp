@@ -1225,7 +1225,7 @@ void R_AddDrawSurf( const srfTriangles_t *tri, const viewEntity_t *space, const 
 		   so that was every 24-bit run.
 		*/
 		if ( hdr_output_active && hdr_particle_light_count_opt > 0 && shader != NULL
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
                 && VR_Active()
                 && tr.viewDef->vrView != 2
 #endif

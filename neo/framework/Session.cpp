@@ -36,7 +36,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "renderer/ModelManager.h"
 
 #include "framework/Session_local.h"
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 #include "renderer/vr.h"
 #endif
 
@@ -504,7 +504,7 @@ void idSessionLocal::StartWipe( const char *_wipeMaterial, bool hold ) {
 		wipeHold = false;
 		return;
 	}
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 	// In VR the wipe has no screen to fade: its 2D quad lands on the UI
 	// layer, which in play is the panel in front of the face, and the
 	// capture reads the eye layer rather than the loading panel - a blank
@@ -3349,7 +3349,7 @@ void idSessionLocal::Init() {
 	menuSoundWorld = soundSystem->AllocSoundWorld( rw );
 
 	// we have a single instance of the main menu
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 	// The VR pack brings the full game's mainmenu.gui, whose new game is a map
 	// the demo lacks: only the demo has demo_mainmenu.gui, so it goes first.
 	guiMainMenu = NULL;

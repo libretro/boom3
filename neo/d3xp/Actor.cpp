@@ -975,7 +975,7 @@ void idActor::Restore( idRestoreGame *savefile ) {
 	headAnim.Restore( savefile );
 	torsoAnim.Restore( savefile );
 	legsAnim.Restore( savefile );
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 	rightHandAnim.Init( this, &animator, ANIMCHANNEL_RIGHTHAND );
 	leftHandAnim.Init( this, &animator, ANIMCHANNEL_LEFTHAND );
 #endif
@@ -1174,7 +1174,7 @@ void idActor::SetupBody( void ) {
 
 	torsoAnim.Init( this, &animator, ANIMCHANNEL_TORSO );
 	legsAnim.Init( this, &animator, ANIMCHANNEL_LEGS );
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 	rightHandAnim.Init( this, &animator, ANIMCHANNEL_RIGHTHAND );
 	leftHandAnim.Init( this, &animator, ANIMCHANNEL_LEFTHAND );
 #endif
@@ -1247,7 +1247,7 @@ idActor::ShutdownThreads
 */
 void idActor::ShutdownThreads( void ) {
 	headAnim.Shutdown();
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 	rightHandAnim.Shutdown();
 	leftHandAnim.Shutdown();
 #endif
@@ -1958,7 +1958,7 @@ void idActor::SetAnimState( int channel, const char *statename, int blendFrames 
 		allowEyeFocus = true;
 		break;
 
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 	case ANIMCHANNEL_RIGHTHAND :
 	case ANIMCHANNEL_LEFTHAND :
 		HandAnim( channel )->SetState( statename, blendFrames );
@@ -1989,7 +1989,7 @@ const char *idActor::GetAnimState( int channel ) const {
 		return legsAnim.state;
 		break;
 
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 	case ANIMCHANNEL_RIGHTHAND :
 	case ANIMCHANNEL_LEFTHAND :
 		return HandAnim( channel )->state;
@@ -2026,12 +2026,11 @@ bool idActor::InAnimState( int channel, const char *statename ) const {
 		}
 		break;
 
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 	case ANIMCHANNEL_RIGHTHAND :
 	case ANIMCHANNEL_LEFTHAND :
-		if ( HandAnim( channel )->state == statename ) {
+		if ( HandAnim( channel )->state == statename )
 			return true;
-		}
 		break;
 #endif
 	default:
@@ -2073,13 +2072,13 @@ void idActor::UpdateAnimState( void ) {
 	headAnim.UpdateState();
 	torsoAnim.UpdateState();
 	legsAnim.UpdateState();
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 	rightHandAnim.UpdateState();
 	leftHandAnim.UpdateState();
 #endif
 }
 
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 /*
 =====================
 idActor::HandAnim
@@ -2652,7 +2651,7 @@ void idActor::Event_StopAnim( int channel, int frames ) {
 		legsAnim.StopAnim( frames );
 		break;
 
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 	case ANIMCHANNEL_RIGHTHAND :
 	case ANIMCHANNEL_LEFTHAND :
 		HandAnim( channel )->StopAnim( frames );
@@ -2737,7 +2736,7 @@ void idActor::Event_PlayAnim( int channel, const char *animname ) {
 		}
 		break;
 
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 	case ANIMCHANNEL_RIGHTHAND :
 	case ANIMCHANNEL_LEFTHAND :
 		HandAnim( channel )->idleAnim = false;
@@ -2818,7 +2817,7 @@ void idActor::Event_PlayCycle( int channel, const char *animname ) {
 		}
 		break;
 
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 	case ANIMCHANNEL_RIGHTHAND :
 	case ANIMCHANNEL_LEFTHAND :
 		HandAnim( channel )->idleAnim = false;
@@ -2861,7 +2860,7 @@ void idActor::Event_IdleAnim( int channel, const char *animname ) {
 			legsAnim.BecomeIdle();
 			break;
 
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 		case ANIMCHANNEL_RIGHTHAND :
 		case ANIMCHANNEL_LEFTHAND :
 			HandAnim( channel )->BecomeIdle();
@@ -2938,7 +2937,7 @@ void idActor::Event_IdleAnim( int channel, const char *animname ) {
 		}
 		break;
 
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 	case ANIMCHANNEL_RIGHTHAND :
 	case ANIMCHANNEL_LEFTHAND :
 		HandAnim( channel )->BecomeIdle();
@@ -2995,7 +2994,7 @@ void idActor::Event_SetSyncedAnimWeight( int channel, int anim, float weight ) {
 		}
 		break;
 
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 	case ANIMCHANNEL_RIGHTHAND :
 	case ANIMCHANNEL_LEFTHAND :
 		animator.CurrentAnim( channel )->SetSyncedAnimWeight( anim, weight );
@@ -3035,7 +3034,7 @@ void idActor::Event_OverrideAnim( int channel ) {
 		SyncAnimChannels( ANIMCHANNEL_LEGS, ANIMCHANNEL_TORSO, torsoAnim.lastAnimBlendFrames );
 		break;
 
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 	case ANIMCHANNEL_RIGHTHAND :
 	case ANIMCHANNEL_LEFTHAND :
 		HandAnim( channel )->Disable();
@@ -3066,7 +3065,7 @@ void idActor::Event_EnableAnim( int channel, int blendFrames ) {
 		legsAnim.Enable( blendFrames );
 		break;
 
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 	case ANIMCHANNEL_RIGHTHAND :
 	case ANIMCHANNEL_LEFTHAND :
 		HandAnim( channel )->Enable( blendFrames );
@@ -3100,7 +3099,7 @@ void idActor::Event_SetBlendFrames( int channel, int blendFrames ) {
 		legsAnim.lastAnimBlendFrames = blendFrames;
 		break;
 
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 	case ANIMCHANNEL_RIGHTHAND :
 	case ANIMCHANNEL_LEFTHAND :
 		HandAnim( channel )->animBlendFrames = blendFrames;
@@ -3132,7 +3131,7 @@ void idActor::Event_GetBlendFrames( int channel ) {
 		idThread::ReturnInt( legsAnim.animBlendFrames );
 		break;
 
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 	case ANIMCHANNEL_RIGHTHAND :
 	case ANIMCHANNEL_LEFTHAND :
 		idThread::ReturnInt( HandAnim( channel )->animBlendFrames );
@@ -3212,7 +3211,7 @@ void idActor::Event_AnimDone( int channel, int blendFrames ) {
 		idThread::ReturnInt( result );
 		break;
 
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 	case ANIMCHANNEL_RIGHTHAND :
 	case ANIMCHANNEL_LEFTHAND :
 		idThread::ReturnInt( HandAnim( channel )->AnimDone( blendFrames ) );

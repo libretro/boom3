@@ -61,7 +61,7 @@ const idEventDef EV_Weapon_TotalAmmoCount( "totalAmmoCount", NULL, 'f' );
 const idEventDef EV_Weapon_ClipSize( "clipSize", NULL, 'f' );
 const idEventDef EV_Weapon_WeaponOutOfAmmo( "weaponOutOfAmmo" );
 const idEventDef EV_Weapon_WeaponReady( "weaponReady" );
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 const idEventDef EV_Weapon_IsMotionControlled( "isMotionControlled", NULL, 'd' );
 const idEventDef EV_Weapon_GetWeaponSkin( "getWeaponSkin", NULL, 's' );
 #endif
@@ -100,7 +100,7 @@ CLASS_DECLARATION( idAnimatedEntity, idWeapon )
 	EVENT( EV_Weapon_GetOwner,					idWeapon::Event_GetOwner )
 	EVENT( EV_Weapon_State,						idWeapon::Event_WeaponState )
 	EVENT( EV_Weapon_WeaponReady,				idWeapon::Event_WeaponReady )
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 	EVENT( EV_Weapon_IsMotionControlled,		idWeapon::Event_IsMotionControlled )
 	EVENT( EV_Weapon_GetWeaponSkin,				idWeapon::Event_GetWeaponSkin )
 #endif
@@ -166,7 +166,7 @@ idWeapon::idWeapon() {
 	weaponDef				= NULL;
 	thread					= NULL;
 
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 	vrHandModel				= NULL;
 	vrHandJoint				= INVALID_JOINT;
 	vrHandOffset.Zero();
@@ -664,7 +664,7 @@ void idWeapon::Restore( idRestoreGame *savefile ) {
 		weaponLights.Set(newLight.name, newLight);
 	}
 
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 	// not in the save: looked up again on the restored model
 	{
 		static const char * const attachers[2] = { "RhandAttacher", "LhandAttacher" };
@@ -694,7 +694,7 @@ idWeapon::Clear
 void idWeapon::Clear( void ) {
 	CancelEvents( &EV_Weapon_Clear );
 
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 	vrHandModel				= NULL;
 	vrHandJoint				= INVALID_JOINT;
 	vrHandMeasured			= false;
@@ -1029,7 +1029,7 @@ void idWeapon::GetWeaponDef( const char *objectname, int ammoinclip ) {
 	ejectJointView = animator.GetJointHandle( "eject" );
 	guiLightJointView = animator.GetJointHandle( "guiLight" );
 	ventLightJointView = animator.GetJointHandle( "ventLight" );
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 	{
 		static const char * const attachers[2] = { "RhandAttacher", "LhandAttacher" };
 		for ( int h = 0; h < 2; h++ ) {
@@ -2152,7 +2152,7 @@ void idWeapon::AlertMonsters( void ) {
 	}
 }
 
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 /*
 ================
 idWeapon::Event_IsMotionControlled
@@ -2232,7 +2232,7 @@ void idWeapon::PresentWeapon( bool showViewModel ) {
 	playerViewOrigin = owner->firstPersonViewOrigin;
 	playerViewAxis = owner->firstPersonViewAxis;
 
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 	// shots, melee and the flashlight go where the controller points
 	{
 		idVec3 aimOrigin;

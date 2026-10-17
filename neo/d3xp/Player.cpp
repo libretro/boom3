@@ -38,7 +38,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "WorldSpawn.h"
 #include "Player.h"
 
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 #include "renderer/vr.h"
 #include "idlib/geometry/JointTransform.h"
 #endif
@@ -86,7 +86,7 @@ const idEventDef EV_Player_StopFxFov( "stopFxFov" );
 const idEventDef EV_Player_EnableWeapon( "enableWeapon" );
 const idEventDef EV_Player_DisableWeapon( "disableWeapon" );
 const idEventDef EV_Player_GetCurrentWeapon( "getCurrentWeapon", NULL, 's' );
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 // the hands, for the VR replacement pack's player scripts
 const idEventDef EV_Player_GetWeaponHand( "getWeaponHand", NULL, 'd' );
 const idEventDef EV_Player_GetFlashHand( "getFlashHand", NULL, 'd' );
@@ -123,7 +123,7 @@ CLASS_DECLARATION( idActor, idPlayer )
 	EVENT( EV_Player_EnableWeapon,			idPlayer::Event_EnableWeapon )
 	EVENT( EV_Player_DisableWeapon,			idPlayer::Event_DisableWeapon )
 	EVENT( EV_Player_GetCurrentWeapon,		idPlayer::Event_GetCurrentWeapon )
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 	EVENT( EV_Player_GetWeaponHand,			idPlayer::Event_GetWeaponHand )
 	EVENT( EV_Player_GetFlashHand,			idPlayer::Event_GetFlashHand )
 	EVENT( EV_Player_GetWeaponHandState,	idPlayer::Event_GetWeaponHandState )
@@ -1193,7 +1193,7 @@ idPlayer::idPlayer
 idPlayer::idPlayer() {
 	memset( &usercmd, 0, sizeof( usercmd ) );
 
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 	vrBodyReady				= false;
 	vrBodyShown				= false;
 #endif
@@ -1938,7 +1938,7 @@ void idPlayer::Spawn( void ) {
 	bloomSpeed				= 1;
 	bloomIntensity			= -0.01f;
 
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 	VRInitBody();
 #endif
 }
@@ -2498,11 +2498,10 @@ void idPlayer::Restore( idRestoreGame *savefile ) {
 	// DG: workaround for lingering messages that are shown forever after loading a savegame
 	//     (one way to get them is saving again, while the message from first save is still
 	//      shown, and then load)
-	if ( hud ) {
+	if ( hud )
 		hud->SetStateString( "message", "" );
-	}
 
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 	VRInitBody();
 #endif
 }
@@ -3129,7 +3128,7 @@ void idPlayer::DrawHUD( idUserInterface *_hud ) {
 	_hud->Redraw( gameLocal.realClientTime );
 
 	bool showCrosshair = weapon.GetEntity()->ShowCrosshair();
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 	{
 		// the screen's centre is not where a held weapon points
 		idVec3 aimOrigin;
@@ -5190,7 +5189,7 @@ void idPlayer::UpdateFocus( void ) {
 
 	start = GetEyePosition();
 	end = start + viewAngles.ToForward() * 80.0f;
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 	{
 		// GUIs are pointed at with the controller
 		idVec3 aimOrigin;
@@ -7403,7 +7402,7 @@ void idPlayer::Think( void ) {
 	}
 
 	if ( !g_stopTime.GetBool() ) {
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 		VRUpdateBody();
 #endif
 		UpdateAnimation();
@@ -8297,7 +8296,7 @@ void idPlayer::CalculateViewWeaponPos( idVec3 &origin, idMat3 &axis ) {
 	idAngles	angles;
 	int			delta;
 
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 	// in VR the controller holds the weapon: the model turns with where it
 	// points, and its right hand sits in the controller's grip
 	{
@@ -8374,7 +8373,7 @@ void idPlayer::CalculateViewWeaponPos( idVec3 &origin, idMat3 &axis ) {
 	axis = angles.ToMat3() * viewAxis;
 }
 
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 /*
 ==================
 idPlayer::Event_GetWeaponHand

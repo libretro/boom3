@@ -210,7 +210,7 @@ extern idCVar	g_gun_x;
 extern idCVar	g_gun_y;
 extern idCVar	g_gun_z;
 
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 extern idCVar	vr_motionControls;
 extern idCVar	vr_weaponHand;
 extern idCVar	vr_weaponPitch;

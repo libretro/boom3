@@ -329,7 +329,7 @@ idCVar g_gun_x(						"g_gunX",					"0",			CVAR_GAME | CVAR_FLOAT, "" );
 idCVar g_gun_y(						"g_gunY",					"0",			CVAR_GAME | CVAR_FLOAT, "" );
 idCVar g_gun_z(						"g_gunZ",					"0",			CVAR_GAME | CVAR_FLOAT, "" );
 
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 idCVar vr_motionControls(			"vr_motionControls",		"1",			CVAR_GAME | CVAR_ARCHIVE | CVAR_BOOL, "in VR, the weapon is held and aimed by the controller, not the right stick" );
 idCVar vr_weaponHand(				"vr_weaponHand",			"0",			CVAR_GAME | CVAR_ARCHIVE | CVAR_INTEGER, "the hand holding the weapon: 0 right, 1 left", 0, 1 );
 idCVar vr_weaponPitch(				"vr_weaponPitch",			"0",			CVAR_GAME | CVAR_ARCHIVE | CVAR_FLOAT, "degrees added to the controller's pointing pitch, for the weapon and its shots" );

@@ -39,7 +39,7 @@ typedef struct {
 	idMat3		axis;
 } orientation_t;
 
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 /* A subview image is only valid for the eye it was rendered for. In flat
  * rendering vrView is 0, so this is just frameCount scaled and the
  * once-per-frame reuse is unchanged. */
@@ -298,18 +298,15 @@ R_RemoteRender
 static void R_RemoteRender( drawSurf_t *surf, textureStage_t *stage ) {
 	viewDef_t		*parms;
 
-#if defined(LIBRETRO) && defined(BOOM3_VR)
-	if (VR_Active() && stage->dynamicFrameCount == R_SubviewFrameKey()) {
+#if defined(BOOM3_VR)
+	if (VR_Active() && stage->dynamicFrameCount == R_SubviewFrameKey())
 		return;
-	}
-	else if (!VR_Active() && stage->dynamicFrameCount == tr.frameCount) {
+	else if (!VR_Active() && stage->dynamicFrameCount == tr.frameCount)
 		return;
-	}
 #else
 	// remote views can be reused in a single frame
-	if ( stage->dynamicFrameCount == tr.frameCount ) {
+	if ( stage->dynamicFrameCount == tr.frameCount )
 		return;
-	}
 #endif
 
 	// if the entity doesn't have a remoteRenderView, do nothing
@@ -326,7 +323,7 @@ static void R_RemoteRender( drawSurf_t *surf, textureStage_t *stage ) {
 
 	parms->renderView = *surf->space->entityDef->parms.remoteRenderView;
 	parms->renderView.viewID = 0;	// clear to allow player bodies to show up, and suppress view weapons
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 	parms->vrProjection = false;	// the camera has its own FOV, not the HMD eye frustum
 #endif
 	parms->initialViewAreaOrigin = parms->renderView.vieworg;
@@ -352,7 +349,7 @@ static void R_RemoteRender( drawSurf_t *surf, textureStage_t *stage ) {
 	R_RenderView(parms);
 
 	// copy this rendering to the image
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 	if (VR_Active())
 		stage->dynamicFrameCount = R_SubviewFrameKey();
 	else
@@ -360,9 +357,8 @@ static void R_RemoteRender( drawSurf_t *surf, textureStage_t *stage ) {
 #else
 	stage->dynamicFrameCount = tr.frameCount;
 #endif
-	if (!stage->image) {
+	if (!stage->image)
 		stage->image = globalImages->scratchImage;
-	}
 
 	tr.CaptureRenderToImage( stage->image->imgName );
 	tr.UnCrop();
@@ -376,13 +372,11 @@ R_MirrorRender
 void R_MirrorRender( drawSurf_t *surf, textureStage_t *stage, idScreenRect scissor ) {
 	viewDef_t		*parms;
 
-#if defined(LIBRETRO) && defined(BOOM3_VR)
-	if (VR_Active() && stage->dynamicFrameCount == R_SubviewFrameKey()) {
+#if defined(BOOM3_VR)
+	if (VR_Active() && stage->dynamicFrameCount == R_SubviewFrameKey())
 		return;
-	}
-	else if (!VR_Active() && stage->dynamicFrameCount == tr.frameCount) {
+	else if (!VR_Active() && stage->dynamicFrameCount == tr.frameCount)
 		return;
-	}
 #else
 	// remote views can be reused in a single frame
 	if ( stage->dynamicFrameCount == tr.frameCount ) {
@@ -419,7 +413,7 @@ void R_MirrorRender( drawSurf_t *surf, textureStage_t *stage, idScreenRect sciss
 	R_RenderView( parms );
 
 	// copy this rendering to the image
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 	if (VR_Active())
 		stage->dynamicFrameCount = R_SubviewFrameKey();
 	else
@@ -441,7 +435,7 @@ R_XrayRender
 void R_XrayRender( drawSurf_t *surf, textureStage_t *stage, idScreenRect scissor ) {
 	viewDef_t		*parms;
 
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 	if (VR_Active() && stage->dynamicFrameCount == R_SubviewFrameKey()) {
 		return;
 	}
@@ -485,7 +479,7 @@ void R_XrayRender( drawSurf_t *surf, textureStage_t *stage, idScreenRect scissor
 	R_RenderView( parms );
 
 	// copy this rendering to the image
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 	if (VR_Active())
 		stage->dynamicFrameCount = R_SubviewFrameKey();
 	else

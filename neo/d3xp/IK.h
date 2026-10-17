@@ -59,7 +59,7 @@ public:
 	virtual void			ClearJointMods( void );
 
 	bool					SolveTwoBones( const idVec3 &startPos, const idVec3 &endPos, const idVec3 &dir, float len0, float len1, idVec3 &jointPos );
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 	bool					SolveTwoArmBones( idVec3 &startPos, idVec3 &endPos, const idVec3 &dir, float len0, float len1, idVec3 &jointPos );
 #endif
 	float					GetBoneAxis( const idVec3 &startPos, const idVec3 &endPos, const idVec3 &dir, idMat3 &axis );
@@ -186,7 +186,7 @@ private:
 	idMat3					upperArmToShoulderJoint[MAX_ARMS];
 	idMat3					lowerArmToElbowJoint[MAX_ARMS];
 
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 public:
 	// The VR player's arms (Doom3Quest's): the player places each hand joint
 	// and gives each controller's orientation in model space, which rolls the

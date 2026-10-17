@@ -979,12 +979,6 @@ void idRenderSystemLocal::CaptureRenderToFile( const char *fileName, bool fixAlp
 	guiModel->Clear();
 	R_IssueRenderCommands();
 
-#if defined(BOOM3_ARB2_RENDERER) && !defined(LIBRETRO)
-	if ( !R_GLSLRenderer() ) {
-		qglReadBuffer( GL_BACK );
-	}
-#endif
-
 	// include extra space for OpenGL padding to word boundaries
 	int	c = ( rc->width + 3 ) * rc->height;
 	// GLES reads only RGBA (GL_RGB fails, leaving the objective

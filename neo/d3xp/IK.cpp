@@ -209,7 +209,7 @@ bool idIK::SolveTwoBones( const idVec3 &startPos, const idVec3 &endPos, const id
 	return true;
 }
 
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 /*
 ================
 idIK::SolveTwoArmBones
@@ -989,7 +989,7 @@ void idIK_Reach::Restore( idRestoreGame *savefile ) {
 		savefile->ReadMat3( lowerArmToElbowJoint[i] );
 }
 
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 /*
 ================
 idIK_Reach::Init

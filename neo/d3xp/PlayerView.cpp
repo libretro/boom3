@@ -35,7 +35,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "Player.h"
 
 #include "PlayerView.h"
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 #include "renderer/vr.h"
 #endif
 
@@ -656,7 +656,7 @@ void idPlayerView::ScreenFade() {
 	}
 
 	if ( fadeColor[ 3 ] != 0.0f ) {
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 		if ( VR_Active() ) {
 			VR_SetScreenFade( fadeColor.ToFloatPtr() );
 			return;

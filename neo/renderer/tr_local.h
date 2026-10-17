@@ -393,7 +393,7 @@ typedef struct viewEntity_s {
 const int	MAX_CLIP_PLANES	= 1;				// we may expand this to six for some subview issues
 
 // viewDefs are allocated on the frame temporary stack memory
-#if defined(LIBRETRO) && defined(BOOM3_VR) && defined(HAVE_OPENGLES3)
+#if defined(BOOM3_VR) && defined(HAVE_OPENGLES3)
 #define BOOM3_VR_MULTIVIEW	// both eyes in one pass, through GL_OVR_multiview2
 #endif
 
@@ -460,7 +460,7 @@ typedef struct viewDef_s {
 	// crossing a closed door.  This is used to avoid drawing interactions
 	// when the light is behind a closed door.
 
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 	int		vrView;			// 0 = not an eye view, 1 = left, 2 = right, 3 = both (multiview)
 	bool	vrProjection;	// build an asymmetric projection from vrFovTan
 	float	vrFovTan[4];	// left, right, up, down (positive tangents)
@@ -1162,10 +1162,8 @@ void		GLimp_Shutdown( void );
 // and resets the gamma ramps.
 
 void		GLimp_SwapBuffers( void );
-#ifdef LIBRETRO
 // the framebuffer the core draws its views into (0 the default one)
 GLuint		GLimp_ViewFramebuffer( void );
-#endif
 // Calls the system specific swapbuffers routine, and may also perform
 // other system specific cvar checks that happen every frame.
 // This will not be called if 'r_drawBuffer GL_FRONT'
@@ -1557,9 +1555,7 @@ typedef struct shaderProgram_s {
  * then records; true for anything it does not cache. */
 bool GL_UniformChanged( shaderProgram_t *program, int locationOffset, const float *value, int count );
 
-#if defined(LIBRETRO)
 void GLimp_EndView3D( void );
-#endif
 
 // the source a GLSL renderer compiles on this context: unchanged on GLES,
 // the desktop GLSL of the same program on a desktop context

@@ -2741,14 +2741,9 @@ void idImage::CopyFramebuffer( int x, int y, int imageWidth, int imageHeight, bo
 	   GL_BACK only when one is not.
 	*/
 	{
-#ifdef LIBRETRO
 		/* the core knows what it bound; asking GL is a round trip that
 		 * syncs threaded drivers on every capture */
 		const GLuint boundFbo = GLimp_ViewFramebuffer();
-#else
-		GLint boundFbo = 0;
-		qglGetIntegerv( GL_FRAMEBUFFER_BINDING, &boundFbo );
-#endif
 		qglReadBuffer( boundFbo ? GL_COLOR_ATTACHMENT0 : GL_BACK );
 	}
 #endif

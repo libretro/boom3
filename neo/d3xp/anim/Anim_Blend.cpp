@@ -42,7 +42,7 @@ If you have questions concerning this license or the applicable additional terms
 
 static const char *channelNames[ ANIM_NumAnimChannels ] = {
 	"all", "torso", "legs", "head", "eyelids"
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 	, "rightHand", "leftHand"
 #endif
 };

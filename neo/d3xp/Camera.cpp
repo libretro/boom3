@@ -386,13 +386,12 @@ void idCameraAnim::LoadAnim( void ) {
 	cameraCuts.SetNum( numCuts );
 	for( i = 0; i < numCuts; i++ ) {
 		cameraCuts[ i ] = parser.ParseInt();
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 		// The VR pack's cameras cut on their first frame too, and may follow a
 		// cut with the "pos ( x y z )" and "rotA ( p y r )" / "rot ( x y z )"
 		// its own immersive cutscenes put the camera at; those are skipped.
-		if ( ( cameraCuts[ i ] < 0 ) || ( cameraCuts[ i ] >= numFrames ) ) {
+		if ( ( cameraCuts[ i ] < 0 ) || ( cameraCuts[ i ] >= numFrames ) )
 			parser.Error( "Invalid camera cut" );
-		}
 		while ( parser.PeekTokenString( "pos" ) || parser.PeekTokenString( "rotA" ) || parser.PeekTokenString( "rot" ) ) {
 			idToken token;
 			idVec3 ignored;
@@ -400,9 +399,8 @@ void idCameraAnim::LoadAnim( void ) {
 			parser.Parse1DMatrix( 3, ignored.ToFloatPtr() );
 		}
 #else
-		if ( ( cameraCuts[ i ] < 1 ) || ( cameraCuts[ i ] >= numFrames ) ) {
+		if ( ( cameraCuts[ i ] < 1 ) || ( cameraCuts[ i ] >= numFrames ) )
 			parser.Error( "Invalid camera cut" );
-		}
 #endif
 	}
 	parser.ExpectTokenString( "}" );

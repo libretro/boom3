@@ -30,7 +30,7 @@
 #include "renderer/glsl_desktop.h"
 #endif
 
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 #include "renderer/vr.h"
 #endif
 

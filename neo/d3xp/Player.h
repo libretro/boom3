@@ -455,7 +455,7 @@ public:
 	float					DefaultFov( void ) const;
 	float					CalcFov( bool honorZoom );
 	void					CalculateViewWeaponPos( idVec3 &origin, idMat3 &axis );
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 	// in VR, the weapon hand's pointing (aim) or holding pose in the world;
 	// false while the controllers do not drive the weapon
 	bool					GetVRHandPose( bool aim, idVec3 &origin, idMat3 &axis, int hand = -1 ) const;
@@ -772,7 +772,7 @@ private:
 	void				Event_EnableWeapon( void );
 	void				Event_DisableWeapon( void );
 	void				Event_GetCurrentWeapon( void );
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 	// The VR pack's body (Doom3Quest's): drawn in first person, its arms bent
 	// to put the hands on the weapon and the other controller. Not saved;
 	// set up again on restore.
@@ -787,7 +787,7 @@ private:
 	void					VRUpdateBody( void );
 	void					VRSetHandIK( int hand, idVec3 handOrigin, const idMat3 &handAxis, idWeapon *weapon, int weap );
 #endif
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 	void				Event_GetWeaponHand( void );
 	void				Event_GetFlashHand( void );
 	void				Event_GetWeaponHandState( void );

@@ -32,7 +32,7 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "renderer/tr_local.h"
 
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 #include "renderer/vr.h"
 #endif
 
@@ -1004,19 +1004,17 @@ void RB_DrawView( const void *data ) {
 	}
 #endif
 
-#if defined(LIBRETRO) && defined(BOOM3_VR)
-	if ( VR_Active() ) {
+#if defined(BOOM3_VR)
+	if ( VR_Active() )
 		VR_BindTargetForView( backEnd.viewDef->vrView );
-	}
 #endif
 	// render the scene, jumping to the hardware specific interaction renderers
 	RB_STD_DrawView();
 
-#if defined(LIBRETRO) && defined(BOOM3_GLSL_RENDERERS)
+#if defined(BOOM3_GLSL_RENDERERS)
 	// a tiled GPU need not write this view's depth and stencil back
-	if ( R_GLSLRenderer() && backEnd.viewDef->viewEntitys ) {
+	if ( R_GLSLRenderer() && backEnd.viewDef->viewEntitys )
 		GLimp_EndView3D();
-	}
 #endif
 
 #ifdef BOOM3_ARB2_RENDERER

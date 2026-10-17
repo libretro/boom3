@@ -39,7 +39,7 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "renderer/tr_local.h"
 
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 #include "renderer/vr.h"
 #endif
 
@@ -159,7 +159,7 @@ R_ScreenRectFromViewFrustumBounds
 */
 idScreenRect R_ScreenRectFromViewFrustumBounds( const idBounds &bounds ) {
 
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 	if ( VR_Active() && tr.viewDef->vrProjection ) {
 		const float *t = tr.viewDef->vrFovTan;
 		const float tx = Max( t[0], t[1] ), ty = Max( t[2], t[3] );
@@ -927,10 +927,9 @@ void R_SetupProjection( viewDef_t * viewDef ) {
 	// set up projection matrix
 	//
 	zNear	= r_znear.GetFloat();
-	if ( viewDef->renderView.cramZNear ) {
+	if ( viewDef->renderView.cramZNear )
 		zNear *= 0.25;
-	}
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 	if ( VR_Active() && viewDef->vrProjection ) {
 		xmin = -zNear * viewDef->vrFovTan[0];
 		xmax =  zNear * viewDef->vrFovTan[1];
@@ -1118,7 +1117,7 @@ Parms will typically be allocated with R_FrameAlloc
 */
 void R_RenderViewInternal( viewDef_t *parms );
 
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 static bool R_IsPlayerViewForVR( const viewDef_t *parms ) {
 	return VR_Active()
 		&& tr.viewDef == NULL && !parms->isSubview
@@ -1134,7 +1133,7 @@ void R_RenderView( viewDef_t *parms ) {
 		extern void R_ParticleLightSubmit( viewDef_t * );
 		R_ParticleLightSubmit( parms );
 	}
-#if defined(LIBRETRO) && defined(BOOM3_VR)
+#if defined(BOOM3_VR)
 	if ( !R_IsPlayerViewForVR( parms ) )
 #endif
 	{
@@ -1209,7 +1208,7 @@ void R_RenderView( viewDef_t *parms ) {
 		parms->vrProjection = true;
 		R_RenderViewInternal( parms );
 	}
-#elif defined(LIBRETRO) && defined(BOOM3_VR)
+#elif defined(BOOM3_VR)
 	if (VR_Active()) {
 		// eye 0 reuses the allocated viewDef, eye 1 is a copy with its own
 		// view state and draw surfaces allocated by R_AddModelSurfaces/R_AddDrawSurf.
@@ -1231,24 +1230,19 @@ void R_RenderView( viewDef_t *parms ) {
 #endif
 }
 
-void R_RenderViewInternal( viewDef_t *parms ) {
-#if !defined(LIBRETRO) && !defined(BOOM3_VR)
+void R_RenderViewInternal( viewDef_t *parms )
 {
-    extern void R_ParticleLightSubmit(viewDef_t *);
-    R_ParticleLightSubmit(parms);
-}
-#elif defined(LIBRETRO) && defined(BOOM3_VR)
-if (!VR_Active())
-{
-    extern void R_ParticleLightSubmit(viewDef_t *);
-    R_ParticleLightSubmit(parms);
-}
+#if defined(BOOM3_VR)
+	if (!VR_Active())
+	{
+		extern void R_ParticleLightSubmit(viewDef_t *);
+		R_ParticleLightSubmit(parms);
+	}
 #endif
 	viewDef_t		*oldView;
 
-	if ( parms->renderView.width <= 0 || parms->renderView.height <= 0 ) {
+	if ( parms->renderView.width <= 0 || parms->renderView.height <= 0 )
 		return;
-	}
 
 	tr.viewCount++;
 
@@ -1293,18 +1287,17 @@ if (!VR_Active())
 	R_SortDrawSurfs();
 
 	// generate any subviews (mirrors, cameras, etc) before adding this view
-	if ( R_GenerateSubViews() ) {
+	if ( R_GenerateSubViews() )
+	{
 		// if we are debugging subviews, allow the skipping of the
 		// main view draw
-		if ( r_subviewOnly.GetBool() ) {
+		if ( r_subviewOnly.GetBool() )
 			return;
-		}
 	}
 
 	// write everything needed to the demo file
-	if ( session->writeDemo ) {
+	if ( session->writeDemo )
 		static_cast<idRenderWorldLocal *>(parms->renderWorld)->WriteVisibleDefs( tr.viewDef );
-	}
 
 	// add the rendering commands for this viewDef
 	R_AddDrawViewCmd( parms );
