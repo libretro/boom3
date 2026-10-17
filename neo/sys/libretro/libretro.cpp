@@ -67,7 +67,10 @@ extern "C" {
 #ifdef BOOM3_VULKAN_RENDERER
 #include "../libretro-common/include/libretro_vulkan.h"
 #include "renderer/vk/vk_backend.h"
+#include "renderer/vk/vk_hdr_block.h"
 #endif
+static bool lr_vulkan( void );
+#define LR_VULKAN() lr_vulkan()
 
 #include <locale.h>
 
@@ -336,6 +339,7 @@ static aces2Params_t *hdr_aces2_params;
  * they are solved in one place rather than spelled out per backend. */
 static GLuint hdr_filmic_lut;
 static GLuint hdr_filmic_desat;
+static void hdr_tex_delete( GLuint *tex );
 
 /* Filmic's curve as a 256-entry texture on unit 3 - the same unit the
  * ACES 2.0 tables use, which is safe because the two modes are never
@@ -359,6 +363,34 @@ static bool hdr_filmic_build( void ) {
 		lut16[i] = (unsigned short)( v * 65535.0 + 0.5 );
 		lut8[i]  = (unsigned char)( v * 255.0 + 0.5 );
 	}
+#ifdef BOOM3_VULKAN_RENDERER
+	if ( LR_VULKAN() ) {
+		if ( !hdr_filmic_desat ) {
+			/* the atlas's RGB rows as RGBA, the format every device takes */
+			static unsigned short desat4[FILMIC_DESAT_W * FILMIC_DESAT_H * 4];
+			int k;
+			for ( k = 0; k < FILMIC_DESAT_W * FILMIC_DESAT_H; k++ ) {
+				desat4[k * 4 + 0] = filmic_desat[k * 3 + 0];
+				desat4[k * 4 + 1] = filmic_desat[k * 3 + 1];
+				desat4[k * 4 + 2] = filmic_desat[k * 3 + 2];
+				desat4[k * 4 + 3] = 65535;
+			}
+			hdr_filmic_desat = vkb_image_create( FILMIC_DESAT_W, FILMIC_DESAT_H, 1, 0, VKB_FORMAT_RGBA16,
+					VKB_FILTER_LINEAR_NOMIP, VKB_WRAP_CLAMP, 0 );
+			if ( !hdr_filmic_desat ) {
+				return false;
+			}
+			vkb_image_upload( hdr_filmic_desat, 0, 0, desat4, sizeof( desat4 ) );
+		}
+		hdr_filmic_lut = vkb_image_create( 256, 1, 1, 0, VKB_FORMAT_I16, VKB_FILTER_LINEAR_NOMIP, VKB_WRAP_CLAMP, 0 );
+		if ( !hdr_filmic_lut ) {
+			hdr_tex_delete( &hdr_filmic_desat );
+			return false;
+		}
+		vkb_image_upload( hdr_filmic_lut, 0, 0, lut16, sizeof( lut16 ) );
+		return true;
+	}
+#endif
 
 	/* The desaturation atlas: the cube's blue slices side by side, so this
 	 * needs no 3D texture and works on GLES2 as well.  It does not depend
@@ -651,6 +683,12 @@ static GLuint hdr_bloom_fbo[4], hdr_bloom_tex[4];   /* [0,1]=1/4 A/B, [2,3]=1/16
    the two-band buffers above so switching the option needs no reallocation. */
 #define HDR_CONV_MAX 6
 static GLuint hdr_conv_fbo[HDR_CONV_MAX], hdr_conv_tex[HDR_CONV_MAX];
+#ifdef BOOM3_VULKAN_RENDERER
+/* the Vulkan renderer's bloom bands: the backend's target images */
+static unsigned vk_conv_tex[HDR_CONV_MAX];
+static unsigned vk_bloom_tex[4];   /* [0,1] 1/4 A/B, [2,3] 1/16 A/B */
+static int vk_bloom_w, vk_bloom_h, vk_bloom_format = -1;
+#endif
 static GLuint hdr_prog_down, hdr_prog_down_karis, hdr_prog_up;
 static GLint  hdr_down_k_loc_texel = -1;
 #ifdef LR_ARB_PASSES
@@ -1008,11 +1046,30 @@ static rendererKind_t libretro_renderer = R_RENDERER_ARB2;
 
 /* the Vulkan renderer owns the frame: no GL context, no glsm, and the
  * present passes are its own */
+static bool lr_vulkan( void ) {
 #ifdef BOOM3_VULKAN_RENDERER
-#define LR_VULKAN() ( libretro_renderer == R_RENDERER_VULKAN )
+	return libretro_renderer == R_RENDERER_VULKAN;
 #else
-#define LR_VULKAN() false
+	return false;
 #endif
+}
+
+/* The display transform's lookup tables are GL textures, or the Vulkan
+ * backend's images under the same ids. */
+static void hdr_tex_delete( GLuint *tex ) {
+	if ( !*tex ) {
+		return;
+	}
+#ifdef BOOM3_VULKAN_RENDERER
+	if ( LR_VULKAN() ) {
+		vkb_image_destroy( *tex );
+		*tex = 0;
+		return;
+	}
+#endif
+	glDeleteTextures( 1, tex );
+	*tex = 0;
+}
 
 static retro_hw_context_type get_hw_context_type(void)
 {
@@ -2685,10 +2742,7 @@ static void update_variables(bool startup)
 		if (want != hdr_filmiclog_contrast) {
 			hdr_filmiclog_contrast = want;
 			/* the curve texture is built from this; drop it */
-			if (hdr_filmic_lut) {
-				glDeleteTextures(1, &hdr_filmic_lut);
-				hdr_filmic_lut = 0;
-			}
+			hdr_tex_delete( &hdr_filmic_lut );
 		}
 	}
 
@@ -2838,6 +2892,14 @@ static void context_reset(void)
          log_cb(RETRO_LOG_ERROR, "boom3: the frontend has no Vulkan render interface.\n");
          return;
       }
+      /* the previous device's tables and bloom bands went with it */
+      hdr_aces2_lut = hdr_aces2_gui_tex = hdr_filmic_lut = hdr_filmic_desat = 0;
+      hdr_aces2_gui_ready = false;
+      hdr_aces2_peak = 0.0f;
+      memset( vk_conv_tex, 0, sizeof( vk_conv_tex ) );
+      memset( vk_bloom_tex, 0, sizeof( vk_bloom_tex ) );
+      vk_bloom_w = vk_bloom_h = 0;
+      vk_bloom_format = -1;
       if (!vkb_init(iface, scr_width, scr_height))
       {
          log_cb(RETRO_LOG_ERROR, "boom3: the Vulkan backend did not come up.\n");
@@ -6882,18 +6944,12 @@ static bool hdr_arb_ready( void );
  * callee, which is a link failure on six targets at once and the same
  * mistake this work has already made once. */
 static void hdr_aces2_free( void ) {
-	if ( hdr_aces2_lut ) {
-		glDeleteTextures( 1, &hdr_aces2_lut );
-		hdr_aces2_lut = 0;
-	}
+	hdr_tex_delete( &hdr_aces2_lut );
 	if ( hdr_aces2_params ) {
 		free( hdr_aces2_params );
 		hdr_aces2_params = NULL;
 	}
-	if ( hdr_aces2_gui_tex ) {
-		glDeleteTextures( 1, &hdr_aces2_gui_tex );
-		hdr_aces2_gui_tex = 0;
-	}
+	hdr_tex_delete( &hdr_aces2_gui_tex );
 	hdr_aces2_peak = 0.0f;
 	hdr_aces2_gui_ready = false;
 }
@@ -6944,6 +7000,19 @@ static bool hdr_aces2_build( float peakLuminance ) {
 			if ( v > 1.0f ) v = 1.0f;
 			g16[k] = (unsigned short)( v * 65535.0f + 0.5f );
 		}
+#ifdef BOOM3_VULKAN_RENDERER
+		if ( LR_VULKAN() ) {
+			hdr_tex_delete( &hdr_aces2_gui_tex );
+			hdr_aces2_gui_tex = vkb_image_create( ACES2_GUI_LUT_SIZE, 1, 1, 0, VKB_FORMAT_I16,
+					VKB_FILTER_LINEAR_NOMIP, VKB_WRAP_CLAMP, 0 );
+			if ( hdr_aces2_gui_tex ) {
+				vkb_image_upload( hdr_aces2_gui_tex, 0, 0, g16, sizeof( g16 ) );
+			} else {
+				hdr_aces2_gui_ready = false;
+			}
+		} else
+#endif
+		{
 		if ( !hdr_aces2_gui_tex ) {
 			glGenTextures( 1, &hdr_aces2_gui_tex );
 		}
@@ -6990,8 +7059,23 @@ static bool hdr_aces2_build( float peakLuminance ) {
 		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
 		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
 		glActiveTexture( GL_TEXTURE0 );
+		}
 	}
 
+#ifdef BOOM3_VULKAN_RENDERER
+	if ( LR_VULKAN() ) {
+		/* the hue tables wrap around, as the texture's S does under GL */
+		hdr_aces2_lut = vkb_image_create( ACES2_LUT_WIDTH, 1, 1, 0, VKB_FORMAT_RGBA16,
+				VKB_FILTER_LINEAR_NOMIP, VKB_WRAP_REPEAT, 0 );
+		if ( !hdr_aces2_lut ) {
+			hdr_aces2_free();
+			return false;
+		}
+		vkb_image_upload( hdr_aces2_lut, 0, 0, lut, sizeof( lut ) );
+		hdr_aces2_peak = peakLuminance;
+		return true;
+	}
+#endif
 	glGenTextures( 1, &hdr_aces2_lut );
 	glActiveTexture( GL_TEXTURE3 );
 	glBindTexture( GL_TEXTURE_2D, hdr_aces2_lut );
@@ -8342,8 +8426,297 @@ static void hdr_shoulder_params( int mode, float H, float *A, float *slopeOut ) 
 #endif
 
 /* run the conversion pass from the scene target into dstFbo */
+#ifdef BOOM3_VULKAN_RENDERER
+/* The display transform on the Vulkan renderer: the same chain as the
+ * GL paths below - the bloom's bright pass, its pyramid or two-band
+ * blur, then the composite into the frame image - drawn through the
+ * backend's post passes with the constants in vk_hdr_block.h. */
+
+static void hdr_vk_targets_free( void ) {
+	int i;
+	for ( i = 0; i < HDR_CONV_MAX; i++ ) {
+		hdr_tex_delete( &vk_conv_tex[i] );
+	}
+	for ( i = 0; i < 4; i++ ) {
+		hdr_tex_delete( &vk_bloom_tex[i] );
+	}
+	vk_bloom_w = vk_bloom_h = 0;
+	vk_bloom_format = -1;
+}
+
+/* the scene's format, which the bloom bands and the scene copies share */
+enum vkb_format RB_VK_SceneFormat( void ) {
+	if ( !hdr_output_active ) {
+		return VKB_FORMAT_RGBA8;
+	}
+	if ( hdr_fp32_scene ) {
+		return VKB_FORMAT_RGBA32F;
+	}
+	return hdr_fp16_scene ? VKB_FORMAT_RGBA16F : VKB_FORMAT_RGB10A2;
+}
+
+static bool hdr_vk_targets( int w, int h, int convN ) {
+	const int format = (int)RB_VK_SceneFormat();
+	int i;
+	if ( vk_bloom_w == w && vk_bloom_h == h && vk_bloom_format == format ) {
+		return true;
+	}
+	hdr_vk_targets_free();
+	for ( i = 0; i < 4; i++ ) {
+		int bw = ( i < 2 ) ? w / 4 : w / 16;
+		int bh = ( i < 2 ) ? h / 4 : h / 16;
+		if ( bw < 1 ) bw = 1;
+		if ( bh < 1 ) bh = 1;
+		vk_bloom_tex[i] = vkb_image_create_target( bw, bh, (enum vkb_format)format );
+		if ( !vk_bloom_tex[i] ) {
+			hdr_vk_targets_free();
+			return false;
+		}
+	}
+	for ( i = 0; i < convN && i < HDR_CONV_MAX; i++ ) {
+		int cw = ( w / 4 ) >> i, ch = ( h / 4 ) >> i;
+		if ( cw < 1 ) cw = 1;
+		if ( ch < 1 ) ch = 1;
+		vk_conv_tex[i] = vkb_image_create_target( cw, ch, (enum vkb_format)format );
+		if ( !vk_conv_tex[i] ) {
+			hdr_vk_targets_free();
+			return false;
+		}
+	}
+	vk_bloom_w = w;
+	vk_bloom_h = h;
+	vk_bloom_format = format;
+	return true;
+}
+
+static void hdr_vk_pass( unsigned target, int w, int h, int program, unsigned image, const float p0[4],
+		const float p1[4], unsigned stateBits ) {
+	vkb_draw_t draw;
+	vkb_draw_block_t block;
+	if ( !vkb_post_begin( target, w, h ) ) {
+		return;
+	}
+	memset( &draw, 0, sizeof( draw ) );
+	memset( &block, 0, sizeof( block ) );
+	if ( p0 ) {
+		memcpy( block.vertexParms[0], p0, sizeof( block.vertexParms[0] ) );
+	}
+	if ( p1 ) {
+		memcpy( block.vertexParms[1], p1, sizeof( block.vertexParms[1] ) );
+	}
+	block.glColor[0] = block.glColor[1] = block.glColor[2] = block.glColor[3] = 1.0f;
+	draw.block = &block;
+	draw.image[0] = image;
+	draw.program = (unsigned char)program;
+	draw.layout = VKB_VERTEX_DRAWVERT;
+	draw.cull = VKB_CULL_NONE;
+	draw.stateBits = stateBits;
+	vkb_draw_fullscreen( &draw );
+}
+
+static void hdr_present_vk( float paperWhite, float H, const float mat[9] ) {
+	const int hw = glConfig.vidWidth, hh = glConfig.vidHeight;
+	const int convN = hdr_bloom_convolution ? hdr_conv_levels( hw, hh ) : 0;
+	const bool haveBloom = hdr_bloom_amount > 0.0f && hdr_vk_targets( hw, hh, convN );
+	const float frameN = (float)( hdr_frame_counter++ & 63u );
+	float bandW0, bandW1;
+	float p0[4], p1[4];
+	vkb_hdr_block_t block;
+	vkb_draw_t draw;
+	unsigned bloomT = 0, bloomW = 0;
+	float m[9];
+	int i;
+
+	if ( haveBloom ) {
+		int qw = hw / 4 < 1 ? 1 : hw / 4,  qh = hh / 4 < 1 ? 1 : hh / 4;
+		int sw = hw / 16 < 1 ? 1 : hw / 16, sh = hh / 16 < 1 ? 1 : hh / 16;
+		/* the bright pass: the scene into the tight band, or the pyramid's base */
+		p0[0] = hdr_bright_threshold();
+		p0[1] = 0.25f;
+		p0[2] = hdr_bloom_firefly_knee;
+		p0[3] = 1.0f / hdr_scene_encode_scale;
+		p1[0] = 1.0f / (float)hw;
+		p1[1] = 1.0f / (float)hh;
+		p1[2] = p1[3] = 0.0f;
+		hdr_vk_pass( convN ? vk_conv_tex[0] : vk_bloom_tex[0], qw, qh, VKB_PROGRAM_HDR_BRIGHT,
+			vkb_image_scene_ref(), p0, p1, 0 );
+		if ( convN ) {
+			/* down the pyramid, then back up adding each level into the one above */
+			for ( i = 1; i < convN; i++ ) {
+				int pw = ( hw / 4 ) >> ( i - 1 ), ph = ( hh / 4 ) >> ( i - 1 );
+				if ( pw < 1 ) pw = 1;
+				if ( ph < 1 ) ph = 1;
+				p1[0] = 1.0f / (float)pw;
+				p1[1] = 1.0f / (float)ph;
+				hdr_vk_pass( vk_conv_tex[i], pw > 1 ? pw / 2 : 1, ph > 1 ? ph / 2 : 1,
+					i == 1 ? VKB_PROGRAM_HDR_DOWN_KARIS : VKB_PROGRAM_HDR_DOWN, vk_conv_tex[i - 1], NULL, p1, 0 );
+			}
+			p0[0] = 1.0f;   /* the radius */
+			p0[1] = p0[2] = p0[3] = 0.0f;
+			for ( i = convN - 1; i > 0; i-- ) {
+				int pw = ( hw / 4 ) >> i, ph = ( hh / 4 ) >> i;
+				int dw = ( hw / 4 ) >> ( i - 1 ), dh = ( hh / 4 ) >> ( i - 1 );
+				if ( pw < 1 ) pw = 1;
+				if ( ph < 1 ) ph = 1;
+				if ( dw < 1 ) dw = 1;
+				if ( dh < 1 ) dh = 1;
+				p1[0] = 1.0f / (float)pw;
+				p1[1] = 1.0f / (float)ph;
+				hdr_vk_pass( vk_conv_tex[i - 1], dw, dh, VKB_PROGRAM_HDR_UP, vk_conv_tex[i], p0, p1,
+					GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE );
+			}
+			bloomT = bloomW = vk_conv_tex[0];
+		} else {
+			/* the two bands: a separable blur at 1/4, and the 1/16 band seeded from it */
+			p1[0] = 1.0f / (float)qw; p1[1] = 0.0f; p1[2] = p1[3] = 0.0f;
+			hdr_vk_pass( vk_bloom_tex[1], qw, qh, VKB_PROGRAM_HDR_BLUR, vk_bloom_tex[0], NULL, p1, 0 );
+			p1[0] = 0.0f; p1[1] = 1.0f / (float)qh;
+			hdr_vk_pass( vk_bloom_tex[0], qw, qh, VKB_PROGRAM_HDR_BLUR, vk_bloom_tex[1], NULL, p1, 0 );
+			p1[0] = 1.0f / (float)sw; p1[1] = 0.0f;
+			hdr_vk_pass( vk_bloom_tex[3], sw, sh, VKB_PROGRAM_HDR_BLUR, vk_bloom_tex[0], NULL, p1, 0 );
+			p1[0] = 0.0f; p1[1] = 1.0f / (float)sh;
+			hdr_vk_pass( vk_bloom_tex[2], sw, sh, VKB_PROGRAM_HDR_BLUR, vk_bloom_tex[3], NULL, p1, 0 );
+			bloomT = vk_bloom_tex[0];
+			bloomW = vk_bloom_tex[2];
+		}
+	}
+	bandW0 = convN ? 0.36f / (float)convN : 0.22f;
+	bandW1 = convN ? 0.0f : 0.14f;
+
+	/* the composite's constants, as the GL path sets its uniforms */
+	memset( &block, 0, sizeof( block ) );
+	memset( &draw, 0, sizeof( draw ) );
+	if ( hdr_rolloff_mode == HDR_ROLLOFF_ACES2FULL ) {
+		if ( !hdr_aces2_build( hdr_aces2_wanted_peak > 0.0f ? hdr_aces2_wanted_peak : 1000.0f ) ) {
+			if ( log_cb ) {
+				log_cb( RETRO_LOG_WARN, "[boom3] HDR: ACES 2.0 tables unavailable, using the tone scale\n" );
+			}
+			hdr_rolloff_mode = HDR_ROLLOFF_ACES2;
+		} else {
+			const aces2Params_t *p = hdr_aces2_params;
+			hdr_aces2_exposure = paperWhite / 100.0f;
+			for ( i = 0; i < 9; i++ ) m[i] = (float)p->input.RGB_to_CAM16_c[i];
+			VKB_HDR_MAT3( block.inRgbToCam, m );
+			for ( i = 0; i < 9; i++ ) m[i] = (float)p->input.cone_to_Aab[i];
+			VKB_HDR_MAT3( block.inConeToAab, m );
+			for ( i = 0; i < 9; i++ ) m[i] = (float)p->limit.Aab_to_cone[i];
+			VKB_HDR_MAT3( block.limAabToCone, m );
+			for ( i = 0; i < 9; i++ ) m[i] = (float)p->limit.CAM16_c_to_RGB[i];
+			VKB_HDR_MAT3( block.limCamToRgb, m );
+			block.inScalars[0] = (float)p->input.F_L_n;
+			block.inScalars[1] = (float)p->input.cz;
+			block.inScalars[2] = (float)p->input.inv_cz;
+			block.inScalars[3] = (float)p->input.A_w_J;
+			block.limScalars[0] = (float)p->limit.F_L_n;
+			block.limScalars[1] = (float)p->limit.cz;
+			block.limScalars[2] = (float)p->limit.inv_cz;
+			block.limScalars[3] = (float)p->limit.A_w_J;
+			block.ts[0] = (float)p->ts.m_2;
+			block.ts[1] = (float)p->ts.s_2;
+			block.ts[2] = (float)p->ts.g;
+			block.ts[3] = (float)p->ts.t_1;
+			block.cc[0] = (float)p->chroma.limit_J_max;
+			block.cc[1] = (float)p->chroma.model_gamma_inv;
+			block.cc[2] = (float)p->chroma.sat;
+			block.cc[3] = (float)p->chroma.sat_thr;
+			block.cc2[0] = (float)p->chroma.compr;
+			block.cc2[1] = (float)p->chroma.chroma_compress_scale;
+			block.cc2[2] = (float)p->gamut.mid_J;
+			block.cc2[3] = (float)p->gamut.focus_dist;
+			block.gm[0] = (float)p->gamut.lower_hull_gamma_inv;
+			block.gm[1] = (float)p->ts.forward_limit;
+			block.gm[2] = 0.5f / (float)ACES2_LUT_WIDTH;
+			block.gm[3] = hdr_aces2_exposure;
+			for ( i = 0; i < 4; i++ ) block.lutScale[i] = (float)hdr_aces2_scales[i];
+			draw.image[3] = hdr_aces2_lut;
+		}
+	}
+	block.halBloom[0] = 1.0f;
+	block.halBloom[1] = hdr_halation == 2 ? 0.72f : hdr_halation == 1 ? 0.86f : 1.0f;
+	block.halBloom[2] = hdr_halation == 2 ? 0.45f : hdr_halation == 1 ? 0.70f : 1.0f;
+	block.halBloom[3] = haveBloom ? hdr_bloom_amount : 0.0f;
+	block.outEncBandW[0] = hdr_pq_output ? 1.0f : 0.0f;
+	block.outEncBandW[1] = hdr_pq_output ? 1.0f / 1023.0f : 1.0f / 255.0f;
+	block.outEncBandW[2] = bandW0;
+	block.outEncBandW[3] = bandW1;
+	block.filmDesat[3] = ( hdr_hl_desat == 1 && hdr_rolloff_mode != HDR_ROLLOFF_NEUTRAL
+			&& hdr_rolloff_mode != HDR_ROLLOFF_ACES2FULL && hdr_rolloff_mode != HDR_ROLLOFF_AGX ) ? 1.0f : 0.0f;
+	if ( hdr_ssaa == 2 && hw > 0 && hh > 0 ) {
+		float sel = 0.0f;
+		if ( hdr_rolloff_mode == HDR_ROLLOFF_FILMICLOG || hdr_rolloff_mode == HDR_ROLLOFF_AGX )
+			sel = 1.0f;
+		else if ( hdr_rolloff_mode == HDR_ROLLOFF_NEUTRAL )
+			sel = 2.0f;
+		else if ( hdr_rolloff_mode == HDR_ROLLOFF_GT )
+			sel = 3.0f;
+		block.ssaaCa[0] = 0.5f / (float)hw;
+		block.ssaaCa[1] = 0.5f / (float)hh;
+		block.ssaaCa[2] = sel;
+	}
+	block.ssaaCa[3] = hdr_chroma_ab >= 3 ? 0.0088400f : hdr_chroma_ab == 2 ? 0.0044200f
+			: hdr_chroma_ab == 1 ? 0.0022100f : 0.0f;
+	block.expandEncFrame[0] = (float)hdr_expand_mode;
+	block.expandEncFrame[1] = 0.75f;
+	block.expandEncFrame[2] = 1.0f / hdr_scene_encode_scale;
+	block.expandEncFrame[3] = frameN;
+	if ( hdr_rolloff_mode == HDR_ROLLOFF_FILMICLOG && hdr_filmic_build() ) {
+		draw.image[4] = hdr_filmic_lut;
+		draw.image[5] = hdr_filmic_desat;
+	}
+	{
+		float ft[2];
+		hdr_filmiclog_terms( ft );
+		block.filmDesat[0] = ft[0];
+		block.filmDesat[1] = 0.0f;
+		block.filmDesat[2] = ft[1];
+	}
+	{
+		const bool aces2Abs = ( hdr_rolloff_mode == HDR_ROLLOFF_ACES2FULL && hdr_aces2_lut != 0 );
+		const float *a2m = ( hdr_aces2_gamut == 0 ) ? hdr_m709to2020
+						 : ( hdr_aces2_gamut == 1 ) ? hdr_mP3to2020 : hdr_mIdentity;
+		VKB_HDR_MAT3( block.gamut, aces2Abs ? a2m : mat );
+		block.parms[0] = hdr_pq_output ? ( aces2Abs ? 100.0f : paperWhite ) / 10000.0f : 1.0f;
+		block.parms[1] = H;
+		block.parms[2] = (float)hdr_rolloff_mode;
+		block.parms[3] = 0.75f;   /* the Reinhard knee */
+	}
+	{
+		float as, an;
+		double l0, S0, S1, C2;
+		hdr_shoulder_params( hdr_rolloff_mode, H, &as, &an );
+		hdr_gt_params( hdr_gt_toe, hdr_gt_shoulder, &l0, &S0, &S1, &C2 );
+		block.aces[0] = as;
+		block.aces[1] = an;
+		block.aces[2] = (float)hdr_gt_norm();
+		hdr_gt_s0_last = (float)S0;
+		block.gt[0] = hdr_gt_toe;
+		block.gt[1] = (float)S0;
+		block.gt[2] = (float)( 1.0 - S1 );
+		block.gt[3] = (float)C2;
+	}
+
+	/* the composite into the frame image */
+	if ( !vkb_post_begin( 0, scr_width, scr_height ) ) {
+		return;
+	}
+	draw.block = &block;
+	draw.blockBytes = sizeof( block );
+	draw.image[0] = vkb_image_scene_ref();
+	draw.image[1] = bloomT;
+	draw.image[2] = bloomW;
+	draw.program = VKB_PROGRAM_HDR_COMPOSITE;
+	draw.layout = VKB_VERTEX_DRAWVERT;
+	draw.cull = VKB_CULL_NONE;
+	draw.stateBits = GLS_DEPTHFUNC_ALWAYS | GLS_DEPTHMASK;
+	vkb_draw_fullscreen( &draw );
+	vkb_post_end();
+}
+#endif
+
 static void hdr_present( GLuint dstFbo ) {
-	if ( !hdr_output_active || !HDR_COMPOSITE_READY || hdr_fbo == 0 )
+	if ( !hdr_output_active )
+		return;
+	if ( !LR_VULKAN() && ( !HDR_COMPOSITE_READY || hdr_fbo == 0 ) )
 		return;
 
 	/* frontend HDR state, re-queried per present as the contract asks */
@@ -8440,6 +8813,12 @@ static void hdr_present( GLuint dstFbo ) {
 		}
 	}
 
+#ifdef BOOM3_VULKAN_RENDERER
+	if ( LR_VULKAN() ) {
+		hdr_present_vk( paperWhite, H, mat );
+		return;
+	}
+#endif
 	glDisable( GL_DEPTH_TEST );
 	glDisable( GL_STENCIL_TEST );
 	glDisable( GL_BLEND );
@@ -9102,9 +9481,12 @@ void RB_VK_BeginFrame( void ) {
 	if ( !vkb_ready() ) {
 		return;
 	}
+	/* a PQ frame is 10-bit; the frontend reads the image as it is */
+	vkb_frame_format( hdr_output_active && hdr_pq_output ? VKB_FORMAT_RGB10A2 : VKB_FORMAT_RGBA8 );
 	if ( hdr_output_active || hdr_ssaa == 2 ) {
-		enum vkb_format format = ( hdr_fp16_scene || hdr_fp32_scene ) ? VKB_FORMAT_RGBA16F : VKB_FORMAT_RGBA8;
-		if ( vkb_begin_frame( VKB_TARGET_SCENE, glConfig.vidWidth, glConfig.vidHeight, format ) ) {
+		if ( vkb_begin_frame( VKB_TARGET_SCENE, glConfig.vidWidth, glConfig.vidHeight, RB_VK_SceneFormat() ) ) {
+			/* the 24-bit supersample resolves through the plain blit; the
+			 * display transform draws the frame itself (hdr_present_vk) */
 			float parms[4][4];
 			memset( parms, 0, sizeof( parms ) );
 			vkb_set_composite( VKB_PROGRAM_BLIT, parms, 0 );
@@ -9118,6 +9500,7 @@ void RB_VK_BeginFrame( void ) {
 void GLimp_SwapBuffers() {
 #ifdef BOOM3_VULKAN_RENDERER
    if ( LR_VULKAN() ) {
+      hdr_present( 0 );
       vkb_end_frame();
       video_cb( RETRO_HW_FRAME_BUFFER_VALID, scr_width, scr_height, 0 );
       return;

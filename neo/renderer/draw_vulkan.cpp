@@ -410,7 +410,7 @@ on first use.
 */
 static void RB_VK_EnsureTarget( idImage *image, int width, int height, enum vkb_format format ) {
 	if ( image->texnum != idImage::TEXTURE_NOT_LOADED
-			&& ( image->uploadWidth < width || image->uploadHeight < height ) ) {
+			&& ( image->uploadWidth < width || image->uploadHeight < height || image->internalFormat != (int)format ) ) {
 		vkb_image_destroy( image->texnum );
 		image->texnum = idImage::TEXTURE_NOT_LOADED;
 	}
@@ -422,16 +422,18 @@ static void RB_VK_EnsureTarget( idImage *image, int width, int height, enum vkb_
 		}
 		image->uploadWidth = width;
 		image->uploadHeight = height;
+		image->internalFormat = (int)format;
 		image->type = TT_2D;
 	}
 }
 
+enum vkb_format RB_VK_SceneFormat( void );
+
 void R_VK_CopyFramebuffer( idImage *image, int x, int y, int width, int height ) {
-	extern bool hdr_fp16_scene;
 	if ( !vkb_ready() ) {
 		return;
 	}
-	RB_VK_EnsureTarget( image, width, height, hdr_output_active && hdr_fp16_scene ? VKB_FORMAT_RGBA16F : VKB_FORMAT_RGBA8 );
+	RB_VK_EnsureTarget( image, width, height, RB_VK_SceneFormat() );
 	if ( image->texnum != idImage::TEXTURE_NOT_LOADED ) {
 		vkb_copy_color( image->texnum, x, y, width, height );
 	}
