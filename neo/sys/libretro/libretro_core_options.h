@@ -251,13 +251,19 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "settings, and dithers the 10-bit quantization. 24-bit tone-mapped "
       "runs that same scene pipeline - curves, bloom, every enhancement - "
       "encoded to the stock 24-bit surface: the full transform family on any "
-      "SDR display, with no HDR frontend support needed.",
+      "SDR display, with no HDR frontend support needed. 16-bit float scRGB "
+      "hands the frontend the transformed scene as linear light (Rec.709, "
+      "1.0 = 80 nits) in a half-float surface: no PQ curve and no dither "
+      "on the way out, with the frontend converting to its display. It "
+      "needs a frontend that offers the surface; one that does not gets "
+      "HDR10, and failing that the tone-mapped path.",
       NULL,
       NULL,
       {
          { "24bit",     "24-bit (Standard)" },
          { "24bit-tonemapped", "24-bit, tone-mapped" },
-         { "30bit-hdr", "30-bit Color (HDR)" },
+         { "30bit-hdr", "30-bit Color (HDR10)" },
+         { "16bit-scrgb", "16-bit float scRGB (HDR, linear)" },
          { NULL, NULL },
       },
       "24bit"

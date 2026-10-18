@@ -26,7 +26,7 @@ layout(set = 0, binding = 1, std140) uniform Hdr
     vec4 lutScale;        // cuspJ, cuspM, reachM, gammaInv
     vec4 halBloom;        // xyz halation, w bloom amount
     vec4 ssaaCa;          // xyz supersample offsets and curve select, w chromatic aberration
-    vec4 outEncBandW;     // x 1 PQ / 0 gamma 2.4, y dither LSB, zw band weights
+    vec4 outEncBandW;     // x 2 linear scRGB / 1 PQ / 0 gamma 2.4, y dither LSB, zw band weights
     vec4 expandEncFrame;  // xy expansion mode and knee, z 1/encode scale, w frame
     vec4 filmDesat;       // xyz filmic terms, w highlight desaturation
     vec4 aces;            // shoulder A, gradient, GT normalisation
@@ -397,6 +397,11 @@ void main() {
     lin = mix(lin, vec3(hlq), hlg);
   }
   lin = u_hdr.gamut * lin;
+  if (u_hdr.outEncBandW.xy.x > 1.5) {
+    // scRGB: linear, 1.0 = 80 nits, unbounded either side
+    fragColor = vec4(lin * u_hdr.parms.x, 1.0);
+    return;
+  }
   vec3 y = clamp(lin * u_hdr.parms.x, 0.0, 1.0);
   vec3 e = (u_hdr.outEncBandW.xy.x > 0.5)
       ? vec3(pq(y.r), pq(y.g), pq(y.b))

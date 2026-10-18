@@ -25,6 +25,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
@@ -80,6 +81,22 @@ static int print_from;
 static const char *ppm_path;
 static const char *shots;
 static unsigned char *pixels;
+/* RETRO_PIXEL_FORMAT_SCRGB_RGBA16F: the frame is read back as linear
+ * light relative to the 200-nit paper white the host reports, encoded
+ * sRGB, so a renderer compares with another on the same picture */
+static int scrgb;
+static float *pixels_f;
+
+static unsigned char srgb8(float lin)
+{
+   float v;
+   if (lin <= 0.0f)
+      return 0;
+   if (lin >= 1.0f)
+      return 255;
+   v = lin <= 0.0031308f ? lin * 12.92f : 1.055f * (float)pow(lin, 1.0 / 2.4) - 0.055f;
+   return (unsigned char)(v * 255.0f + 0.5f);
+}
 static EGLDisplay dpy;
 
 static void log_cb(enum retro_log_level level, const char *fmt, ...)
@@ -103,6 +120,19 @@ static void read_frame(unsigned w, unsigned h)
 {
    pBindFramebuffer(0x8CA8 /* GL_READ_FRAMEBUFFER */, fbo);
    pPixelStorei(0x0D05 /* GL_PACK_ALIGNMENT */, 1);
+   if (scrgb)
+   {
+      unsigned i;
+      pReadPixels(0, 0, (int)w, (int)h, 0x1908 /* GL_RGBA */, 0x1406 /* GL_FLOAT */, pixels_f);
+      for (i = 0; i < w * h; i++)
+      {
+         pixels[i * 4 + 0] = srgb8(pixels_f[i * 4 + 0] * (80.0f / 200.0f));
+         pixels[i * 4 + 1] = srgb8(pixels_f[i * 4 + 1] * (80.0f / 200.0f));
+         pixels[i * 4 + 2] = srgb8(pixels_f[i * 4 + 2] * (80.0f / 200.0f));
+         pixels[i * 4 + 3] = 255;
+      }
+      return;
+   }
    pReadPixels(0, 0, (int)w, (int)h, 0x1908 /* GL_RGBA */, 0x1401 /* GL_UNSIGNED_BYTE */, pixels);
 }
 
@@ -189,7 +219,7 @@ static bool hdr_metadata(void *data)
    if (md->version != 1 || md->size < sizeof(*md))
       return false;
    md->output_mode      = 1;
-   md->source_formats   = RETRO_HDR_SOURCE_FORMAT_HDR10_2101010;
+   md->source_formats   = RETRO_HDR_SOURCE_FORMAT_HDR10_2101010 | RETRO_HDR_SOURCE_FORMAT_SCRGB_RGBA16F;
    md->paper_white_nits = 200.0f;
    md->max_nits         = 1000.0f;
    md->min_nits         = 0.0f;
@@ -240,7 +270,20 @@ static bool env_cb(unsigned cmd, void *data)
    switch (cmd & 0xffff)
    {
    case RETRO_ENVIRONMENT_SET_PIXEL_FORMAT:
+   {
+      /* HOST_SURFACES names what the host offers beyond the SDR
+       * surface: "hdr10", "scrgb" or both (the default), "none" */
+      enum retro_pixel_format f = *(const enum retro_pixel_format *)data;
+      const char *have = getenv("HOST_SURFACES");
+      if (!have)
+         have = "hdr10 scrgb";
+      if (f == RETRO_PIXEL_FORMAT_SCRGB_RGBA16F && !strstr(have, "scrgb"))
+         return false;
+      if (f == RETRO_PIXEL_FORMAT_HDR10_2101010 && !strstr(have, "hdr10"))
+         return false;
+      scrgb = f == RETRO_PIXEL_FORMAT_SCRGB_RGBA16F;
       return true;
+   }
    case RETRO_ENVIRONMENT_GET_HDR_METADATA & 0xffff:
       return hdr_metadata(data);
    case RETRO_ENVIRONMENT_GET_DISPLAY_METADATA & 0xffff:
@@ -366,7 +409,8 @@ static int make_framebuffer(void)
    pBindFramebuffer(0x8D40 /* GL_FRAMEBUFFER */, fbo);
    pGenRenderbuffers(1, &fbo_color);
    pBindRenderbuffer(0x8D41, fbo_color);
-   pRenderbufferStorage(0x8D41, 0x8058 /* GL_RGBA8 */, (int)fb_w, (int)fb_h);
+   pRenderbufferStorage(0x8D41, scrgb ? 0x881A /* GL_RGBA16F */ : 0x8058 /* GL_RGBA8 */,
+         (int)fb_w, (int)fb_h);
    pFramebufferRenderbuffer(0x8D40, 0x8CE0 /* COLOR0 */, 0x8D41, fbo_color);
    pGenRenderbuffers(1, &fbo_depth);
    pBindRenderbuffer(0x8D41, fbo_depth);
@@ -375,6 +419,8 @@ static int make_framebuffer(void)
    if (pCheckFramebufferStatus(0x8D40) != 0x8CD5)
       return 0;
    pixels = (unsigned char *)malloc(fb_w * fb_h * 4);
+   if (scrgb)
+      pixels_f = (float *)malloc(fb_w * fb_h * 4 * sizeof(float));
    return 1;
 }
 

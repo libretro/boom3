@@ -255,6 +255,34 @@ bool          hdr_output_active = false;   /* chosen at load, needs restart; rea
  * without the second: the same composite, ending in a gamma 1/2.4
  * encode to the stock 24-bit surface instead of PQ to the HDR10 one. */
 static bool   hdr_pq_output = false;
+/* scRGB: the composite ends in linear Rec.709 at 1.0 = 80 nits into an
+ * FP16 surface - no transfer curve, no dither.  hdr_pq_output is true
+ * with it: the frontend's HDR contract applies to both HDR surfaces. */
+static bool   hdr_scrgb_output = false;
+/* the three ends of the composite: outEnc.x in the shaders */
+#define HDR_ENC_GAMMA  0.0f
+#define HDR_ENC_PQ     1.0f
+#define HDR_ENC_LINEAR 2.0f
+static float hdr_out_enc( void ) {
+	return hdr_scrgb_output ? HDR_ENC_LINEAR : hdr_pq_output ? HDR_ENC_PQ : HDR_ENC_GAMMA;
+}
+static float hdr_out_lsb( void ) {
+	return hdr_scrgb_output ? 0.0f : hdr_pq_output ? 1.0f / 1023.0f : 1.0f / 255.0f;
+}
+/* the composite's output scale: PQ takes nits/10000, scRGB nits/80, the
+ * SDR surface its own 1.0 */
+static float hdr_out_scale( float nits ) {
+	return hdr_scrgb_output ? nits / 80.0f : hdr_pq_output ? nits / 10000.0f : 1.0f;
+}
+/* Chromaticities as the CTL lays them out: red, green, blue, white. */
+static const double hdr_prims[3][8] = {
+	{ 0.640, 0.330, 0.300, 0.600, 0.150, 0.060, 0.3127, 0.3290 },  /* Rec.709 */
+	{ 0.680, 0.320, 0.265, 0.690, 0.150, 0.060, 0.3127, 0.3290 },  /* P3-D65  */
+	{ 0.708, 0.292, 0.170, 0.797, 0.131, 0.046, 0.3127, 0.3290 }   /* Rec.2020 */
+};
+#define HDR_PRIMS_709  hdr_prims[0]
+#define HDR_PRIMS_P3   hdr_prims[1]
+#define HDR_PRIMS_2020 hdr_prims[2]
 int           r_specularFalloffShape = 0;  /* 0 original hard-knee quadratic, 1 tailed power; read by Image_init */
 float         hdr_particle_gain = 1.0f;  /* particle-stage scale in HDR mode; read by draw_common and draw_gles2 */
 float         hdr_emissive_gain = 1.0f;  /* additive-stage scale in HDR mode; read by draw_common and draw_gles2 */
@@ -328,7 +356,6 @@ static bool   hdr_aces2_warned_expand = false;
 static int    hdr_aces2_gamut = 3;        /* 0 Rec.709, 1 P3-D65, 2 Rec.2020, 3 the display's */
 static bool   hdr_aces2_display_valid;    /* hdr_aces2_display_prims hold a display */
 static double hdr_aces2_display_prims[8];
-static float  hdr_aces2_display_m2020[9]; /* those primaries to Rec.2020 */
 /* Top of the Filmic Log encode, in stops above mid grey.  Blender's 4 is
  * sized for footage where 1.0 is a nominal white; this engine's scene
  * runs past it. */
@@ -4042,61 +4069,51 @@ bool retro_load_game(const struct retro_game_info *info)
 	enum retro_pixel_format fmt = RETRO_PIXEL_FORMAT_XRGB8888;
 	{
 		/* Color Format option, resolved once at load (the pixel format
-		   cannot change mid-session): 30-bit HDR asks for the HDR10
-		   surface and enables the PQ conversion pass; refusal by an
-		   older frontend falls back to the stock 24-bit path. */
+		   cannot change mid-session).  The two HDR surfaces are asked
+		   for and may be refused: 16-bit scRGB falls back to HDR10, and
+		   HDR10 to the tone-mapped pipeline on the stock surface, which
+		   is what was asked for minus the part the frontend cannot do.
+		   Falling back to plain 24-bit instead turned the whole scene
+		   pipeline off and the only clue was one warning line. */
 		struct retro_variable cfv = { "doom_color_format", NULL };
-		if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &cfv) && cfv.value
-				&& strcmp(cfv.value, "24bit-tonemapped") == 0) {
-			/* the whole scene pipeline, encoded to the stock surface:
-			 * no pixel-format negotiation, nothing to be refused */
-			hdr_output_active = true;
-			hdr_pq_output = false;
-			if (log_cb)
-				log_cb(RETRO_LOG_INFO, "[boom3] SDR tone-mapped output enabled\n");
-		} else if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &cfv) && cfv.value
-				&& strcmp(cfv.value, "30bit-hdr") == 0) {
+		const char *want = (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &cfv) && cfv.value)
+				? cfv.value : "24bit";
+		bool scrgb = strcmp(want, "16bit-scrgb") == 0;
+		bool hdr10 = scrgb || strcmp(want, "30bit-hdr") == 0;
+		hdr_output_active = hdr10 || strcmp(want, "24bit-tonemapped") == 0;
+		hdr_pq_output = false;
+		hdr_scrgb_output = false;
+		if (scrgb) {
+			enum retro_pixel_format sf = RETRO_PIXEL_FORMAT_SCRGB_RGBA16F;
+			if (environ_cb(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &sf)) {
+				fmt = sf;
+				hdr_pq_output = true;
+				hdr_scrgb_output = true;
+			} else if (log_cb)
+				log_cb(RETRO_LOG_WARN, "[boom3] this frontend has no scRGB FP16 surface; asking for HDR10\n");
+		}
+		if (hdr10 && !hdr_scrgb_output) {
 			enum retro_pixel_format hf = RETRO_PIXEL_FORMAT_HDR10_2101010;
 			if (environ_cb(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &hf)) {
-				hdr_output_active = true;
+				fmt = hf;
 				hdr_pq_output = true;
-				if (log_cb)
-					log_cb(RETRO_LOG_INFO, "[boom3] 30-bit HDR10 output enabled\n");
-			} else {
-				/* The frontend cannot give us an HDR10 surface.  Which
-				 * frontends and drivers can is not something to guess at:
-				 * RetroArch's gl driver on Windows accepts the format and
-				 * presents it through an FP16 scRGB backbuffer, converting
-				 * our PQ Rec.2020 output on the way, which is the opposite
-				 * of what a first reading of the release notes suggests.
-				 * The only thing worth acting on is the answer this call
-				 * gives.  Falling back to plain
-				 * 24-bit turned the whole scene pipeline off with it, so the
-				 * Display Transform, the supersample resolve and everything
-				 * else silently did nothing and the only clue was one warning
-				 * line.  Fall back to the tone-mapped path instead: same
-				 * pipeline, same curves, encoded to the stock surface.  It is
-				 * what was asked for minus the part the driver cannot do. */
-				hdr_output_active = true;
-				hdr_pq_output = false;
-				if (log_cb)
-					log_cb(RETRO_LOG_WARN, "[boom3] this video driver has no HDR10 "
-							"surface; running the 24-bit tone-mapped pipeline instead, "
-							"so the display transform still applies\n");
-			}
+			} else if (log_cb)
+				log_cb(RETRO_LOG_WARN, "[boom3] this video driver has no HDR10 "
+						"surface; running the 24-bit tone-mapped pipeline instead, "
+						"so the display transform still applies\n");
 		}
 	}
-	/* Say plainly which of the three output paths is running.  Working
-	 * this out from the absence of an effect cost a bug report. */
+	/* Say plainly which output path is running.  Working this out from
+	 * the absence of an effect cost a bug report. */
 	if (log_cb)
 		log_cb(RETRO_LOG_INFO, "[boom3] output path: %s\n",
 				!hdr_output_active ? "stock 24-bit, no scene pipeline - "
 						"display transform and its options have no effect" :
+				hdr_scrgb_output ? "16-bit scRGB, linear Rec.709 at 80 nits" :
 				hdr_pq_output ? "30-bit HDR10, PQ encode" :
 				"24-bit tone-mapped, full scene pipeline");
 
 	if (hdr_output_active) {
-		fmt = RETRO_PIXEL_FORMAT_HDR10_2101010;
 		struct retro_variable pv = { "doom_hdr_precision", NULL };
 		if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &pv) && pv.value) {
 			hdr_fp16_scene = strcmp(pv.value, "fp16") == 0;
@@ -4589,7 +4606,7 @@ static const char *hdr_fs_src =
 	"uniform float uCa;\n"
 	"uniform vec3 uSsaa;\n"
 	"uniform float uHlDesat;\n"
-	"uniform vec2 uOutEnc;\n"   /* x: 1 PQ / 0 gamma-2.4, y: dither LSB */
+	"uniform vec2 uOutEnc;\n"   /* x: 2 linear scRGB / 1 PQ / 0 gamma-2.4, y: dither LSB */
 	"uniform vec2 uBandW;\n"
 	"uniform float uEncScale;\n"
 	"uniform float uFrame;\n"
@@ -5135,6 +5152,7 @@ static const char *hdr_fs_src =
 	"    lin = mix(lin, vec3(hlq), hlg);\n"
 	"  }\n"
 	"  lin = uGamut * lin;\n"
+	"  if (uOutEnc.x > 1.5) { gl_FragColor = vec4(lin * uParms.x, 1.0); return; }\n"
 	"  vec3 y = clamp(lin * uParms.x, 0.0, 1.0);\n"
 	/* SDR tone-mapped ends in gamma 1/2.4 instead of PQ */
 	"  vec3 e = (uOutEnc.x > 0.5)\n"
@@ -6395,7 +6413,32 @@ static const char *hdr_arb_composite_src( int mode, int bands ) {
 	 * in [0,1] once H is 1 and env[0].x is 1, so the encode is the
 	 * whole difference; the dither that follows reads its amplitude
 	 * from env[3].z either way. */
-	if ( !hdr_pq_output ) {
+	if ( hdr_scrgb_output ) {
+		/* linear out: the scale without the saturate, no transfer curve,
+		 * and the dither's MAD without its saturate - scRGB carries
+		 * values above one and below zero */
+		static const char scaleHead[] =
+			"MUL_SAT y, r, program.env[0].x;\n";
+		static const char pqTail[] =
+			"POW e.z, t.z, kPqB.x;\n";
+		static const char ditherSat[] =
+			"MAD_SAT e, d, program.env[3].z, e;\n";
+		char *ph = strstr( p, scaleHead );
+		char *pt = ph ? strstr( ph, pqTail ) : NULL;
+		if ( ph && pt ) {
+			static const char linEnc[] =
+			"MUL e, r, program.env[0].x;\n";
+			char *after = pt + sizeof( pqTail ) - 1;
+			const size_t encLen = sizeof( linEnc ) - 1;
+			const size_t rest = strlen( after ) + 1;
+			memcpy( ph, linEnc, encLen );
+			memmove( ph + encLen, after, rest );
+		}
+		ph = strstr( p, ditherSat );
+		if ( ph ) {
+			memcpy( ph, "MAD     ", 8 );
+		}
+	} else if ( !hdr_pq_output ) {
 		static const char pqHead[] =
 			"POW p.x, y.x, kPqA.x;\n";
 		static const char pqTail[] =
@@ -6958,6 +7001,7 @@ static void hdr_fail( const char *why ) {
 				"to 24-bit for correct colors.\n", why );
 	hdr_output_active = false;
 	hdr_pq_output = false;
+	hdr_scrgb_output = false;
 }
 
 #ifdef LR_ARB_PASSES
@@ -7051,16 +7095,11 @@ static bool hdr_aces2_build( float peakLuminance ) {
 	/* Rec.2020 - the transform lands directly in the composite's output
 	 * primaries, which is what lets the gamut matrix after it be fed
 	 * identity rows instead of rotating an already-finished colour. */
-	static const double prims[3][8] = {
-		{ 0.640, 0.330, 0.300, 0.600, 0.150, 0.060, 0.3127, 0.3290 },  /* Rec.709 */
-		{ 0.680, 0.320, 0.265, 0.690, 0.150, 0.060, 0.3127, 0.3290 },  /* P3-D65  */
-		{ 0.708, 0.292, 0.170, 0.797, 0.131, 0.046, 0.3127, 0.3290 }   /* Rec.2020 */
-	};
 	/* the display's own primaries when the frontend reported them, else
 	 * P3-D65, which most HDR displays are close to */
 	const double *rec2020 = hdr_aces2_gamut == 3
-			? ( hdr_aces2_display_valid ? hdr_aces2_display_prims : prims[1] )
-			: prims[( hdr_aces2_gamut < 0 || hdr_aces2_gamut > 2 ) ? 2 : hdr_aces2_gamut];
+			? ( hdr_aces2_display_valid ? hdr_aces2_display_prims : HDR_PRIMS_P3 )
+			: hdr_prims[( hdr_aces2_gamut < 0 || hdr_aces2_gamut > 2 ) ? 2 : hdr_aces2_gamut];
 	static unsigned short lut[ACES2_LUT_WIDTH * 4];
 	static unsigned char  lut8[ACES2_LUT_WIDTH * 4];
 
@@ -7353,7 +7392,7 @@ static bool hdr_arb_ready( void ) {
 			&& hdr_arb_comp_ssaa == hdr_ssaa
 			&& hdr_arb_comp_agxlook == hdr_agx_look
 			&& hdr_arb_comp_desat == hdr_hl_desat
-			&& hdr_arb_comp_pqout == (int)hdr_pq_output
+			&& hdr_arb_comp_pqout == (int)hdr_out_enc()
 			&& hdr_arb_comp_expand == (int)( hdr_expand_mode != 0 ) ) {
 		return true;
 	}
@@ -7397,7 +7436,7 @@ static bool hdr_arb_ready( void ) {
 			|| hdr_arb_comp_ssaa != hdr_ssaa
 			|| hdr_arb_comp_agxlook != hdr_agx_look
 			|| hdr_arb_comp_desat != hdr_hl_desat
-			|| hdr_arb_comp_pqout != (int)hdr_pq_output
+			|| hdr_arb_comp_pqout != (int)hdr_out_enc()
 			|| hdr_arb_comp_expand != (int)( hdr_expand_mode != 0 ) ) {
 		if ( hdr_arb_comp1 ) {
 			GLuint dead[3] = { hdr_arb_comp0, hdr_arb_comp1, hdr_arb_comp2 };
@@ -7421,7 +7460,7 @@ static bool hdr_arb_ready( void ) {
 		hdr_arb_comp_ssaa = hdr_ssaa;
 		hdr_arb_comp_agxlook = hdr_agx_look;
 		hdr_arb_comp_desat = hdr_hl_desat;
-		hdr_arb_comp_pqout = (int)hdr_pq_output;
+		hdr_arb_comp_pqout = (int)hdr_out_enc();
 		hdr_arb_comp_expand = (int)( hdr_expand_mode != 0 );
 
 		/* Say what was baked in.  These two are baked into the program
@@ -8108,39 +8147,46 @@ static void ldr_present( GLuint dstFbo )
 #endif
 }
 
-/* Rec.709 -> Rec.2020 (column-major for glUniformMatrix3fv) */
-static const float hdr_m709to2020[9] = {
-	0.6274f, 0.0691f, 0.0164f,
-	0.3293f, 0.9195f, 0.0880f,
-	0.0433f, 0.0114f, 0.8956f
-};
-/* DCI-P3(D65) -> Rec.2020: for the Wide mode's 709-as-P3 reinterpretation */
-static const float hdr_mP3to2020[9] = {
-	0.7538f, 0.0457f, -0.0012f,
-	0.1986f, 0.9418f,  0.0176f,
-	0.0476f, 0.0125f,  0.9837f
-};
-static const float hdr_mIdentity[9] = {
-	1.0f, 0.0f, 0.0f,
-	0.0f, 1.0f, 0.0f,
-	0.0f, 0.0f, 1.0f
-};
+/* the primaries the surface is read in: PQ is Rec.2020, scRGB and the
+ * SDR surface Rec.709 */
+static const double *hdr_output_prims( void ) {
+	return ( hdr_pq_output && !hdr_scrgb_output ) ? HDR_PRIMS_2020 : HDR_PRIMS_709;
+}
+
+/* linear RGB in some primaries to the output's, column-major as
+ * glUniformMatrix3fv and the Vulkan block take it */
+static void hdr_to_output( const double from[8], float out[9] ) {
+	double m[9];
+	int i;
+	if ( !ACES2_PrimariesMatrix( from, hdr_output_prims(), m ) ) {
+		for ( i = 0; i < 9; i++ ) {
+			out[i] = ( i % 4 == 0 ) ? 1.0f : 0.0f;
+		}
+		return;
+	}
+	for ( i = 0; i < 9; i++ ) {
+		out[i] = (float)m[i];
+	}
+}
 
 /* ACES 2.0 lands in the gamut it was told to limit to; this takes that
- * to the Rec.2020 the PQ encode expects */
-static const float *hdr_aces2_to_2020( void ) {
+ * to the output's primaries */
+static const float *hdr_aces2_to_output( void ) {
+	static float m[9];
+	const double *from;
 	switch ( hdr_aces2_gamut ) {
-	case 0:  return hdr_m709to2020;
-	case 1:  return hdr_mP3to2020;
-	case 3:  return hdr_aces2_display_valid ? hdr_aces2_display_m2020 : hdr_mP3to2020;
-	default: return hdr_mIdentity;
+	case 0:  from = HDR_PRIMS_709; break;
+	case 1:  from = HDR_PRIMS_P3; break;
+	case 3:  from = hdr_aces2_display_valid ? hdr_aces2_display_prims : HDR_PRIMS_P3; break;
+	default: from = HDR_PRIMS_2020; break;
 	}
+	hdr_to_output( from, m );
+	return m;
 }
 
 /* The display the frontend reports, for the limiting gamut: new
  * primaries re-solve the tables. */
 static void hdr_aces2_set_display( const hdr_frontend_t *fe ) {
-	double m[9];
 	int i;
 	if ( !fe->displayKnown ) {
 		if ( hdr_aces2_display_valid ) {
@@ -8160,8 +8206,9 @@ static void hdr_aces2_set_display( const hdr_frontend_t *fe ) {
 		}
 	}
 	{
-		static const double rec2020[8] = { 0.708, 0.292, 0.170, 0.797, 0.131, 0.046, 0.3127, 0.3290 };
-		if ( !ACES2_PrimariesMatrix( fe->displayPrims, rec2020, m ) ) {
+		/* degenerate chromaticities are no display */
+		double m[9];
+		if ( !ACES2_PrimariesMatrix( fe->displayPrims, HDR_PRIMS_2020, m ) ) {
 			hdr_aces2_display_valid = false;
 			hdr_aces2_peak = 0.0f;
 			return;
@@ -8169,9 +8216,6 @@ static void hdr_aces2_set_display( const hdr_frontend_t *fe ) {
 	}
 	for ( i = 0; i < 8; i++ ) {
 		hdr_aces2_display_prims[i] = fe->displayPrims[i];
-	}
-	for ( i = 0; i < 9; i++ ) {
-		hdr_aces2_display_m2020[i] = (float)m[i];
 	}
 	hdr_aces2_display_valid = true;
 	hdr_aces2_peak = 0.0f;
@@ -8784,8 +8828,8 @@ static void hdr_present_vk( float paperWhite, float H, const float mat[9] ) {
 	block.halBloom[1] = hdr_halation == 2 ? 0.72f : hdr_halation == 1 ? 0.86f : 1.0f;
 	block.halBloom[2] = hdr_halation == 2 ? 0.45f : hdr_halation == 1 ? 0.70f : 1.0f;
 	block.halBloom[3] = haveBloom ? hdr_bloom_amount : 0.0f;
-	block.outEncBandW[0] = hdr_pq_output ? 1.0f : 0.0f;
-	block.outEncBandW[1] = hdr_pq_output ? 1.0f / 1023.0f : 1.0f / 255.0f;
+	block.outEncBandW[0] = hdr_out_enc();
+	block.outEncBandW[1] = hdr_out_lsb();
 	block.outEncBandW[2] = bandW0;
 	block.outEncBandW[3] = bandW1;
 	block.filmDesat[3] = ( hdr_hl_desat == 1 && hdr_rolloff_mode != HDR_ROLLOFF_NEUTRAL
@@ -8821,9 +8865,9 @@ static void hdr_present_vk( float paperWhite, float H, const float mat[9] ) {
 	}
 	{
 		const bool aces2Abs = ( hdr_rolloff_mode == HDR_ROLLOFF_ACES2FULL && hdr_aces2_lut != 0 );
-		const float *a2m = hdr_aces2_to_2020();
+		const float *a2m = hdr_aces2_to_output();
 		VKB_HDR_MAT3( block.gamut, aces2Abs ? a2m : mat );
-		block.parms[0] = hdr_pq_output ? ( aces2Abs ? 100.0f : paperWhite ) / 10000.0f : 1.0f;
+		block.parms[0] = hdr_out_scale( aces2Abs ? 100.0f : paperWhite );
 		block.parms[1] = H;
 		block.parms[2] = (float)hdr_rolloff_mode;
 		block.parms[3] = 0.75f;   /* the Reinhard knee */
@@ -8966,19 +9010,27 @@ static void hdr_present( GLuint dstFbo ) {
 	static unsigned matMode = ~0u;
 	int i;
 	if ( gamutMode != matMode ) {
+		/* the scene's Rec.709 values read as some wider set of primaries,
+		 * then taken to the output's: on a Rec.2020 surface Accurate is
+		 * the true rotation and Super the identity, on a Rec.709 one the
+		 * other way about */
 		switch ( gamutMode ) {
-			case 3:   /* Super: no rotation, the display's interpretation boosts */
-				memcpy( mat, hdr_mIdentity, sizeof( mat ) );
+			case 3:   /* Super: the display's Rec.2020 interpretation boosts */
+				hdr_to_output( HDR_PRIMS_2020, mat );
 				break;
 			case 2:   /* Wide: 709 coordinates reinterpreted as DCI-P3 */
-				memcpy( mat, hdr_mP3to2020, sizeof( mat ) );
+				hdr_to_output( HDR_PRIMS_P3, mat );
 				break;
-			case 1:   /* Expanded: halfway between Accurate and Wide */
+			case 1: { /* Expanded: halfway between Accurate and Wide */
+				float wide[9];
+				hdr_to_output( HDR_PRIMS_709, mat );
+				hdr_to_output( HDR_PRIMS_P3, wide );
 				for ( i = 0; i < 9; i++ )
-					mat[i] = 0.5f * ( hdr_m709to2020[i] + hdr_mP3to2020[i] );
+					mat[i] = 0.5f * ( mat[i] + wide[i] );
 				break;
+			}
 			default:  /* Accurate */
-				memcpy( mat, hdr_m709to2020, sizeof( mat ) );
+				hdr_to_output( HDR_PRIMS_709, mat );
 				break;
 		}
 		matMode = gamutMode;
@@ -9405,8 +9457,7 @@ static void hdr_present( GLuint dstFbo ) {
 	glUniform1i( hdr_loc_bloomW, 2 );
 	glUniform1f( hdr_loc_bloomAmt, haveBloom ? hdr_bloom_amount : 0.0f );
 	if ( hdr_loc_outenc >= 0 )
-		glUniform2f( hdr_loc_outenc, hdr_pq_output ? 1.0f : 0.0f,
-				hdr_pq_output ? 1.0f / 1023.0f : 1.0f / 255.0f );
+		glUniform2f( hdr_loc_outenc, hdr_out_enc(), hdr_out_lsb() );
 	if ( hdr_loc_hldesat >= 0 ) {
 		int on = hdr_hl_desat == 1
 				&& hdr_rolloff_mode != HDR_ROLLOFF_NEUTRAL
@@ -9475,10 +9526,9 @@ static void hdr_present( GLuint dstFbo ) {
 		 * ARB path. */
 		const bool aces2Abs = ( hdr_rolloff_mode == HDR_ROLLOFF_ACES2FULL
 				&& hdr_aces2_lut != 0 );
-		const float *a2m = hdr_aces2_to_2020();
+		const float *a2m = hdr_aces2_to_output();
 		glUniformMatrix3fv( hdr_loc_mat, 1, GL_FALSE, aces2Abs ? a2m : mat );
-		glUniform4f( hdr_loc_parms, hdr_pq_output
-					? ( aces2Abs ? 100.0f : paperWhite ) / 10000.0f : 1.0f, H,
+		glUniform4f( hdr_loc_parms, hdr_out_scale( aces2Abs ? 100.0f : paperWhite ), H,
 				(float)hdr_rolloff_mode, 0.75f /* Reinhard knee */ );
 	}
 	/* Same 0.75 knee as the Reinhard roll-off: expansion starts where
@@ -9530,15 +9580,13 @@ static void hdr_present( GLuint dstFbo ) {
 		 * highlight roll-off stays the transform's rather than becoming
 		 * a straight multiply. */
 		hdr_aces2_exposure = aces2Abs ? ( paperWhite / 100.0f ) : 1.0f;
-		const float p0[4] = { hdr_pq_output
-					? ( aces2Abs ? 100.0f : paperWhite ) / 10000.0f : 1.0f, H,
+		const float p0[4] = { hdr_out_scale( aces2Abs ? 100.0f : paperWhite ), H,
 				(float)hdr_rolloff_mode, 0.75f };
 		const float p1[4] = { (float)hdr_expand_mode, eknee,
 				1.0f / ( 1.0f - eknee < 1e-4f ? 1e-4f : 1.0f - eknee ), 0.0f };
 		const float p2[4] = { 1.0f / hdr_scene_encode_scale,
 				haveBloom ? hdr_bloom_amount : 0.0f, bandW0, bandW1 };
-		const float p3[4] = { frameN * 3.0f, 0.6180339887f,
-				hdr_pq_output ? 1.0f / 1023.0f : 1.0f / 255.0f, 0.0f };
+		const float p3[4] = { frameN * 3.0f, 0.6180339887f, hdr_out_lsb(), 0.0f };
 		/* rows, from the column-major matrix the GLSL upload uses */
 		/* ACES 2.0 lands in the output primaries itself, so the gamut
 		 * stage that follows it is fed identity rows.  Rotating an
@@ -9550,7 +9598,7 @@ static void hdr_present( GLuint dstFbo ) {
 		 * the stage after it converts from that to the Rec.2020 the PQ
 		 * encode expects - identity only when the two are the same.
 		 * The matrices already exist for the ordinary gamut modes. */
-		const float *a2m = hdr_aces2_to_2020();
+		const float *a2m = hdr_aces2_to_output();
 		const float *gm  = aces2 ? a2m : mat;
 		const float r0[4] = { gm[0], gm[3], gm[6], 0.0f };
 		const float r1[4] = { gm[1], gm[4], gm[7], 0.0f };
@@ -9694,7 +9742,9 @@ void RB_VK_BeginFrame( void ) {
 		return;
 	}
 	/* a PQ frame is 10-bit; the frontend reads the image as it is */
-	vkb_frame_format( hdr_output_active && hdr_pq_output ? VKB_FORMAT_RGB10A2 : VKB_FORMAT_RGBA8 );
+	vkb_frame_format( !hdr_output_active ? VKB_FORMAT_RGBA8
+			: hdr_scrgb_output ? VKB_FORMAT_RGBA16F
+			: hdr_pq_output ? VKB_FORMAT_RGB10A2 : VKB_FORMAT_RGBA8 );
 	if ( hdr_output_active || hdr_ssaa == 2 ) {
 		int sw, sh;
 		RB_VK_SceneSize( &sw, &sh );

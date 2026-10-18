@@ -1,6 +1,6 @@
 #!/bin/sh
 # hdr_check.sh: every HDR shader the core builds must compile, for every
-# tone curve, in both tone-mapped colour formats, on every renderer the
+# tone curve, in the three colour formats of the scene pipeline, on every renderer the
 # core has.  Each combination runs the main menu for a few frames under
 # egl_host and fails on any composite, bloom or ARB program the core
 # reports as not compiling.  Where the renderers include arb2, each
@@ -52,7 +52,7 @@ if [ -n "$reference" ]; then
 fi
 
 for r in $renderers; do
-	for fmt in 30bit-hdr 24bit-tonemapped; do
+	for fmt in 30bit-hdr 24bit-tonemapped 16bit-scrgb; do
 		for c in $curves; do
 			opt="doom_renderer=$r"
 			[ "$r" = gles ] && opt=

@@ -27,6 +27,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 #include <vulkan/vulkan.h>
 
@@ -53,6 +54,7 @@ static uint32_t queue_family;
 static VkCommandPool pool;
 static VkCommandBuffer cmd;
 static VkFence fence;
+static int scrgb;   /* the core asked for RETRO_PIXEL_FORMAT_SCRGB_RGBA16F */
 static VkBuffer readback;
 static VkDeviceMemory readback_memory;
 static VkDeviceSize readback_size;
@@ -430,7 +432,9 @@ static int read_frame(unsigned w, unsigned h)
             }
             else if (bpp == 8)
             {
-               /* half floats, clamped: enough to see the picture */
+               /* half floats, clamped: enough to see the picture.  An
+                * scRGB frame is read relative to the 200-nit paper white
+                * the host reports and encoded sRGB, as egl_host does. */
                unsigned c;
                for (c = 0; c < 4; c++)
                {
@@ -443,6 +447,14 @@ static int read_frame(unsigned w, unsigned h)
                      f = (1.0 + m / 1024.0) * (e >= 15 ? (double)(1u << (e - 15)) : 1.0 / (double)(1u << (15 - e)));
                   if (hbits & 0x8000)
                      f = 0.0;
+                  if (scrgb && c < 3)
+                  {
+                     f *= 80.0 / 200.0;
+                     if (f >= 1.0)
+                        f = 1.0;
+                     else
+                        f = f <= 0.0031308 ? f * 12.92 : 1.055 * pow(f, 1.0 / 2.4) - 0.055;
+                  }
                   if (f > 1.0)
                      f = 1.0;
                   dst[x * 4 + c] = (unsigned char)(f * 255.0 + 0.5);
@@ -559,7 +571,7 @@ static bool hdr_metadata(void *data)
    if (md->version != 1 || md->size < sizeof(*md))
       return false;
    md->output_mode      = 1;
-   md->source_formats   = RETRO_HDR_SOURCE_FORMAT_HDR10_2101010;
+   md->source_formats   = RETRO_HDR_SOURCE_FORMAT_HDR10_2101010 | RETRO_HDR_SOURCE_FORMAT_SCRGB_RGBA16F;
    md->paper_white_nits = 200.0f;
    md->max_nits         = 1000.0f;
    md->min_nits         = 0.0f;
@@ -610,7 +622,20 @@ static bool env_cb(unsigned cmd_id, void *data)
    switch (cmd_id)
    {
    case RETRO_ENVIRONMENT_SET_PIXEL_FORMAT:
+   {
+      /* HOST_SURFACES names what the host offers beyond the SDR
+       * surface: "hdr10", "scrgb" or both (the default), "none" */
+      enum retro_pixel_format f = *(const enum retro_pixel_format *)data;
+      const char *have = getenv("HOST_SURFACES");
+      if (!have)
+         have = "hdr10 scrgb";
+      if (f == RETRO_PIXEL_FORMAT_SCRGB_RGBA16F && !strstr(have, "scrgb"))
+         return false;
+      if (f == RETRO_PIXEL_FORMAT_HDR10_2101010 && !strstr(have, "hdr10"))
+         return false;
+      scrgb = f == RETRO_PIXEL_FORMAT_SCRGB_RGBA16F;
       return true;
+   }
    case RETRO_ENVIRONMENT_GET_LOG_INTERFACE:
       ((struct retro_log_callback *)data)->log = log_cb;
       return true;
