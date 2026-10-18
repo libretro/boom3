@@ -66,10 +66,10 @@ static VkDescriptorSet vkb_descriptor_set(const vkb_draw_t *draw)
 {
    VkDescriptorSetAllocateInfo ai;
    VkDescriptorSet set = VK_NULL_HANDLE;
-   VkWriteDescriptorSet writes[2 + VKB_MAX_TEXTURE_UNITS];
+   VkWriteDescriptorSet writes[2 + VKB_MAX_TEXTURE_UNITS + 1];
    VkDescriptorBufferInfo buffers[2];
-   VkDescriptorImageInfo images[VKB_MAX_TEXTURE_UNITS];
-   unsigned i, same = 1;
+   VkDescriptorImageInfo images[VKB_MAX_TEXTURE_UNITS + 1];
+   unsigned i, same = 1, count = 2 + VKB_MAX_TEXTURE_UNITS;
 
    /* the image table is the main thread's to change while this records */
    vkt_lock();
@@ -80,6 +80,8 @@ static VkDescriptorSet vkb_descriptor_set(const vkb_draw_t *draw)
       if (vkb.boundImages[i] != draw->image[i] || vkb.boundSamplers[i] != sampler)
          same = 0;
    }
+   if (vkb.boundInput != draw->inputImage)
+      same = 0;
    if (same && vkb.boundSet)
    {
       vkt_unlock();
@@ -143,8 +145,27 @@ static VkDescriptorSet vkb_descriptor_set(const vkb_draw_t *draw)
       vkb.boundImages[i]   = draw->image[i];
       vkb.boundSamplers[i] = (unsigned)(size_t)im->sampler;
    }
+   /* the in-place pass's own pixel */
+   if (draw->inputImage)
+   {
+      const vkb_image_t *im = vkb_image_get(draw->inputImage);
+      if (im && im->view)
+      {
+         images[VKB_MAX_TEXTURE_UNITS].sampler     = VK_NULL_HANDLE;
+         images[VKB_MAX_TEXTURE_UNITS].imageView   = im->view;
+         images[VKB_MAX_TEXTURE_UNITS].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+         writes[count].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+         writes[count].dstSet          = set;
+         writes[count].dstBinding      = VKB_BINDING_INPUT;
+         writes[count].descriptorCount = 1;
+         writes[count].descriptorType  = VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT;
+         writes[count].pImageInfo      = &images[VKB_MAX_TEXTURE_UNITS];
+         count++;
+      }
+   }
+   vkb.boundInput = draw->inputImage;
    vkt_unlock();
-   vk.vkUpdateDescriptorSets(vkb.device, 2 + VKB_MAX_TEXTURE_UNITS, writes, 0, NULL);
+   vk.vkUpdateDescriptorSets(vkb.device, count, writes, 0, NULL);
    vkb.boundSet = set;
    return set;
 }
@@ -161,7 +182,9 @@ static void vkb_bind(const vkb_draw_t *draw, VkDescriptorSet set, unsigned block
    key.layout        = draw->layout;
    key.cull          = draw->cull;
    key.stencil       = draw->stencil;
-   key.target        = vkb.target->format | (vkb.targetKind == VKB_TARGET_POST ? VKB_TARGET_POST : 0);
+   key.target        = vkb.target->format
+                     | (vkb.targetKind == VKB_TARGET_POST ? VKB_TARGET_POST : 0)
+                     | (vkb.targetKind == VKB_TARGET_INPLACE ? VKB_TARGET_INPLACE : 0);
    key.lineMode      = draw->lineMode;
    key.polygonOffset = (draw->depthBias[0] != 0.0f || draw->depthBias[1] != 0.0f) ? 1 : 0;
    key.mirror        = draw->mirror;

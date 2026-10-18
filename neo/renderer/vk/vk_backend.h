@@ -155,6 +155,13 @@ int  vkb_frame_format(enum vkb_format format);
  * pass ends the one before it, so its image can be sampled. */
 int  vkb_post_begin(unsigned target, unsigned width, unsigned height);
 void vkb_post_end(void);
+/* The frame image read and written in one pass: the draw's inputImage is
+ * the frame image (vkb_image_scene_ref when the scene was drawn into
+ * it), each fragment reading its own pixel through the input attachment
+ * and writing it back.  The display transform without a second image. */
+int  vkb_post_begin_inplace(void);
+/* whether this frame's scene was drawn into the frame image itself */
+int  vkb_scene_in_frame(void);
 
 /* clears, scissored to the current scissor: colour, depth and stencil to
  * the given value */
@@ -197,6 +204,7 @@ enum vkb_program
    VKB_PROGRAM_HDR_UP,        /* the pyramid up, additive */
    VKB_PROGRAM_HDR_BLUR,      /* the two-band blur */
    VKB_PROGRAM_HDR_COMPOSITE, /* the display transform: its block is vkb_hdr_block_t */
+   VKB_PROGRAM_HDR_COMPOSITE_INPLACE, /* the same on the frame image itself, through the input attachment */
    VKB_PROGRAM_COUNT
 };
 
@@ -270,6 +278,7 @@ typedef struct vkb_draw
    const void *block;           /* vkb_draw_block_t, or a program's own block */
    unsigned blockBytes;         /* 0: sizeof(vkb_draw_block_t) */
    unsigned image[6];           /* the units the program samples; 0 unbound */
+   unsigned inputImage;         /* the image read as the input attachment: the in-place pass's own target */
    unsigned vertexBuffer;
    unsigned vertexOffset;       /* bytes; the base vertex is derived from the stride */
    unsigned indexBuffer;

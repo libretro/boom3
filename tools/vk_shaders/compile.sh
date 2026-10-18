@@ -53,7 +53,8 @@ hdr_down_frag hdr_down.frag
 hdr_down_karis_frag hdr_down_karis.frag
 hdr_up_frag hdr_up.frag
 hdr_blur_frag hdr_blur.frag
-hdr_composite_frag hdr_composite.frag
+hdr_composite_frag hdr_composite.frag -DINPLACE=0
+hdr_composite_inplace_frag hdr_composite.frag -DINPLACE=1
 "
 echo "$variants" | while read -r name file defines; do
 	[ -z "$name" ] && continue

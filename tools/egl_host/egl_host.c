@@ -52,12 +52,19 @@ typedef void (*gl_gen_t)(int, GLuint_t *);
 typedef void (*gl_bind_t)(unsigned, GLuint_t);
 typedef void (*gl_rbstorage_t)(unsigned, unsigned, int, int);
 typedef void (*gl_fbrb_t)(unsigned, unsigned, unsigned, GLuint_t);
+typedef void (*gl_teximage_t)(unsigned, int, int, int, int, int, unsigned, unsigned, const void *);
+typedef void (*gl_texparam_t)(unsigned, unsigned, int);
+typedef void (*gl_fbtex_t)(unsigned, unsigned, unsigned, GLuint_t, int);
 typedef unsigned (*gl_check_t)(unsigned);
 typedef void (*gl_read_t)(int, int, int, int, unsigned, unsigned, void *);
 typedef void (*gl_pixelstore_t)(unsigned, int);
 typedef void (*gl_finish_t)(void);
 
-static gl_gen_t        pGenFramebuffers, pGenRenderbuffers;
+static gl_gen_t        pGenFramebuffers, pGenRenderbuffers, pGenTextures;
+static gl_bind_t       pBindTexture;
+static gl_teximage_t   pTexImage2D;
+static gl_texparam_t   pTexParameteri;
+static gl_fbtex_t      pFramebufferTexture2D;
 static gl_bind_t       pBindFramebuffer, pBindRenderbuffer;
 static gl_rbstorage_t  pRenderbufferStorage;
 static gl_fbrb_t       pFramebufferRenderbuffer;
@@ -402,16 +409,38 @@ static int make_framebuffer(void)
    pFramebufferRenderbuffer = (gl_fbrb_t)eglGetProcAddress("glFramebufferRenderbuffer");
    pCheckFramebufferStatus = (gl_check_t)eglGetProcAddress("glCheckFramebufferStatus");
    pReadPixels = (gl_read_t)eglGetProcAddress("glReadPixels");
+   pGenTextures = (gl_gen_t)eglGetProcAddress("glGenTextures");
+   pBindTexture = (gl_bind_t)eglGetProcAddress("glBindTexture");
+   pTexImage2D = (gl_teximage_t)eglGetProcAddress("glTexImage2D");
+   pTexParameteri = (gl_texparam_t)eglGetProcAddress("glTexParameteri");
+   pFramebufferTexture2D = (gl_fbtex_t)eglGetProcAddress("glFramebufferTexture2D");
    pPixelStorei = (gl_pixelstore_t)eglGetProcAddress("glPixelStorei");
    if (!pGenFramebuffers || !pReadPixels)
       return 0;
    pGenFramebuffers(1, &fbo);
    pBindFramebuffer(0x8D40 /* GL_FRAMEBUFFER */, fbo);
-   pGenRenderbuffers(1, &fbo_color);
-   pBindRenderbuffer(0x8D41, fbo_color);
-   pRenderbufferStorage(0x8D41, scrgb ? 0x881A /* GL_RGBA16F */ : 0x8058 /* GL_RGBA8 */,
-         (int)fb_w, (int)fb_h);
-   pFramebufferRenderbuffer(0x8D40, 0x8CE0 /* COLOR0 */, 0x8D41, fbo_color);
+   /* An scRGB frame goes to a float texture, as a frontend attaches it;
+    * HOST_FBO=renderbuffer keeps it a renderbuffer, which the core
+    * cannot draw onto in place. */
+   if (scrgb && pGenTextures && pTexImage2D && pFramebufferTexture2D
+         && !(getenv("HOST_FBO") && !strcmp(getenv("HOST_FBO"), "renderbuffer")))
+   {
+      pGenTextures(1, &fbo_color);
+      pBindTexture(0x0DE1 /* GL_TEXTURE_2D */, fbo_color);
+      pTexImage2D(0x0DE1, 0, 0x881A /* GL_RGBA16F */, (int)fb_w, (int)fb_h, 0,
+            0x1908 /* GL_RGBA */, 0x140B /* GL_HALF_FLOAT */, NULL);
+      pTexParameteri(0x0DE1, 0x2801 /* GL_TEXTURE_MIN_FILTER */, 0x2601 /* GL_LINEAR */);
+      pTexParameteri(0x0DE1, 0x2800 /* GL_TEXTURE_MAG_FILTER */, 0x2601);
+      pFramebufferTexture2D(0x8D40, 0x8CE0 /* COLOR0 */, 0x0DE1, fbo_color, 0);
+   }
+   else
+   {
+      pGenRenderbuffers(1, &fbo_color);
+      pBindRenderbuffer(0x8D41, fbo_color);
+      pRenderbufferStorage(0x8D41, scrgb ? 0x881A /* GL_RGBA16F */ : 0x8058 /* GL_RGBA8 */,
+            (int)fb_w, (int)fb_h);
+      pFramebufferRenderbuffer(0x8D40, 0x8CE0 /* COLOR0 */, 0x8D41, fbo_color);
+   }
    pGenRenderbuffers(1, &fbo_depth);
    pBindRenderbuffer(0x8D41, fbo_depth);
    pRenderbufferStorage(0x8D41, 0x88F0 /* GL_DEPTH24_STENCIL8 */, (int)fb_w, (int)fb_h);

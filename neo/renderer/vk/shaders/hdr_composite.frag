@@ -32,7 +32,16 @@ layout(set = 0, binding = 1, std140) uniform Hdr
     vec4 aces;            // shoulder A, gradient, GT normalisation
 } u_hdr;
 
+#ifndef INPLACE
+#define INPLACE 0
+#endif
+#if INPLACE
+// the frame image itself, the fragment's own pixel: no supersample and
+// no chromatic aberration, which read beyond it
+layout(input_attachment_index = 0, set = 0, binding = 8) uniform subpassInput u_sceneIn;
+#else
 layout(set = 0, binding = 2) uniform sampler2D u_scene;
+#endif
 layout(set = 0, binding = 3) uniform sampler2D u_bloomT;
 layout(set = 0, binding = 4) uniform sampler2D u_bloomW;
 layout(set = 0, binding = 5) uniform sampler2D u_lut;
@@ -348,6 +357,9 @@ void main() {
   vec2 caD = var_TexCoord - 0.5;
   float caR = dot(caD, caD) * u_hdr.ssaaCa.w;
   vec3 base;
+#if INPLACE
+  base = subpassLoad(u_sceneIn).rgb;
+#else
   if (u_hdr.ssaaCa.xyz.x > 0.0) {
     vec2 ssOff = u_hdr.ssaaCa.xyz.xy;
     vec3 acc = vec3(0.0); float wsum = 0.0;
@@ -377,11 +389,14 @@ void main() {
   } else {
     base = texture(u_scene, var_TexCoord).rgb;
   }
+#endif
   vec3 scn = base;
+#if !INPLACE
   if (caR != 0.0) {
     scn.r = texture(u_scene, var_TexCoord - caD * caR).r;
     scn.b = texture(u_scene, var_TexCoord + caD * caR).b;
   }
+#endif
   vec3 lin = srgbToLinear(scn * u_hdr.expandEncFrame.z);
   vec3 bl = u_hdr.outEncBandW.zw.x * texture(u_bloomT, var_TexCoord).rgb;
   if (u_hdr.outEncBandW.zw.y > 0.0)

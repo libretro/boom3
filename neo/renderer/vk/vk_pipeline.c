@@ -45,6 +45,7 @@
 #include "spirv/hdr_up_frag.h"
 #include "spirv/hdr_blur_frag.h"
 #include "spirv/hdr_composite_frag.h"
+#include "spirv/hdr_composite_inplace_frag.h"
 
 /* the engine's state bits (tr_local.h) */
 #define GLS_SRCBLEND_BITS      0x0000000f
@@ -94,7 +95,8 @@ static const vkb_program_source_t sources[VKB_PROGRAM_COUNT] = {
    { SPV(blit_vert), SPV(hdr_down_karis_frag) },
    { SPV(blit_vert), SPV(hdr_up_frag) },
    { SPV(blit_vert), SPV(hdr_blur_frag) },
-   { SPV(blit_vert), SPV(hdr_composite_frag) }
+   { SPV(blit_vert), SPV(hdr_composite_frag) },
+   { SPV(blit_vert), SPV(hdr_composite_inplace_frag) }
 };
 
 static VkShaderModule vkb_module(const unsigned int *code, size_t bytes)
@@ -240,9 +242,79 @@ VkRenderPass vkb_post_render_pass(enum vkb_format colorFormat)
    return *slot;
 }
 
+/* The frame image as both the colour attachment and an input attachment
+ * of one subpass: each fragment reads the pixel it is about to write,
+ * which the self-dependency makes well-defined, in the general layout
+ * both uses allow.  The display transform runs on the frame image this
+ * way, with no scene image to resolve from. */
+VkRenderPass vkb_inplace_render_pass(enum vkb_format colorFormat)
+{
+   VkAttachmentDescription att;
+   VkAttachmentReference colorRef, inputRef;
+   VkSubpassDescription sub;
+   VkSubpassDependency deps[3];
+   VkRenderPassCreateInfo rci;
+   VkRenderPass *slot = &vkb.inplacePass[colorFormat];
+   if (*slot)
+      return *slot;
+   memset(&att, 0, sizeof(att));
+   att.format         = vkb_vk_format(colorFormat);
+   att.samples        = VK_SAMPLE_COUNT_1_BIT;
+   att.loadOp         = VK_ATTACHMENT_LOAD_OP_LOAD;
+   att.storeOp        = VK_ATTACHMENT_STORE_OP_STORE;
+   att.stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+   att.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+   att.initialLayout  = VK_IMAGE_LAYOUT_GENERAL;
+   att.finalLayout    = VK_IMAGE_LAYOUT_GENERAL;
+   colorRef.attachment = 0;
+   colorRef.layout     = VK_IMAGE_LAYOUT_GENERAL;
+   inputRef.attachment = 0;
+   inputRef.layout     = VK_IMAGE_LAYOUT_GENERAL;
+   memset(&sub, 0, sizeof(sub));
+   sub.pipelineBindPoint    = VK_PIPELINE_BIND_POINT_GRAPHICS;
+   sub.inputAttachmentCount = 1;
+   sub.pInputAttachments    = &inputRef;
+   sub.colorAttachmentCount = 1;
+   sub.pColorAttachments    = &colorRef;
+   memset(deps, 0, sizeof(deps));
+   deps[0].srcSubpass    = VK_SUBPASS_EXTERNAL;
+   deps[0].dstSubpass    = 0;
+   deps[0].srcStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT
+      | VK_PIPELINE_STAGE_TRANSFER_BIT;
+   deps[0].dstStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+   deps[0].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
+   deps[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT
+      | VK_ACCESS_INPUT_ATTACHMENT_READ_BIT;
+   /* the fragment's own pixel, written before it is read again */
+   deps[1].srcSubpass      = 0;
+   deps[1].dstSubpass      = 0;
+   deps[1].srcStageMask    = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+   deps[1].dstStageMask    = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+   deps[1].srcAccessMask   = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+   deps[1].dstAccessMask   = VK_ACCESS_INPUT_ATTACHMENT_READ_BIT;
+   deps[1].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
+   deps[2].srcSubpass    = 0;
+   deps[2].dstSubpass    = VK_SUBPASS_EXTERNAL;
+   deps[2].srcStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+   deps[2].dstStageMask  = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT;
+   deps[2].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+   deps[2].dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT;
+   memset(&rci, 0, sizeof(rci));
+   rci.sType           = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+   rci.attachmentCount = 1;
+   rci.pAttachments    = &att;
+   rci.subpassCount    = 1;
+   rci.pSubpasses      = &sub;
+   rci.dependencyCount = 3;
+   rci.pDependencies   = deps;
+   if (vk.vkCreateRenderPass(vkb.device, &rci, NULL, slot) != VK_SUCCESS)
+      *slot = VK_NULL_HANDLE;
+   return *slot;
+}
+
 int vkb_pipelines_init(void)
 {
-   VkDescriptorSetLayoutBinding bindings[2 + VKB_MAX_TEXTURE_UNITS];
+   VkDescriptorSetLayoutBinding bindings[2 + VKB_MAX_TEXTURE_UNITS + 1];
    VkDescriptorSetLayoutCreateInfo dci;
    VkPipelineLayoutCreateInfo pci;
    unsigned i;
@@ -261,9 +333,15 @@ int vkb_pipelines_init(void)
       bindings[2 + i].descriptorCount = 1;
       bindings[2 + i].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_VERTEX_BIT;
    }
+   /* the in-place pass's own pixel; left unwritten by every other draw,
+    * which is allowed of a binding the program does not read */
+   bindings[VKB_BINDING_INPUT].binding         = VKB_BINDING_INPUT;
+   bindings[VKB_BINDING_INPUT].descriptorType  = VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT;
+   bindings[VKB_BINDING_INPUT].descriptorCount = 1;
+   bindings[VKB_BINDING_INPUT].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
    memset(&dci, 0, sizeof(dci));
    dci.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-   dci.bindingCount = 2 + VKB_MAX_TEXTURE_UNITS;
+   dci.bindingCount = 2 + VKB_MAX_TEXTURE_UNITS + 1;
    dci.pBindings    = bindings;
    if (vk.vkCreateDescriptorSetLayout(vkb.device, &dci, NULL, &vkb.setLayout) != VK_SUCCESS)
       return 0;
@@ -306,6 +384,11 @@ void vkb_pipelines_shutdown(void)
       {
          vk.vkDestroyRenderPass(vkb.device, vkb.renderPass[i], NULL);
          vkb.renderPass[i] = VK_NULL_HANDLE;
+      }
+      if (vkb.inplacePass[i])
+      {
+         vk.vkDestroyRenderPass(vkb.device, vkb.inplacePass[i], NULL);
+         vkb.inplacePass[i] = VK_NULL_HANDLE;
       }
       if (vkb.postPass[i])
       {
@@ -354,7 +437,10 @@ static VkBlendFactor vkb_dst_factor(unsigned bits)
 
 static VkPipeline vkb_pipeline_make(const vkb_pipeline_key_t *key)
 {
-   const int post = (key->target & VKB_TARGET_POST) != 0;
+   const int inplace = (key->target & VKB_TARGET_INPLACE) != 0;
+   const int post = (key->target & VKB_TARGET_POST) != 0 || inplace;
+   const unsigned format = key->target & ~(VKB_TARGET_POST | VKB_TARGET_INPLACE);
+   int fullscreen;
    VkPipelineShaderStageCreateInfo stages[2];
    VkVertexInputBindingDescription binding;
    VkVertexInputAttributeDescription attrs[6];
@@ -420,11 +506,14 @@ static VkPipeline vkb_pipeline_make(const vkb_pipeline_key_t *key)
       attrs[5].offset    = 44;
       numAttrs           = 6;
    }
+   /* the fullscreen programs take their triangle from the vertex index,
+    * with no vertex buffer bound */
+   fullscreen = sources[key->program].vert == spirv_blit_vert;
    memset(&vi, 0, sizeof(vi));
    vi.sType                           = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-   vi.vertexBindingDescriptionCount   = key->program == VKB_PROGRAM_BLIT ? 0 : 1;
+   vi.vertexBindingDescriptionCount   = fullscreen ? 0 : 1;
    vi.pVertexBindingDescriptions      = &binding;
-   vi.vertexAttributeDescriptionCount = key->program == VKB_PROGRAM_BLIT ? 0 : numAttrs;
+   vi.vertexAttributeDescriptionCount = fullscreen ? 0 : numAttrs;
    vi.pVertexAttributeDescriptions    = attrs;
 
    memset(&ia, 0, sizeof(ia));
@@ -545,7 +634,8 @@ static VkPipeline vkb_pipeline_make(const vkb_pipeline_key_t *key)
    gci.pColorBlendState    = &cb;
    gci.pDynamicState       = &dy;
    gci.layout              = vkb.pipelineLayout;
-   gci.renderPass          = post ? vkb.postPass[key->target & ~VKB_TARGET_POST] : vkb.renderPass[key->target];
+   gci.renderPass          = inplace ? vkb.inplacePass[format]
+                           : post ? vkb.postPass[format] : vkb.renderPass[format];
    gci.subpass             = 0;
    if (vk.vkCreateGraphicsPipelines(vkb.device, vkb.pipelineCache, 1, &gci, NULL, &pipeline) != VK_SUCCESS)
       return VK_NULL_HANDLE;

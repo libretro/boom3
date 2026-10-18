@@ -194,7 +194,7 @@ static int vkb_frames_init(void)
       VkCommandBufferAllocateInfo cai;
       VkFenceCreateInfo fci;
       VkSemaphoreCreateInfo sci;
-      VkDescriptorPoolSize sizes[2];
+      VkDescriptorPoolSize sizes[3];
       VkDescriptorPoolCreateInfo dpi;
 
       memset(&pci, 0, sizeof(pci));
@@ -225,10 +225,12 @@ static int vkb_frames_init(void)
       sizes[0].descriptorCount = 2 * 16384;
       sizes[1].type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
       sizes[1].descriptorCount = VKB_MAX_TEXTURE_UNITS * 16384;
+      sizes[2].type            = VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT;
+      sizes[2].descriptorCount = 64;
       memset(&dpi, 0, sizeof(dpi));
       dpi.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
       dpi.maxSets       = 16384;
-      dpi.poolSizeCount = 2;
+      dpi.poolSizeCount = 3;
       dpi.pPoolSizes    = sizes;
       if (vk.vkCreateDescriptorPool(vkb.device, &dpi, NULL, &f->descriptors) != VK_SUCCESS)
          return 0;
@@ -449,6 +451,7 @@ void vkb_shutdown(void)
 }
 
 int vkb_ready(void) { return vkb.ready; }
+int vkb_scene_in_frame(void) { return vkb.frameOpen && vkb.sceneTarget == &vkb.frameImage[vkb.syncIndex]; }
 unsigned vkb_max_texture_size(void) { return vkb.properties.limits.maxImageDimension2D; }
 int vkb_has_bc(void) { return vkb.hasBC; }
 int vkb_has_anisotropy(void) { return vkb.features.samplerAnisotropy; }
@@ -480,15 +483,19 @@ void vkb_render_pass_begin(void)
 {
    VkRenderPassBeginInfo rbi;
    vkb_target_t *t = vkb.target;
+   const int inplace = vkb.targetKind == VKB_TARGET_INPLACE;
    if (vkb.inRenderPass)
       return;
    /* the target's first use leaves the undefined layout; afterwards the
-    * frontend (frame image) or the composite (scene) left it readable */
+    * frontend (frame image) or the composite (scene) left it readable.
+    * The in-place pass reads and writes it in the general layout. */
    vkb_image_barrier(vkb.cmd, t->color, VK_IMAGE_ASPECT_COLOR_BIT,
          t->layoutReady ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
-         VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-         VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+         inplace ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+         VK_ACCESS_SHADER_READ_BIT,
+         VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | (inplace ? VK_ACCESS_INPUT_ATTACHMENT_READ_BIT : 0),
+         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | (inplace ? VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT : 0));
    if (!t->depthReady && t->depth)
    {
       vkb_image_barrier(vkb.cmd, t->depth, VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT,
@@ -500,8 +507,8 @@ void vkb_render_pass_begin(void)
    }
    memset(&rbi, 0, sizeof(rbi));
    rbi.sType                    = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-   rbi.renderPass               = t->renderPass;
-   rbi.framebuffer              = t->framebuffer;
+   rbi.renderPass               = inplace ? vkb.inplacePass[t->format] : t->renderPass;
+   rbi.framebuffer              = inplace ? t->inplaceFramebuffer : t->framebuffer;
    rbi.renderArea.extent.width  = t->width;
    rbi.renderArea.extent.height = t->height;
    vk.vkCmdBeginRenderPass(vkb.cmd, &rbi, VK_SUBPASS_CONTENTS_INLINE);
@@ -511,6 +518,7 @@ void vkb_render_pass_begin(void)
    vkb.boundVertexBuffer = 0xffffffffu;
    vkb.boundIndexBuffer  = 0xffffffffu;
    memset(vkb.boundImages, 0xff, sizeof(vkb.boundImages));
+   vkb.boundInput = 0xffffffffu;
    vkb_viewport(0, 0, (int)t->width, (int)t->height);
    vkb_scissor(0, 0, (int)t->width, (int)t->height);
 }
@@ -523,7 +531,8 @@ void vkb_render_pass_end(void)
    vkb.inRenderPass = 0;
    /* readable by the frontend or the composite */
    vkb_image_barrier(vkb.cmd, vkb.target->color, VK_IMAGE_ASPECT_COLOR_BIT,
-         VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+         vkb.targetKind == VKB_TARGET_INPLACE ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
          VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
          VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
    vkb.target->layoutReady = 1;
@@ -581,6 +590,20 @@ void vkb_post_end(void)
    vkb_render_pass_end();
 }
 
+int vkb_post_begin_inplace(void)
+{
+   vkb_target_t *frame = &vkb.frameImage[vkb.syncIndex];
+   if (!vkb.frameOpen || !frame->color || !frame->inplaceFramebuffer)
+      return 0;
+   vkb_render_pass_end();
+   vkb.target     = frame;
+   vkb.targetKind = VKB_TARGET_INPLACE;
+   vkb.postImage  = 0;
+   vkb.frameComposited = 1;
+   vkb_render_pass_begin();
+   return 1;
+}
+
 /* the frame images in a format: remade when it changes */
 static int vkb_frame_images_make(enum vkb_format format)
 {
@@ -635,6 +658,7 @@ int vkb_begin_frame(enum vkb_target target, unsigned width, unsigned height,
    else
       vkb.target = &vkb.frameImage[vkb.syncIndex];
    vkb.targetKind = (unsigned char)target;
+   vkb.sceneTarget = vkb.target;
    if (!vkb.target->color)
       return 0;
 
@@ -674,10 +698,10 @@ static void vkb_composite(void)
    vkb_render_pass_begin();
    memset(&block, 0, sizeof(block));
    memcpy(block.vertexParms, vkb.compositeParms, sizeof(block.vertexParms));
-   block.screenParms[0] = 1.0f / (float)vkb.scene.width;
-   block.screenParms[1] = 1.0f / (float)vkb.scene.height;
-   block.screenParms[2] = (float)vkb.scene.width / (float)frame->width;
-   block.screenParms[3] = (float)vkb.scene.height / (float)frame->height;
+   block.screenParms[0] = 1.0f / (float)vkb.sceneTarget->width;
+   block.screenParms[1] = 1.0f / (float)vkb.sceneTarget->height;
+   block.screenParms[2] = (float)vkb.sceneTarget->width / (float)frame->width;
+   block.screenParms[3] = (float)vkb.sceneTarget->height / (float)frame->height;
    block.glColor[0] = block.glColor[1] = block.glColor[2] = block.glColor[3] = 1.0f;
    memset(&d, 0, sizeof(d));
    d.block      = &block;

@@ -632,6 +632,14 @@ static float  hdr_gt_shoulder   = 0.40f;
 static int    hdr_expand_mode   = 0;       /* 0 none, 1 per-channel inverse tonemap, 2 hue-preserving; live-switchable */
 
 static GLuint hdr_fbo, hdr_tex, hdr_rbo, hdr_prog;
+/* The scene drawn into the frontend's own framebuffer and transformed in
+ * place: scRGB, whose surface is a float texture that can hold the
+ * linear scene, on a context with a texture barrier (ARB or NV), which
+ * lets the composite read the texel it writes.  No scene target. */
+static bool   hdr_inplace;
+static GLuint hdr_inplace_tex;
+static void ( *hdr_texture_barrier )( void );
+static int    hdr_texture_barrier_probed;
 static GLint  hdr_loc_tex, hdr_loc_mat, hdr_loc_parms;
 static GLint  hdr_loc_bloomT, hdr_loc_bloomW, hdr_loc_bloomAmt, hdr_loc_encScale;
 static GLint  hdr_loc_hal = -1;
@@ -2979,6 +2987,10 @@ static void context_reset(void)
 #endif
    /* previous context's HDR objects are gone with it */
    hdr_fbo = hdr_tex = hdr_rbo = hdr_prog = 0;
+   hdr_inplace = false;
+   hdr_inplace_tex = 0;
+   hdr_texture_barrier = NULL;
+   hdr_texture_barrier_probed = 0;
    hdr_prog_bright = hdr_prog_blur = 0;
    hdr_bright_loc_ffknee = -1;
    hdr_bloom_prog_bad = hdr_bloom_tex_bad = false;
@@ -7729,7 +7741,8 @@ static bool hdr_ensure_target( int w, int h ) {
 	   then had no scene target at all, hdr_fbo stayed zero, hdr_present
 	   returned on its first line, and the screen was black with nothing
 	   to log. */
-	if ( hdr_fbo == 0 || w != hdr_w || h != hdr_h ) {
+	const bool resized = w != hdr_w || h != hdr_h;
+	if ( !hdr_inplace && ( hdr_fbo == 0 || resized ) ) {
 		if ( hdr_tex ) glDeleteTextures( 1, &hdr_tex );
 		if ( hdr_rbo ) glDeleteRenderbuffers( 1, &hdr_rbo );
 		if ( hdr_fbo ) glDeleteFramebuffers( 1, &hdr_fbo );
@@ -7781,7 +7794,9 @@ static bool hdr_ensure_target( int w, int h ) {
 			hdr_fail( "scene FBO incomplete" );
 			return false;
 		}
-		/* bloom chain: [0,1] at 1/4 res, [2,3] at 1/16 */
+	}
+	/* bloom chain: [0,1] at 1/4 res, [2,3] at 1/16 */
+	if ( hdr_bloom_fbo[0] == 0 || resized ) {
 		{
 			/*
 			   The bright pass writes LINEAR light here, so the target's
@@ -8017,6 +8032,33 @@ static void ldr_destroy_target( void ) {
 #endif
 }
 
+/* The frontend framebuffer's colour texture, when the scene can be drawn
+ * into it and transformed in place: a float texture, and a texture
+ * barrier to draw it onto itself with.  0 otherwise. */
+static GLuint hdr_inplace_texture( GLuint fbo ) {
+	GLint type = 0, name = 0, component = 0;
+	if ( !hdr_texture_barrier_probed ) {
+		hdr_texture_barrier_probed = 1;
+		hdr_texture_barrier = (void (*)( void ))hw_render.get_proc_address( "glTextureBarrier" );
+		if ( !hdr_texture_barrier )
+			hdr_texture_barrier = (void (*)( void ))hw_render.get_proc_address( "glTextureBarrierNV" );
+	}
+	if ( !hdr_texture_barrier )
+		return 0;
+	glBindFramebuffer( RARCH_GL_FRAMEBUFFER, fbo );
+	glGetFramebufferAttachmentParameteriv( RARCH_GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+			0x8CD0 /* GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE */, &type );
+	if ( type != GL_TEXTURE )
+		return 0;
+	glGetFramebufferAttachmentParameteriv( RARCH_GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+			0x8CD1 /* GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME */, &name );
+	glGetFramebufferAttachmentParameteriv( RARCH_GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+			0x8211 /* GL_FRAMEBUFFER_ATTACHMENT_COMPONENT_TYPE */, &component );
+	if ( component != GL_FLOAT || name == 0 )
+		return 0;
+	return (GLuint)name;
+}
+
 static void hdr_bind_scene( void ) {
 #if defined(BOOM3_VR)
 	if ( vr_active ) { VR_BindTargetForView( 0 ); return; }
@@ -8032,6 +8074,27 @@ static void hdr_bind_scene( void ) {
 			core_view_fbo = ldr_fbo;
 		}
 		return;
+	}
+	{
+		const GLuint tex = ( hdr_scrgb_output && hdr_ssaa == 1 && hdr_chroma_ab == 0 )
+				? hdr_inplace_texture( core_view_fbo ) : 0;
+		if ( tex != 0 ) {
+			if ( !hdr_inplace ) {
+				/* the scene target has no further use */
+				if ( hdr_tex ) glDeleteTextures( 1, &hdr_tex );
+				if ( hdr_rbo ) glDeleteRenderbuffers( 1, &hdr_rbo );
+				if ( hdr_fbo ) glDeleteFramebuffers( 1, &hdr_fbo );
+				hdr_fbo = hdr_rbo = hdr_tex = 0;
+				hdr_inplace = true;
+				if ( log_cb )
+					log_cb( RETRO_LOG_INFO, "[boom3] HDR: the scene draws into the frontend's surface and the display transform runs on it in place\n" );
+			}
+			hdr_inplace_tex = tex;
+			hdr_ensure_target( scr_width, scr_height );
+			glBindFramebuffer( RARCH_GL_FRAMEBUFFER, core_view_fbo );
+			return;
+		}
+		hdr_inplace = false;
 	}
 	if ( !hdr_ensure_target( scr_width * hdr_ssaa, scr_height * hdr_ssaa ) )
 		return;
@@ -8887,16 +8950,25 @@ static void hdr_present_vk( float paperWhite, float H, const float mat[9] ) {
 		block.gt[3] = (float)C2;
 	}
 
-	/* the composite into the frame image */
-	if ( !vkb_post_begin( 0, scr_width, scr_height ) ) {
-		return;
+	/* the composite into the frame image: on the scene drawn there, in
+	 * place, each fragment reading its own pixel */
+	if ( vkb_scene_in_frame() ) {
+		if ( !vkb_post_begin_inplace() ) {
+			return;
+		}
+		draw.inputImage = vkb_image_scene_ref();
+		draw.program = VKB_PROGRAM_HDR_COMPOSITE_INPLACE;
+	} else {
+		if ( !vkb_post_begin( 0, scr_width, scr_height ) ) {
+			return;
+		}
+		draw.image[0] = vkb_image_scene_ref();
+		draw.program = VKB_PROGRAM_HDR_COMPOSITE;
 	}
 	draw.block = &block;
 	draw.blockBytes = sizeof( block );
-	draw.image[0] = vkb_image_scene_ref();
 	draw.image[1] = bloomT;
 	draw.image[2] = bloomW;
-	draw.program = VKB_PROGRAM_HDR_COMPOSITE;
 	draw.layout = VKB_VERTEX_DRAWVERT;
 	draw.cull = VKB_CULL_NONE;
 	draw.stateBits = GLS_DEPTHFUNC_ALWAYS | GLS_DEPTHMASK;
@@ -8993,7 +9065,7 @@ static void hdr_fe_query( hdr_frontend_t *fe ) {
 static void hdr_present( GLuint dstFbo ) {
 	if ( !hdr_output_active )
 		return;
-	if ( !LR_VULKAN() && ( !HDR_COMPOSITE_READY || hdr_fbo == 0 ) )
+	if ( !LR_VULKAN() && ( !HDR_COMPOSITE_READY || ( hdr_fbo == 0 && !hdr_inplace ) ) )
 		return;
 
 	if ( !LR_VULKAN() ) {
@@ -9142,7 +9214,7 @@ static void hdr_present( GLuint dstFbo ) {
 		qglBindProgramARB( GL_FRAGMENT_PROGRAM_ARB, hdr_arb_bright );
 #endif
 	}
-		glBindTexture( GL_TEXTURE_2D, hdr_tex );
+		glBindTexture( GL_TEXTURE_2D, hdr_inplace ? hdr_inplace_tex : hdr_tex );
 		/* Threshold and knee are tuned together: the knee lets
 		   sub-threshold content contribute, so holding the knee fixed
 		   and raising the threshold is what keeps total bloom energy
@@ -9426,7 +9498,10 @@ static void hdr_present( GLuint dstFbo ) {
 	glActiveTexture( GL_TEXTURE2 );
 	glBindTexture( GL_TEXTURE_2D, convN ? hdr_conv_tex[0] : hdr_bloom_tex[2] );
 	glActiveTexture( GL_TEXTURE0 );
-	glBindTexture( GL_TEXTURE_2D, hdr_tex );
+	glBindTexture( GL_TEXTURE_2D, hdr_inplace ? hdr_inplace_tex : hdr_tex );
+	/* in place: each texel is read once and written once past the barrier */
+	if ( hdr_inplace )
+		hdr_texture_barrier();
 	/* wraps every 64 frames; the pattern only has to keep moving */
 	const float frameN = (float)( hdr_frame_counter++ & 63u );
 
@@ -9739,6 +9814,19 @@ static void vk_present( void ) {
  * scene image the composite resolves (the supersample, the HDR curves). */
 void RB_VK_BeginFrame( void ) {
 	if ( !vkb_ready() ) {
+		return;
+	}
+	/* The scene pipeline draws into the frame image itself and the
+	 * display transform runs on it in place: the frame image takes the
+	 * scene's format - the frontend samples the view it is handed, and
+	 * PQ or sRGB codes in a half float are finer than 10 or 8 bits.
+	 * Only the supersample and chromatic aberration, which read beyond
+	 * the pixel, need a scene image to resolve from - and scRGB a float
+	 * one, since its output is unbounded. */
+	if ( hdr_output_active && hdr_ssaa != 2 && hdr_chroma_ab == 0
+			&& ( !hdr_scrgb_output || hdr_fp16_scene || hdr_fp32_scene ) ) {
+		vkb_frame_format( RB_VK_SceneFormat() );
+		vkb_begin_frame( VKB_TARGET_FRAME, scr_width, scr_height, RB_VK_SceneFormat() );
 		return;
 	}
 	/* a PQ frame is 10-bit; the frontend reads the image as it is */

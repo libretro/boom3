@@ -146,20 +146,22 @@ const vkb_image_t *vkb_image_get(unsigned image)
    if (image == VKB_IMAGE_SCENE)
    {
       vkb_image_t *im = &vkb.images[image];
-      im->image   = vkb.scene.color;
-      im->view    = vkb.scene.colorView;
-      im->width   = vkb.scene.width;
-      im->height  = vkb.scene.height;
+      const vkb_target_t *t = vkb.sceneTarget ? vkb.sceneTarget : &vkb.scene;
+      im->image   = t->color;
+      im->view    = t->colorView;
+      im->width   = t->width;
+      im->height  = t->height;
       im->levels  = 1;
       im->sampler = vkb_sampler(VKB_FILTER_LINEAR_NOMIP, VKB_WRAP_CLAMP, 0, 0);
    }
    else if (image == VKB_IMAGE_SCENE_DEPTH)
    {
       vkb_image_t *im = &vkb.images[image];
-      im->image   = vkb.scene.depth;
-      im->view    = vkb.scene.depthView;
-      im->width   = vkb.scene.width;
-      im->height  = vkb.scene.height;
+      const vkb_target_t *t = vkb.sceneTarget ? vkb.sceneTarget : &vkb.scene;
+      im->image   = t->depth;
+      im->view    = t->depthView;
+      im->width   = t->width;
+      im->height  = t->height;
       im->levels  = 1;
       im->sampler = vkb_sampler(VKB_FILTER_NEAREST, VKB_WRAP_CLAMP, 0, 0);
    }
@@ -569,7 +571,8 @@ int vkb_target_create(vkb_target_t *t, unsigned width, unsigned height, enum vkb
    /* the frontend may read an 8-bit frame image through an sRGB view */
    if (!vkb_image_make(&color, width, height, 1, 0, format,
             VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
-            | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+            | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT
+            | (frontend ? VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT : 0),
             frontend ? VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT : 0))
    {
       vkb_image_release(&color);
@@ -613,11 +616,30 @@ int vkb_target_create(vkb_target_t *t, unsigned width, unsigned height, enum vkb
       vkb_target_destroy(t);
       return 0;
    }
+   /* the frame image's in-place pass: the colour alone */
+   if (frontend)
+   {
+      VkRenderPass pass = vkb_inplace_render_pass(format);
+      if (!pass)
+      {
+         vkb_target_destroy(t);
+         return 0;
+      }
+      fci.renderPass      = pass;
+      fci.attachmentCount = 1;
+      if (vk.vkCreateFramebuffer(vkb.device, &fci, NULL, &t->inplaceFramebuffer) != VK_SUCCESS)
+      {
+         vkb_target_destroy(t);
+         return 0;
+      }
+   }
    return 1;
 }
 
 void vkb_target_destroy(vkb_target_t *t)
 {
+   if (t->inplaceFramebuffer)
+      vk.vkDestroyFramebuffer(vkb.device, t->inplaceFramebuffer, NULL);
    if (t->framebuffer)
       vk.vkDestroyFramebuffer(vkb.device, t->framebuffer, NULL);
    if (t->colorView)

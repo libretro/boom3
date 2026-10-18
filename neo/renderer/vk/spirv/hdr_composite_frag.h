@@ -1,4 +1,4 @@
-/* hdr_composite.frag  - made by tools/vk_shaders/compile.sh, do not edit */
+/* hdr_composite.frag -DINPLACE=0 - made by tools/vk_shaders/compile.sh, do not edit */
 static const unsigned int spirv_hdr_composite_frag[] = {
  0x07230203, 0x00010300, 0x0008000b, 0x00000b06, 0x00000000, 0x00020011, 0x00000001, 0x0006000b,
  0x00000001, 0x4c534c47, 0x6474732e, 0x3035342e, 0x00000000, 0x0003000e, 0x00000000, 0x00000001,

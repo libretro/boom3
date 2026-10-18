@@ -129,6 +129,8 @@ extern vkb_procs_t vk;
 #define VKB_DRAW_BLOCK_ALIGN 256
 #define VKB_BLOCK_RANGE 1024          /* the largest block a program reads */
 #define VKB_TARGET_POST 0x40          /* a pipeline key's target: a colour-only pass */
+#define VKB_TARGET_INPLACE 0x80       /* a pipeline key's target: the frame image read and written in place */
+#define VKB_BINDING_INPUT (2 + VKB_MAX_TEXTURE_UNITS)   /* the input attachment's descriptor binding */
 #define VKB_MAX_TEXTURE_UNITS 6
 #define VKB_PIPELINE_SLOTS 1024
 
@@ -237,6 +239,7 @@ typedef struct vkb_render_target
    vkb_mem_t depthMem;
    VkFramebuffer framebuffer;
    VkRenderPass renderPass;
+   VkFramebuffer inplaceFramebuffer;   /* a frame image's: the colour alone, read and written in place */
    unsigned width;
    unsigned height;
    unsigned char format;       /* enum vkb_format of the colour */
@@ -260,7 +263,8 @@ typedef struct vkb_state
    VkDescriptorSetLayout setLayout;
    VkShaderModule modules[VKB_PROGRAM_COUNT][2];
    VkRenderPass renderPass[VKB_FORMAT_COUNT];   /* by colour format */
-   VkRenderPass postPass[VKB_FORMAT_COUNT];     /* colour only, for the post chain */
+   VkRenderPass postPass[VKB_FORMAT_COUNT];        /* colour only, for the post chain */
+   VkRenderPass inplacePass[VKB_FORMAT_COUNT];     /* the frame image as input and colour attachment at once */
    vkb_target_t postTarget;                     /* the post pass's target image, as a target */
    unsigned postImage;
    VkSampler samplers[VKB_FILTER_COUNT][4][2];   /* filter, wrap, anisotropy */
@@ -311,7 +315,8 @@ typedef struct vkb_state
    /* the frame being recorded */
    VkCommandBuffer cmd;
    vkb_target_t *target;
-   unsigned char targetKind;    /* enum vkb_target, or VKB_TARGET_POST */
+   unsigned char targetKind;    /* enum vkb_target, VKB_TARGET_POST or VKB_TARGET_INPLACE */
+   vkb_target_t *sceneTarget;   /* where the frame's scene was drawn: the scene image, or the frame image itself */
    unsigned char frameComposited; /* the post chain drew the frame image */
    unsigned char inRenderPass;
    unsigned char frameOpen;
@@ -319,6 +324,7 @@ typedef struct vkb_state
    VkPipeline boundPipeline;
    VkDescriptorSet boundSet;
    unsigned boundImages[VKB_MAX_TEXTURE_UNITS];
+   unsigned boundInput;          /* the set's input attachment image, 0 none */
    unsigned boundSamplers[VKB_MAX_TEXTURE_UNITS];
    unsigned boundVertexBuffer;
    unsigned boundIndexBuffer;
@@ -367,6 +373,7 @@ void vkb_transfer_now(void);
 /* vk_image.c */
 VkFormat vkb_vk_format(enum vkb_format format);
 VkRenderPass vkb_post_render_pass(enum vkb_format colorFormat);
+VkRenderPass vkb_inplace_render_pass(enum vkb_format colorFormat);
 int  vkb_image_post_framebuffer(unsigned image, VkFramebuffer *framebuffer, vkb_image_t **im);
 VkFormat vkb_depth_stencil_format(void);
 int  vkb_images_init(void);
