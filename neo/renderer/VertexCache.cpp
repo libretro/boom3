@@ -235,6 +235,7 @@ idVertexCache::Init
 ===========
 */
 void idVertexCache::Init() {
+	frameTempDest = NULL;
 	cmdSystem->AddCommand( "listVertexCache", R_ListVertexCache_f, CMD_FL_RENDERER, "lists vertex cache" );
 
 	if ( r_vertexBufferMegs.GetInteger() < 8 ) {
@@ -424,12 +425,31 @@ void idVertexCache::Alloc( void *data, int size, vertCache_t **buffer, bool inde
 			}
 			ForceBindElement( block->vbo );
 			if ( small ) {
-				unsigned short *dst = (unsigned short *)Mem_Alloc( count * sizeof( unsigned short ) );
-				for ( i = 0; i < count; i++ ) {
-					dst[i] = (unsigned short)src[i];
+				/* narrowed straight into the buffer's mapping where the
+				 * context maps ranges, through a staging copy where not */
+				const int bytes = count * (int)sizeof( unsigned short );
+				unsigned short *dst = NULL;
+				qglBufferDataARB( GL_ELEMENT_ARRAY_BUFFER_ARB, (GLsizeiptrARB)bytes, NULL, GL_STATIC_DRAW_ARB );
+				if ( glCaps.mapRange ) {
+					dst = (unsigned short *)glCaps.MapBufferRange( GL_ELEMENT_ARRAY_BUFFER_ARB, 0, bytes,
+						GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT );
 				}
-				qglBufferDataARB( GL_ELEMENT_ARRAY_BUFFER_ARB, (GLsizeiptrARB)( count * sizeof( unsigned short ) ), dst, GL_STATIC_DRAW_ARB );
-				Mem_Free( dst );
+				if ( dst ) {
+					for ( i = 0; i < count; i++ ) {
+						dst[i] = (unsigned short)src[i];
+					}
+					if ( !glCaps.UnmapBuffer( GL_ELEMENT_ARRAY_BUFFER_ARB ) ) {
+						dst = NULL;		// the contents were lost while mapped
+					}
+				}
+				if ( !dst ) {
+					dst = (unsigned short *)Mem_Alloc( bytes );
+					for ( i = 0; i < count; i++ ) {
+						dst[i] = (unsigned short)src[i];
+					}
+					qglBufferSubDataARB( GL_ELEMENT_ARRAY_BUFFER_ARB, 0, (GLsizeiptrARB)bytes, dst );
+					Mem_Free( dst );
+				}
 				block->indexType = GL_UNSIGNED_SHORT;
 			} else {
 				qglBufferDataARB( GL_ELEMENT_ARRAY_BUFFER_ARB, (GLsizeiptrARB)size, data, GL_STATIC_DRAW_ARB );
@@ -457,6 +477,71 @@ void idVertexCache::AllocStream( void *data, int size, vertCache_t **buffer ) {
 	allocatingTempBuffer = true;
 	Alloc( data, size, buffer );
 	allocatingTempBuffer = false;
+}
+
+/*
+===========
+idVertexCache::AllocFrameTempInPlace
+===========
+*/
+vertCache_t *idVertexCache::AllocFrameTempInPlace( int size, void **dest ) {
+	int ringBytes;
+
+	*dest = NULL;
+	// only where AllocFrameTemp would take the persistent ring rather than
+	// its overflow path, so the block is the one it would have made
+	if ( !streaming || !ringMemory || vulkan || size <= 0 ) {
+		return NULL;
+	}
+	ringBytes = ( ( size + VERTEX_ALIGN - 1 ) / VERTEX_ALIGN ) * VERTEX_ALIGN;
+	if ( ringUsed + ringBytes > ringSegmentBytes ) {
+		return NULL;
+	}
+	frameTempDest = dest;
+	return AllocFrameTemp( NULL, size );
+}
+
+/*
+===========
+idVertexCache::AllocStreamInPlace
+===========
+*/
+void *idVertexCache::AllocStreamInPlace( int size, vertCache_t **buffer ) {
+	void *p;
+
+	*buffer = NULL;
+	if ( virtualMemory || vulkan || !glCaps.mapRange || size <= 0 ) {
+		return NULL;
+	}
+	// sized without contents, then mapped for the caller to fill
+	allocatingTempBuffer = true;
+	Alloc( NULL, size, buffer );
+	allocatingTempBuffer = false;
+	if ( !*buffer ) {
+		return NULL;
+	}
+	ForceBindArray( (*buffer)->vbo );
+	p = glCaps.MapBufferRange( GL_ARRAY_BUFFER_ARB, 0, size, GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT );
+	if ( !p ) {
+		Free( *buffer );
+		*buffer = NULL;
+	}
+	return p;
+}
+
+/*
+===========
+idVertexCache::StreamWritten
+===========
+*/
+bool idVertexCache::StreamWritten( vertCache_t **buffer ) {
+	ForceBindArray( (*buffer)->vbo );
+	if ( glCaps.UnmapBuffer( GL_ARRAY_BUFFER_ARB ) ) {
+		return true;
+	}
+	Free( *buffer );
+	*buffer = NULL;
+	return false;
 }
 
 /*
@@ -604,6 +689,12 @@ vertCache_t	*idVertexCache::AllocFrameTemp( void *data, int size ) {
 		block->vbo = ringBuffer;
 		block->offset = ringSegment * ringSegmentBytes + ringUsed;
 		ringUsed += ringBytes;
+		if ( frameTempDest ) {
+			// AllocFrameTempInPlace: the caller writes the bytes
+			*frameTempDest = ringMemory + block->offset;
+			frameTempDest = NULL;
+			return block;
+		}
 		SIMDProcessor->Memcpy( RingMemory( (int)block->offset, size ), data, size );
 		RingRelease();
 		return block;
@@ -816,14 +907,21 @@ void idVertexCache::InitStreaming() {
 		arenas[i].buffer = 0;
 	}
 
-	/* The ES 3.1 renderer, and ARB2 on its NV5 tier, which draws a light's
-	   interactions from the shared buffers with multi-draw-indirect. */
+	/* The ES 3.1 renderer, and ARB2: its NV5 tier draws a light's
+	   interactions from the shared buffers with multi-draw-indirect, and
+	   every tier takes the persistent ring for the frame's data and the
+	   shared buffers for static data where the context runs them - the
+	   same draws from different buffers, so the same pixels. */
 	if ( virtualMemory ) {
 		return;
 	}
 #ifdef BOOM3_ARB2_RENDERER
-	if ( glConfig.renderer != R_RENDERER_ES31
-			&& !( glConfig.renderer == R_RENDERER_ARB2 && arb2Tier >= ARB2_TIER_NV5 ) ) {
+	if ( glConfig.renderer == R_RENDERER_ARB2 ) {
+		if ( arb2Tier < ARB2_TIER_NV5
+				&& !( glCaps.bufferStorage && glCaps.sync && glCaps.mapRange && glCaps.copyBuffer ) ) {
+			return;
+		}
+	} else if ( glConfig.renderer != R_RENDERER_ES31 ) {
 		return;
 	}
 #else
@@ -1029,12 +1127,26 @@ void idVertexCache::ArenaUpload( GLuint buffer, int offset, const void *data, in
 
 	qglBindBufferARB( GL_COPY_WRITE_BUFFER, buffer );
 	if ( shortIndexes ) {
-		unsigned short *d = (unsigned short *)Mem_Alloc( bytes );
-		for ( i = 0; i < count; i++ ) {
-			d[i] = (unsigned short)src[i];
+		/* the block's range is new to the GPU, so it is invalidated and
+		 * narrowed into in place; a staging copy only if that fails */
+		unsigned short *d = (unsigned short *)glCaps.MapBufferRange( GL_COPY_WRITE_BUFFER, offset, bytes,
+			GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_RANGE_BIT );
+		if ( d ) {
+			for ( i = 0; i < count; i++ ) {
+				d[i] = (unsigned short)src[i];
+			}
+			if ( !glCaps.UnmapBuffer( GL_COPY_WRITE_BUFFER ) ) {
+				d = NULL;
+			}
 		}
-		qglBufferSubDataARB( GL_COPY_WRITE_BUFFER, offset, bytes, d );
-		Mem_Free( d );
+		if ( !d ) {
+			d = (unsigned short *)Mem_Alloc( bytes );
+			for ( i = 0; i < count; i++ ) {
+				d[i] = (unsigned short)src[i];
+			}
+			qglBufferSubDataARB( GL_COPY_WRITE_BUFFER, offset, bytes, d );
+			Mem_Free( d );
+		}
 	} else {
 		qglBufferSubDataARB( GL_COPY_WRITE_BUFFER, offset, bytes, data );
 	}

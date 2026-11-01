@@ -64,6 +64,7 @@ typedef void (APIENTRYP gl_caps_MakeTextureHandleResident_t)(unsigned long long 
 typedef void (APIENTRYP gl_caps_MakeTextureHandleNonResident_t)(unsigned long long handle);
 typedef void (APIENTRYP gl_caps_BindBufferBaseNV_t)(GLenum target, GLuint index, GLuint buffer);
 typedef void (APIENTRYP gl_caps_ProgramBufferParametersfvNV_t)(GLenum target, GLuint bindingIndex, GLuint wordIndex, GLsizei count, const GLfloat *params);
+typedef void (APIENTRYP gl_caps_ProgramEnvParameters4fvEXT_t)(GLenum target, GLuint index, GLsizei count, const GLfloat *params);
 typedef void (APIENTRYP gl_caps_ProgramEnvParameterI4uiNV_t)(GLenum target, GLuint index, GLuint x, GLuint y, GLuint z, GLuint w);
 typedef void (APIENTRYP gl_caps_MakeBufferResidentNV_t)(GLenum target, GLenum access);
 typedef void (APIENTRYP gl_caps_GetBufferParameterui64vNV_t)(GLenum target, GLenum pname, unsigned long long *params);
@@ -105,6 +106,7 @@ typedef struct gl_caps_s {
 	gl_caps_MakeTextureHandleNonResident_t MakeTextureHandleNonResident;
 	gl_caps_BindBufferBaseNV_t            BindBufferBaseNV;
 	gl_caps_ProgramBufferParametersfvNV_t ProgramBufferParametersfvNV;
+	gl_caps_ProgramEnvParameters4fvEXT_t  ProgramEnvParameters4fvEXT;
 	gl_caps_ProgramEnvParameterI4uiNV_t   ProgramEnvParameterI4uiNV;
 	gl_caps_MakeBufferResidentNV_t        MakeBufferResidentNV;
 	gl_caps_GetBufferParameterui64vNV_t   GetBufferParameterui64vNV;
@@ -129,6 +131,7 @@ typedef struct gl_caps_s {
 	unsigned char blit;           /* BlitFramebuffer */
 	unsigned char multiDrawIndirect; /* MultiDrawElementsIndirect, with draw parameters in shaders */
 	unsigned char bindless;       /* ARB_bindless_texture */
+	unsigned char programEnvParameters; /* EXT_gpu_program_parameters: several env parameters per call */
 	unsigned char nvGpuProgram4;  /* NV_gpu_program4 with NV_parameter_buffer_object, on a compatibility context */
 	unsigned char nvGpuProgram5;  /* NV_gpu_program5 on top of nvGpuProgram4 */
 	unsigned char nvBatchDraw;    /* nvGpuProgram5 with NV_shader_buffer_load global loads, multi-draw-indirect

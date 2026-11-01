@@ -143,6 +143,30 @@ void R_CreateVertexProgramShadowCache( srfTriangles_t *tri ) {
 		return;
 	}
 
+	/* A deformed surface's cache is rebuilt whenever the surface is: it
+	   is written straight into its mapped buffer, with no staging copy for
+	   the driver to copy again. */
+	if ( tri->deformedSurface ) {
+		const int bytes = tri->numVerts * 2 * sizeof( shadowCache_t );
+		idVec4 *dst = (idVec4 *)vertexCache.AllocStreamInPlace( bytes, &tri->shadowCache );
+		if ( dst ) {
+			// the SIMD writer stores aligned vec4s; a context that maps
+			// below 16 bytes takes them through an aligned staging copy
+			if ( ( (uintptr_t)dst & 15 ) == 0 ) {
+				SIMDProcessor->CreateVertexProgramShadowCache( dst, tri->verts, tri->numVerts );
+			} else {
+				bool stagingOnStack;
+				idVec4 *staging = (idVec4 *)Mem_MallocA( bytes, stagingOnStack );
+				SIMDProcessor->CreateVertexProgramShadowCache( staging, tri->verts, tri->numVerts );
+				SIMDProcessor->Memcpy( dst, staging, bytes );
+				Mem_FreeA( staging, stagingOnStack );
+			}
+			if ( vertexCache.StreamWritten( &tri->shadowCache ) ) {
+				return;
+			}
+		}
+	}
+
 	// DG: use Mem_MallocA() instead of _alloca16() to avoid stack overflows with big models
 	bool tempOnStack;
 	shadowCache_t *temp = (shadowCache_t *)Mem_MallocA( tri->numVerts * 2 * sizeof( shadowCache_t ), tempOnStack );
@@ -165,12 +189,16 @@ R_SkyboxTexGen
 void R_SkyboxTexGen( drawSurf_t *surf, const idVec3 &viewOrg ) {
 	int		i;
 	idVec3	localViewOrigin;
+	void	*ringDest;
+	vertCache_t *inPlace;
 
 	R_GlobalPointToLocal( surf->space->modelMatrix, viewOrg, localViewOrigin );
 
 	int numVerts = surf->geo->numVerts;
 	int size = numVerts * sizeof( idVec3 );
-	idVec3 *texCoords = (idVec3 *) _alloca16( size );
+	// written where the GPU reads them when the ring allows it
+	inPlace = vertexCache.AllocFrameTempInPlace( size, &ringDest );
+	idVec3 *texCoords = inPlace ? (idVec3 *)ringDest : (idVec3 *) _alloca16( size );
 
 	const idDrawVert *verts = surf->geo->verts;
 	for ( i = 0; i < numVerts; i++ ) {
@@ -179,7 +207,7 @@ void R_SkyboxTexGen( drawSurf_t *surf, const idVec3 &viewOrg ) {
 		texCoords[i][2] = verts[i].xyz[2] - localViewOrigin[2];
 	}
 
-	surf->dynamicTexCoords = vertexCache.AllocFrameTemp( texCoords, size );
+	surf->dynamicTexCoords = inPlace ? inPlace : vertexCache.AllocFrameTemp( texCoords, size );
 }
 
 /*
@@ -190,6 +218,8 @@ R_WobbleskyTexGen
 void R_WobbleskyTexGen( drawSurf_t *surf, const idVec3 &viewOrg ) {
 	int		i;
 	idVec3	localViewOrigin;
+	void	*ringDest;
+	vertCache_t *inPlace;
 
 	const int *parms = surf->material->GetTexGenRegisters();
 
@@ -248,7 +278,8 @@ void R_WobbleskyTexGen( drawSurf_t *surf, const idVec3 &viewOrg ) {
 
 	int numVerts = surf->geo->numVerts;
 	int size = numVerts * sizeof( idVec3 );
-	idVec3 *texCoords = (idVec3 *) _alloca16( size );
+	inPlace = vertexCache.AllocFrameTempInPlace( size, &ringDest );
+	idVec3 *texCoords = inPlace ? (idVec3 *)ringDest : (idVec3 *) _alloca16( size );
 
 	const idDrawVert *verts = surf->geo->verts;
 	for ( i = 0; i < numVerts; i++ ) {
@@ -261,7 +292,7 @@ void R_WobbleskyTexGen( drawSurf_t *surf, const idVec3 &viewOrg ) {
 		R_LocalPointToGlobal( transform, v, texCoords[i] );
 	}
 
-	surf->dynamicTexCoords = vertexCache.AllocFrameTemp( texCoords, size );
+	surf->dynamicTexCoords = inPlace ? inPlace : vertexCache.AllocFrameTemp( texCoords, size );
 }
 
 /*

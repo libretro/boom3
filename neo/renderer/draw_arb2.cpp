@@ -108,6 +108,13 @@ post-process chain) starts from a cleared cache.
 
 Values that do reach the driver are exactly the values the old code
 sent, so rendering is unchanged.
+
+With EXT_gpu_program_parameters the changed parameters are not sent one
+by one: each setter widens a pending span instead, and RB_EnvFlush hands
+the driver the span from the cache in one ProgramEnvParameters4fvEXT call
+per target just before the draw.  A row inside the span that did not
+change is sent again with the value the driver already holds - every
+draw sets all of the rows, so none of them is unset.
 */
 #define RB_ENV_CACHE_SIZE ( PP_COLOR_ADD + 1 )
 #define RB_FRAG_ENV_CACHE_SIZE 2
@@ -118,9 +125,32 @@ static bool	rb_envCacheValid[RB_ENV_CACHE_SIZE];
 static float	rb_fragEnvCache[RB_FRAG_ENV_CACHE_SIZE][4];
 static bool	rb_fragEnvCacheValid[RB_FRAG_ENV_CACHE_SIZE];
 
+// pending spans [lo, hi], empty when lo > hi; only used while rb_envSpans
+static int		rb_envLo = RB_ENV_CACHE_SIZE, rb_envHi = -1;
+static int		rb_fragEnvLo = RB_FRAG_ENV_CACHE_SIZE, rb_fragEnvHi = -1;
+static bool	rb_envSpans;
+
 static ID_INLINE void RB_EnvCacheReset( void ) {
 	memset( rb_envCacheValid, 0, sizeof( rb_envCacheValid ) );
 	memset( rb_fragEnvCacheValid, 0, sizeof( rb_fragEnvCacheValid ) );
+	rb_envLo = RB_ENV_CACHE_SIZE;
+	rb_envHi = -1;
+	rb_fragEnvLo = RB_FRAG_ENV_CACHE_SIZE;
+	rb_fragEnvHi = -1;
+}
+
+static ID_INLINE void RB_EnvFlush( void ) {
+	if ( rb_envLo <= rb_envHi ) {
+		glCaps.ProgramEnvParameters4fvEXT( GL_VERTEX_PROGRAM_ARB, rb_envLo, rb_envHi - rb_envLo + 1, rb_envCache[rb_envLo] );
+		rb_envLo = RB_ENV_CACHE_SIZE;
+		rb_envHi = -1;
+	}
+	if ( rb_fragEnvLo <= rb_fragEnvHi ) {
+		glCaps.ProgramEnvParameters4fvEXT( GL_FRAGMENT_PROGRAM_ARB, rb_fragEnvLo, rb_fragEnvHi - rb_fragEnvLo + 1,
+			rb_fragEnvCache[rb_fragEnvLo] );
+		rb_fragEnvLo = RB_FRAG_ENV_CACHE_SIZE;
+		rb_fragEnvHi = -1;
+	}
 }
 
 static ID_INLINE void RB_VertexEnvParm( int index, const float *v ) {
@@ -135,6 +165,15 @@ static ID_INLINE void RB_VertexEnvParm( int index, const float *v ) {
 		}
 		memcpy( c, v, 4 * sizeof( float ) );
 		rb_envCacheValid[index] = true;
+		if ( rb_envSpans ) {
+			if ( index < rb_envLo ) {
+				rb_envLo = index;
+			}
+			if ( index > rb_envHi ) {
+				rb_envHi = index;
+			}
+			return;
+		}
 	}
 	qglProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, index, v );
 }
@@ -152,6 +191,15 @@ static ID_INLINE void RB_FragmentEnvParm( int index, const float *v ) {
 		}
 		memcpy( c, v, 4 * sizeof( float ) );
 		rb_fragEnvCacheValid[index] = true;
+		if ( rb_envSpans ) {
+			if ( index < rb_fragEnvLo ) {
+				rb_fragEnvLo = index;
+			}
+			if ( index > rb_fragEnvHi ) {
+				rb_fragEnvHi = index;
+			}
+			return;
+		}
 	}
 	qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, index, v );
 }
@@ -245,6 +293,7 @@ void	RB_ARB2_DrawInteraction( const drawInteraction_t *din ) {
 	} else {
 		RB_FragmentEnvParm( 1, din->specularColor.ToFloatPtr() );
 	}
+	RB_EnvFlush();
 
 	// set the textures
 
@@ -944,6 +993,7 @@ void RB_ARB2_CreateDrawInteractions( const drawSurf_t *surf ) {
 	}
 
 	RB_EnvCacheReset();
+	rb_envSpans = glCaps.programEnvParameters;
 	RB_UpdateSpecularBoost();
 
 	if ( nv5 ) {
@@ -968,6 +1018,7 @@ void RB_ARB2_CreateDrawInteractions( const drawSurf_t *surf ) {
 	}
 
 	RB_EnvCacheReset();
+	rb_envSpans = false;
 
 	qglDisableVertexAttribArrayARB( 8 );
 	qglDisableVertexAttribArrayARB( 9 );

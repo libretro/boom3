@@ -166,6 +166,7 @@ void gl_caps_init(gl_caps_loader_t load)
    CAPS_GET(MakeTextureHandleNonResident, gl_caps_MakeTextureHandleNonResident_t, "glMakeTextureHandleNonResidentARB", NULL, NULL);
    CAPS_GET(BindBufferBaseNV, gl_caps_BindBufferBaseNV_t, "glBindBufferBaseNV", NULL, NULL);
    CAPS_GET(ProgramBufferParametersfvNV, gl_caps_ProgramBufferParametersfvNV_t, "glProgramBufferParametersfvNV", NULL, NULL);
+   CAPS_GET(ProgramEnvParameters4fvEXT, gl_caps_ProgramEnvParameters4fvEXT_t, "glProgramEnvParameters4fvEXT", NULL, NULL);
    CAPS_GET(ProgramEnvParameterI4uiNV, gl_caps_ProgramEnvParameterI4uiNV_t, "glProgramEnvParameterI4uiNV", NULL, NULL);
    CAPS_GET(MakeBufferResidentNV, gl_caps_MakeBufferResidentNV_t, "glMakeBufferResidentNV", NULL, NULL);
    CAPS_GET(GetBufferParameterui64vNV, gl_caps_GetBufferParameterui64vNV_t, "glGetBufferParameterui64vNV", NULL, NULL);
@@ -208,6 +209,8 @@ void gl_caps_init(gl_caps_loader_t load)
    glCaps.bindless = glCaps.GetTextureHandle && glCaps.GetTextureSamplerHandle
       && glCaps.MakeTextureHandleResident && glCaps.MakeTextureHandleNonResident
       && !glCaps.es && gl_caps_has_extension("GL_ARB_bindless_texture");
+   glCaps.programEnvParameters = glCaps.ProgramEnvParameters4fvEXT && !glCaps.es && !glCaps.core
+      && gl_caps_has_extension("GL_EXT_gpu_program_parameters");
    /* The NVIDIA assembly tiers.  A core profile drops every assembly
     * entry point, so only a compatibility (or pre-3.2) context counts. */
    glCaps.nvGpuProgram4 = glCaps.BindBufferBaseNV && glCaps.ProgramBufferParametersfvNV

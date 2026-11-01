@@ -107,6 +107,21 @@ public:
 	// As with Position(), this may not actually be a pointer you can access.
 	vertCache_t	*	AllocFrameTemp( void *data, int bytes );
 
+	// AllocFrameTemp without the copy: the block it would make in the
+	// persistent ring, and in *dest where to write its bytes, which the
+	// caller fills before the frame is drawn and never reads back.  NULL
+	// when the ring is not persistently mapped or has no room - build the
+	// data and AllocFrameTemp it instead.
+	vertCache_t	*	AllocFrameTempInPlace( int bytes, void **dest );
+
+	// AllocStream without the copy: the block's own buffer mapped for the
+	// caller to write its bytes, never read back, before StreamWritten
+	// unmaps it.  NULL when the buffer cannot be mapped - AllocStream the
+	// data instead.  StreamWritten is false when the driver lost the
+	// contents while mapped; the block is freed and *buffer cleared.
+	void *			AllocStreamInPlace( int bytes, vertCache_t **buffer );
+	bool			StreamWritten( vertCache_t **buffer );
+
 	// notes that a buffer is used this frame, so it can't be purged
 	// out from under the GPU
 	void			Touch( vertCache_t *buffer );
@@ -194,6 +209,7 @@ private:
 	bool			virtualMemory;			// not fast stuff
 
 	bool			allocatingTempBuffer;	// force GL_STREAM_DRAW_ARB
+	void **			frameTempDest;			// AllocFrameTempInPlace's request, NULL otherwise
 
 	vertCache_t		*tempBuffers[NUM_VERTEX_FRAMES];		// allocated at startup
 	bool			tempOverflow;			// had to alloc a temp in static memory
