@@ -816,9 +816,21 @@ void idVertexCache::InitStreaming() {
 		arenas[i].buffer = 0;
 	}
 
-	if ( virtualMemory || glConfig.renderer != R_RENDERER_ES31 ) {
+	/* The ES 3.1 renderer, and ARB2 on its NV5 tier, which draws a light's
+	   interactions from the shared buffers with multi-draw-indirect. */
+	if ( virtualMemory ) {
 		return;
 	}
+#ifdef BOOM3_ARB2_RENDERER
+	if ( glConfig.renderer != R_RENDERER_ES31
+			&& !( glConfig.renderer == R_RENDERER_ARB2 && arb2Tier >= ARB2_TIER_NV5 ) ) {
+		return;
+	}
+#else
+	if ( glConfig.renderer != R_RENDERER_ES31 ) {
+		return;
+	}
+#endif
 
 	// segments start at a multiple of VERTEX_ALIGN and of 256, so the
 	// blocks in them keep both alignments

@@ -166,6 +166,11 @@ void gl_caps_init(gl_caps_loader_t load)
    CAPS_GET(MakeTextureHandleNonResident, gl_caps_MakeTextureHandleNonResident_t, "glMakeTextureHandleNonResidentARB", NULL, NULL);
    CAPS_GET(BindBufferBaseNV, gl_caps_BindBufferBaseNV_t, "glBindBufferBaseNV", NULL, NULL);
    CAPS_GET(ProgramBufferParametersfvNV, gl_caps_ProgramBufferParametersfvNV_t, "glProgramBufferParametersfvNV", NULL, NULL);
+   CAPS_GET(ProgramEnvParameterI4uiNV, gl_caps_ProgramEnvParameterI4uiNV_t, "glProgramEnvParameterI4uiNV", NULL, NULL);
+   CAPS_GET(MakeBufferResidentNV, gl_caps_MakeBufferResidentNV_t, "glMakeBufferResidentNV", NULL, NULL);
+   CAPS_GET(GetBufferParameterui64vNV, gl_caps_GetBufferParameterui64vNV_t, "glGetBufferParameterui64vNV", NULL, NULL);
+   CAPS_GET(VertexAttribIPointer, gl_caps_VertexAttribIPointer_t, "glVertexAttribIPointer", "glVertexAttribIPointerEXT", NULL);
+   CAPS_GET(VertexAttribDivisor, gl_caps_VertexAttribDivisor_t, "glVertexAttribDivisor", "glVertexAttribDivisorARB", NULL);
 
    /* Each group counts only on a version or extension that promises it:
     * a loader may hand back a stub for a name the context does not
@@ -211,6 +216,16 @@ void gl_caps_init(gl_caps_loader_t load)
       && gl_caps_has_extension("GL_NV_parameter_buffer_object");
    glCaps.nvGpuProgram5 = glCaps.nvGpuProgram4
       && gl_caps_has_extension("GL_NV_gpu_program5");
+   /* MultiDrawElementsIndirect's commands carry a base instance, which
+    * instanced attributes honour from GL 4.2 on - multiDrawIndirect
+    * already asks for 4.3 or the extensions that bring it. */
+   glCaps.nvBatchDraw = glCaps.nvGpuProgram5 && glCaps.multiDrawIndirect
+      && glCaps.bufferStorage && glCaps.sync && glCaps.baseVertex
+      && glCaps.ProgramEnvParameterI4uiNV && glCaps.MakeBufferResidentNV
+      && glCaps.GetBufferParameterui64vNV && glCaps.VertexAttribIPointer
+      && glCaps.VertexAttribDivisor
+      && (caps_at_least(4, 2) || gl_caps_has_extension("GL_ARB_base_instance"))
+      && gl_caps_has_extension("GL_NV_shader_buffer_load");
 
    glCaps.uniformBufferAlign  = 256;
    glCaps.maxUniformBlockSize = 16384;

@@ -2582,7 +2582,8 @@ static void update_variables(bool startup)
 	var.value = NULL;
 	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
 		arb2TierRequest = !strcmp(var.value, "arb") ? ARB2_TIER_ARB
-			: !strcmp(var.value, "nv4") ? ARB2_TIER_NV4 : -1;
+			: !strcmp(var.value, "nv4") ? ARB2_TIER_NV4
+			: !strcmp(var.value, "nv5") ? ARB2_TIER_NV5 : -1;
 #endif
 
 	/* Quality preset override */

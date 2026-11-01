@@ -39,6 +39,18 @@ If you have questions concerning this license or the applicable additional terms
 #ifndef GL_FRAGMENT_PROGRAM_PARAMETER_BUFFER_NV
 #define GL_FRAGMENT_PROGRAM_PARAMETER_BUFFER_NV 0x8DA4
 #endif
+#ifndef GL_DRAW_INDIRECT_BUFFER
+#define GL_DRAW_INDIRECT_BUFFER                 0x8F3F
+#endif
+#ifndef GL_COPY_WRITE_BUFFER
+#define GL_COPY_WRITE_BUFFER                    0x8F37
+#endif
+#ifndef GL_BUFFER_GPU_ADDRESS_NV
+#define GL_BUFFER_GPU_ADDRESS_NV                0x8F1D
+#endif
+#ifndef GL_READ_ONLY
+#define GL_READ_ONLY                            0x88B8
+#endif
 
 int arb2Tier = ARB2_TIER_ARB;
 int arb2TierRequest = -1;
@@ -353,6 +365,501 @@ static void RB_ARB2NV_DrawInteraction( const drawInteraction_t *din ) {
 	RB_DrawElementsWithCounters( din->surf->geo );
 }
 
+/*
+   The NV5 tier: a light's interactions as multi-draw-indirect batches.
+
+   The vertex cache runs in its streaming mode on this tier, so static
+   geometry sits in a few shared buffers and each frame's in one ring,
+   and surfaces that share the vertex buffer, the index buffer and the
+   modelview matrix are drawn by one MultiDrawElementsIndirect with base
+   vertices and first indices in place of per-surface attribute pointers.
+
+   Each draw's parameters are a record in the vertex cache's persistent
+   ring, written where the GPU reads them.  The vertex program finds its
+   record by global load (NV_shader_buffer_load) at the batch's base
+   address, in program.env[ARB2_NV5_ENV_BASE], plus an offset fetched from
+   an instanced attribute that baseInstance indexes - assembly programs
+   have no draw index of their own.  It hands the fragment program what
+   it needs as flat attributes.
+
+   Textures go to units ARB2_NV5_SLOT_UNIT and up, which the engine's
+   own unit tracking never touches, and the record names the units; the
+   fragment program samples them through a texture array, which
+   NV_gpu_program5 lets any index address.  A unit keeps its texture
+   across batches until a batch needs it for another one, so a light's
+   falloff and projection and the common materials stay bound.
+
+   The scissor stays at the union of the batch's surface rectangles and
+   the fragment program kills outside each draw's own, on the pixel
+   edges glScissor would clip at.
+
+   What a batch cannot take - a depth range hack, geometry outside the
+   shared buffers, a surface whose interactions could outgrow the batch
+   or its texture units, a full ring - draws through the NV4 path.
+*/
+#define ARB2_NV5_REC_UNITS	ARB2_NVREC_VECS		// bump, falloff, projection, diffuse units
+#define ARB2_NV5_REC_UNITS2	( ARB2_NVREC_VECS + 1 )	// specular unit
+#define ARB2_NV5_REC_CLIP	( ARB2_NVREC_VECS + 2 )	// the draw's scissor in window pixels, x1 y1 x2 y2 exclusive
+#define ARB2_NV5_REC_VECS	( ARB2_NVREC_VECS + 3 )
+#define ARB2_NV5_REC_BYTES	( ARB2_NV5_REC_VECS * 16 )
+#define ARB2_NV5_BATCH		64		// draws a batch holds
+#define ARB2_NV5_CHUNK		512		// draws a ring reservation holds, batches carved from it in turn
+#define ARB2_NV5_SLOT_UNIT	8		// first texture unit of the batch textures
+#define ARB2_NV5_MAX_SLOTS	24
+#define ARB2_NV5_ENV_BASE	90		// vertex program.env: the batch's record base address, low and high words
+
+typedef struct {
+	GLuint	count;
+	GLuint	instanceCount;
+	GLuint	firstIndex;
+	GLint	baseVertex;
+	GLuint	baseInstance;
+} arb2Nv5Command_t;
+
+typedef struct {
+	unsigned long long	ringAddress;	// GPU address of rb_nv5.ring
+	float				*rec;			// the batch's records in the ring, NULL when none reserved
+	arb2Nv5Command_t	*cmd;			// its indirect commands
+	float				*chunkRec;		// this frame's ring reservation, NULL when none
+	arb2Nv5Command_t	*chunkCmd;
+	const viewEntity_t	*space;
+	vertCache_t			*vertexBlock;	// a block of the batch's vertex buffer
+	vertCache_t			*indexBlock;	// and of its index buffer
+	GLuint				ring;			// the vertex cache ring buffer the address belongs to
+	GLuint				chunkRing;		// the ring buffer the chunk is in
+	GLuint				idBuffer;		// record offsets, the instanced attribute
+	GLuint				pointerBuffer;	// the vertex buffer the attribute pointers start at, 0 when none
+	GLuint				slotTex[ARB2_NV5_MAX_SLOTS];	// texture each slot unit holds, 0 when unknown
+	int					slotBatch[ARB2_NV5_MAX_SLOTS];	// the batch that last named the slot
+	int					recOffset;		// ring offsets of rec and cmd
+	int					cmdOffset;
+	int					chunkRecOffset;
+	int					chunkCmdOffset;
+	int					chunkUsed;		// draws of the chunk earlier batches took
+	int					chunkFrame;		// backEnd.frameCount it was reserved in
+	int					count;			// draws in the batch
+	int					serial;			// batch number, for slotBatch
+	int					pinned;			// slots the batch names
+	int					slots;			// slot units this context has
+	int					surfBaseVertex;
+	int					surfFirstIndex;
+	int					clip[4];		// union of the batch's draw rectangles
+	GLenum				indexType;
+	bool				programs;		// the NV5 programs compiled
+	bool				ringFull;		// no more batches this list
+	bool				batchedMode;	// the NV5 programs are bound, not the NV4 ones
+} arb2Nv5_t;
+
+static arb2Nv5_t	rb_nv5;
+
+/* Forget what the slot units hold: the textures may have been deleted
+ * and their names reused since. */
+static void RB_ARB2NV5_ResetSlots( void ) {
+	int i;
+	for ( i = 0; i < ARB2_NV5_MAX_SLOTS; i++ ) {
+		rb_nv5.slotTex[i] = 0;
+		rb_nv5.slotBatch[i] = -1;
+	}
+	rb_nv5.pinned = 0;
+}
+
+/* The slot unit holding img for this batch, binding it there if no slot
+ * does yet.  The caller has made sure a free slot exists. */
+static int RB_ARB2NV5_Slot( idImage *img ) {
+	GLuint	tex;
+	int		i;
+	int		victim;
+
+	// what Bind would bind: the partial image while the full one loads
+	img->Touch();
+	if ( img->texnum == idImage::TEXTURE_NOT_LOADED && img->partialImage ) {
+		img = img->partialImage;
+		img->Touch();
+	}
+	// the programs sample 2D; a stage of another type reads black, as an
+	// unbound 2D unit would have
+	if ( img->type != TT_2D ) {
+		img = globalImages->blackImage;
+		img->Touch();
+	}
+	img->frameUsed = backEnd.frameCount;
+	img->bindCount++;
+	tex = img->texnum;
+
+	victim = -1;
+	for ( i = 0; i < rb_nv5.slots; i++ ) {
+		if ( rb_nv5.slotTex[i] == tex ) {
+			break;
+		}
+		if ( rb_nv5.slotBatch[i] != rb_nv5.serial
+				&& ( victim < 0 || rb_nv5.slotBatch[i] < rb_nv5.slotBatch[victim] ) ) {
+			victim = i;
+		}
+	}
+	if ( i == rb_nv5.slots ) {
+		if ( victim < 0 ) {
+			// RB_ARB2NV5_AddSurface's bound makes this unreachable
+			common->Warning( "RB_ARB2NV5_Slot: no free texture unit" );
+			victim = 0;
+		}
+		i = victim;
+		qglActiveTextureARB( GL_TEXTURE0_ARB + ARB2_NV5_SLOT_UNIT + i );
+		qglBindTexture( GL_TEXTURE_2D, tex );
+		rb_nv5.slotTex[i] = tex;
+		// the active unit is no longer the one the engine has recorded
+		backEnd.glState.currenttmu = -1;
+	}
+	if ( rb_nv5.slotBatch[i] != rb_nv5.serial ) {
+		rb_nv5.slotBatch[i] = rb_nv5.serial;
+		rb_nv5.pinned++;
+	}
+	return i;
+}
+
+static void RB_ARB2NV5_BindPrograms( bool batched ) {
+	const bool ambient = backEnd.vLight->lightShader->IsAmbientLight();
+	if ( batched ) {
+		qglBindProgramARB( GL_VERTEX_PROGRAM_ARB, VPROG_NV5_INTERACTION );
+		qglBindProgramARB( GL_FRAGMENT_PROGRAM_ARB, ambient ? FPROG_NV5_INTERACTION_AMBIENT : FPROG_NV5_INTERACTION );
+	} else {
+		qglBindProgramARB( GL_VERTEX_PROGRAM_ARB, VPROG_NV_INTERACTION );
+		qglBindProgramARB( GL_FRAGMENT_PROGRAM_ARB, ambient ? FPROG_NV_INTERACTION_AMBIENT : FPROG_NV_INTERACTION );
+	}
+	rb_nv5.batchedMode = batched;
+}
+
+/* Draw the batch with its state set: the modelview matrix of its space,
+ * the scissor around its draws, the attribute pointers at the start of
+ * its vertex buffer, its index buffer, and its records' address. */
+static void RB_ARB2NV5_Flush( void ) {
+	unsigned long long	base;
+	idScreenRect		rect;
+
+	if ( rb_nv5.count == 0 ) {
+		return;
+	}
+	if ( !rb_nv5.batchedMode ) {
+		RB_ARB2NV5_BindPrograms( true );
+	}
+
+	if ( rb_nv5.space != backEnd.currentSpace ) {
+		backEnd.currentSpace = rb_nv5.space;
+		qglLoadMatrixf( rb_nv5.space->modelViewMatrix );
+	}
+	if ( r_useScissor.GetBool() ) {
+		rect.x1 = rb_nv5.clip[0] - backEnd.viewDef->viewport.x1;
+		rect.y1 = rb_nv5.clip[1] - backEnd.viewDef->viewport.y1;
+		rect.x2 = rb_nv5.clip[2] - 1 - backEnd.viewDef->viewport.x1;
+		rect.y2 = rb_nv5.clip[3] - 1 - backEnd.viewDef->viewport.y1;
+		if ( !backEnd.currentScissor.Equals( rect ) ) {
+			backEnd.currentScissor = rect;
+			qglScissor( rb_nv5.clip[0], rb_nv5.clip[1],
+				rb_nv5.clip[2] - rb_nv5.clip[0], rb_nv5.clip[3] - rb_nv5.clip[1] );
+		}
+	}
+
+	// BaseVertex binds the vertex buffer; the pointers start at it, and
+	// name the buffer that was bound when they were set
+	vertexCache.BaseVertex( rb_nv5.vertexBlock, sizeof( idDrawVert ) );
+	if ( rb_nv5.pointerBuffer != rb_nv5.vertexBlock->vbo ) {
+		const idDrawVert *ac = (const idDrawVert *)NULL;
+		qglColorPointer( 4, GL_UNSIGNED_BYTE, sizeof( idDrawVert ), RB_DRAWVERT( ac, color ) );
+		qglVertexAttribPointerARB( 11, 3, GL_FLOAT, false, sizeof( idDrawVert ), RB_DRAWVERT( ac, normal ) );
+		qglVertexAttribPointerARB( 10, 3, GL_FLOAT, false, sizeof( idDrawVert ), RB_DRAWVERT( ac, tangents[1] ) );
+		qglVertexAttribPointerARB( 9, 3, GL_FLOAT, false, sizeof( idDrawVert ), RB_DRAWVERT( ac, tangents[0] ) );
+		qglVertexAttribPointerARB( 8, 2, GL_FLOAT, false, sizeof( idDrawVert ), RB_DRAWVERT( ac, st ) );
+		qglVertexPointer( 3, GL_FLOAT, sizeof( idDrawVert ), RB_DRAWVERT( ac, xyz ) );
+		rb_nv5.pointerBuffer = rb_nv5.vertexBlock->vbo;
+	}
+	vertexCache.Position( rb_nv5.indexBlock );	// binds the index buffer
+
+	base = rb_nv5.ringAddress + (unsigned long long)rb_nv5.recOffset;
+	glCaps.ProgramEnvParameterI4uiNV( GL_VERTEX_PROGRAM_ARB, ARB2_NV5_ENV_BASE,
+		(GLuint)( base & 0xffffffffu ), (GLuint)( base >> 32 ), 0, 0 );
+	glCaps.MultiDrawElementsIndirect( GL_TRIANGLES, rb_nv5.indexType,
+		(const void *)(intptr_t)rb_nv5.cmdOffset, rb_nv5.count, 0 );
+
+	rb_nv5.chunkUsed += rb_nv5.count;
+	rb_nv5.count = 0;
+	rb_nv5.rec = NULL;
+	rb_nv5.serial++;
+	rb_nv5.pinned = 0;
+}
+
+/* RB_CollectSingleDrawInteractions' callback: one record and one
+ * indirect command. */
+static void RB_ARB2NV5_Collect( const drawInteraction_t *din ) {
+	static const float zero[4] = { 0, 0, 0, 0 };
+	static const float one[4] = { 1, 1, 1, 1 };
+	static const float negOne[4] = { -1, -1, -1, -1 };
+	const srfTriangles_t	*geo = din->surf->geo;
+	const float	*colorModulate = zero;
+	const float	*colorAdd = one;
+	float		*r;
+	arb2Nv5Command_t *c;
+	int			k;
+
+	k = rb_nv5.count++;
+	r = rb_nv5.rec + k * ARB2_NV5_REC_VECS * 4;
+
+	memcpy( r + ARB2_NVREC_LIGHT_ORIGIN * 4, din->localLightOrigin.ToFloatPtr(), 16 );
+	memcpy( r + ARB2_NVREC_VIEW_ORIGIN * 4, din->localViewOrigin.ToFloatPtr(), 16 );
+	memcpy( r + ARB2_NVREC_PROJECT_S * 4, din->lightProjection[0].ToFloatPtr(), 16 );
+	memcpy( r + ARB2_NVREC_PROJECT_T * 4, din->lightProjection[1].ToFloatPtr(), 16 );
+	memcpy( r + ARB2_NVREC_PROJECT_Q * 4, din->lightProjection[2].ToFloatPtr(), 16 );
+	memcpy( r + ARB2_NVREC_FALLOFF_S * 4, din->lightProjection[3].ToFloatPtr(), 16 );
+	memcpy( r + ARB2_NVREC_BUMP_S * 4, din->bumpMatrix[0].ToFloatPtr(), 16 );
+	memcpy( r + ARB2_NVREC_BUMP_T * 4, din->bumpMatrix[1].ToFloatPtr(), 16 );
+	memcpy( r + ARB2_NVREC_DIFFUSE_S * 4, din->diffuseMatrix[0].ToFloatPtr(), 16 );
+	memcpy( r + ARB2_NVREC_DIFFUSE_T * 4, din->diffuseMatrix[1].ToFloatPtr(), 16 );
+	memcpy( r + ARB2_NVREC_SPECULAR_S * 4, din->specularMatrix[0].ToFloatPtr(), 16 );
+	memcpy( r + ARB2_NVREC_SPECULAR_T * 4, din->specularMatrix[1].ToFloatPtr(), 16 );
+
+	switch ( din->vertexColor ) {
+	case SVC_IGNORE:
+		break;
+	case SVC_MODULATE:
+		colorModulate = one;
+		colorAdd = zero;
+		break;
+	case SVC_INVERSE_MODULATE:
+		colorModulate = negOne;
+		break;
+	}
+	memcpy( r + ARB2_NVREC_COLOR_MODULATE * 4, colorModulate, 16 );
+	memcpy( r + ARB2_NVREC_COLOR_ADD * 4, colorAdd, 16 );
+	memcpy( r + ARB2_NVREC_DIFFUSE_COLOR * 4, din->diffuseColor.ToFloatPtr(), 16 );
+	r[ARB2_NVREC_SPECULAR_COLOR * 4 + 0] = din->specularColor[0] * rb_specularBoost;
+	r[ARB2_NVREC_SPECULAR_COLOR * 4 + 1] = din->specularColor[1] * rb_specularBoost;
+	r[ARB2_NVREC_SPECULAR_COLOR * 4 + 2] = din->specularColor[2] * rb_specularBoost;
+	r[ARB2_NVREC_SPECULAR_COLOR * 4 + 3] = din->specularColor[3];
+
+	r[ARB2_NV5_REC_UNITS * 4 + 0] = (float)RB_ARB2NV5_Slot( din->bumpImage );
+	r[ARB2_NV5_REC_UNITS * 4 + 1] = (float)RB_ARB2NV5_Slot( din->lightFalloffImage );
+	r[ARB2_NV5_REC_UNITS * 4 + 2] = (float)RB_ARB2NV5_Slot( din->lightImage );
+	r[ARB2_NV5_REC_UNITS * 4 + 3] = (float)RB_ARB2NV5_Slot( din->diffuseImage );
+	r[ARB2_NV5_REC_UNITS2 * 4 + 0] = (float)RB_ARB2NV5_Slot( din->specularImage );
+	r[ARB2_NV5_REC_UNITS2 * 4 + 1] = 0.0f;
+	r[ARB2_NV5_REC_UNITS2 * 4 + 2] = 0.0f;
+	r[ARB2_NV5_REC_UNITS2 * 4 + 3] = 0.0f;
+
+	if ( r_useScissor.GetBool() ) {
+		const idScreenRect *s = &din->surf->scissorRect;
+		const int x1 = backEnd.viewDef->viewport.x1 + s->x1;
+		const int y1 = backEnd.viewDef->viewport.y1 + s->y1;
+		const int x2 = backEnd.viewDef->viewport.x1 + s->x2 + 1;
+		const int y2 = backEnd.viewDef->viewport.y1 + s->y2 + 1;
+		r[ARB2_NV5_REC_CLIP * 4 + 0] = (float)x1;
+		r[ARB2_NV5_REC_CLIP * 4 + 1] = (float)y1;
+		r[ARB2_NV5_REC_CLIP * 4 + 2] = (float)x2;
+		r[ARB2_NV5_REC_CLIP * 4 + 3] = (float)y2;
+		if ( k == 0 ) {
+			rb_nv5.clip[0] = x1;
+			rb_nv5.clip[1] = y1;
+			rb_nv5.clip[2] = x2;
+			rb_nv5.clip[3] = y2;
+		} else {
+			if ( x1 < rb_nv5.clip[0] ) rb_nv5.clip[0] = x1;
+			if ( y1 < rb_nv5.clip[1] ) rb_nv5.clip[1] = y1;
+			if ( x2 > rb_nv5.clip[2] ) rb_nv5.clip[2] = x2;
+			if ( y2 > rb_nv5.clip[3] ) rb_nv5.clip[3] = y2;
+		}
+	} else {
+		// no scissor: a rectangle no pixel is outside
+		r[ARB2_NV5_REC_CLIP * 4 + 0] = -1.0e9f;
+		r[ARB2_NV5_REC_CLIP * 4 + 1] = -1.0e9f;
+		r[ARB2_NV5_REC_CLIP * 4 + 2] = 1.0e9f;
+		r[ARB2_NV5_REC_CLIP * 4 + 3] = 1.0e9f;
+	}
+
+	c = rb_nv5.cmd + k;
+	c->count = (GLuint)geo->numIndexes;
+	c->instanceCount = 1;
+	c->firstIndex = (GLuint)rb_nv5.surfFirstIndex;
+	c->baseVertex = rb_nv5.surfBaseVertex;
+	c->baseInstance = (GLuint)k;
+
+	backEnd.pc.c_drawElements++;
+	backEnd.pc.c_drawIndexes += geo->numIndexes;
+	backEnd.pc.c_drawVertexes += geo->numVerts;
+	backEnd.pc.c_vboIndexes += geo->numIndexes;
+}
+
+/* 0 when the batch already names img's texture, else 1: a slot img may
+ * need.  An image still loading counts as needing one. */
+static int RB_ARB2NV5_NewUnit( const idImage *img ) {
+	int i;
+	if ( !img ) {
+		return 0;
+	}
+	for ( i = 0; i < rb_nv5.slots; i++ ) {
+		if ( rb_nv5.slotBatch[i] == rb_nv5.serial && rb_nv5.slotTex[i] == img->texnum ) {
+			return 0;
+		}
+	}
+	return 1;
+}
+
+/* Collect surf into the batch, flushing the batch first when surf cannot
+ * join it.  False when surf has to be drawn through the NV4 path. */
+static bool RB_ARB2NV5_AddSurface( const drawSurf_t *surf ) {
+	const srfTriangles_t	*geo = surf->geo;
+	vertCache_t	*vb;
+	vertCache_t	*ib;
+	GLuint		ring;
+	int			isize;
+	int			baseVertex;
+	int			lightStages;
+	int			stages;
+	int			worstDraws;
+	int			worstUnits;
+	int			i;
+
+	if ( r_skipInteractions.GetBool() || !geo || !geo->ambientCache || !geo->indexCache
+			|| !r_useIndexBuffers.GetBool() || rb_nv5.ringFull
+			|| surf->space->weaponDepthHack || surf->space->modelDepthHack != 0.0f ) {
+		return false;
+	}
+	vb = geo->ambientCache;
+	ib = geo->indexCache;
+	isize = ( vertexCache.IndexType( ib ) == GL_UNSIGNED_SHORT ) ? 2 : 4;
+	if ( !ib->vbo || ( ib->offset % isize ) != 0 ) {
+		return false;
+	}
+	baseVertex = vertexCache.BaseVertex( vb, sizeof( idDrawVert ) );
+	if ( baseVertex < 0 ) {
+		return false;
+	}
+
+	/* The most interactions surf can make - one per bump, diffuse or
+	   specular stage for each light stage - and the most textures they
+	   can name that the batch does not already: the falloff, the light
+	   stages' projections, those stages' textures, and the black and
+	   flat normal images RB_SubmittInteraction substitutes for missing
+	   ones.  The batch is flushed first unless both still fit; after a
+	   flush nothing is named, so the units are counted again in full. */
+	lightStages = backEnd.vLight->lightShader->GetNumStages();
+	stages = 0;
+	worstUnits = RB_ARB2NV5_NewUnit( backEnd.vLight->falloffImage )
+		+ RB_ARB2NV5_NewUnit( globalImages->blackImage )
+		+ RB_ARB2NV5_NewUnit( globalImages->flatNormalMap );
+	for ( i = 0; i < lightStages; i++ ) {
+		worstUnits += RB_ARB2NV5_NewUnit( backEnd.vLight->lightShader->GetStage( i )->texture.image );
+	}
+	for ( i = 0; i < surf->material->GetNumStages(); i++ ) {
+		const shaderStage_t *stage = surf->material->GetStage( i );
+		if ( stage->lighting != SL_AMBIENT ) {
+			stages++;
+			worstUnits += RB_ARB2NV5_NewUnit( stage->texture.image );
+		}
+	}
+	worstDraws = lightStages * stages;
+	if ( worstDraws <= 0 ) {
+		return true;	// nothing to draw
+	}
+	if ( worstDraws > ARB2_NV5_BATCH ) {
+		return false;
+	}
+	if ( rb_nv5.count > 0
+			&& ( surf->space != rb_nv5.space || vb->vbo != rb_nv5.vertexBlock->vbo
+				|| ib->vbo != rb_nv5.indexBlock->vbo || vertexCache.IndexType( ib ) != rb_nv5.indexType
+				|| rb_nv5.count + worstDraws > ARB2_NV5_BATCH || rb_nv5.pinned + worstUnits > rb_nv5.slots ) ) {
+		RB_ARB2NV5_Flush();
+		worstUnits = 3 + lightStages + stages;
+	}
+	if ( rb_nv5.pinned + worstUnits > rb_nv5.slots ) {
+		return false;
+	}
+
+	if ( !rb_nv5.rec ) {
+		/* Batches take consecutive draws of a chunk reserved once per
+		   frame - the ring's segments are fenced per frame, so a chunk is
+		   never written past the frame it was reserved in - and a new
+		   chunk when a whole batch might not fit the rest. */
+		if ( !rb_nv5.chunkRec || rb_nv5.chunkFrame != backEnd.frameCount
+				|| rb_nv5.chunkUsed + ARB2_NV5_BATCH > ARB2_NV5_CHUNK ) {
+			rb_nv5.chunkRec = (float *)vertexCache.RingReserve( ARB2_NV5_CHUNK * ARB2_NV5_REC_BYTES, 16,
+				&ring, &rb_nv5.chunkRecOffset );
+			rb_nv5.chunkCmd = rb_nv5.chunkRec ? (arb2Nv5Command_t *)vertexCache.RingReserve(
+				ARB2_NV5_CHUNK * (int)sizeof( arb2Nv5Command_t ), 16, &ring, &rb_nv5.chunkCmdOffset ) : NULL;
+			if ( !rb_nv5.chunkRec || !rb_nv5.chunkCmd ) {
+				rb_nv5.chunkRec = NULL;
+				rb_nv5.ringFull = true;
+				return false;
+			}
+			rb_nv5.chunkUsed = 0;
+			rb_nv5.chunkFrame = backEnd.frameCount;
+			rb_nv5.chunkRing = ring;
+		}
+		rb_nv5.rec = rb_nv5.chunkRec + rb_nv5.chunkUsed * ARB2_NV5_REC_VECS * 4;
+		rb_nv5.cmd = rb_nv5.chunkCmd + rb_nv5.chunkUsed;
+		rb_nv5.recOffset = rb_nv5.chunkRecOffset + rb_nv5.chunkUsed * ARB2_NV5_REC_BYTES;
+		rb_nv5.cmdOffset = rb_nv5.chunkCmdOffset + rb_nv5.chunkUsed * (int)sizeof( arb2Nv5Command_t );
+		ring = rb_nv5.chunkRing;
+		if ( ring != rb_nv5.ring ) {
+			// a ring this context has not made resident yet
+			qglBindBufferARB( GL_COPY_WRITE_BUFFER, ring );
+			glCaps.MakeBufferResidentNV( GL_COPY_WRITE_BUFFER, GL_READ_ONLY );
+			glCaps.GetBufferParameterui64vNV( GL_COPY_WRITE_BUFFER, GL_BUFFER_GPU_ADDRESS_NV, &rb_nv5.ringAddress );
+			qglBindBufferARB( GL_COPY_WRITE_BUFFER, 0 );
+			rb_nv5.ring = ring;
+		}
+		qglBindBufferARB( GL_DRAW_INDIRECT_BUFFER, ring );
+	}
+
+	rb_nv5.space = surf->space;
+	rb_nv5.vertexBlock = vb;
+	rb_nv5.indexBlock = ib;
+	rb_nv5.indexType = vertexCache.IndexType( ib );
+	rb_nv5.surfBaseVertex = baseVertex;
+	rb_nv5.surfFirstIndex = (int)( ib->offset / isize );
+	RB_CollectSingleDrawInteractions( surf, RB_ARB2NV5_Collect );
+	return true;
+}
+
+/* A light's list on the NV5 tier: batches where they can be made, the
+ * NV4 path for the surfaces they cannot take. */
+static void RB_ARB2NV5_DrawList( const drawSurf_t *surf ) {
+	idDrawVert	*ac;
+
+	rb_nv5.count = 0;
+	rb_nv5.rec = NULL;
+	rb_nv5.pinned = 0;
+	rb_nv5.pointerBuffer = 0;
+	RB_ARB2NV5_BindPrograms( true );
+
+	// the record offsets, fetched per draw through baseInstance
+	qglBindBufferARB( GL_ARRAY_BUFFER_ARB, rb_nv5.idBuffer );
+	glCaps.VertexAttribIPointer( 1, 1, GL_UNSIGNED_INT, 0, NULL );
+	glCaps.VertexAttribDivisor( 1, 1 );
+	qglEnableVertexAttribArrayARB( 1 );
+	vertexCache.InvalidateBindings();
+
+	for ( ; surf ; surf = surf->nextOnLight ) {
+		if ( RB_ARB2NV5_AddSurface( surf ) ) {
+			continue;
+		}
+		RB_ARB2NV5_Flush();
+		if ( rb_nv5.batchedMode ) {
+			RB_ARB2NV5_BindPrograms( false );
+		}
+		ac = (idDrawVert *)vertexCache.Position( surf->geo->ambientCache );
+		qglColorPointer( 4, GL_UNSIGNED_BYTE, sizeof( idDrawVert ), RB_DRAWVERT( ac, color ) );
+		qglVertexAttribPointerARB( 11, 3, GL_FLOAT, false, sizeof( idDrawVert ), RB_DRAWVERT( ac, normal ) );
+		qglVertexAttribPointerARB( 10, 3, GL_FLOAT, false, sizeof( idDrawVert ), RB_DRAWVERT( ac, tangents[1] ) );
+		qglVertexAttribPointerARB( 9, 3, GL_FLOAT, false, sizeof( idDrawVert ), RB_DRAWVERT( ac, tangents[0] ) );
+		qglVertexAttribPointerARB( 8, 2, GL_FLOAT, false, sizeof( idDrawVert ), RB_DRAWVERT( ac, st ) );
+		qglVertexPointer( 3, GL_FLOAT, sizeof( idDrawVert ), RB_DRAWVERT( ac, xyz ) );
+		rb_nv5.pointerBuffer = 0;
+		RB_CreateSingleDrawInteractions( surf, RB_ARB2NV_DrawInteraction );
+	}
+	RB_ARB2NV5_Flush();
+
+	qglDisableVertexAttribArrayARB( 1 );
+	glCaps.VertexAttribDivisor( 1, 0 );
+	qglBindBufferARB( GL_DRAW_INDIRECT_BUFFER, 0 );
+}
+
 
 /*
 =============
@@ -363,6 +870,7 @@ RB_ARB2_CreateDrawInteractions
 void RB_ARB2_CreateDrawInteractions( const drawSurf_t *surf ) {
 	bool	ambient;
 	bool	nv;
+	bool	nv5;
 
 	if ( !surf ) {
 		return;
@@ -370,6 +878,7 @@ void RB_ARB2_CreateDrawInteractions( const drawSurf_t *surf ) {
 
 	ambient = backEnd.vLight->lightShader->IsAmbientLight();
 	nv = rb_nvInteraction && !r_testARBProgram.GetBool();
+	nv5 = nv && rb_nv5.programs && vertexCache.Streaming();
 
 	// perform setup here that will be constant for all interactions
 	GL_State( GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE | GLS_DEPTHMASK | backEnd.depthFunc );
@@ -378,6 +887,8 @@ void RB_ARB2_CreateDrawInteractions( const drawSurf_t *surf ) {
 	if ( r_testARBProgram.GetBool() ) {
 		qglBindProgramARB( GL_VERTEX_PROGRAM_ARB, VPROG_TEST );
 		qglBindProgramARB( GL_FRAGMENT_PROGRAM_ARB, FPROG_TEST );
+	} else if ( nv5 ) {
+		// RB_ARB2NV5_DrawList binds its programs
 	} else if ( nv ) {
 		qglBindProgramARB( GL_VERTEX_PROGRAM_ARB, VPROG_NV_INTERACTION );
 		qglBindProgramARB( GL_FRAGMENT_PROGRAM_ARB, ambient ? FPROG_NV_INTERACTION_AMBIENT : FPROG_NV_INTERACTION );
@@ -435,6 +946,10 @@ void RB_ARB2_CreateDrawInteractions( const drawSurf_t *surf ) {
 	RB_EnvCacheReset();
 	RB_UpdateSpecularBoost();
 
+	if ( nv5 ) {
+		RB_ARB2NV5_DrawList( surf );
+		surf = NULL;
+	}
 	for ( ; surf ; surf=surf->nextOnLight ) {
 		// perform setup here that will not change over multiple interaction passes
 
@@ -504,6 +1019,13 @@ void RB_ARB2_DrawInteractions( void ) {
 	if ( rb_nvInteraction ) {
 		glCaps.BindBufferBaseNV( GL_VERTEX_PROGRAM_PARAMETER_BUFFER_NV, 0, rb_nvParmBuffer );
 		glCaps.BindBufferBaseNV( GL_FRAGMENT_PROGRAM_PARAMETER_BUFFER_NV, 0, rb_nvParmBuffer );
+	}
+	// the NV5 slot units: textures may have been deleted and their
+	// names reused since the last view; and a ring full in the last view
+	// may have room in this one's frame
+	if ( rb_nv5.programs ) {
+		RB_ARB2NV5_ResetSlots();
+		rb_nv5.ringFull = false;
 	}
 
 	//
@@ -624,6 +1146,9 @@ static progDef_t	progs[MAX_GLPROGS] = {
 	{ GL_VERTEX_PROGRAM_ARB, VPROG_NV_INTERACTION, "nv_interaction.vp" },
 	{ GL_FRAGMENT_PROGRAM_ARB, FPROG_NV_INTERACTION, "nv_interaction.fp" },
 	{ GL_FRAGMENT_PROGRAM_ARB, FPROG_NV_INTERACTION_AMBIENT, "nv_interactionAmbient.fp" },
+	{ GL_VERTEX_PROGRAM_ARB, VPROG_NV5_INTERACTION, "nv5_interaction.vp" },
+	{ GL_FRAGMENT_PROGRAM_ARB, FPROG_NV5_INTERACTION, "nv5_interaction.fp" },
+	{ GL_FRAGMENT_PROGRAM_ARB, FPROG_NV5_INTERACTION_AMBIENT, "nv5_interactionAmbient.fp" },
 
 	// additional programs can be dynamically specified in materials
 };
@@ -845,6 +1370,181 @@ static const char nvInteractionAmbientFP[] =
 	"MAD light, light, scaleTwo, subOne;\n"
 	NV_INTERACTION_FP_TAIL;
 
+/*
+   The NV5 tier's batched interaction programs.
+
+   The vertex program is the NV4 one with its parameters loaded from the
+   draw's record: program.env[90].xy holds the batch's record base address,
+   vertex.attrib[1] - instanced, so baseInstance picks it - the record's
+   offset from it, and the record is ARB2_NV5_REC_VECS vec4s in the
+   arb2_nvrec.h order with three more behind: the texture units, the
+   specular unit, and the draw's scissor rectangle.  The colours, units
+   and rectangle reach the fragment program as flat attributes.
+
+   The fragment programs are the NV4 ones sampling the per-draw textures
+   through a unit array, killing outside the draw's scissor rectangle the
+   way glScissor clips - a pixel's centre is half a pixel inside the edges
+   it belongs between - and keeping the two splice anchors.  The array's
+   extent depends on the context's units, so they are built at tier
+   selection.
+*/
+static const char nv5InteractionVP[] =
+	"!!NVvp5.0\n"
+	"OPTION ARB_position_invariant;\n"
+	"UINT ATTRIB recOff = vertex.attrib[1];\n"
+	"LONG TEMP addr, step;\n"
+	"UINT TEMP t;\n"
+	"TEMP R0, R1, R2, lo, vo, ps, pt, pq, pf, bs, bt, ds, dt, ss, st, cm, ca;\n"
+	"PARAM defaultTexCoord = { 0, 0.5, 0, 1 };\n"
+	"PK64.U addr.x, program.env[90];\n"
+	"MOV.U t, { 0, 0, 0, 0 };\n"
+	"MOV.U t.x, recOff.x;\n"
+	"PK64.U step.x, t;\n"
+	"ADD.U64 addr.x, addr.x, step.x;\n"
+	"MOV.U t.x, 16;\n"
+	"PK64.U step.x, t;\n"
+	"LOAD.F32X4 lo, addr.x;\n"
+	"ADD.U64 addr.x, addr.x, step.x;\n"
+	"LOAD.F32X4 vo, addr.x;\n"
+	"ADD.U64 addr.x, addr.x, step.x;\n"
+	"LOAD.F32X4 ps, addr.x;\n"
+	"ADD.U64 addr.x, addr.x, step.x;\n"
+	"LOAD.F32X4 pt, addr.x;\n"
+	"ADD.U64 addr.x, addr.x, step.x;\n"
+	"LOAD.F32X4 pq, addr.x;\n"
+	"ADD.U64 addr.x, addr.x, step.x;\n"
+	"LOAD.F32X4 pf, addr.x;\n"
+	"ADD.U64 addr.x, addr.x, step.x;\n"
+	"LOAD.F32X4 bs, addr.x;\n"
+	"ADD.U64 addr.x, addr.x, step.x;\n"
+	"LOAD.F32X4 bt, addr.x;\n"
+	"ADD.U64 addr.x, addr.x, step.x;\n"
+	"LOAD.F32X4 ds, addr.x;\n"
+	"ADD.U64 addr.x, addr.x, step.x;\n"
+	"LOAD.F32X4 dt, addr.x;\n"
+	"ADD.U64 addr.x, addr.x, step.x;\n"
+	"LOAD.F32X4 ss, addr.x;\n"
+	"ADD.U64 addr.x, addr.x, step.x;\n"
+	"LOAD.F32X4 st, addr.x;\n"
+	"ADD.U64 addr.x, addr.x, step.x;\n"
+	"LOAD.F32X4 cm, addr.x;\n"
+	"ADD.U64 addr.x, addr.x, step.x;\n"
+	"LOAD.F32X4 ca, addr.x;\n"
+	"ADD.U64 addr.x, addr.x, step.x;\n"
+	"LOAD.F32X4 R0, addr.x;\n"
+	"MOV result.attrib[0], R0;\n"
+	"ADD.U64 addr.x, addr.x, step.x;\n"
+	"LOAD.F32X4 R0, addr.x;\n"
+	"MOV result.attrib[1], R0;\n"
+	"ADD.U64 addr.x, addr.x, step.x;\n"
+	"LOAD.F32X4 R0, addr.x;\n"
+	"MOV result.attrib[2], R0;\n"
+	"ADD.U64 addr.x, addr.x, step.x;\n"
+	"LOAD.F32X4 R0, addr.x;\n"
+	"MOV result.attrib[3], R0;\n"
+	"ADD.U64 addr.x, addr.x, step.x;\n"
+	"LOAD.F32X4 R0, addr.x;\n"
+	"MOV result.attrib[4], R0;\n"
+	"SUB R0, lo, vertex.position;\n"
+	"DP3 result.texcoord[0].x, vertex.attrib[9], R0;\n"
+	"DP3 result.texcoord[0].y, vertex.attrib[10], R0;\n"
+	"DP3 result.texcoord[0].z, vertex.attrib[11], R0;\n"
+	"MOV result.texcoord[1], defaultTexCoord;\n"
+	"DP4 result.texcoord[1].x, vertex.attrib[8], bs;\n"
+	"DP4 result.texcoord[1].y, vertex.attrib[8], bt;\n"
+	"MOV result.texcoord[2], defaultTexCoord;\n"
+	"DP4 result.texcoord[2].x, vertex.position, pf;\n"
+	"DP4 result.texcoord[3].x, vertex.position, ps;\n"
+	"DP4 result.texcoord[3].y, vertex.position, pt;\n"
+	"DP4 result.texcoord[3].w, vertex.position, pq;\n"
+	"MOV result.texcoord[4], defaultTexCoord;\n"
+	"DP4 result.texcoord[4].x, vertex.attrib[8], ds;\n"
+	"DP4 result.texcoord[4].y, vertex.attrib[8], dt;\n"
+	"MOV result.texcoord[5], defaultTexCoord;\n"
+	"DP4 result.texcoord[5].x, vertex.attrib[8], ss;\n"
+	"DP4 result.texcoord[5].y, vertex.attrib[8], st;\n"
+	"DP3 R1, R0, R0;\n"
+	"RSQ R1, R1.x;\n"
+	"MUL R0, R0, R1.x;\n"
+	"SUB R1, vo, vertex.position;\n"
+	"DP3 R2, R1, R1;\n"
+	"RSQ R2, R2.x;\n"
+	"MUL R1, R1, R2.x;\n"
+	"ADD R0, R0, R1;\n"
+	"DP3 result.texcoord[6].x, vertex.attrib[9], R0;\n"
+	"DP3 result.texcoord[6].y, vertex.attrib[10], R0;\n"
+	"DP3 result.texcoord[6].z, vertex.attrib[11], R0;\n"
+	"MAD result.color, vertex.color, cm, ca;\n"
+	"END\n";
+
+/* %d: the last unit of the texture array */
+#define NV5_INTERACTION_FP_HEAD \
+	"!!NVfp5.0\n" \
+	"FLAT ATTRIB dcol = fragment.attrib[0];\n" \
+	"FLAT ATTRIB scol = fragment.attrib[1];\n" \
+	"FLAT ATTRIB units = fragment.attrib[2];\n" \
+	"FLAT ATTRIB units2 = fragment.attrib[3];\n" \
+	"FLAT ATTRIB clip = fragment.attrib[4];\n" \
+	"TEXTURE tex[] = { texture[8..%d] };\n" \
+	"ADDRESS A0, A1;\n" \
+	"TEMP light, color, R1, R2, localNormal, specular, proj, fall;\n" \
+	"PARAM subOne = { -1, -1, -1, -1 };\n" \
+	"PARAM scaleTwo = { 2, 2, 2, 2 };\n" \
+	"PARAM one = { 1, 1, 1, 1 };\n" \
+	"ARL A0, units;\n" \
+	"ARL A1.x, units2.x;\n" \
+	"DP3 specular, fragment.texcoord[6], fragment.texcoord[6];\n" \
+	"RSQ specular, specular.x;\n" \
+	"MUL specular, specular.x, fragment.texcoord[6];\n"
+
+#define NV5_INTERACTION_FP_TAIL \
+	"TEX localNormal, fragment.texcoord[1], tex[A0.x], 2D;\n" \
+	"MOV localNormal.x, localNormal.a;\n" \
+	"MAD localNormal, localNormal, scaleTwo, subOne;\n" \
+	"DP3 light, light, localNormal;\n" \
+	"TXP proj, fragment.texcoord[3], tex[A0.z], 2D;\n" \
+	"MUL light, light, proj;\n" \
+	"TXP fall, fragment.texcoord[2], tex[A0.y], 2D;\n" \
+	"MUL light, light, fall;\n" \
+	"TEX R1, fragment.texcoord[4], tex[A0.w], 2D;\n" \
+	"MUL color, R1, dcol;\n" \
+	"DP3 specular, specular, localNormal;\n" \
+	"TEX R1, specular, texture[6], 2D;\n" \
+	"MUL R1, R1, scol;\n" \
+	"TEX R2, fragment.texcoord[5], tex[A1.x], 2D;\n" \
+	"ADD R2, R2, R2;\n" \
+	"MAD color, R1, R2, color;\n" \
+	"MUL color, light, color;\n" \
+	"MUL result.color, color, fragment.color;\n" \
+	"SUB R1.xy, fragment.position, clip;\n" \
+	"SUB R1.zw, clip, fragment.position.xyxy;\n" \
+	"KIL R1;\n" \
+	"MUL R1, proj, fall;\n" \
+	"DP4 R1.x, |R1|, one;\n" \
+	"SEQ R1.x, R1.x, 0.0;\n" \
+	"KIL -R1.x;\n" \
+	"END\n"
+
+static char nv5InteractionFP[2048];
+static char nv5InteractionAmbientFP[2048];
+
+static void R_ARB2NV5_BuildPrograms( int lastUnit ) {
+	idStr::snPrintf( nv5InteractionFP, sizeof( nv5InteractionFP ),
+		NV5_INTERACTION_FP_HEAD
+		"NRM light.xyz, fragment.texcoord[0];\n"
+		NV5_INTERACTION_FP_TAIL, lastUnit );
+	idStr::snPrintf( nv5InteractionAmbientFP, sizeof( nv5InteractionAmbientFP ),
+		NV5_INTERACTION_FP_HEAD
+		"TEX light, fragment.texcoord[0], texture[0], CUBE;\n"
+		"MAD light, light, scaleTwo, subOne;\n"
+		NV5_INTERACTION_FP_TAIL, lastUnit );
+}
+
+static ID_INLINE bool R_ARB2NV5Program( int ident ) {
+	return ident == VPROG_NV5_INTERACTION || ident == FPROG_NV5_INTERACTION
+		|| ident == FPROG_NV5_INTERACTION_AMBIENT;
+}
+
 static ID_INLINE bool R_ARB2NVProgram( int ident ) {
 	return ident == VPROG_NV_INTERACTION || ident == FPROG_NV_INTERACTION
 		|| ident == FPROG_NV_INTERACTION_AMBIENT;
@@ -921,19 +1621,26 @@ void R_LoadARBProgram( int progIndex ) {
 	bool	interactionFP;
 
 	progs[progIndex].loaded = false;
-	nvProg = R_ARB2NVProgram( progs[progIndex].ident );
+	nvProg = R_ARB2NVProgram( progs[progIndex].ident ) || R_ARB2NV5Program( progs[progIndex].ident );
 	interactionFP = progs[progIndex].ident == FPROG_INTERACTION
 		|| progs[progIndex].ident == FPROG_NV_INTERACTION
-		|| progs[progIndex].ident == FPROG_NV_INTERACTION_AMBIENT;
+		|| progs[progIndex].ident == FPROG_NV_INTERACTION_AMBIENT
+		|| progs[progIndex].ident == FPROG_NV5_INTERACTION
+		|| progs[progIndex].ident == FPROG_NV5_INTERACTION_AMBIENT;
 
 	if ( nvProg ) {
-		// the ARB tier never binds these, and its driver may not parse them
-		if ( arb2Tier < ARB2_TIER_NV4 ) {
+		// a lower tier never binds these, and its driver may not parse them
+		if ( arb2Tier < ( R_ARB2NV5Program( progs[progIndex].ident ) ? ARB2_TIER_NV5 : ARB2_TIER_NV4 ) ) {
 			return;
 		}
-		nvSrc = ( progs[progIndex].ident == VPROG_NV_INTERACTION ) ? nvInteractionVP
-			: ( progs[progIndex].ident == FPROG_NV_INTERACTION ) ? nvInteractionFP
-			: nvInteractionAmbientFP;
+		switch ( progs[progIndex].ident ) {
+		case VPROG_NV_INTERACTION:			nvSrc = nvInteractionVP; break;
+		case FPROG_NV_INTERACTION:			nvSrc = nvInteractionFP; break;
+		case FPROG_NV_INTERACTION_AMBIENT:	nvSrc = nvInteractionAmbientFP; break;
+		case VPROG_NV5_INTERACTION:			nvSrc = nv5InteractionVP; break;
+		case FPROG_NV5_INTERACTION:			nvSrc = nv5InteractionFP; break;
+		default:							nvSrc = nv5InteractionAmbientFP; break;
+		}
 		common->Printf( "<internal> %s", progs[progIndex].name );
 		buffer = (char *)_alloca( strlen( nvSrc ) + 1 );
 		strcpy( buffer, nvSrc );
@@ -1537,13 +2244,18 @@ R_ReloadARBPrograms_f
 void R_ReloadARBPrograms_f( const idCmdArgs &args ) {
 	int		i;
 	int		nvLoaded;
+	int		nv5Loaded;
 
 	common->Printf( "----- R_ReloadARBPrograms -----\n" );
 	nvLoaded = 0;
+	nv5Loaded = 0;
 	for ( i = 0 ; progs[i].name[0] ; i++ ) {
 		R_LoadARBProgram( i );
 		if ( progs[i].loaded && R_ARB2NVProgram( progs[i].ident ) ) {
 			nvLoaded++;
+		}
+		if ( progs[i].loaded && R_ARB2NV5Program( progs[i].ident ) ) {
+			nv5Loaded++;
 		}
 	}
 
@@ -1553,6 +2265,14 @@ void R_ReloadARBPrograms_f( const idCmdArgs &args ) {
 	rb_nvInteraction = arb2Tier >= ARB2_TIER_NV4 && rb_nvParmBuffer != 0 && nvLoaded == 3;
 	if ( arb2Tier >= ARB2_TIER_NV4 && !rb_nvInteraction ) {
 		common->Printf( "ARB2: NV interaction programs not accepted, interactions use the ARB programs\n" );
+	}
+
+	/* The batched path draws what it cannot batch through the NV4
+	   programs, so it needs those as well as its own. */
+	rb_nv5.programs = arb2Tier >= ARB2_TIER_NV5 && rb_nvInteraction && rb_nv5.idBuffer != 0 && nv5Loaded == 3;
+	if ( arb2Tier >= ARB2_TIER_NV5 && !rb_nv5.programs ) {
+		common->Printf( "ARB2: NV5 batched interactions not available, interactions use %s\n",
+			rb_nvInteraction ? "the NV4 programs" : "the ARB programs" );
 	}
 }
 
@@ -1575,7 +2295,11 @@ static void R_ARB2_SelectTier( void ) {
 
 	avail = ARB2_TIER_ARB;
 	if ( glConfig.ARBVertexBufferObjectAvailable && glCaps.nvGpuProgram4 ) {
-		avail = glCaps.nvGpuProgram5 ? ARB2_TIER_NV5 : ARB2_TIER_NV4;
+		avail = ARB2_TIER_NV4;
+		// the batched path wants at least eight texture units of its own
+		if ( glCaps.nvBatchDraw && glConfig.maxTextureImageUnits >= ARB2_NV5_SLOT_UNIT + 8 ) {
+			avail = ARB2_TIER_NV5;
+		}
 	}
 	want = arb2TierRequest;
 	tier = ( want < 0 || want > avail ) ? avail : want;
@@ -1599,6 +2323,32 @@ static void R_ARB2_SelectTier( void ) {
 		ARB2_NVREC_RESET( &rb_nvRec );
 	}
 
+	if ( tier >= ARB2_TIER_NV5 ) {
+		GLuint	offsets[ARB2_NV5_BATCH];
+		int		units;
+		int		i;
+
+		units = glConfig.maxTextureImageUnits < ARB2_NV5_SLOT_UNIT + ARB2_NV5_MAX_SLOTS
+			? glConfig.maxTextureImageUnits : ARB2_NV5_SLOT_UNIT + ARB2_NV5_MAX_SLOTS;
+		rb_nv5.slots = units - ARB2_NV5_SLOT_UNIT;
+		R_ARB2NV5_BuildPrograms( units - 1 );
+		RB_ARB2NV5_ResetSlots();
+
+		for ( i = 0; i < ARB2_NV5_BATCH; i++ ) {
+			offsets[i] = (GLuint)( i * ARB2_NV5_REC_BYTES );
+		}
+		qglGenBuffersARB( 1, &rb_nv5.idBuffer );
+		qglBindBufferARB( GL_ARRAY_BUFFER_ARB, rb_nv5.idBuffer );
+		qglBufferDataARB( GL_ARRAY_BUFFER_ARB, sizeof( offsets ), offsets, GL_STATIC_DRAW_ARB );
+		qglBindBufferARB( GL_ARRAY_BUFFER_ARB, 0 );
+		vertexCache.InvalidateBindings();
+		if ( qglGetError() != GL_NO_ERROR || rb_nv5.idBuffer == 0 ) {
+			common->Printf( "ARB2: no record offset buffer for %s\n", tierNames[tier] );
+			rb_nv5.idBuffer = 0;
+			tier = ARB2_TIER_NV4;
+		}
+	}
+
 	arb2Tier = tier;
 	common->Printf( "ARB2 program tier: %s\n", tierNames[tier] );
 }
@@ -1613,9 +2363,10 @@ void R_ARB2_Init( void ) {
 	glConfig.allowARB2Path = false;
 	arb2Tier = ARB2_TIER_ARB;
 
-	// a new context: whatever buffer the old one had went with it
+	// a new context: whatever buffers the old one had went with it
 	rb_nvParmBuffer = 0;
 	rb_nvInteraction = false;
+	memset( &rb_nv5, 0, sizeof( rb_nv5 ) );
 
 	common->Printf( "ARB2 renderer: " );
 

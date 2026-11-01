@@ -1332,6 +1332,7 @@ bool RB_DepthCaptureWanted( void );
 void RB_LoadShaderTextureMatrix( const float *shaderRegisters, const textureStage_t *texture );
 void RB_GetShaderTextureMatrix( const float *shaderRegisters, const textureStage_t *texture, float matrix[16] );
 void RB_CreateSingleDrawInteractions( const drawSurf_t *surf, void (*DrawInteraction)(const drawInteraction_t *) );
+void RB_CollectSingleDrawInteractions( const drawSurf_t *surf, void (*DrawInteraction)(const drawInteraction_t *) );
 
 const shaderStage_t *RB_SetLightTexture( const idRenderLightLocal *light );
 
@@ -1416,6 +1417,9 @@ typedef enum {
 	VPROG_NV_INTERACTION,          // NV tiers: interaction parameters from program.buffer[0]
 	FPROG_NV_INTERACTION,          // NV tiers: light vector by NRM instead of the cube map
 	FPROG_NV_INTERACTION_AMBIENT,  // NV tiers: ambient lights, ambientNormalMap lookup kept
+	VPROG_NV5_INTERACTION,         // NV5 tier: multi-draw-indirect, a record per draw by global load
+	FPROG_NV5_INTERACTION,         // NV5 tier: textures from a per-batch unit array
+	FPROG_NV5_INTERACTION_AMBIENT, // NV5 tier: ambient lights
 	//
 	PROG_USER
 } program_t;

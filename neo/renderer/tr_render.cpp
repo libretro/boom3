@@ -750,7 +750,8 @@ interaction into primitive interactions
 =============
 */
 #ifdef BOOM3_ARB2_RENDERER
-void RB_CreateSingleDrawInteractions( const drawSurf_t *surf, void (*DrawInteraction)(const drawInteraction_t *) ) {
+static void RB_BuildSingleDrawInteractions( const drawSurf_t *surf, void (*DrawInteraction)(const drawInteraction_t *),
+		bool setState ) {
 	const idMaterial	*surfaceShader = surf->material;
 	const float			*surfaceRegs = surf->shaderRegisters;
 	const viewLight_t	*vLight = backEnd.vLight;
@@ -776,28 +777,30 @@ void RB_CreateSingleDrawInteractions( const drawSurf_t *surf, void (*DrawInterac
 		allowNoSpecular = tr.allowNoSpecular;
 	}
 
-	// change the matrix and light projection vectors if needed
-	if ( surf->space != backEnd.currentSpace ) {
-		backEnd.currentSpace = surf->space;
-		qglLoadMatrixf( surf->space->modelViewMatrix );
-	}
+	if ( setState ) {
+		// change the matrix and light projection vectors if needed
+		if ( surf->space != backEnd.currentSpace ) {
+			backEnd.currentSpace = surf->space;
+			qglLoadMatrixf( surf->space->modelViewMatrix );
+		}
 
-	// change the scissor if needed
-	if ( r_useScissor.GetBool() && !backEnd.currentScissor.Equals( surf->scissorRect ) ) {
-		backEnd.currentScissor = surf->scissorRect;
-		qglScissor( backEnd.viewDef->viewport.x1 + backEnd.currentScissor.x1,
-			backEnd.viewDef->viewport.y1 + backEnd.currentScissor.y1,
-			backEnd.currentScissor.x2 + 1 - backEnd.currentScissor.x1,
-			backEnd.currentScissor.y2 + 1 - backEnd.currentScissor.y1 );
-	}
+		// change the scissor if needed
+		if ( r_useScissor.GetBool() && !backEnd.currentScissor.Equals( surf->scissorRect ) ) {
+			backEnd.currentScissor = surf->scissorRect;
+			qglScissor( backEnd.viewDef->viewport.x1 + backEnd.currentScissor.x1,
+				backEnd.viewDef->viewport.y1 + backEnd.currentScissor.y1,
+				backEnd.currentScissor.x2 + 1 - backEnd.currentScissor.x1,
+				backEnd.currentScissor.y2 + 1 - backEnd.currentScissor.y1 );
+		}
 
-	// hack depth range if needed
-	if ( surf->space->weaponDepthHack ) {
-		RB_EnterWeaponDepthHack();
-	}
+		// hack depth range if needed
+		if ( surf->space->weaponDepthHack ) {
+			RB_EnterWeaponDepthHack();
+		}
 
-	if ( surf->space->modelDepthHack ) {
-		RB_EnterModelDepthHack( surf->space->modelDepthHack );
+		if ( surf->space->modelDepthHack ) {
+			RB_EnterModelDepthHack( surf->space->modelDepthHack );
+		}
 	}
 
 	inter.surf = surf;
@@ -915,9 +918,28 @@ void RB_CreateSingleDrawInteractions( const drawSurf_t *surf, void (*DrawInterac
 	}
 
 	// unhack depth range if needed
-	if ( surf->space->weaponDepthHack || surf->space->modelDepthHack != 0.0f ) {
+	if ( setState && ( surf->space->weaponDepthHack || surf->space->modelDepthHack != 0.0f ) ) {
 		RB_LeaveDepthHack();
 	}
+}
+
+void RB_CreateSingleDrawInteractions( const drawSurf_t *surf, void (*DrawInteraction)(const drawInteraction_t *) ) {
+	RB_BuildSingleDrawInteractions( surf, DrawInteraction, true );
+}
+
+/*
+=================
+RB_CollectSingleDrawInteractions
+
+RB_CreateSingleDrawInteractions without the GL state it sets per surface -
+the modelview matrix, the scissor and the depth range hacks - for a
+backend that collects the interactions and draws them later with that
+state set for a whole batch.  The caller keeps surfaces with a depth
+range hack out of it.
+=================
+*/
+void RB_CollectSingleDrawInteractions( const drawSurf_t *surf, void (*DrawInteraction)(const drawInteraction_t *) ) {
+	RB_BuildSingleDrawInteractions( surf, DrawInteraction, false );
 }
 #endif
 
