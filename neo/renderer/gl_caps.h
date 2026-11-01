@@ -62,6 +62,8 @@ typedef unsigned long long (APIENTRYP gl_caps_GetTextureHandle_t)(GLuint texture
 typedef unsigned long long (APIENTRYP gl_caps_GetTextureSamplerHandle_t)(GLuint texture, GLuint sampler);
 typedef void (APIENTRYP gl_caps_MakeTextureHandleResident_t)(unsigned long long handle);
 typedef void (APIENTRYP gl_caps_MakeTextureHandleNonResident_t)(unsigned long long handle);
+typedef void (APIENTRYP gl_caps_BindBufferBaseNV_t)(GLenum target, GLuint index, GLuint buffer);
+typedef void (APIENTRYP gl_caps_ProgramBufferParametersfvNV_t)(GLenum target, GLuint bindingIndex, GLuint wordIndex, GLsizei count, const GLfloat *params);
 
 /* Entry points are NULL when the context lacks them; the flags say which
  * groups are complete.  Members by alignment: pointers first. */
@@ -96,6 +98,8 @@ typedef struct gl_caps_s {
 	gl_caps_GetTextureSamplerHandle_t     GetTextureSamplerHandle;
 	gl_caps_MakeTextureHandleResident_t   MakeTextureHandleResident;
 	gl_caps_MakeTextureHandleNonResident_t MakeTextureHandleNonResident;
+	gl_caps_BindBufferBaseNV_t            BindBufferBaseNV;
+	gl_caps_ProgramBufferParametersfvNV_t ProgramBufferParametersfvNV;
 
 	int  major, minor;            /* context version, from GL_VERSION */
 	int  uniformBufferAlign;      /* GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT */
@@ -115,6 +119,8 @@ typedef struct gl_caps_s {
 	unsigned char blit;           /* BlitFramebuffer */
 	unsigned char multiDrawIndirect; /* MultiDrawElementsIndirect, with draw parameters in shaders */
 	unsigned char bindless;       /* ARB_bindless_texture */
+	unsigned char nvGpuProgram4;  /* NV_gpu_program4 with NV_parameter_buffer_object, on a compatibility context */
+	unsigned char nvGpuProgram5;  /* NV_gpu_program5 on top of nvGpuProgram4 */
 } gl_caps_t;
 
 extern gl_caps_t glCaps;

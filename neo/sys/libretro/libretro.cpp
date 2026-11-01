@@ -2574,6 +2574,17 @@ static void update_variables(bool startup)
 	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
 		cvarSystem->SetCVarBool("r_spectralMix", strcmp(var.value, "enabled") == 0);
 
+#if defined(BOOM3_ARB2_RENDERER)
+	/* The ARB2 program tier, read when the context comes up - which on
+	 * the first boot is after this startup pass and before the cvar
+	 * system exists, hence a plain variable like the HDR precision. */
+	var.key = "doom_arb2_tier";
+	var.value = NULL;
+	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+		arb2TierRequest = !strcmp(var.value, "arb") ? ARB2_TIER_ARB
+			: !strcmp(var.value, "nv4") ? ARB2_TIER_NV4 : -1;
+#endif
+
 	/* Quality preset override */
 	var.key = "doom_shadow_smoothing";
 	var.value = NULL;

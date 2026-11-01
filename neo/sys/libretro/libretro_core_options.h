@@ -105,6 +105,23 @@ struct retro_core_option_v2_definition option_defs_us[] = {
    },
 #endif
 #endif
+#if defined(BOOM3_ARB2_RENDERER)
+	{
+      "doom_arb2_tier",
+      "ARB2 Program Tier (Restart Required)",
+      NULL,
+      "Which assembly programs the ARB2 renderer lights with. 'Auto' takes the highest tier the driver offers. 'ARB Assembly' is the stock ARB vertex/fragment program path every vendor runs, and the only tier outside NVIDIA's own driver. 'NVIDIA GPU Program 4' (GeForce 8 and later) hands each light interaction its parameters in one parameter-buffer update instead of a call per parameter, normalises the light vector exactly instead of through an 8-bit cube map, and skips the blend for pixels a light cannot reach. A tier the driver lacks falls back to the next one down. ARB2 renderer only.",
+      NULL,
+      NULL,
+      {
+         { "auto", "Auto" },
+         { "arb",  "ARB Assembly" },
+         { "nv4",  "NVIDIA GPU Program 4" },
+         { NULL, NULL },
+      },
+      "auto"
+   },
+#endif
 	{
       "doom_shadow_smoothing",
       "Smooth Shadows From Moving Lights",

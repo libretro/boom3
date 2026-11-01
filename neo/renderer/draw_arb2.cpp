@@ -31,6 +31,17 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "renderer/tr_local.h"
 #include "renderer/spectral_mix.h"
+#include "renderer/arb2_nvrec.h"
+
+#ifndef GL_VERTEX_PROGRAM_PARAMETER_BUFFER_NV
+#define GL_VERTEX_PROGRAM_PARAMETER_BUFFER_NV   0x8DA2
+#endif
+#ifndef GL_FRAGMENT_PROGRAM_PARAMETER_BUFFER_NV
+#define GL_FRAGMENT_PROGRAM_PARAMETER_BUFFER_NV 0x8DA4
+#endif
+
+int arb2Tier = ARB2_TIER_ARB;
+int arb2TierRequest = -1;
 
 // DG: if this is defined, the soft particle shaders will be compiled into the executable
 //  otherwise soft_particle.vfp will be opened as a file just like the other shaders
@@ -249,6 +260,99 @@ void	RB_ARB2_DrawInteraction( const drawInteraction_t *din ) {
 	RB_DrawElementsWithCounters( din->surf->geo );
 }
 
+/*
+   The NV tiers' interaction parameters.
+
+   NV_parameter_buffer_object gives the vertex and fragment programs one
+   buffer to read every per-draw parameter from, and rb_nvRec mirrors
+   what that buffer holds.  Each draw stores its sixteen vec4s into the
+   record, which keeps a dirty span of the ones that actually changed,
+   and one ProgramBufferParametersfvNV call uploads the span - against a
+   ProgramEnvParameter4fvARB per changed parameter on the ARB tier.
+
+   The span is relative to the previous draw, not to the start of a
+   light's list: the buffer is written by nothing else, so its contents
+   carry over between lists, views and frames.  R_ARB2_Init resets the
+   record whenever it makes a new buffer.
+
+   The vertex colour and diffuse/specular colour parameters are the same
+   values the ARB path sends as env[16..17] and fragment env[0..1].
+*/
+static arb2_nvrec_t	rb_nvRec;
+static GLuint		rb_nvParmBuffer;
+static bool		rb_nvInteraction;	// NV programs compiled and the buffer made
+
+static void RB_ARB2NV_DrawInteraction( const drawInteraction_t *din ) {
+	static const float zero[4] = { 0, 0, 0, 0 };
+	static const float one[4] = { 1, 1, 1, 1 };
+	static const float negOne[4] = { -1, -1, -1, -1 };
+	arb2_nvrec_t * const r = &rb_nvRec;
+	const float *colorModulate = zero;
+	const float *colorAdd = one;
+	float sc[4];
+
+	ARB2_NVREC_SET( r, ARB2_NVREC_LIGHT_ORIGIN, din->localLightOrigin.ToFloatPtr() );
+	ARB2_NVREC_SET( r, ARB2_NVREC_VIEW_ORIGIN, din->localViewOrigin.ToFloatPtr() );
+	ARB2_NVREC_SET( r, ARB2_NVREC_PROJECT_S, din->lightProjection[0].ToFloatPtr() );
+	ARB2_NVREC_SET( r, ARB2_NVREC_PROJECT_T, din->lightProjection[1].ToFloatPtr() );
+	ARB2_NVREC_SET( r, ARB2_NVREC_PROJECT_Q, din->lightProjection[2].ToFloatPtr() );
+	ARB2_NVREC_SET( r, ARB2_NVREC_FALLOFF_S, din->lightProjection[3].ToFloatPtr() );
+	ARB2_NVREC_SET( r, ARB2_NVREC_BUMP_S, din->bumpMatrix[0].ToFloatPtr() );
+	ARB2_NVREC_SET( r, ARB2_NVREC_BUMP_T, din->bumpMatrix[1].ToFloatPtr() );
+	ARB2_NVREC_SET( r, ARB2_NVREC_DIFFUSE_S, din->diffuseMatrix[0].ToFloatPtr() );
+	ARB2_NVREC_SET( r, ARB2_NVREC_DIFFUSE_T, din->diffuseMatrix[1].ToFloatPtr() );
+	ARB2_NVREC_SET( r, ARB2_NVREC_SPECULAR_S, din->specularMatrix[0].ToFloatPtr() );
+	ARB2_NVREC_SET( r, ARB2_NVREC_SPECULAR_T, din->specularMatrix[1].ToFloatPtr() );
+
+	switch ( din->vertexColor ) {
+	case SVC_IGNORE:
+		break;
+	case SVC_MODULATE:
+		colorModulate = one;
+		colorAdd = zero;
+		break;
+	case SVC_INVERSE_MODULATE:
+		colorModulate = negOne;
+		break;
+	}
+	ARB2_NVREC_SET( r, ARB2_NVREC_COLOR_MODULATE, colorModulate );
+	ARB2_NVREC_SET( r, ARB2_NVREC_COLOR_ADD, colorAdd );
+
+	ARB2_NVREC_SET( r, ARB2_NVREC_DIFFUSE_COLOR, din->diffuseColor.ToFloatPtr() );
+	if ( rb_specularBoost != 1.0f ) {
+		sc[0] = din->specularColor[0] * rb_specularBoost;
+		sc[1] = din->specularColor[1] * rb_specularBoost;
+		sc[2] = din->specularColor[2] * rb_specularBoost;
+		sc[3] = din->specularColor[3];
+		ARB2_NVREC_SET( r, ARB2_NVREC_SPECULAR_COLOR, sc );
+	} else {
+		ARB2_NVREC_SET( r, ARB2_NVREC_SPECULAR_COLOR, din->specularColor.ToFloatPtr() );
+	}
+
+	// the fragment target's binding 0 is the same buffer, so one upload
+	// reaches both programs
+	if ( ARB2_NVREC_DIRTY( r ) ) {
+		glCaps.ProgramBufferParametersfvNV( GL_VERTEX_PROGRAM_PARAMETER_BUFFER_NV, 0,
+			ARB2_NVREC_FIRST_WORD( r ), ARB2_NVREC_WORDS( r ), r->v[r->lo] );
+		ARB2_NVREC_CLEAN( r );
+	}
+
+	// texture 0 is not read for a non-ambient light: the light vector is
+	// normalised by NRM.  1..5 as on the ARB path.
+	GL_SelectTextureNoClient( 1 );
+	din->bumpImage->Bind();
+	GL_SelectTextureNoClient( 2 );
+	din->lightFalloffImage->Bind();
+	GL_SelectTextureNoClient( 3 );
+	din->lightImage->Bind();
+	GL_SelectTextureNoClient( 4 );
+	din->diffuseImage->Bind();
+	GL_SelectTextureNoClient( 5 );
+	din->specularImage->Bind();
+
+	RB_DrawElementsWithCounters( din->surf->geo );
+}
+
 
 /*
 =============
@@ -257,9 +361,15 @@ RB_ARB2_CreateDrawInteractions
 =============
 */
 void RB_ARB2_CreateDrawInteractions( const drawSurf_t *surf ) {
+	bool	ambient;
+	bool	nv;
+
 	if ( !surf ) {
 		return;
 	}
+
+	ambient = backEnd.vLight->lightShader->IsAmbientLight();
+	nv = rb_nvInteraction && !r_testARBProgram.GetBool();
 
 	// perform setup here that will be constant for all interactions
 	GL_State( GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE | GLS_DEPTHMASK | backEnd.depthFunc );
@@ -268,6 +378,9 @@ void RB_ARB2_CreateDrawInteractions( const drawSurf_t *surf ) {
 	if ( r_testARBProgram.GetBool() ) {
 		qglBindProgramARB( GL_VERTEX_PROGRAM_ARB, VPROG_TEST );
 		qglBindProgramARB( GL_FRAGMENT_PROGRAM_ARB, FPROG_TEST );
+	} else if ( nv ) {
+		qglBindProgramARB( GL_VERTEX_PROGRAM_ARB, VPROG_NV_INTERACTION );
+		qglBindProgramARB( GL_FRAGMENT_PROGRAM_ARB, ambient ? FPROG_NV_INTERACTION_AMBIENT : FPROG_NV_INTERACTION );
 	} else {
 		qglBindProgramARB( GL_VERTEX_PROGRAM_ARB, VPROG_INTERACTION );
 		qglBindProgramARB( GL_FRAGMENT_PROGRAM_ARB, FPROG_INTERACTION );
@@ -283,11 +396,14 @@ void RB_ARB2_CreateDrawInteractions( const drawSurf_t *surf ) {
 	qglEnableVertexAttribArrayARB( 11 );
 	qglEnableClientState( GL_COLOR_ARRAY );
 
-	// texture 0 is the normalization cube map for the vector towards the light
-	GL_SelectTextureNoClient( 0 );
-	if ( backEnd.vLight->lightShader->IsAmbientLight() ) {
+	// texture 0 is the normalization cube map for the vector towards the
+	// light; the NV programs normalise it with NRM and only an ambient
+	// light reads the unit
+	if ( ambient ) {
+		GL_SelectTextureNoClient( 0 );
 		globalImages->ambientNormalMap->Bind();
-	} else {
+	} else if ( !nv ) {
+		GL_SelectTextureNoClient( 0 );
 		globalImages->normalCubeMapImage->Bind();
 	}
 
@@ -333,7 +449,7 @@ void RB_ARB2_CreateDrawInteractions( const drawSurf_t *surf ) {
 
 		// this may cause RB_ARB2_DrawInteraction to be exacuted multiple
 		// times with different colors and images if the surface or light have multiple layers
-		RB_CreateSingleDrawInteractions( surf, RB_ARB2_DrawInteraction );
+		RB_CreateSingleDrawInteractions( surf, nv ? RB_ARB2NV_DrawInteraction : RB_ARB2_DrawInteraction );
 	}
 
 	RB_EnvCacheReset();
@@ -381,6 +497,14 @@ void RB_ARB2_DrawInteractions( void ) {
 
 	GL_SelectTexture( 0 );
 	qglDisableClientState( GL_TEXTURE_COORD_ARRAY );
+
+	// the NV interaction programs read program.buffer[0]; bound per view
+	// rather than once per context, since the frontend's state handling
+	// may move bindings between frames
+	if ( rb_nvInteraction ) {
+		glCaps.BindBufferBaseNV( GL_VERTEX_PROGRAM_PARAMETER_BUFFER_NV, 0, rb_nvParmBuffer );
+		glCaps.BindBufferBaseNV( GL_FRAGMENT_PROGRAM_PARAMETER_BUFFER_NV, 0, rb_nvParmBuffer );
+	}
 
 	//
 	// for each light, perform adding and shadowing
@@ -468,6 +592,7 @@ typedef struct {
 	GLenum			target;
 	GLuint			ident;
 	char			name[64];
+	bool			loaded;		// the driver accepted the program at its last load
 } progDef_t;
 
 static	const int	MAX_GLPROGS = 200;
@@ -494,6 +619,11 @@ static progDef_t	progs[MAX_GLPROGS] = {
 	{ GL_FRAGMENT_PROGRAM_ARB, FPROG_FF_GAMMA, "ff_gamma.vfp" },
 	{ GL_FRAGMENT_PROGRAM_ARB, FPROG_FF_GAMMA_CUBE, "ff_gamma_cube.vfp" },
 	{ GL_FRAGMENT_PROGRAM_ARB, FPROG_FF_GAMMA_GUI, "ff_gamma_gui.vfp" },
+
+	// the NV tiers' interaction programs, built in; loaded only on an NV tier
+	{ GL_VERTEX_PROGRAM_ARB, VPROG_NV_INTERACTION, "nv_interaction.vp" },
+	{ GL_FRAGMENT_PROGRAM_ARB, FPROG_NV_INTERACTION, "nv_interaction.fp" },
+	{ GL_FRAGMENT_PROGRAM_ARB, FPROG_NV_INTERACTION_AMBIENT, "nv_interactionAmbient.fp" },
 
 	// additional programs can be dynamically specified in materials
 };
@@ -601,6 +731,140 @@ const char* softpartFShader = "!!ARBfp1.0  \n"
 #endif // D3_INTEGRATE_SOFTPART_SHADERS
 
 /*
+   The NV tiers' interaction programs.
+
+   The vertex program is interaction.vfp's, reading its parameters from
+   program.buffer[0] in the arb2_nvrec.h layout instead of program.env,
+   and reusing the light vector it already has rather than subtracting
+   it a second time.
+
+   The fragment programs keep interaction.vfp's arithmetic and its
+   register names, and carry the two lines the load-time splices anchor
+   on - the specular table read (Toksvig) and the final colour product
+   (spectral mix) - so every splice and the injected gamma epilogue
+   apply to them unchanged.  Against interaction.vfp they differ in:
+
+   - the light vector of a non-ambient light is normalised by NRM, not
+     looked up in the 8-bit normalization cube map: one fetch fewer and
+     no quantization of the vector.  An ambient light keeps the
+     ambientNormalMap lookup, which is data rather than a normaliser;
+
+   - a fragment where the light projection times the falloff is zero in
+     every channel is killed.  Its contribution is exactly zero - every
+     term is multiplied by them, and the epilogue maps zero to zero -
+     so on an additive pass killing it writes the same framebuffer
+     while sparing the blend.  The kill comes after the last fetch: KIL
+     ends the fragment, and the quad's implicit derivatives must still
+     see it for the fetches before.
+
+   No OPTION line, so the epilogue's TEMP goes after the header, and no
+   word in them may contain the end token in capitals.
+*/
+static const char nvInteractionVP[] =
+	"!!NVvp4.0\n"
+	"OPTION ARB_position_invariant;\n"
+	"BUFFER4 parm[] = { program.buffer[0] };\n"
+	"TEMP R0, R1, R2;\n"
+	"PARAM defaultTexCoord = { 0, 0.5, 0, 1 };\n"
+	"SUB R0, parm[0], vertex.position;\n"
+	"DP3 result.texcoord[0].x, vertex.attrib[9], R0;\n"
+	"DP3 result.texcoord[0].y, vertex.attrib[10], R0;\n"
+	"DP3 result.texcoord[0].z, vertex.attrib[11], R0;\n"
+	"MOV result.texcoord[1], defaultTexCoord;\n"
+	"DP4 result.texcoord[1].x, vertex.attrib[8], parm[6];\n"
+	"DP4 result.texcoord[1].y, vertex.attrib[8], parm[7];\n"
+	"MOV result.texcoord[2], defaultTexCoord;\n"
+	"DP4 result.texcoord[2].x, vertex.position, parm[5];\n"
+	"DP4 result.texcoord[3].x, vertex.position, parm[2];\n"
+	"DP4 result.texcoord[3].y, vertex.position, parm[3];\n"
+	"DP4 result.texcoord[3].w, vertex.position, parm[4];\n"
+	"MOV result.texcoord[4], defaultTexCoord;\n"
+	"DP4 result.texcoord[4].x, vertex.attrib[8], parm[8];\n"
+	"DP4 result.texcoord[4].y, vertex.attrib[8], parm[9];\n"
+	"MOV result.texcoord[5], defaultTexCoord;\n"
+	"DP4 result.texcoord[5].x, vertex.attrib[8], parm[10];\n"
+	"DP4 result.texcoord[5].y, vertex.attrib[8], parm[11];\n"
+	"DP3 R1, R0, R0;\n"
+	"RSQ R1, R1.x;\n"
+	"MUL R0, R0, R1.x;\n"
+	"SUB R1, parm[1], vertex.position;\n"
+	"DP3 R2, R1, R1;\n"
+	"RSQ R2, R2.x;\n"
+	"MUL R1, R1, R2.x;\n"
+	"ADD R0, R0, R1;\n"
+	"DP3 result.texcoord[6].x, vertex.attrib[9], R0;\n"
+	"DP3 result.texcoord[6].y, vertex.attrib[10], R0;\n"
+	"DP3 result.texcoord[6].z, vertex.attrib[11], R0;\n"
+	"MAD result.color, vertex.color, parm[12], parm[13];\n"
+	"END\n";
+
+#define NV_INTERACTION_FP_HEAD \
+	"!!NVfp4.0\n" \
+	"BUFFER4 parm[] = { program.buffer[0] };\n" \
+	"TEMP light, color, R1, R2, localNormal, specular, proj, fall;\n" \
+	"PARAM subOne = { -1, -1, -1, -1 };\n" \
+	"PARAM scaleTwo = { 2, 2, 2, 2 };\n" \
+	"PARAM one = { 1, 1, 1, 1 };\n" \
+	"DP3 specular, fragment.texcoord[6], fragment.texcoord[6];\n" \
+	"RSQ specular, specular.x;\n" \
+	"MUL specular, specular.x, fragment.texcoord[6];\n"
+
+#define NV_INTERACTION_FP_TAIL \
+	"TEX localNormal, fragment.texcoord[1], texture[1], 2D;\n" \
+	"MOV localNormal.x, localNormal.a;\n" \
+	"MAD localNormal, localNormal, scaleTwo, subOne;\n" \
+	"DP3 light, light, localNormal;\n" \
+	"TXP proj, fragment.texcoord[3], texture[3], 2D;\n" \
+	"MUL light, light, proj;\n" \
+	"TXP fall, fragment.texcoord[2], texture[2], 2D;\n" \
+	"MUL light, light, fall;\n" \
+	"TEX R1, fragment.texcoord[4], texture[4], 2D;\n" \
+	"MUL color, R1, parm[14];\n" \
+	"DP3 specular, specular, localNormal;\n" \
+	"TEX R1, specular, texture[6], 2D;\n" \
+	"MUL R1, R1, parm[15];\n" \
+	"TEX R2, fragment.texcoord[5], texture[5], 2D;\n" \
+	"ADD R2, R2, R2;\n" \
+	"MAD color, R1, R2, color;\n" \
+	"MUL color, light, color;\n" \
+	"MUL result.color, color, fragment.color;\n" \
+	"MUL R1, proj, fall;\n" \
+	"DP4 R1.x, |R1|, one;\n" \
+	"SEQ R1.x, R1.x, 0.0;\n" \
+	"KIL -R1.x;\n" \
+	"END\n"
+
+static const char nvInteractionFP[] =
+	NV_INTERACTION_FP_HEAD
+	"NRM light.xyz, fragment.texcoord[0];\n"
+	NV_INTERACTION_FP_TAIL;
+
+static const char nvInteractionAmbientFP[] =
+	NV_INTERACTION_FP_HEAD
+	"TEX light, fragment.texcoord[0], texture[0], CUBE;\n"
+	"MAD light, light, scaleTwo, subOne;\n"
+	NV_INTERACTION_FP_TAIL;
+
+static ID_INLINE bool R_ARB2NVProgram( int ident ) {
+	return ident == VPROG_NV_INTERACTION || ident == FPROG_NV_INTERACTION
+		|| ident == FPROG_NV_INTERACTION_AMBIENT;
+}
+
+/* The first "END" that is a token of its own - not the head of ENDIF,
+ * ENDREP or ENDLOOP, which the NV grammars have. */
+static char *R_FindEndToken( char *text ) {
+	char *e = strstr( text, "END" );
+	while ( e != NULL ) {
+		const char c = e[3];
+		if ( !( c == '_' || ( c >= '0' && c <= '9' ) || ( c >= 'A' && c <= 'Z' ) || ( c >= 'a' && c <= 'z' ) ) ) {
+			return e;
+		}
+		e = strstr( e + 3, "END" );
+	}
+	return NULL;
+}
+
+/*
 =================
 R_LoadARBProgram
 =================
@@ -652,7 +916,29 @@ void R_LoadARBProgram( int progIndex ) {
 	int		err;
 	char	*buffer;
 	char	*start = NULL, *end;
+	const char *nvSrc;
+	bool	nvProg;
+	bool	interactionFP;
 
+	progs[progIndex].loaded = false;
+	nvProg = R_ARB2NVProgram( progs[progIndex].ident );
+	interactionFP = progs[progIndex].ident == FPROG_INTERACTION
+		|| progs[progIndex].ident == FPROG_NV_INTERACTION
+		|| progs[progIndex].ident == FPROG_NV_INTERACTION_AMBIENT;
+
+	if ( nvProg ) {
+		// the ARB tier never binds these, and its driver may not parse them
+		if ( arb2Tier < ARB2_TIER_NV4 ) {
+			return;
+		}
+		nvSrc = ( progs[progIndex].ident == VPROG_NV_INTERACTION ) ? nvInteractionVP
+			: ( progs[progIndex].ident == FPROG_NV_INTERACTION ) ? nvInteractionFP
+			: nvInteractionAmbientFP;
+		common->Printf( "<internal> %s", progs[progIndex].name );
+		buffer = (char *)_alloca( strlen( nvSrc ) + 1 );
+		strcpy( buffer, nvSrc );
+	}
+	else
 #if D3_INTEGRATE_SOFTPART_SHADERS
 	if ( progs[progIndex].ident == VPROG_SOFT_PARTICLE || progs[progIndex].ident == FPROG_SOFT_PARTICLE
 	     || progs[progIndex].ident == FPROG_FF_GAMMA || progs[progIndex].ident == FPROG_FF_GAMMA_CUBE
@@ -780,14 +1066,14 @@ void R_LoadARBProgram( int progIndex ) {
 			common->Printf( ": GL_VERTEX_PROGRAM_ARB not available\n" );
 			return;
 		}
-		start = strstr( buffer, "!!ARBvp" );
+		start = strstr( buffer, nvProg ? "!!NVvp" : "!!ARBvp" );
 	}
 	if ( progs[progIndex].target == GL_FRAGMENT_PROGRAM_ARB ) {
 		if ( !glConfig.ARBFragmentProgramAvailable ) {
 			common->Printf( ": GL_FRAGMENT_PROGRAM_ARB not available\n" );
 			return;
 		}
-		start = strstr( buffer, "!!ARBfp" );
+		start = strstr( buffer, nvProg ? "!!NVfp" : "!!ARBfp" );
 	}
 	if ( !start ) {
 		common->Printf( ": !!ARB not found\n" );
@@ -817,7 +1103,7 @@ void R_LoadARBProgram( int progIndex ) {
 	   26 ALU against the stock 16, and 9 temporaries against 6, both
 	   inside native limits on the drivers this was checked on.
 	*/
-	if ( progs[progIndex].ident == FPROG_INTERACTION && r_spectralMix.GetBool() ) {
+	if ( interactionFP && r_spectralMix.GetBool() ) {
 		const char *mulLine = strstr( start, "MUL result.color, color, fragment.color;" );
 		if ( mulLine ) {
 			idStr head( start );
@@ -862,7 +1148,7 @@ void R_LoadARBProgram( int progIndex ) {
 	   the same effective exponent the GLES backend hardcodes to
 	   match the D3 look - an approximation, and said so.  Only R2 is
 	   used, dead at this point; no temporaries are added. */
-	if ( progs[progIndex].ident == FPROG_INTERACTION && r_specularAA.GetBool() ) {
+	if ( interactionFP && r_specularAA.GetBool() ) {
 		extern int r_specularFalloffShape;
 		const char *tabLine = strstr( start, "TEX\tR1, specular, texture[6], 2D;" );
 		if ( !tabLine )
@@ -893,7 +1179,7 @@ void R_LoadARBProgram( int progIndex ) {
 	}
 
 
-	end = strstr( start, "END" );
+	end = nvProg ? R_FindEndToken( start ) : strstr( start, "END" );
 
 	if ( !end ) {
 		common->Printf( ": END not found\n" );
@@ -1197,6 +1483,7 @@ void R_LoadARBProgram( int progIndex ) {
 		return;
 	}
 
+	progs[progIndex].loaded = true;
 	common->Printf( "\n" );
 }
 
@@ -1249,11 +1536,71 @@ R_ReloadARBPrograms_f
 */
 void R_ReloadARBPrograms_f( const idCmdArgs &args ) {
 	int		i;
+	int		nvLoaded;
 
 	common->Printf( "----- R_ReloadARBPrograms -----\n" );
+	nvLoaded = 0;
 	for ( i = 0 ; progs[i].name[0] ; i++ ) {
 		R_LoadARBProgram( i );
+		if ( progs[i].loaded && R_ARB2NVProgram( progs[i].ident ) ) {
+			nvLoaded++;
+		}
 	}
+
+	/* The NV interaction path needs all three of its programs; a driver
+	   that refuses any of them gets the ARB programs for interactions,
+	   and the rest of the tier is unaffected. */
+	rb_nvInteraction = arb2Tier >= ARB2_TIER_NV4 && rb_nvParmBuffer != 0 && nvLoaded == 3;
+	if ( arb2Tier >= ARB2_TIER_NV4 && !rb_nvInteraction ) {
+		common->Printf( "ARB2: NV interaction programs not accepted, interactions use the ARB programs\n" );
+	}
+}
+
+/*
+==================
+R_ARB2_SelectTier
+
+The highest tier the context offers, capped by arb2TierRequest.  Called with
+the context current, before the programs load; the parameter buffer the
+NV tiers read is made here, so a context that refuses it stays on ARB.
+==================
+*/
+static void R_ARB2_SelectTier( void ) {
+	static const char * const tierNames[] = {
+		"ARB assembly", "NV_gpu_program4", "NV_gpu_program5"
+	};
+	int		avail;
+	int		want;
+	int		tier;
+
+	avail = ARB2_TIER_ARB;
+	if ( glConfig.ARBVertexBufferObjectAvailable && glCaps.nvGpuProgram4 ) {
+		avail = glCaps.nvGpuProgram5 ? ARB2_TIER_NV5 : ARB2_TIER_NV4;
+	}
+	want = arb2TierRequest;
+	tier = ( want < 0 || want > avail ) ? avail : want;
+	if ( want > avail ) {
+		common->Printf( "ARB2: %s asked for, which this context lacks\n", tierNames[want] );
+	}
+
+	if ( tier >= ARB2_TIER_NV4 ) {
+		while ( qglGetError() != GL_NO_ERROR ) {
+		}
+		qglGenBuffersARB( 1, &rb_nvParmBuffer );
+		qglBindBufferARB( GL_ARRAY_BUFFER_ARB, rb_nvParmBuffer );
+		qglBufferDataARB( GL_ARRAY_BUFFER_ARB, sizeof( rb_nvRec.v ), NULL, GL_DYNAMIC_DRAW_ARB );
+		qglBindBufferARB( GL_ARRAY_BUFFER_ARB, 0 );
+		vertexCache.InvalidateBindings();
+		if ( qglGetError() != GL_NO_ERROR || rb_nvParmBuffer == 0 ) {
+			common->Printf( "ARB2: no parameter buffer for %s\n", tierNames[tier] );
+			rb_nvParmBuffer = 0;
+			tier = ARB2_TIER_ARB;
+		}
+		ARB2_NVREC_RESET( &rb_nvRec );
+	}
+
+	arb2Tier = tier;
+	common->Printf( "ARB2 program tier: %s\n", tierNames[tier] );
 }
 
 /*
@@ -1264,6 +1611,11 @@ R_ARB2_Init
 */
 void R_ARB2_Init( void ) {
 	glConfig.allowARB2Path = false;
+	arb2Tier = ARB2_TIER_ARB;
+
+	// a new context: whatever buffer the old one had went with it
+	rb_nvParmBuffer = 0;
+	rb_nvInteraction = false;
 
 	common->Printf( "ARB2 renderer: " );
 
@@ -1275,4 +1627,5 @@ void R_ARB2_Init( void ) {
 	common->Printf( "Available.\n" );
 
 	glConfig.allowARB2Path = true;
+	R_ARB2_SelectTier();
 }

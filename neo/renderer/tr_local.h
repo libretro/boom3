@@ -1374,6 +1374,18 @@ DRAW_*
 ============================================================
 */
 
+/* The ARB2 program tiers: the stock ARB assembly every vendor runs, and
+   the NVIDIA assembly tiers above it, chosen once per context by
+   R_ARB2_Init from what the driver offers and arb2TierRequest allows. */
+typedef enum {
+	ARB2_TIER_ARB,		// !!ARBvp1.0 / !!ARBfp1.0, any vendor
+	ARB2_TIER_NV4,		// NV_gpu_program4 + NV_parameter_buffer_object
+	ARB2_TIER_NV5		// NV_gpu_program5
+} arb2Tier_t;
+
+extern int arb2Tier;		// the arb2Tier_t this context runs
+extern int arb2TierRequest;	// -1 the highest available, else the highest arb2Tier_t allowed; read when a context comes up
+
 void	R_ARB2_Init( void );
 void	RB_ARB2_DrawInteractions( void );
 void	R_ReloadARBPrograms_f( const idCmdArgs &args );
@@ -1401,6 +1413,9 @@ typedef enum {
 	FPROG_FF_GAMMA,        // fixed-function old-style stage, routed through a program for gamma/brightness coverage
 	FPROG_FF_GAMMA_CUBE,   // same, cube-map sampling
 	FPROG_FF_GAMMA_GUI,    // same, with the ACES 2.0 inverse applied to the texel
+	VPROG_NV_INTERACTION,          // NV tiers: interaction parameters from program.buffer[0]
+	FPROG_NV_INTERACTION,          // NV tiers: light vector by NRM instead of the cube map
+	FPROG_NV_INTERACTION_AMBIENT,  // NV tiers: ambient lights, ambientNormalMap lookup kept
 	//
 	PROG_USER
 } program_t;
