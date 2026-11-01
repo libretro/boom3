@@ -228,13 +228,10 @@ VR mode requires pak399.pk4 (https://github.com/Team-Beef-Studios/Doom3Quest).
 
 They can be found here: https://github.com/libretro/boom3/tree/master/tools/vr_paks/compiled
 (or built from `vr/` with `tools/vr_paks/make_vr_paks.sh`) and must be
-installed beside the game's own directories:
+installed into retroarch's system/boom3 directory:
 
 ```
-e.g. base/
-     base_vr/pak399.pk4
-     d3xp/
-     d3xp_vr/pak399roe.pk4
+i.e. system/boom3/pak399.pk4
 ```
 
 ## Testing

@@ -3150,6 +3150,15 @@ bool Sys_GetPath(sysPath_t type, idStr &path) {
 			return false;
 		path = g_game_dir_name;
 		return true;
+	case PATH_SYSTEM:
+	{
+		const char *system_dir = NULL;
+		if ( !environ_cb( RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &system_dir ) ||
+			 !system_dir || !system_dir[0] )
+			return false;
+		path = system_dir;
+		return true;
+	}
 	}
 
 	return false;
@@ -4311,13 +4320,19 @@ bool retro_load_game(const struct retro_game_info *info)
 	BUILD_DATADIR = g_rom_dir;
 
 #if defined(BOOM3_VR)
-	/* VR's hands come from the pack beside the game data (fs_vr) */
+	/* VR's hands come from the pack in RetroArch's system/boom3 directory. */
 	if (vr_user_enable) {
 		char vr_pak[1024];
-		fill_pathname_join(vr_pak, g_rom_dir, "base_vr", sizeof(vr_pak));
-		fill_pathname_join(vr_pak, vr_pak, "pak399.pk4", sizeof(vr_pak));
+		const char *system_dir = NULL;
+		if (environ_cb(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &system_dir) &&
+				system_dir && system_dir[0]) {
+			fill_pathname_join(vr_pak, system_dir, "boom3", sizeof(vr_pak));
+			fill_pathname_join(vr_pak, vr_pak, "pak399.pk4", sizeof(vr_pak));
+		} else {
+			snprintf(vr_pak, sizeof(vr_pak), "%s", "system/boom3/pak399.pk4");
+		}
 		if (!path_is_valid(vr_pak)) {
-			const char *text = "Additional required models for hands missing, download from https://github.com/libretro/boom3";
+			const char *text = "Additional required hand models missing; place pak399.pk4 in RetroArch's system/boom3 folder. Download from https://github.com/libretro/boom3";
 			struct retro_message_ext message = {
 				text,
 				10000,

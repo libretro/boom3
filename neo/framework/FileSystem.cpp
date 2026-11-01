@@ -2446,6 +2446,14 @@ void idFileSystemLocal::Startup( void ) {
 		const idStr writeFolder = gameFolder;
 		SetupGameDirectories( "base_vr" );
 		gameFolder = writeFolder;
+
+		// RetroArch keeps the additional hand-model pack in system/boom3.
+		idStr systemPath;
+		if ( Sys_GetPath( PATH_SYSTEM, systemPath ) ) {
+			const idStr writeFolder = gameFolder;
+			AddGameDirectory( systemPath, "boom3" );
+			gameFolder = writeFolder;
+		}
 	}
 #endif
 

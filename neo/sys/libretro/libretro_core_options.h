@@ -1190,7 +1190,8 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "reports a running headset and returns to the flat screen when it goes. "
       "Needs Color Format set to 24-bit (Standard). Has no effect on platforms "
       "without VR support. Also loads the VR weapons and arms pack (pak399.pk4 "
-      "in base_vr, pak399roe.pk4 in d3xp_vr, beside the game data) when the "
+      "in RetroArch's system/boom3 folder, pak399roe.pk4 in d3xp_vr beside the "
+      "game data) when the "
       "game is loaded.",
       NULL,
       NULL,

@@ -82,6 +82,7 @@ enum sysPath_t {
 #if defined(__AROS__)
 	, PATH_LAUNCH
 #endif
+	, PATH_SYSTEM
 };
 
 template<class type> class idList;		// for Sys_ListFiles
