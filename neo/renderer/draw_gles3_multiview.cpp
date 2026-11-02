@@ -3755,11 +3755,14 @@ int RB_GLSL_DrawShaderPasses(drawSurf_t** drawSurfs, int numDrawSurfs) {
 
 		// only dump if in a 3d view
 		if ( backEnd.viewDef->viewEntitys ) {
+			// only the part the post-process surfaces can read, where that is known
+			int rect[4];
+			const bool part = RB_CurrentRenderCopyRect(drawSurfs, numDrawSurfs, rect);
 			globalImages->currentRenderImage->CopyFramebuffer(backEnd.viewDef->viewport.x1,
 			                                                  backEnd.viewDef->viewport.y1,
 			                                                  backEnd.viewDef->viewport.x2 - backEnd.viewDef->viewport.x1 + 1,
 			                                                  backEnd.viewDef->viewport.y2 - backEnd.viewDef->viewport.y1 + 1,
-			                                                  true);
+			                                                  true, part ? rect : NULL);
 		}
 
 		backEnd.currentRenderCopied = true;

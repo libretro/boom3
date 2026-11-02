@@ -343,7 +343,7 @@ bool R_VK_GenerateImageLevels( idImage *image, int format, int width, int height
 bool R_VK_GenerateRampImage16( idImage *image, const unsigned short *pic, int width, int height, bool luminanceAlpha );
 void R_VK_UploadScratch( idImage *image, const byte *data, int cols, int rows );
 void R_VK_PurgeImage( idImage *image );
-void R_VK_CopyFramebuffer( idImage *image, int x, int y, int width, int height );
+void R_VK_CopyFramebuffer( idImage *image, int x, int y, int width, int height, const int *rect );
 void R_VK_CopyDepthbuffer( idImage *image, int x, int y, int width, int height );
 void R_VK_UploadPrecompressed( idImage *image, const ddsFileHeader_t *header, const byte *data );
 #endif
@@ -2754,13 +2754,16 @@ static GLenum R_CurrentRenderCopyFormat( GLenum fallbackInternal, GLenum *format
 CopyFramebuffer
 ====================
 */
-void idImage::CopyFramebuffer( int x, int y, int imageWidth, int imageHeight, bool useOversizedBuffer ) {
+void idImage::CopyFramebuffer( int x, int y, int imageWidth, int imageHeight, bool useOversizedBuffer,
+		const int *rect ) {
 #ifdef BOOM3_VULKAN_RENDERER
 	if ( R_VulkanRenderer() ) {
-		R_VK_CopyFramebuffer( this, x, y, imageWidth, imageHeight );
+		R_VK_CopyFramebuffer( this, x, y, imageWidth, imageHeight, rect );
 		return;
 	}
 #endif
+	const int sceneWidth = imageWidth;
+	const int sceneHeight = imageHeight;
 	Bind();
 
 	/* the game's cvar, found once it exists rather than looked up by name
@@ -2881,6 +2884,13 @@ void idImage::CopyFramebuffer( int x, int y, int imageWidth, int imageHeight, bo
 			copyInternal = R_CurrentRenderCopyFormat( GL_RGB8, &copyFormat, &copyType );
 #endif
 			qglCopyTexImage2D( GL_TEXTURE_2D, 0, copyInternal, x, y, imageWidth, uploadHeight, 0 );
+		} else if ( rect && layers == 1 && imageWidth == sceneWidth && imageHeight == sceneHeight
+				&& imageWidth == potWidth && imageHeight == potHeight ) {
+			// the part that will be read, where it was read from; the rest
+			// keeps what it held
+			if ( rect[2] > 0 && rect[3] > 0 ) {
+				qglCopyTexSubImage2D( GL_TEXTURE_2D, 0, rect[0], rect[1], x + rect[0], y + rect[1], rect[2], rect[3] );
+			}
 		} else {
 			// otherwise, just subimage upload it so that drivers can tell we are going to be changing
 			// it and don't try and do a texture compression or some other silliness

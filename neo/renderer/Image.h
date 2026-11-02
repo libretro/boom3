@@ -201,7 +201,11 @@ public:
 						textureFilter_t filter, bool allowDownSize,
 						textureDepth_t depth );
 
-	void		CopyFramebuffer( int x, int y, int width, int height, bool useOversizedBuffer );
+	// rect, x y width height from the copy's corner, copies only that part
+	// into an image that already holds the rest (all of it where it does
+	// not); a width of 0 copies nothing
+	void		CopyFramebuffer( int x, int y, int width, int height, bool useOversizedBuffer,
+					const int *rect = NULL );
 
 	// copyPixels false only sizes the image as a copy would, for a view
 	// with nothing to read it

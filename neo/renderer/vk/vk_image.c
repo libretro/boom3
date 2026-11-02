@@ -677,13 +677,17 @@ void vkb_target_view_info(const vkb_target_t *t, VkImageViewCreateInfo *info)
 
 /* A rectangle of the current target into an image the stages sample,
  * outside the render pass. */
-static void vkb_copy_target(unsigned image, int depth, int x, int y, int w, int h)
+/* The rectangle x, y, w, h of the target (from its bottom left, as the
+ * engine counts) into the image's bottom left; part, from that corner,
+ * narrows it to what will be read, where the image already holds the
+ * rest.  A part of no width copies nothing. */
+static void vkb_copy_target(unsigned image, int depth, int x, int y, int w, int h, const int *part)
 {
    vkb_image_t *im;
    VkImageCopy region;
    VkImage src;
    VkImageAspectFlags aspect = depth ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
-   int th;
+   int th, px = 0, py = 0;
    if (image < VKB_IMAGE_FIRST || image >= VKB_MAX_IMAGES || !vkb.images[image].used || !vkb.frameOpen)
       return;
    im = &vkb.images[image];
@@ -692,6 +696,19 @@ static void vkb_copy_target(unsigned image, int depth, int x, int y, int w, int 
    if (h > (int)im->height) h = (int)im->height;
    if (w <= 0 || h <= 0)
       return;
+   /* an image that holds nothing yet takes all of it */
+   if (part && im->layoutReady && part[0] >= 0 && part[1] >= 0
+         && part[0] + part[2] <= w && part[1] + part[3] <= h)
+   {
+      if (part[2] <= 0 || part[3] <= 0)
+         return;
+      px = part[0];
+      py = part[1];
+      x += px;
+      y += py;
+      w  = part[2];
+      h  = part[3];
+   }
    vkb_leave_render_pass();
    src = depth ? vkb.target->depth : vkb.target->color;
    /* the target to transfer source: colour was left readable by the
@@ -728,8 +745,8 @@ static void vkb_copy_target(unsigned image, int depth, int x, int y, int w, int 
    /* the engine's rectangle is from the bottom; the image's rows from the top */
    region.srcOffset.x      = x;
    region.srcOffset.y      = th - y - h;
-   region.dstOffset.x      = 0;
-   region.dstOffset.y      = (int)im->height - h;
+   region.dstOffset.x      = px;
+   region.dstOffset.y      = (int)im->height - py - h;
    region.extent.width     = (uint32_t)w;
    region.extent.height    = (uint32_t)h;
    region.extent.depth     = 1;
@@ -766,5 +783,15 @@ static void vkb_copy_target(unsigned image, int depth, int x, int y, int w, int 
    vkb_enter_render_pass();
 }
 
-void vkb_copy_color(unsigned image, int x, int y, int w, int h) { vkb_copy_target(image, 0, x, y, w, h); }
-void vkb_copy_depth(unsigned image, int x, int y, int w, int h) { vkb_copy_target(image, 1, x, y, w, h); }
+void vkb_copy_color(unsigned image, int x, int y, int w, int h) { vkb_copy_target(image, 0, x, y, w, h, NULL); }
+void vkb_copy_depth(unsigned image, int x, int y, int w, int h) { vkb_copy_target(image, 1, x, y, w, h, NULL); }
+
+void vkb_copy_color_part(unsigned image, int x, int y, int w, int h, int px, int py, int pw, int ph)
+{
+   int part[4];
+   part[0] = px;
+   part[1] = py;
+   part[2] = pw;
+   part[3] = ph;
+   vkb_copy_target(image, 0, x, y, w, h, part);
+}

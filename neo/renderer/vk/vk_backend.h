@@ -351,6 +351,10 @@ unsigned vkb_shadow_find(const void *key);
 /* the frame's scene copies for the stages that read them */
 void vkb_copy_color(unsigned image, int x, int y, int w, int h);
 void vkb_copy_depth(unsigned image, int x, int y, int w, int h);
+/* vkb_copy_color of the part px, py, pw, ph of that rectangle (from its
+ * corner) alone, into an image that holds the rest; all of it into one
+ * that holds nothing yet */
+void vkb_copy_color_part(unsigned image, int x, int y, int w, int h, int px, int py, int pw, int ph);
 
 /* the composite: the scene image into the frame image with the given
  * program, its parms, and a LUT image when the program takes one */

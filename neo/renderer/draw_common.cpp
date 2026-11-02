@@ -369,6 +369,171 @@ bool RB_DepthSoftOnly( void ) {
 
 /*
 =====================
+RB_CurrentRenderCopyRect
+
+The part of the view the post-process surfaces can read from _currentRender,
+so the copy before them takes only that.  The heat haze programs read their
+own pixel moved by a normal map's -1..1 times the deform their vertex
+program clamps to 0.02 of the view times the stage's magnitude (local[1]);
+the colour process reads its own pixel.  A surface draws inside its scissor
+rectangle, so its reach is that rectangle grown by the deform, plus two
+pixels for the bilinear taps.
+
+rect is x, y, width, height from the view's corner; a width of 0 means
+nothing reads the copy.  False where the whole view is copied: a surface
+whose reads are not known (another program, a fixed-function stage, a
+program ARB2 loaded from text that is not the game's own), anything before
+the post-process surfaces reading _currentRender, a view off the target's
+corner, no scissoring, or a projection whose deform the clamp leaves
+unbounded.
+=====================
+*/
+static bool RB_StageReadsCurrentRender( const shaderStage_t *stage ) {
+	int j;
+	if ( stage->texture.image == globalImages->currentRenderImage ) {
+		return true;
+	}
+	if ( stage->newStage ) {
+		for ( j = 0; j < stage->newStage->numFragmentProgramImages; j++ ) {
+			if ( stage->newStage->fragmentProgramImages[j] == globalImages->currentRenderImage ) {
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+static bool RB_MaterialReadsCurrentRender( const idMaterial *material ) {
+	int i;
+	if ( material == NULL ) {
+		return false;
+	}
+	for ( i = 0; i < material->GetNumStages(); i++ ) {
+		if ( RB_StageReadsCurrentRender( material->GetStage( i ) ) ) {
+			return true;
+		}
+	}
+	return false;
+}
+
+bool RB_CurrentRenderCopyRect( drawSurf_t **surfs, int numSurfs, int rect[4] ) {
+	const viewDef_t *view = backEnd.viewDef;
+	const float *proj = view->projectionMatrix;
+	const int vw = view->viewport.x2 - view->viewport.x1 + 1;
+	const int vh = view->viewport.y2 - view->viewport.y1 + 1;
+	const viewLight_t *vLight;
+	int x1 = vw, y1 = vh, x2 = -1, y2 = -1;
+	int i, j;
+
+	if ( view->viewport.x1 != 0 || view->viewport.y1 != 0 || vw <= 0 || vh <= 0
+		|| !r_useScissor.GetBool() || proj[8] != 0.0f || proj[12] != 0.0f ) {
+		return false;
+	}
+	// what draws before the copy reads the last one
+	for ( i = 0; i < view->numDrawSurfs; i++ ) {
+		const idMaterial *m = view->drawSurfs[i]->material;
+		if ( m->GetSort() < SS_POST_PROCESS && RB_MaterialReadsCurrentRender( m ) ) {
+			return false;
+		}
+	}
+	for ( vLight = view->viewLights; vLight; vLight = vLight->next ) {
+		if ( RB_MaterialReadsCurrentRender( vLight->lightShader ) ) {
+			return false;
+		}
+	}
+	for ( i = 0; i < numSurfs; i++ ) {
+		const drawSurf_t *surf = surfs[i];
+		const idMaterial *material = surf->material;
+		const float *regs = surf->shaderRegisters;
+		int mx = -1, my = -1;
+		for ( j = 0; j < material->GetNumStages(); j++ ) {
+			const shaderStage_t *stage = material->GetStage( j );
+			const newShaderStage_t *ns = stage->newStage;
+			float dx, dy;
+			if ( !RB_StageReadsCurrentRender( stage ) ) {
+				continue;
+			}
+			if ( ns == NULL ) {
+				return false;
+			}
+#ifdef BOOM3_ARB2_RENDERER
+			if ( !R_GLSLRenderer() && ( !R_ARBProgramIsStock( ns->vertexProgram )
+				|| !R_ARBProgramIsStock( ns->fragmentProgram ) ) ) {
+				return false;
+			}
+#endif
+			switch ( ns->glslProgram ) {
+			case GLSL_STAGE_COLOR_PROCESS:
+				dx = dy = 0.0f;
+				break;
+			case GLSL_STAGE_HEAT_HAZE:
+			case GLSL_STAGE_HEAT_HAZE_MASK:
+			case GLSL_STAGE_HEAT_HAZE_MASK_VERTEX:
+				if ( ns->numVertexParms < 2 ) {
+					return false;
+				}
+				dx = 0.02f * idMath::Fabs( regs[ns->vertexParms[1][0]] ) * vw;
+				dy = 0.02f * idMath::Fabs( regs[ns->vertexParms[1][1]] ) * vh;
+				break;
+			default:
+				return false;
+			}
+			// not a number, or past the view: the whole copy
+			if ( !( dx <= (float)vw ) || !( dy <= (float)vh ) ) {
+				return false;
+			}
+			if ( (int)dx + 3 > mx ) {
+				mx = (int)dx + 3;
+			}
+			if ( (int)dy + 3 > my ) {
+				my = (int)dy + 3;
+			}
+		}
+		if ( mx < 0 ) {
+			continue;
+		}
+		// an empty scissor the Vulkan renderer widens to the view's
+		if ( surf->scissorRect.x2 < surf->scissorRect.x1 || surf->scissorRect.y2 < surf->scissorRect.y1 ) {
+			return false;
+		}
+		if ( surf->scissorRect.x1 - mx < x1 ) {
+			x1 = surf->scissorRect.x1 - mx;
+		}
+		if ( surf->scissorRect.y1 - my < y1 ) {
+			y1 = surf->scissorRect.y1 - my;
+		}
+		if ( surf->scissorRect.x2 + mx > x2 ) {
+			x2 = surf->scissorRect.x2 + mx;
+		}
+		if ( surf->scissorRect.y2 + my > y2 ) {
+			y2 = surf->scissorRect.y2 + my;
+		}
+	}
+	if ( x2 < x1 || y2 < y1 ) {
+		rect[0] = rect[1] = rect[2] = rect[3] = 0;
+		return true;
+	}
+	if ( x1 < 0 ) {
+		x1 = 0;
+	}
+	if ( y1 < 0 ) {
+		y1 = 0;
+	}
+	if ( x2 > vw - 1 ) {
+		x2 = vw - 1;
+	}
+	if ( y2 > vh - 1 ) {
+		y2 = vh - 1;
+	}
+	rect[0] = x1;
+	rect[1] = y1;
+	rect[2] = x2 - x1 + 1;
+	rect[3] = y2 - y1 + 1;
+	return true;
+}
+
+/*
+=====================
 RB_SoftDepthBounds / RB_SoftDepthBoundsEnd
 
 The GL renderers' soft particles behind the scene, rejected before they
@@ -1772,9 +1937,12 @@ int RB_STD_DrawShaderPasses( drawSurf_t **drawSurfs, int numDrawSurfs ) {
 
 		// only dump if in a 3d view
 		if ( backEnd.viewDef->viewEntitys && tr.backEndRenderer == BE_ARB2 ) {
+			// only the part the post-process surfaces can read, where that is known
+			int rect[4];
+			const bool part = RB_CurrentRenderCopyRect( drawSurfs, numDrawSurfs, rect );
 			globalImages->currentRenderImage->CopyFramebuffer( backEnd.viewDef->viewport.x1,
 				backEnd.viewDef->viewport.y1,  backEnd.viewDef->viewport.x2 -  backEnd.viewDef->viewport.x1 + 1,
-				backEnd.viewDef->viewport.y2 -  backEnd.viewDef->viewport.y1 + 1, true );
+				backEnd.viewDef->viewport.y2 -  backEnd.viewDef->viewport.y1 + 1, true, part ? rect : NULL );
 		}
 		backEnd.currentRenderCopied = true;
 	}

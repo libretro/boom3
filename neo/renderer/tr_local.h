@@ -1332,6 +1332,7 @@ bool RB_MaterialReadsCurrentDepth( const idMaterial *material );
 bool RB_ViewReadsCurrentDepth( void );
 bool RB_DepthCaptureWanted( void );
 bool RB_DepthSoftOnly( void );
+bool RB_CurrentRenderCopyRect( drawSurf_t **surfs, int numSurfs, int rect[4] );
 bool RB_SoftDepthBounds( const drawSurf_t *surf, int drawStateBits );
 void RB_SoftDepthBoundsEnd( void );
 bool RB_DepthCaptureInPlace( void );
@@ -1410,6 +1411,7 @@ void	R_ARB2_Init( void );
 void	RB_ARB2_DrawInteractions( void );
 void	R_ReloadARBPrograms_f( const idCmdArgs &args );
 int		R_FindARBProgram( GLenum target, const char *program );
+bool	R_ARBProgramIsStock( int ident );
 int		R_GLSLStageProgram( const char *program );
 
 typedef enum {

@@ -33,6 +33,8 @@ If you have questions concerning this license or the applicable additional terms
 #include "renderer/spectral_mix.h"
 #include "renderer/arb2_nvrec.h"
 
+#include <encodings/crc32.h>
+
 #ifndef GL_VERTEX_PROGRAM_PARAMETER_BUFFER_NV
 #define GL_VERTEX_PROGRAM_PARAMETER_BUFFER_NV   0x8DA2
 #endif
@@ -2007,6 +2009,7 @@ typedef struct {
 	GLuint			ident;
 	char			name[64];
 	bool			loaded;		// the driver accepted the program at its last load
+	bool			stock;		// the game's own text of a program whose reach is known
 } progDef_t;
 
 static	const int	MAX_GLPROGS = 200;
@@ -2685,6 +2688,54 @@ extern bool hdr_luma_clamp;
 bool arbProgramsUnityGamma = true;
 bool arbProgramsLumaClamp = false;
 
+/*
+=================
+R_ARBProgramTextIsStock / R_ARBProgramIsStock
+
+Whether a program file is the game's own text of one of the post-process
+programs whose screen reach is known (the heat haze family and the colour
+process): CRC-32 of the file with its carriage returns dropped.  Anything
+else - a mod's edit included - reads _currentRender wherever it likes.
+=================
+*/
+static bool R_ARBProgramTextIsStock( const char *text ) {
+	static const uint32_t stock[4] = {
+		0x640e9fedu,	// heatHaze.vfp
+		0x40440f51u,	// heatHazeWithMask.vfp
+		0x3ddd175eu,	// heatHazeWithMaskAndVertex.vfp
+		0x2026ebd3u		// colorProcess.vfp
+	};
+	const char *run = text;
+	const char *p;
+	uint32_t crc = 0;
+	int i;
+	for ( p = text; ; p++ ) {
+		if ( *p == '\r' || *p == '\0' ) {
+			crc = encoding_crc32( crc, (const uint8_t *)run, (size_t)( p - run ) );
+			if ( *p == '\0' ) {
+				break;
+			}
+			run = p + 1;
+		}
+	}
+	for ( i = 0; i < 4; i++ ) {
+		if ( crc == stock[i] ) {
+			return true;
+		}
+	}
+	return false;
+}
+
+bool R_ARBProgramIsStock( int ident ) {
+	int i;
+	for ( i = 0; i < MAX_GLPROGS && progs[i].name[0]; i++ ) {
+		if ( (int)progs[i].ident == ident ) {
+			return progs[i].stock;
+		}
+	}
+	return false;
+}
+
 void R_LoadARBProgram( int progIndex ) {
 	int		ofs;
 	int		err;
@@ -2695,6 +2746,7 @@ void R_LoadARBProgram( int progIndex ) {
 	bool	interactionFP;
 
 	progs[progIndex].loaded = false;
+	progs[progIndex].stock = false;
 	nvProg = R_ARB2NVProgram( progs[progIndex].ident ) || R_ARB2NV5Program( progs[progIndex].ident )
 		|| R_ARB2ShadowProgram( progs[progIndex].ident );
 	interactionFP = progs[progIndex].ident == FPROG_INTERACTION
@@ -2827,6 +2879,8 @@ void R_LoadARBProgram( int progIndex ) {
 			common->Printf( ": File not found\n" );
 			return;
 		}
+
+		progs[progIndex].stock = R_ARBProgramTextIsStock( fileBuffer );
 
 		// copy to stack memory and free
 		buffer = (char *)_alloca( strlen( fileBuffer ) + 1 );

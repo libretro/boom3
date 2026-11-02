@@ -432,12 +432,19 @@ static void RB_VK_EnsureTarget( idImage *image, int width, int height, enum vkb_
 
 enum vkb_format RB_VK_SceneFormat( void );
 
-void R_VK_CopyFramebuffer( idImage *image, int x, int y, int width, int height ) {
+void R_VK_CopyFramebuffer( idImage *image, int x, int y, int width, int height, const int *rect ) {
 	if ( !vkb_ready() ) {
 		return;
 	}
 	RB_VK_EnsureTarget( image, width, height, RB_VK_SceneFormat() );
-	if ( image->texnum != idImage::TEXTURE_NOT_LOADED ) {
+	if ( image->texnum == idImage::TEXTURE_NOT_LOADED ) {
+		return;
+	}
+	if ( rect ) {
+		// the part that will be read; the backend copies all of an image
+		// that holds nothing yet
+		vkb_copy_color_part( image->texnum, x, y, width, height, rect[0], rect[1], rect[2], rect[3] );
+	} else {
 		vkb_copy_color( image->texnum, x, y, width, height );
 	}
 }
@@ -1698,9 +1705,11 @@ static int RB_VK_DrawShaderPasses( drawSurf_t **drawSurfs, int numDrawSurfs ) {
 		if ( r_skipPostProcess.GetBool() ) {
 			return 0;
 		}
+		int rect[4];
+		const bool part = RB_CurrentRenderCopyRect( drawSurfs, numDrawSurfs, rect );
 		R_VK_CopyFramebuffer( globalImages->currentRenderImage, backEnd.viewDef->viewport.x1,
 			backEnd.viewDef->viewport.y1, backEnd.viewDef->viewport.x2 - backEnd.viewDef->viewport.x1 + 1,
-			backEnd.viewDef->viewport.y2 - backEnd.viewDef->viewport.y1 + 1 );
+			backEnd.viewDef->viewport.y2 - backEnd.viewDef->viewport.y1 + 1, part ? rect : NULL );
 		backEnd.currentRenderCopied = true;
 	}
 	backEnd.currentSpace = NULL;
@@ -2124,7 +2133,7 @@ static void RB_VK_RunCommands( void *job ) {
 			const copyRenderCommand_t *cmd = (const copyRenderCommand_t *)cmds;
 			if ( cmd->image && !r_skipCopyTexture.GetBool() ) {
 				RB_VK_BeginFrame();
-				R_VK_CopyFramebuffer( cmd->image, cmd->x, cmd->y, cmd->imageWidth, cmd->imageHeight );
+				R_VK_CopyFramebuffer( cmd->image, cmd->x, cmd->y, cmd->imageWidth, cmd->imageHeight, NULL );
 			}
 			break;
 		}
