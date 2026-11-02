@@ -28,6 +28,7 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "sys/platform.h"
 #include "renderer/tr_local.h"
+#include "renderer/VertexCache.h"
 
 #include "renderer/Model_local.h"
 
@@ -144,9 +145,17 @@ idRenderModel *idRenderModelPrt::InstantiateDynamicModel( const struct renderEnt
 		modelSurface_t *surf;
 
 		if ( staticModel->FindSurfaceWithId( stageNum, surfaceNum ) ) {
+			/* the quads' indexes are the same every frame, so their
+			   buffer stays; only the vertexes are replaced */
+			struct vertCache_s *indexCache;
 			surf = &staticModel->surfaces[surfaceNum];
+			indexCache = surf->geometry->indexCache;
+			surf->geometry->indexCache = NULL;
 			R_FreeStaticTriSurfVertexCaches( surf->geometry );
+			surf->geometry->indexCache = indexCache;
 		} else {
+			glIndex_t *indexes;
+			int quad;
 			surf = &staticModel->surfaces.Alloc();
 			surf->id = stageNum;
 			surf->shader = stage->material;
@@ -154,6 +163,19 @@ idRenderModel *idRenderModelPrt::InstantiateDynamicModel( const struct renderEnt
 			R_AllocStaticTriSurfVerts( surf->geometry, 4 * count );
 			R_AllocStaticTriSurfIndexes( surf->geometry, 6 * count );
 			R_AllocStaticTriSurfPlanes( surf->geometry, 6 * count );
+			/* every quad the surface can hold, written once: a frame
+			   draws the first 6 per particle quad it made */
+			indexes = surf->geometry->indexes;
+			for ( quad = 0; quad < count; quad++ ) {
+				const glIndex_t v = quad * 4;
+				indexes[0] = v;
+				indexes[1] = v + 2;
+				indexes[2] = v + 3;
+				indexes[3] = v;
+				indexes[4] = v + 3;
+				indexes[5] = v + 1;
+				indexes += 6;
+			}
 		}
 
 		int numVerts = 0;
@@ -217,17 +239,16 @@ idRenderModel *idRenderModelPrt::InstantiateDynamicModel( const struct renderEnt
 		// numVerts must be a multiple of 4
 		assert( ( numVerts & 3 ) == 0 && numVerts <= 4 * count );
 
-		// build the indexes
-		int	numIndexes = 0;
-		glIndex_t *indexes = surf->geometry->indexes;
-		for ( int i = 0; i < numVerts; i += 4 ) {
-			indexes[numIndexes+0] = i;
-			indexes[numIndexes+1] = i+2;
-			indexes[numIndexes+2] = i+3;
-			indexes[numIndexes+3] = i;
-			indexes[numIndexes+4] = i+3;
-			indexes[numIndexes+5] = i+1;
-			numIndexes += 6;
+		const int numIndexes = numVerts / 4 * 6;
+
+		/* the index buffer serves every frame that draws no more quads
+		   than it holds; a larger frame has the surface's drawing upload
+		   the longer run */
+		if ( surf->geometry->indexCache
+			&& surf->geometry->indexCache->size / ( surf->geometry->indexCache->indexType == GL_UNSIGNED_SHORT
+				? (int)sizeof( unsigned short ) : (int)sizeof( glIndex_t ) ) < numIndexes ) {
+			vertexCache.Free( surf->geometry->indexCache );
+			surf->geometry->indexCache = NULL;
 		}
 
 		surf->geometry->tangentsCalculated = false;

@@ -451,6 +451,9 @@ void idVertexCache::Alloc( void *data, int size, vertCache_t **buffer, bool inde
 					Mem_Free( dst );
 				}
 				block->indexType = GL_UNSIGNED_SHORT;
+				// the size the buffer holds, as the arena and Vulkan blocks keep it
+				staticAllocTotal += bytes - block->size;
+				block->size = bytes;
 			} else {
 				qglBufferDataARB( GL_ELEMENT_ARRAY_BUFFER_ARB, (GLsizeiptrARB)size, data, GL_STATIC_DRAW_ARB );
 			}
