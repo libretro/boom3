@@ -296,6 +296,7 @@ typedef struct vkb_draw
    unsigned stencilRef;
    unsigned stencilMask;
    float depthBias[2];          /* polygon offset: units, slope factor */
+   float depthMin;              /* the depth bounds test's lower bound: a nearer stored depth drops the pixel; 0 off */
    unsigned char program;       /* enum vkb_program */
    unsigned char layout;        /* enum vkb_vertex_layout */
    unsigned char cull;          /* enum vkb_cull */

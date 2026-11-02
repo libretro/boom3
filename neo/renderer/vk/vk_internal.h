@@ -99,6 +99,7 @@
    X(vkCmdSetViewport) \
    X(vkCmdSetScissor) \
    X(vkCmdSetDepthBias) \
+   X(vkCmdSetDepthBounds) \
    X(vkCmdSetStencilReference) \
    X(vkCmdSetStencilCompareMask) \
    X(vkCmdSetStencilWriteMask) \
@@ -247,6 +248,7 @@ typedef struct vkb_pipeline_key
    unsigned char lineMode;
    unsigned char polygonOffset;
    unsigned char mirror;
+   unsigned char depthBounds;  /* the depth bounds test, its bounds dynamic */
 } vkb_pipeline_key_t;
 
 typedef struct vkb_pipeline_slot

@@ -123,6 +123,7 @@ typedef struct drawSurf_s {
 	struct vertCache_s		*dynamicTexCoords;	// float * in vertex cache memory
 	// specular directions for non vertex program cards, skybox texcoords, etc
 	float					particle_radius;	// The radius of individual quads for soft particles #3878
+	float					softDepthMin;		// soft particles: scene depth nearer than this hides every fragment, 0 none
 #ifdef BOOM3_GLSL_RENDERERS
 	float  wobbleTransform[16];
 #endif
@@ -1331,6 +1332,8 @@ bool RB_MaterialReadsCurrentDepth( const idMaterial *material );
 bool RB_ViewReadsCurrentDepth( void );
 bool RB_DepthCaptureWanted( void );
 bool RB_DepthSoftOnly( void );
+bool RB_SoftDepthBounds( const drawSurf_t *surf, int drawStateBits );
+void RB_SoftDepthBoundsEnd( void );
 bool RB_DepthCaptureInPlace( void );
 bool RB_DepthInPlace( float recip[2] );
 void RB_BindDepthInPlace( void );

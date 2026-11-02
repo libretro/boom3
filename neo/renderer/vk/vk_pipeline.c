@@ -478,7 +478,7 @@ static VkPipeline vkb_pipeline_make(const vkb_pipeline_key_t *key)
    VkPipelineDepthStencilStateCreateInfo ds;
    VkPipelineColorBlendAttachmentState blend;
    VkPipelineColorBlendStateCreateInfo cb;
-   VkDynamicState dynamics[6];
+   VkDynamicState dynamics[7];
    VkPipelineDynamicStateCreateInfo dy;
    VkGraphicsPipelineCreateInfo gci;
    VkPipeline pipeline = VK_NULL_HANDLE;
@@ -576,6 +576,8 @@ static VkPipeline vkb_pipeline_make(const vkb_pipeline_key_t *key)
    ds.sType            = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
    ds.depthTestEnable  = post ? VK_FALSE : VK_TRUE;
    ds.depthWriteEnable = (stateBits & GLS_DEPTHMASK) || post ? VK_FALSE : VK_TRUE;
+   ds.depthBoundsTestEnable = key->depthBounds ? VK_TRUE : VK_FALSE;
+   ds.maxDepthBounds   = 1.0f;
    ds.depthCompareOp   = (stateBits & GLS_DEPTHFUNC_ALWAYS) ? VK_COMPARE_OP_ALWAYS
       : (stateBits & GLS_DEPTHFUNC_EQUAL) ? VK_COMPARE_OP_EQUAL : VK_COMPARE_OP_LESS_OR_EQUAL;
    if (key->stencil != VKB_STENCIL_OFF && !post)
@@ -644,7 +646,8 @@ static VkPipeline vkb_pipeline_make(const vkb_pipeline_key_t *key)
    dynamics[5] = VK_DYNAMIC_STATE_STENCIL_WRITE_MASK;
    memset(&dy, 0, sizeof(dy));
    dy.sType             = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-   dy.dynamicStateCount = 6;
+   dynamics[6] = VK_DYNAMIC_STATE_DEPTH_BOUNDS;
+   dy.dynamicStateCount = key->depthBounds ? 7 : 6;
    dy.pDynamicStates    = dynamics;
 
    memset(&gci, 0, sizeof(gci));

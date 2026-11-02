@@ -1132,6 +1132,11 @@ static void RB_VK_DrawSoftParticle( const drawSurf_t *surf, const shaderStage_t 
 	block.hdrParms[3] = 1.0f;
 	draw.image[0] = RB_VK_StageImage( &pStage->texture );
 	draw.image[1] = depthImage;
+	/* the scene nearer than this hides every fragment: dropped before
+	 * they shade, where that leaves the colour as it was */
+	if ( RB_SOFT_FADE_DROPS( pStage->drawStateBits ) ) {
+		draw.depthMin = surf->softDepthMin;
+	}
 	vkb_draw( &draw );
 }
 

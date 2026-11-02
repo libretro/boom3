@@ -138,6 +138,7 @@ static bool vkb_create_device2(struct retro_vulkan_context *context, VkInstance 
    want.samplerAnisotropy    = have.samplerAnisotropy;
    want.textureCompressionBC = have.textureCompressionBC;
    want.shaderClipDistance   = have.shaderClipDistance;
+   want.depthBounds          = have.depthBounds;
 
    memset(&qci, 0, sizeof(qci));
    qci.sType            = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;

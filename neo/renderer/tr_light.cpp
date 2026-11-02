@@ -1244,6 +1244,52 @@ idRenderModel *R_EntityDefDynamicModel( idRenderEntityLocal *def ) {
 
 /*
 =================
+R_SoftParticleDepthMin
+
+The window depth below which a soft particle surface can leave nothing:
+where the scene is nearer than the surface's nearest vertex by more than
+the softening radius, every fragment fades to zero.  The margin covers the
+GPU's own transform and the fade's reciprocals.  0 where nothing can be
+said: a surface reaching the near plane, beyond the depth the fade clamps
+at, under the weapon's depth hack, or in a stereo view.
+=================
+*/
+static float R_SoftParticleDepthMin( const srfTriangles_t *tri, const viewEntity_t *space, float radius ) {
+	const float *mv = space->modelViewMatrix;
+	const float *proj = tr.viewDef->projectionMatrix;
+	float nearest = -1.0e30f;
+	float z, window;
+	int i;
+
+	if ( tri->verts == NULL || tri->numVerts <= 0 || space->weaponDepthHack ) {
+		return 0.0f;
+	}
+#if defined(BOOM3_VR)
+	if ( VR_Active() ) {
+		return 0.0f;
+	}
+#endif
+	for ( i = 0; i < tri->numVerts; i++ ) {
+		const float *xyz = tri->verts[i].xyz.ToFloatPtr();
+		z = xyz[0] * mv[2] + xyz[1] * mv[6] + xyz[2] * mv[10] + mv[14];
+		if ( z > nearest ) {
+			nearest = z;
+		}
+	}
+	// eye space looks down -z: the fade reaches this far behind the nearest vertex
+	z = nearest + radius * 1.01f + 1.0f;
+	if ( z > -1.0f ) {
+		return 0.0f;
+	}
+	window = 0.5f * ( proj[10] * z + proj[14] ) / -z + 0.5f - 1.0f / 65536.0f;
+	if ( window <= 0.0f || window >= 0.9994f ) {
+		return 0.0f;
+	}
+	return window;
+}
+
+/*
+=================
 R_AddDrawSurf
 =================
 */
@@ -1282,10 +1328,14 @@ void R_AddDrawSurf( const srfTriangles_t *tri, const viewEntity_t *space, const 
 	drawSurf->scissorRect = scissor;
 	drawSurf->sort = shader->GetSort() + tr.sortOffset;
 
+	drawSurf->softDepthMin = 0.0f;
 	if ( soft_particle_radius != -1.0f )	// #3878
 	{
 		drawSurf->dsFlags = DSF_SOFT_PARTICLE;
 		drawSurf->particle_radius = soft_particle_radius;
+		if ( soft_particle_radius > 0.0f && shader->GetSort() < SS_POST_PROCESS ) {
+			drawSurf->softDepthMin = R_SoftParticleDepthMin( tri, space, soft_particle_radius );
+		}
 	}
 	else
 	{

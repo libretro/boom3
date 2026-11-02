@@ -367,6 +367,32 @@ bool RB_DepthSoftOnly( void ) {
 		&& RB_ViewDepthReaders() == RB_DEPTH_READ_SOFT;
 }
 
+/*
+=====================
+RB_SoftDepthBounds / RB_SoftDepthBoundsEnd
+
+The GL renderers' soft particles behind the scene, rejected before they
+shade: the depth bounds test drops a pixel whose scene depth is nearer
+than the surface's softDepthMin, where every fragment fades to zero, under
+the blends that leave the colour as it was for those fragments.  The test
+compares the depth the particles also read, which nothing writes between
+the fill and them.  True when the test is on for the draw.
+=====================
+*/
+bool RB_SoftDepthBounds( const drawSurf_t *surf, int drawStateBits ) {
+	if ( !glConfig.depthBoundsTestAvailable || surf->softDepthMin <= 0.0f
+		|| !RB_SOFT_FADE_DROPS( drawStateBits ) ) {
+		return false;
+	}
+	qglEnable( GL_DEPTH_BOUNDS_TEST_EXT );
+	qglDepthBoundsEXT( surf->softDepthMin, 1.0 );
+	return true;
+}
+
+void RB_SoftDepthBoundsEnd( void ) {
+	qglDisable( GL_DEPTH_BOUNDS_TEST_EXT );
+}
+
 static GLuint	rbDepthInPlace;			// the view's depth texture, 0 when the copy serves
 static float	rbDepthInPlaceRecip[2];	// window position to its texcoord
 static bool		rbDepthBarrierDone;		// the barrier for this view's reads is issued
@@ -1445,7 +1471,11 @@ void RB_STD_T_RenderShaderPasses( const drawSurf_t *surf ) {
 			}
 			
 			// draw it
+			const bool depthBounds = RB_SoftDepthBounds( surf, pStage->drawStateBits );
 			RB_DrawElementsWithCounters( tri );
+			if ( depthBounds ) {
+				RB_SoftDepthBoundsEnd();
+			}
 
 			// Clean up GL state
 			GL_SelectTexture( 1 );

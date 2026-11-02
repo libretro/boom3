@@ -2117,7 +2117,11 @@ static void RB_GLSL_DrawSoftParticle(const drawSurf_t* surf, const shaderStage_t
 
   // the program decides the depth test, so the particle can overdraw
   GL_State(pStage->drawStateBits | GLS_DEPTHFUNC_ALWAYS);
+  const bool depthBounds = RB_SoftDepthBounds(surf, pStage->drawStateBits);
   RB_DrawElementsWithCounters(surf->geo);
+  if ( depthBounds ) {
+    RB_SoftDepthBoundsEnd();
+  }
 
   GL_SelectTexture(1);
   globalImages->BindNull();

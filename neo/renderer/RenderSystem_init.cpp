@@ -469,6 +469,14 @@ static void R_CheckGLSLDesktopExtensions( void ) {
 	qglColorTableEXT = R_GLNoOpColorTable;
 	qglActiveStencilFaceEXT = (PFNGLACTIVESTENCILFACEEXTPROC)R_GLNoOpTexture;
 	qglDepthBoundsEXT = (PFNGLDEPTHBOUNDSEXTPROC)R_GLNoOpDepthBounds;
+	// the soft particles' depth bounds, where the context has the test
+	if ( R_CheckExtension( "EXT_depth_bounds_test" ) ) {
+		qglDepthBoundsEXT = (PFNGLDEPTHBOUNDSEXTPROC)GLimp_ExtensionPointer( "glDepthBoundsEXT" );
+		glConfig.depthBoundsTestAvailable = qglDepthBoundsEXT != NULL;
+		if ( !glConfig.depthBoundsTestAvailable ) {
+			qglDepthBoundsEXT = (PFNGLDEPTHBOUNDSEXTPROC)R_GLNoOpDepthBounds;
+		}
+	}
 	qglStencilOpSeparate = (PFNGLSTENCILOPSEPARATEPROC)GLimp_ExtensionPointer( "glStencilOpSeparate" );
 	qglTexImage3D = (void (APIENTRY *)(GLenum, GLint, GLint, GLsizei, GLsizei, GLsizei, GLint, GLenum, GLenum, const GLvoid *))
 		GLimp_ExtensionPointer( "glTexImage3D" );
