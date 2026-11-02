@@ -631,7 +631,7 @@ static float  hdr_gt_toe        = 0.22f;
 static float  hdr_gt_shoulder   = 0.40f;
 static int    hdr_expand_mode   = 0;       /* 0 none, 1 per-channel inverse tonemap, 2 hue-preserving; live-switchable */
 
-static GLuint hdr_fbo, hdr_tex, hdr_rbo, hdr_prog;
+static GLuint hdr_fbo, hdr_tex, hdr_depth, hdr_prog;
 /* The scene drawn into the frontend's own framebuffer and transformed in
  * place: scRGB, whose surface is a float texture that can hold the
  * linear scene, on a context with a texture barrier (ARB or NV), which
@@ -723,7 +723,48 @@ static volatile float hdr_ssaa_env_override = -1.0f;
  * display-referred 24-bit content the box is the correct resolve - the
  * Karis weighting exists to stop linear-light hot samples dominating a
  * mean, which is a problem 24-bit content cannot have. */
-static GLuint ldr_fbo = 0, ldr_tex = 0, ldr_rbo = 0;
+static GLuint ldr_fbo = 0, ldr_tex = 0, ldr_depth = 0;
+
+/*
+   The scene targets' depth and stencil.  On desktop GL a texture, so soft
+   particles can read the depth in place behind a texture barrier rather
+   than from a copy; on GLES, where nothing permits that, a renderbuffer.
+   Attached to the framebuffer bound for drawing.
+*/
+static GLuint scene_depth_attach( int w, int h ) {
+	GLuint name = 0;
+#ifdef HAVE_OPENGLES
+	glGenRenderbuffers( 1, &name );
+	glBindRenderbuffer( GL_RENDERBUFFER, name );
+	glRenderbufferStorage( GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, w, h );
+	glFramebufferRenderbuffer( RARCH_GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
+			GL_RENDERBUFFER, name );
+#else
+	glGenTextures( 1, &name );
+	glBindTexture( GL_TEXTURE_2D, name );
+	glTexImage2D( GL_TEXTURE_2D, 0, GL_DEPTH24_STENCIL8, w, h, 0, GL_DEPTH_STENCIL,
+			GL_UNSIGNED_INT_24_8, NULL );
+	/* sampled one texel per pixel, as the copy it stands in for */
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
+	glFramebufferTexture2D( RARCH_GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
+			GL_TEXTURE_2D, name, 0 );
+#endif
+	return name;
+}
+
+static void scene_depth_delete( GLuint *name ) {
+	if ( *name == 0 )
+		return;
+#ifdef HAVE_OPENGLES
+	glDeleteRenderbuffers( 1, name );
+#else
+	glDeleteTextures( 1, name );
+#endif
+	*name = 0;
+}
 static int    ldr_w = 0, ldr_h = 0;
 #ifdef LR_GLSL_PASSES
 static GLuint ldr_prog = 0;
@@ -3013,7 +3054,7 @@ static void context_reset(void)
    }
 #endif
    /* previous context's HDR objects are gone with it */
-   hdr_fbo = hdr_tex = hdr_rbo = hdr_prog = 0;
+   hdr_fbo = hdr_tex = hdr_depth = hdr_prog = 0;
    hdr_inplace = false;
    hdr_inplace_tex = 0;
    hdr_texture_barrier = NULL;
@@ -3060,7 +3101,7 @@ static void context_reset(void)
    /* the 24-bit supersample target died with the context too; zeroing
     * the ids without deleting is correct here for the same reason as
     * above - the objects are already gone with the context */
-   ldr_fbo = ldr_tex = ldr_rbo = 0;
+   ldr_fbo = ldr_tex = ldr_depth = 0;
    ldr_w = ldr_h = 0;
    lr_present_vbo = 0;
 #ifdef LR_GLSL_PASSES
@@ -7787,7 +7828,7 @@ static bool hdr_ensure_target( int w, int h ) {
 	const bool resized = w != hdr_w || h != hdr_h;
 	if ( !hdr_inplace && ( hdr_fbo == 0 || resized ) ) {
 		if ( hdr_tex ) glDeleteTextures( 1, &hdr_tex );
-		if ( hdr_rbo ) glDeleteRenderbuffers( 1, &hdr_rbo );
+		if ( hdr_depth ) scene_depth_delete( &hdr_depth );
 		if ( hdr_fbo ) glDeleteFramebuffers( 1, &hdr_fbo );
 		glGenTextures( 1, &hdr_tex );
 		glBindTexture( GL_TEXTURE_2D, hdr_tex );
@@ -7814,16 +7855,12 @@ static bool hdr_ensure_target( int w, int h ) {
 		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
 		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
 		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
-		glGenRenderbuffers( 1, &hdr_rbo );
-		glBindRenderbuffer( GL_RENDERBUFFER, hdr_rbo );
-		/* the engine needs depth AND stencil (stencil shadow volumes) */
-		glRenderbufferStorage( GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, w, h );
 		glGenFramebuffers( 1, &hdr_fbo );
 		glBindFramebuffer( RARCH_GL_FRAMEBUFFER, hdr_fbo );
 		glFramebufferTexture2D( RARCH_GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
 				GL_TEXTURE_2D, hdr_tex, 0 );
-		glFramebufferRenderbuffer( RARCH_GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
-				GL_RENDERBUFFER, hdr_rbo );
+		/* the engine needs depth AND stencil (stencil shadow volumes) */
+		hdr_depth = scene_depth_attach( w, h );
 		if ( glCheckFramebufferStatus( RARCH_GL_FRAMEBUFFER ) != GL_FRAMEBUFFER_COMPLETE ) {
 			/* release what we just built: the ids are non-zero and
 			   hdr_w/hdr_h are still stale, so leaving them behind
@@ -7831,9 +7868,9 @@ static bool hdr_ensure_target( int w, int h ) {
 			   either double-manage or leak outright */
 			glBindFramebuffer( RARCH_GL_FRAMEBUFFER, 0 );
 			glDeleteFramebuffers( 1, &hdr_fbo );
-			glDeleteRenderbuffers( 1, &hdr_rbo );
+			scene_depth_delete( &hdr_depth );
 			glDeleteTextures( 1, &hdr_tex );
-			hdr_fbo = hdr_rbo = hdr_tex = 0;
+			hdr_fbo = hdr_depth = hdr_tex = 0;
 			hdr_fail( "scene FBO incomplete" );
 			return false;
 		}
@@ -7968,8 +8005,8 @@ static bool ldr_ensure_target( int w, int h ) {
 	if ( ldr_fbo ) {
 		glDeleteFramebuffers( 1, &ldr_fbo );
 		glDeleteTextures( 1, &ldr_tex );
-		glDeleteRenderbuffers( 1, &ldr_rbo );
-		ldr_fbo = ldr_tex = ldr_rbo = 0;
+		scene_depth_delete( &ldr_depth );
+		ldr_fbo = ldr_tex = ldr_depth = 0;
 		ldr_w = ldr_h = 0;
 	}
 	glGenTextures( 1, &ldr_tex );
@@ -7986,20 +8023,16 @@ static bool ldr_ensure_target( int w, int h ) {
 	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
 	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
 	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
-	glGenRenderbuffers( 1, &ldr_rbo );
-	glBindRenderbuffer( GL_RENDERBUFFER, ldr_rbo );
-	glRenderbufferStorage( GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, w, h );
 	glGenFramebuffers( 1, &ldr_fbo );
 	glBindFramebuffer( RARCH_GL_FRAMEBUFFER, ldr_fbo );
 	glFramebufferTexture2D( RARCH_GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
 			GL_TEXTURE_2D, ldr_tex, 0 );
-	glFramebufferRenderbuffer( RARCH_GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
-			GL_RENDERBUFFER, ldr_rbo );
+	ldr_depth = scene_depth_attach( w, h );
 	if ( glCheckFramebufferStatus( RARCH_GL_FRAMEBUFFER ) != GL_FRAMEBUFFER_COMPLETE ) {
 		glDeleteFramebuffers( 1, &ldr_fbo );
 		glDeleteTextures( 1, &ldr_tex );
-		glDeleteRenderbuffers( 1, &ldr_rbo );
-		ldr_fbo = ldr_tex = ldr_rbo = 0;
+		scene_depth_delete( &ldr_depth );
+		ldr_fbo = ldr_tex = ldr_depth = 0;
 		return false;
 	}
 	ldr_w = w;
@@ -8065,8 +8098,8 @@ static void ssaa_reconcile( void ) {
 static void ldr_destroy_target( void ) {
 	if ( ldr_fbo ) glDeleteFramebuffers( 1, &ldr_fbo );
 	if ( ldr_tex ) glDeleteTextures( 1, &ldr_tex );
-	if ( ldr_rbo ) glDeleteRenderbuffers( 1, &ldr_rbo );
-	ldr_fbo = ldr_tex = ldr_rbo = 0;
+	if ( ldr_depth ) scene_depth_delete( &ldr_depth );
+	ldr_fbo = ldr_tex = ldr_depth = 0;
 	ldr_w = ldr_h = 0;
 #ifdef LR_GLSL_PASSES
 	if ( ldr_prog ) glDeleteProgram( ldr_prog );
@@ -8125,9 +8158,9 @@ static void hdr_bind_scene( void ) {
 			if ( !hdr_inplace ) {
 				/* the scene target has no further use */
 				if ( hdr_tex ) glDeleteTextures( 1, &hdr_tex );
-				if ( hdr_rbo ) glDeleteRenderbuffers( 1, &hdr_rbo );
+				if ( hdr_depth ) scene_depth_delete( &hdr_depth );
 				if ( hdr_fbo ) glDeleteFramebuffers( 1, &hdr_fbo );
-				hdr_fbo = hdr_rbo = hdr_tex = 0;
+				hdr_fbo = hdr_depth = hdr_tex = 0;
 				hdr_inplace = true;
 				if ( log_cb )
 					log_cb( RETRO_LOG_INFO, "[boom3] HDR: the scene draws into the frontend's surface and the display transform runs on it in place\n" );
@@ -8147,6 +8180,25 @@ static void hdr_bind_scene( void ) {
 
 GLuint GLimp_ViewFramebuffer( void ) {
 	return core_view_fbo;
+}
+
+/* The view framebuffer's depth as a texture, and its size, when the core
+ * owns that framebuffer and its depth is a texture; 0 otherwise. */
+GLuint GLimp_ViewDepthTexture( int *width, int *height ) {
+#ifndef HAVE_OPENGLES
+	if ( core_view_fbo != 0 && core_view_fbo == hdr_fbo && hdr_depth != 0 ) {
+		*width = hdr_w;
+		*height = hdr_h;
+		return hdr_depth;
+	}
+	if ( core_view_fbo != 0 && core_view_fbo == ldr_fbo && ldr_depth != 0 ) {
+		*width = ldr_w;
+		*height = ldr_h;
+		return ldr_depth;
+	}
+#endif
+	*width = *height = 0;
+	return 0;
 }
 
 /* The end of a 3D view: every 3D view clears depth and stencil when it

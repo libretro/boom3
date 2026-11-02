@@ -252,12 +252,14 @@ bool RB_FilterBlend( int drawStateBits ) {
 
 /*
 =====================
-RB_MaterialReadsCurrentDepth / RB_ViewReadsCurrentDepth
+RB_MaterialReadsCurrentDepth / RB_ViewDepthReaders
 
 What reads _currentDepth: soft particles (a surface flagged
 DSF_SOFT_PARTICLE with a softening radius), any material stage or
 fragment program image that is the image itself (surfaces and lights
 alike), and r_showDepth.  A view with none of them never samples the copy.
+Soft particles of a post-process material count with the others: post-
+process surfaces write depth while they draw.
 =====================
 */
 bool RB_MaterialReadsCurrentDepth( const idMaterial *material ) {
@@ -281,33 +283,46 @@ bool RB_MaterialReadsCurrentDepth( const idMaterial *material ) {
 	return false;
 }
 
-bool RB_ViewReadsCurrentDepth( void ) {
+enum {
+	RB_DEPTH_READ_SOFT	= 1,	// soft particles drawn before the post-process surfaces
+	RB_DEPTH_READ_OTHER	= 2		// anything else
+};
+
+static int RB_ViewDepthReaders( void ) {
 	const viewDef_t *view = backEnd.viewDef;
 	const viewLight_t *vLight;
 	const idMaterial *last = NULL;
+	int readers = 0;
 	int i;
 	if ( r_showDepth.GetBool() ) {
-		return true;
+		return RB_DEPTH_READ_OTHER;
 	}
 	for ( i = 0; i < view->numDrawSurfs; i++ ) {
 		const drawSurf_t *surf = view->drawSurfs[i];
 		if ( ( surf->dsFlags & DSF_SOFT_PARTICLE ) && surf->particle_radius > 0.0f ) {
-			return true;
+			if ( surf->material->GetSort() >= SS_POST_PROCESS ) {
+				return RB_DEPTH_READ_OTHER;
+			}
+			readers |= RB_DEPTH_READ_SOFT;
 		}
 		// surfaces sharing a material sit together in the sorted list
 		if ( surf->material != last ) {
 			last = surf->material;
 			if ( RB_MaterialReadsCurrentDepth( last ) ) {
-				return true;
+				return RB_DEPTH_READ_OTHER;
 			}
 		}
 	}
 	for ( vLight = view->viewLights; vLight; vLight = vLight->next ) {
 		if ( RB_MaterialReadsCurrentDepth( vLight->lightShader ) ) {
-			return true;
+			return RB_DEPTH_READ_OTHER;
 		}
 	}
-	return false;
+	return readers;
+}
+
+bool RB_ViewReadsCurrentDepth( void ) {
+	return RB_ViewDepthReaders() != 0;
 }
 
 /*
@@ -323,6 +338,85 @@ bool RB_DepthCaptureWanted( void ) {
 	const bool capture = r_enableDepthCapture.GetInteger() == 1
 		|| ( r_enableDepthCapture.GetInteger() == -1 && r_useSoftParticles.GetBool() );
 	return capture && backEnd.viewDef->renderView.viewID >= 0 && RB_ViewReadsCurrentDepth();
+}
+
+/*
+=====================
+RB_DepthCaptureInPlace / RB_BindDepthInPlace / RB_UnbindDepthInPlace
+
+The GL renderers' soft particles read the view's own depth texture instead
+of a copy when nothing else reads the copy, the view starts at the
+framebuffer's corner (so a pixel's texel is the one the copy would put
+there) and a texture barrier orders the depth fill and the stencil passes
+before the reads.  Between the barrier and the last soft particle nothing
+writes depth or stencil: soft particles draw before the post-process
+surfaces, the only ones that write depth after the fill, and the stencil
+ops are KEEP once the shadows are done.
+
+RB_DepthCaptureInPlace decides it for every view at the capture point,
+and says whether the copy can be skipped.  The texture stays bound only
+while soft particles draw.
+=====================
+*/
+static GLuint	rbDepthInPlace;			// the view's depth texture, 0 when the copy serves
+static float	rbDepthInPlaceRecip[2];	// window position to its texcoord
+static bool		rbDepthBarrierDone;		// the barrier for this view's reads is issued
+
+bool RB_DepthCaptureInPlace( void ) {
+	const viewDef_t *view = backEnd.viewDef;
+	int w = 0, h = 0;
+	GLuint tex;
+
+	rbDepthInPlace = 0;
+	rbDepthBarrierDone = false;
+	if ( R_VulkanRenderer() || !glCaps.textureBarrier
+		|| view->viewport.x1 != 0 || view->viewport.y1 != 0
+		|| !RB_DepthCaptureWanted()
+		|| RB_ViewDepthReaders() != RB_DEPTH_READ_SOFT ) {
+		return false;
+	}
+	tex = GLimp_ViewDepthTexture( &w, &h );
+	if ( tex == 0 || w <= 0 || h <= 0 ) {
+		return false;
+	}
+	rbDepthInPlace = tex;
+	rbDepthInPlaceRecip[0] = 1.0f / w;
+	rbDepthInPlaceRecip[1] = 1.0f / h;
+	return true;
+}
+
+bool RB_DepthInPlace( float recip[2] ) {
+	if ( rbDepthInPlace == 0 ) {
+		return false;
+	}
+	if ( recip ) {
+		recip[0] = rbDepthInPlaceRecip[0];
+		recip[1] = rbDepthInPlaceRecip[1];
+	}
+	return true;
+}
+
+void RB_BindDepthInPlace( void ) {
+	tmu_t *tmu = &backEnd.glState.tmu[backEnd.glState.currenttmu];
+	if ( !rbDepthBarrierDone ) {
+		glCaps.TextureBarrier();
+		rbDepthBarrierDone = true;
+	}
+	// the unit cleared first, so its cache describes what is bound
+	globalImages->BindNull();
+	qglBindTexture( GL_TEXTURE_2D, rbDepthInPlace );
+	tmu->current2DMap = rbDepthInPlace;
+	if ( R_GLSLRenderer() ) {
+		// what the GLSL renderers' BindNull unbinds
+		tmu->textureType = TT_2D;
+	}
+}
+
+void RB_UnbindDepthInPlace( void ) {
+	tmu_t *tmu = &backEnd.glState.tmu[backEnd.glState.currenttmu];
+	// unbound, so no later draw that writes depth can sample it
+	qglBindTexture( GL_TEXTURE_2D, 0 );
+	tmu->current2DMap = -1;
 }
 
 #ifdef BOOM3_ARB2_RENDERER
@@ -809,6 +903,8 @@ void RB_STD_FillDepthBuffer( drawSurf_t **drawSurfs, int numDrawSurfs ) {
 
 	RB_RenderDrawSurfListWithFunction( drawSurfs, numDrawSurfs, RB_T_FillDepthBuffer );
 
+	const bool inPlace = RB_DepthCaptureInPlace();
+
 	// Make the early depth pass available to shaders. #3877
 	bool getDepthCapture = r_enableDepthCapture.GetInteger() == 1
 		|| (r_enableDepthCapture.GetInteger() == -1 && r_useSoftParticles.GetBool());
@@ -818,12 +914,15 @@ void RB_STD_FillDepthBuffer( drawSurf_t **drawSurfs, int numDrawSurfs ) {
 		/* The copy is a full-viewport depth read every view; the pixels
 		 * are copied only for a view that has something to read them.
 		 * Otherwise only the image's size follows the view, so the
-		 * program environment reports what it always reported. */
-		globalImages->currentDepthImage->CopyDepthbuffer( backEnd.viewDef->viewport.x1,
-														  backEnd.viewDef->viewport.y1,
-														  backEnd.viewDef->viewport.x2 - backEnd.viewDef->viewport.x1 + 1,
-														  backEnd.viewDef->viewport.y2 - backEnd.viewDef->viewport.y1 + 1,
-														  true, RB_DepthCaptureWanted() );
+		 * program environment reports what it always reported.  A view
+		 * whose soft particles read its depth in place needs neither. */
+		if ( !inPlace ) {
+			globalImages->currentDepthImage->CopyDepthbuffer( backEnd.viewDef->viewport.x1,
+															  backEnd.viewDef->viewport.y1,
+															  backEnd.viewDef->viewport.x2 - backEnd.viewDef->viewport.x1 + 1,
+															  backEnd.viewDef->viewport.y2 - backEnd.viewDef->viewport.y1 + 1,
+															  true, RB_DepthCaptureWanted() );
+		}
 		bool isPostProcess = false;
 		RB_SetProgramEnvironment( isPostProcess );
 	}
@@ -917,8 +1016,10 @@ void RB_SetProgramEnvironment( bool isPostProcess ) {
 	// during post-processing effects. The depth render is smaller during the effect too, but the depth image doesn't 
 	// need to be downsized, whereas the current render image does get downsized when it's captured by the game after 
 	// the skybox render pass. The ratio is needed to map between the two render images.
-	parm[0] = 1.0f / globalImages->currentDepthImage->uploadWidth;
-	parm[1] = 1.0f / globalImages->currentDepthImage->uploadHeight;
+	if ( !RB_DepthInPlace( parm ) ) {
+		parm[0] = 1.0f / globalImages->currentDepthImage->uploadWidth;
+		parm[1] = 1.0f / globalImages->currentDepthImage->uploadHeight;
+	}
 	parm[2] = static_cast<float>(globalImages->currentRenderImage->uploadWidth) / globalImages->currentDepthImage->uploadWidth;
 	parm[3] = static_cast<float>(globalImages->currentRenderImage->uploadHeight) / globalImages->currentDepthImage->uploadHeight;
 	qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, PP_CURDEPTH_RECIPR, parm );
@@ -1237,7 +1338,12 @@ void RB_STD_T_RenderShaderPasses( const drawSurf_t *surf ) {
 			GL_SelectTexture( 0 );
 			pStage->texture.image->Bind();
 			GL_SelectTexture( 1 );
-			globalImages->currentDepthImage->Bind();
+			const bool depthInPlace = RB_DepthInPlace( NULL );
+			if ( depthInPlace ) {
+				RB_BindDepthInPlace();
+			} else {
+				globalImages->currentDepthImage->Bind();
+			}
 
 			qglBindProgramARB( GL_FRAGMENT_PROGRAM_ARB, FPROG_SOFT_PARTICLE );
 			qglEnable( GL_FRAGMENT_PROGRAM_ARB );
@@ -1338,6 +1444,9 @@ void RB_STD_T_RenderShaderPasses( const drawSurf_t *surf ) {
 
 			// Clean up GL state
 			GL_SelectTexture( 1 );
+			if ( depthInPlace ) {
+				RB_UnbindDepthInPlace();
+			}
 			globalImages->BindNull();
 			GL_SelectTexture( 0 );
 			globalImages->BindNull();

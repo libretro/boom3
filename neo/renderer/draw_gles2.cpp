@@ -1916,8 +1916,10 @@ void RB_GLSL_FillDepthBuffer(drawSurf_t** drawSurfs, int numDrawSurfs) {
 #ifdef HAVE_OPENGLES2
   depthCopied = false;
 #else
-  depthCopied = RB_DepthCaptureWanted();
-  if ( depthCopied ) {
+  // read in place where it can be, else copied
+  const bool inPlace = RB_DepthCaptureInPlace();
+  depthCopied = inPlace || RB_DepthCaptureWanted();
+  if ( depthCopied && !inPlace ) {
     globalImages->currentDepthImage->CopyDepthbuffer( backEnd.viewDef->viewport.x1,
                                                       backEnd.viewDef->viewport.y1,
                                                       backEnd.viewDef->viewport.x2 - backEnd.viewDef->viewport.x1 + 1,
@@ -2092,8 +2094,10 @@ static void RB_GLSL_DrawSoftParticle(const drawSurf_t* surf, const shaderStage_t
   parms[1][3] = srcBlend == GLS_SRCBLEND_SRC_ALPHA ? 0.0f : 1.0f;
   qglUniform4fv(softParticleShader.vertexParms, 2, &parms[0][0]);
 
-  sp[0] = 1.0f / globalImages->currentDepthImage->uploadWidth;
-  sp[1] = 1.0f / globalImages->currentDepthImage->uploadHeight;
+  if ( !RB_DepthInPlace( sp ) ) {
+    sp[0] = 1.0f / globalImages->currentDepthImage->uploadWidth;
+    sp[1] = 1.0f / globalImages->currentDepthImage->uploadHeight;
+  }
   sp[2] = sp[3] = 0.0f;
   GL_Uniform4fv(offsetof(shaderProgram_t, screenParms), sp);
 
@@ -2103,7 +2107,11 @@ static void RB_GLSL_DrawSoftParticle(const drawSurf_t* surf, const shaderStage_t
   GL_Uniform4fv(offsetof(shaderProgram_t, hdrParms), hp);
 
   GL_SelectTexture(1);
-  globalImages->currentDepthImage->Bind();
+  if ( RB_DepthInPlace( NULL ) ) {
+    RB_BindDepthInPlace();
+  } else {
+    globalImages->currentDepthImage->Bind();
+  }
   GL_SelectTexture(0);
   pStage->texture.image->Bind();
 

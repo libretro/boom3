@@ -250,6 +250,14 @@ void gl_caps_init(gl_caps_loader_t load)
       && (caps_at_least(4, 0) || gl_caps_has_extension("GL_ARB_transform_feedback2")
          || gl_caps_has_extension("GL_NV_transform_feedback2"));
 
+   /* the core entry point where 4.5 or the ARB extension promises it,
+    * else NV_texture_barrier's */
+   if (!glCaps.es && (caps_at_least(4, 5) || gl_caps_has_extension("GL_ARB_texture_barrier")))
+      CAPS_GET(TextureBarrier, gl_caps_TextureBarrier_t, "glTextureBarrier", NULL, NULL);
+   else if (!glCaps.es && gl_caps_has_extension("GL_NV_texture_barrier"))
+      CAPS_GET(TextureBarrier, gl_caps_TextureBarrier_t, "glTextureBarrierNV", NULL, NULL);
+   glCaps.textureBarrier = glCaps.TextureBarrier != NULL;
+
    glCaps.queries = glCaps.GenQueries && glCaps.BeginQuery && glCaps.EndQuery && glCaps.GetQueryObjectuiv
       && (glCaps.es ? caps_at_least(3, 0) : (caps_at_least(1, 5) || gl_caps_has_extension("GL_ARB_occlusion_query")));
 

@@ -1158,6 +1158,7 @@ void		GLimp_Shutdown( void );
 void		GLimp_SwapBuffers( void );
 // the framebuffer the core draws its views into (0 the default one)
 GLuint		GLimp_ViewFramebuffer( void );
+GLuint		GLimp_ViewDepthTexture( int *width, int *height );
 // Calls the system specific swapbuffers routine, and may also perform
 // other system specific cvar checks that happen every frame.
 // This will not be called if 'r_drawBuffer GL_FRONT'
@@ -1329,6 +1330,10 @@ bool RB_FilterBlend( int drawStateBits );
 bool RB_MaterialReadsCurrentDepth( const idMaterial *material );
 bool RB_ViewReadsCurrentDepth( void );
 bool RB_DepthCaptureWanted( void );
+bool RB_DepthCaptureInPlace( void );
+bool RB_DepthInPlace( float recip[2] );
+void RB_BindDepthInPlace( void );
+void RB_UnbindDepthInPlace( void );
 
 /* Whether a soft particle fragment the fade takes to zero may be dropped:
  * an alpha blend fades alpha, so a zero fade leaves the destination whole
