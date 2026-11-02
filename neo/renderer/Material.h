@@ -526,7 +526,9 @@ public:
 						// this is only used by the gui system to force sorting order
 						// on images referenced from tga's instead of materials.
 						// this is done this way as there are 2000 tgas the guis use
-	void				SetSort( float s ) const { sort = s; };
+						// written only when it changes: the GUIs set it again every
+						// time they set up, while a render thread may be reading it
+	void				SetSort( float s ) const { if ( sort != s ) { sort = s; } };
 
 						// DFRM_NONE, DFRM_SPRITE, etc
 	deform_t			Deform( void ) const { return deform; }
