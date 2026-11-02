@@ -295,12 +295,45 @@ typedef struct vkb_draw
    unsigned char shortIndexes;  /* 16-bit indexes, else 32 */
    unsigned char lineMode;
    unsigned char mirror;        /* the view is mirrored: the shadow ops swap faces */
+   unsigned char shadowCaps;    /* with shadowVolume: the caps as well as the sil planes */
+   unsigned shadowVolume;       /* a volume vkb_shadow_queue built: its indexes and counts replace the draw's */
 } vkb_draw_t;
 
 void vkb_set_view(const vkb_view_block_t *view);
 void vkb_draw(const vkb_draw_t *draw);
 /* a post pass's fullscreen triangle: no geometry, the block and textures */
 void vkb_draw_fullscreen(const vkb_draw_t *draw);
+
+/* --- shadow volumes built on the GPU ------------------------------------- */
+
+/* What R_CreateVertexProgramTurboShadowVolume would build from a surface,
+ * built by compute at the start of the frame it is drawn in: the same
+ * indexes, in no particular order, which the stencil counts the same. */
+typedef struct vkb_shadow_volume
+{
+   unsigned vertexBuffer;       /* the shadow cache: per vertex w 1, then w 0 */
+   unsigned vertexOffset;       /* bytes */
+   unsigned indexBuffer;        /* the surface's triangles */
+   unsigned indexOffset;        /* bytes */
+   unsigned numIndexes;
+   unsigned silBuffer;          /* per sil edge v1 v2 p1 p2, p2 0xffffffff when dangling */
+   unsigned silOffset;          /* bytes */
+   unsigned numSilEdges;
+   unsigned cullPlanes;         /* bit i: cull against clipPlanes[i] */
+   float lightOrigin[3];        /* facing's, in surface space */
+   float clipPlanes[6][4];      /* the light frustum, in surface space */
+   unsigned char shortIndexes;
+} vkb_shadow_volume_t;
+
+/* whether the device builds them */
+int  vkb_shadows_available(void);
+/* For the frame the front end is writing (before vkb_frame_handoff): the
+ * volume named by key is built at that frame's start, once however often
+ * it is queued.  0 when it cannot be built. */
+unsigned vkb_shadow_queue(const void *key, const vkb_shadow_volume_t *volume);
+/* During the frame's recording: the handle for vkb_draw's shadowVolume,
+ * 0 when the volume was not queued for this frame. */
+unsigned vkb_shadow_find(const void *key);
 
 /* the frame's scene copies for the stages that read them */
 void vkb_copy_color(unsigned image, int x, int y, int w, int h);

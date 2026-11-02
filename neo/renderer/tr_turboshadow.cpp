@@ -33,16 +33,23 @@ If you have questions concerning this license or the applicable additional terms
 int	c_turboUsedVerts;
 int c_turboUnusedVerts;
 
-#ifndef BOOM3_ARB2_RENDERER
-// only the ARB2 backend builds shadow volumes on the GPU
+// set by the backend that builds them: ARB2's NV5 tier, or Vulkan
 bool r_gpuShadowVolumes = false;
 
 void R_ForgetSilEdges( const silEdge_t *silEdges ) {
+#ifdef BOOM3_ARB2_RENDERER
+	RB_ARB2_ForgetSilEdges( silEdges );
+#endif
+#ifdef BOOM3_VULKAN_RENDERER
+	RB_VK_ForgetSilEdges( silEdges );
+#endif
 }
 
 void R_ForgetGpuShadow( const gpuShadow_t *gs ) {
-}
+#ifdef BOOM3_ARB2_RENDERER
+	RB_ARB2_ForgetGpuShadow( gs );
 #endif
+}
 
 /*
 =====================

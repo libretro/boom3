@@ -1699,6 +1699,11 @@ void R_ForgetSilEdges( const silEdge_t *silEdges );
 // a volume about to be freed: the backend drops its kept capture
 void R_ForgetGpuShadow( const gpuShadow_t *gs );
 
+// the backends' parts of R_ForgetSilEdges and R_ForgetGpuShadow
+void RB_ARB2_ForgetSilEdges( const silEdge_t *silEdges );
+void RB_ARB2_ForgetGpuShadow( const gpuShadow_t *gs );
+void RB_VK_ForgetSilEdges( const silEdge_t *silEdges );
+
 // the ARB2 backend's: build a gpuShadow_t volume, then draw it as RB_DrawShadowElementsWithCounters would
 bool RB_ARB2_CaptureGpuShadow( const srfTriangles_t *tri );
 void RB_ARB2_DrawGpuShadow( const srfTriangles_t *tri, int numIndexes );
@@ -1849,6 +1854,8 @@ bool RB_VK_Deferred( void );   // a frame is on the thread: EndFrame leaves its 
 void RB_VK_Sync( void );
 void RB_VK_Shutdown( void );
 void RB_VK_SceneSize( int *width, int *height );   // the frame's scene size, as handed over
+void RB_VK_ShadowsUp( void );     // after vkb_init: whether shadow volumes are built on the GPU
+void RB_VK_ShadowsDown( void );   // before vkb_shutdown
 #endif
 void *R_FrameAlloc( int bytes );
 void *R_ClearedFrameAlloc( int bytes );

@@ -2987,6 +2987,7 @@ static void context_reset(void)
          log_cb(RETRO_LOG_ERROR, "boom3: the Vulkan backend did not come up.\n");
          return;
       }
+      RB_VK_ShadowsUp();
       if (!first_boot)
       {
          R_ReinitOpenGL();
@@ -3135,6 +3136,7 @@ static void context_destroy(void)
 #ifdef BOOM3_VULKAN_RENDERER
     if (LR_VULKAN()) {
         RB_VK_Shutdown();
+        RB_VK_ShadowsDown();
         vkb_shutdown();
     }
 #endif

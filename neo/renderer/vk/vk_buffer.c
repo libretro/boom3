@@ -79,7 +79,7 @@ static int vkb_static_make(unsigned i, int indexes, size_t atLeast)
    bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
    bci.size  = size;
    bci.usage = (indexes ? VK_BUFFER_USAGE_INDEX_BUFFER_BIT : VK_BUFFER_USAGE_VERTEX_BUFFER_BIT)
-      | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+      | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
    if (vk.vkCreateBuffer(vkb.device, &bci, NULL, &b->buffer) != VK_SUCCESS)
       return 0;
    vk.vkGetBufferMemoryRequirements(vkb.device, b->buffer, &req);

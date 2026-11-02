@@ -104,7 +104,10 @@
    X(vkCmdSetStencilWriteMask) \
    X(vkCmdClearAttachments) \
    X(vkCmdPushConstants) \
-   X(vkCmdExecuteCommands)
+   X(vkCmdExecuteCommands) \
+   X(vkCreateComputePipelines) \
+   X(vkCmdDispatch) \
+   X(vkCmdDrawIndexedIndirect)
 
 typedef struct vkb_procs
 {
@@ -197,6 +200,17 @@ typedef struct vkb_deferred_free
 
 #define VKB_FRAME_CMDS 8          /* command buffers a frame may submit in turn */
 
+/* a volume queued for the frame's build */
+typedef struct vkb_shadow_job
+{
+   const void *key;
+   vkb_shadow_volume_t volume;
+   unsigned parmOffset;        /* in the ring: its parameters, then its two draws */
+   unsigned silFirst;          /* in the slot's index buffer */
+   unsigned capFirst;
+   unsigned facingFirst;
+} vkb_shadow_job_t;
+
 typedef struct vkb_frame
 {
    VkCommandPool pool;
@@ -208,6 +222,18 @@ typedef struct vkb_frame
    VkDescriptorPool descriptors;
    unsigned ringUsed;
    unsigned char submitted;
+   /* the shadow volumes the frame builds, and where */
+   vkb_shadow_job_t *shadowJobs;
+   unsigned shadowCount;
+   unsigned shadowCapacity;
+   unsigned *shadowSlots;      /* open addressing on the key: a job number + 1, 0 empty */
+   unsigned shadowSlotCount;   /* a power of two, at least twice the capacity */
+   VkBuffer shadowIndexes;
+   vkb_mem_t shadowIndexMem;
+   VkDeviceSize shadowIndexBytes;
+   VkBuffer shadowFacing;
+   vkb_mem_t shadowFacingMem;
+   VkDeviceSize shadowFacingBytes;
 } vkb_frame_t;
 
 typedef struct vkb_pipeline_key
@@ -344,6 +370,11 @@ typedef struct vkb_state
 
    char deviceName[256];
    uint32_t apiVersion;        /* what the instance and device both offer, patch level dropped */
+   unsigned char denormMode;   /* the shadow build's: 0 the driver's, 1 flushed, 2 preserved */
+   VkDescriptorSetLayout shadowSetLayout;
+   VkPipelineLayout shadowLayout;
+   VkPipeline shadowCaps;
+   VkPipeline shadowSil;
    unsigned char ready;
    unsigned char hasBC;
 } vkb_state_t;
@@ -409,6 +440,13 @@ void vkb_render_pass_end(void);
  * viewport and scissor kept */
 void vkb_leave_render_pass(void);
 void vkb_enter_render_pass(void);
+
+/* vk_shadow.c */
+int  vkb_shadows_init(void);
+void vkb_shadows_shutdown(void);
+void vkb_shadows_frame_reset(vkb_frame_t *f);
+void vkb_shadows_record(VkCommandBuffer cmd);
+void vkb_shadows_draw(const vkb_draw_t *draw);
 
 /* vk_pipeline.c */
 int  vkb_pipelines_init(void);

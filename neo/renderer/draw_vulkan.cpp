@@ -1356,7 +1356,13 @@ static void RB_VK_StencilShadowPass( const drawSurf_t *surf, const viewLight_t *
 		draw.vertexBuffer = vc->vbo;
 		draw.vertexOffset = (unsigned)vc->offset;
 		draw.layout = VKB_VERTEX_SHADOW;
-		if ( tri->indexCache && !tri->indexCache->virtMem ) {
+		if ( tri->gpuShadow ) {
+			// built at the frame's start, by the queue RB_VK_Prepare filled
+			draw.shadowVolume = vkb_shadow_find( tri );
+			if ( !draw.shadowVolume ) {
+				continue;
+			}
+		} else if ( tri->indexCache && !tri->indexCache->virtMem ) {
 			draw.indexBuffer = tri->indexCache->vbo;
 			draw.indexOffset = (unsigned)tri->indexCache->offset;
 			draw.shortIndexes = tri->indexCache->indexType == GL_UNSIGNED_SHORT;
@@ -1389,6 +1395,7 @@ static void RB_VK_StencilShadowPass( const drawSurf_t *surf, const viewLight_t *
 			numIndexes = tri->numIndexes;
 		}
 		draw.indexCount = (unsigned)numIndexes;
+		draw.shadowCaps = numIndexes == tri->numIndexes;
 		draw.program = VKB_PROGRAM_SHADOW;
 		draw.cull = VKB_CULL_NONE;
 		draw.stateBits = GLS_DEPTHMASK | GLS_COLORMASK | GLS_ALPHAMASK | GLS_DEPTHFUNC_LESS;
@@ -1807,6 +1814,192 @@ static void RB_VK_PrepareMaterial( const idMaterial *shader ) {
 	}
 }
 
+/*
+====================
+Shadow volumes built on the GPU
+
+A gpuShadow_t volume is queued with the backend while the frame's
+commands are prepared, built by compute at the frame's start and drawn
+from what it wrote.  Its sil edges go up once, to a static block: per
+edge v1 v2 p1 p2, a dangling edge's missing triangle as 0xffffffff.
+The table of those blocks is the main thread's.
+====================
+*/
+typedef struct {
+	const silEdge_t *	key;		// NULL in an empty slot
+	unsigned			buffer;
+	unsigned			offset;
+	unsigned			bytes;
+} vkSilBlock_t;
+
+static vkSilBlock_t *	vkSil;
+static int				vkSilMax;		// a power of two, 0 when none
+static int				vkSilCount;
+
+static int RB_VK_SilHome( const silEdge_t *key ) {
+	return (int)( ( (unsigned)( (uintptr_t)key >> 4 ) * 2654435761u ) & (unsigned)( vkSilMax - 1 ) );
+}
+
+static int RB_VK_SilSlot( const silEdge_t *key ) {
+	int i = RB_VK_SilHome( key );
+	while ( vkSil[i].key != NULL && vkSil[i].key != key ) {
+		i = ( i + 1 ) & ( vkSilMax - 1 );
+	}
+	return i;
+}
+
+static bool RB_VK_SilGrow( void ) {
+	vkSilBlock_t *old = vkSil;
+	int oldMax = vkSilMax;
+	int i;
+	vkSilMax = oldMax ? oldMax * 2 : 256;
+	vkSil = (vkSilBlock_t *)Mem_ClearedAlloc( vkSilMax * sizeof( vkSilBlock_t ) );
+	if ( !vkSil ) {
+		vkSil = old;
+		vkSilMax = oldMax;
+		return false;
+	}
+	for ( i = 0; i < oldMax; i++ ) {
+		if ( old[i].key ) {
+			vkSil[RB_VK_SilSlot( old[i].key )] = old[i];
+		}
+	}
+	Mem_Free( old );
+	return true;
+}
+
+static const vkSilBlock_t *RB_VK_SilEdges( const srfTriangles_t *src ) {
+	vkSilBlock_t *b;
+	unsigned *data;
+	const int numFaces = src->numIndexes / 3;
+	int i;
+	if ( !vkSilMax || ( vkSilCount + 1 ) * 2 > vkSilMax ) {
+		if ( !RB_VK_SilGrow() ) {
+			return NULL;
+		}
+	}
+	b = &vkSil[RB_VK_SilSlot( src->silEdges )];
+	if ( b->key ) {
+		return b;
+	}
+	b->bytes = (unsigned)src->numSilEdges * 16;
+	if ( !vkb_static_alloc( b->bytes, 0, &b->buffer, &b->offset ) ) {
+		return NULL;
+	}
+	data = (unsigned *)Mem_Alloc( b->bytes );
+	for ( i = 0; i < src->numSilEdges; i++ ) {
+		const silEdge_t *e = &src->silEdges[i];
+		data[i * 4 + 0] = (unsigned)e->v1;
+		data[i * 4 + 1] = (unsigned)e->v2;
+		data[i * 4 + 2] = (unsigned)e->p1;
+		data[i * 4 + 3] = e->p2 < numFaces ? (unsigned)e->p2 : 0xffffffffu;
+	}
+	vkb_static_upload( b->buffer, b->offset, data, b->bytes );
+	Mem_Free( data );
+	b->key = src->silEdges;
+	vkSilCount++;
+	return b;
+}
+
+void RB_VK_ForgetSilEdges( const silEdge_t *silEdges ) {
+	int i, j, k;
+	if ( !vkSilCount || !silEdges ) {
+		return;
+	}
+	i = RB_VK_SilSlot( silEdges );
+	if ( vkSil[i].key == NULL ) {
+		return;
+	}
+	vkb_static_free( vkSil[i].buffer, vkSil[i].offset, vkSil[i].bytes );
+	vkSilCount--;
+	// close the gap: pull back each later entry of the run that may live here
+	j = i;
+	for ( ;; ) {
+		j = ( j + 1 ) & ( vkSilMax - 1 );
+		if ( vkSil[j].key == NULL ) {
+			break;
+		}
+		k = RB_VK_SilHome( vkSil[j].key );
+		if ( i <= j ? ( i < k && k <= j ) : ( i < k || k <= j ) ) {
+			continue;
+		}
+		vkSil[i] = vkSil[j];
+		i = j;
+	}
+	vkSil[i].key = NULL;
+}
+
+void RB_VK_ShadowsUp( void ) {
+#if defined( _MSC_VER ) && defined( _M_IX86 )
+	// the CPU's face planes there come from routines the build does not replay
+	r_gpuShadowVolumes = false;
+#else
+	r_gpuShadowVolumes = vkb_shadows_available() != 0;
+#endif
+}
+
+// the device's static blocks went with it
+void RB_VK_ShadowsDown( void ) {
+	r_gpuShadowVolumes = false;
+	if ( vkSil ) {
+		Mem_Free( vkSil );
+	}
+	vkSil = NULL;
+	vkSilMax = vkSilCount = 0;
+}
+
+// the frame's volumes, from what AddActiveInteraction readied: queued once each
+static void RB_VK_PrepareShadows( const drawSurf_t *surf ) {
+	for ( ; surf; surf = surf->nextOnLight ) {
+		const srfTriangles_t *tri = surf->geo;
+		const gpuShadow_t *gs = tri->gpuShadow;
+		const srfTriangles_t *src;
+		const vertCache_t *vc = tri->shadowCache;
+		const vertCache_t *ic;
+		const vkSilBlock_t *sil;
+		vkb_shadow_volume_t v;
+		int i;
+		if ( !gs || !vc || vc->virtMem ) {
+			continue;
+		}
+		src = gs->source;
+		ic = src->indexCache;
+		sil = RB_VK_SilEdges( src );
+		if ( !sil ) {
+			continue;
+		}
+		memset( &v, 0, sizeof( v ) );
+		v.vertexBuffer = vc->vbo;
+		v.vertexOffset = (unsigned)vc->offset;
+		if ( ic && !ic->virtMem ) {
+			v.indexBuffer = ic->vbo;
+			v.indexOffset = (unsigned)ic->offset;
+			v.shortIndexes = ic->indexType == GL_UNSIGNED_SHORT;
+		} else {
+			void *p = vkb_ring_alloc( src->numIndexes * sizeof( src->indexes[0] ), 4, &v.indexBuffer, &v.indexOffset );
+			if ( !p ) {
+				continue;
+			}
+			memcpy( p, src->indexes, src->numIndexes * sizeof( src->indexes[0] ) );
+		}
+		v.numIndexes = (unsigned)src->numIndexes;
+		v.silBuffer = sil->buffer;
+		v.silOffset = sil->offset;
+		v.numSilEdges = (unsigned)src->numSilEdges;
+		v.cullPlanes = (unsigned)gs->cullPlanes;
+		v.lightOrigin[0] = gs->lightOrigin[0];
+		v.lightOrigin[1] = gs->lightOrigin[1];
+		v.lightOrigin[2] = gs->lightOrigin[2];
+		for ( i = 0; i < 6; i++ ) {
+			v.clipPlanes[i][0] = gs->clipPlanes[i][0];
+			v.clipPlanes[i][1] = gs->clipPlanes[i][1];
+			v.clipPlanes[i][2] = gs->clipPlanes[i][2];
+			v.clipPlanes[i][3] = gs->clipPlanes[i][3];
+		}
+		vkb_shadow_queue( tri, &v );
+	}
+}
+
 static void RB_VK_PrepareSurfs( const drawSurf_t *surf ) {
 	for ( ; surf; surf = surf->nextOnLight ) {
 		RB_VK_PrepareMaterial( surf->material );
@@ -1833,6 +2026,10 @@ static void RB_VK_Prepare( const emptyCommand_t *cmds ) {
 			}
 			RB_VK_PrepareSurfs( vLight->globalShadows );
 			RB_VK_PrepareSurfs( vLight->localShadows );
+			if ( r_gpuShadowVolumes ) {
+				RB_VK_PrepareShadows( vLight->globalShadows );
+				RB_VK_PrepareShadows( vLight->localShadows );
+			}
 			RB_VK_PrepareSurfs( vLight->localInteractions );
 			RB_VK_PrepareSurfs( vLight->globalInteractions );
 			RB_VK_PrepareSurfs( vLight->translucentInteractions );

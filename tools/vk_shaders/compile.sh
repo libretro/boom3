@@ -55,6 +55,10 @@ hdr_up_frag hdr_up.frag
 hdr_blur_frag hdr_blur.frag
 hdr_composite_frag hdr_composite.frag -DINPLACE=0
 hdr_composite_inplace_frag hdr_composite.frag -DINPLACE=1
+shadow_caps_comp shadow_caps.comp -DDENORM=0
+shadow_caps_ftz_comp shadow_caps.comp -DDENORM=1
+shadow_caps_preserve_comp shadow_caps.comp -DDENORM=2
+shadow_sil_comp shadow_sil.comp
 "
 echo "$variants" | while read -r name file defines; do
 	[ -z "$name" ] && continue

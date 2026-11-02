@@ -216,7 +216,7 @@ void vkb_draw(const vkb_draw_t *draw)
    void *p;
    VkDescriptorSet set;
    VkBuffer vb, ib;
-   if (!vkb.inRenderPass || !draw->block || !draw->indexCount)
+   if (!vkb.inRenderPass || !draw->block || ( !draw->indexCount && !draw->shadowVolume ))
       return;
    p = vkb_ring_alloc_frame(vkb_block_bytes(draw), VKB_DRAW_BLOCK_ALIGN, &buffer, &offset);
    if (!p)
@@ -229,7 +229,7 @@ void vkb_draw(const vkb_draw_t *draw)
    vkb_bind(draw, set, ringOffsetOf(buffer, offset));
 
    vb = vkb_static_vk_buffer(draw->vertexBuffer);
-   ib = vkb_static_vk_buffer(draw->indexBuffer);
+   ib = draw->shadowVolume ? vb : vkb_static_vk_buffer(draw->indexBuffer);
    if (!vb || !ib)
       return;
    stride = draw->layout == VKB_VERTEX_SHADOW ? 16 : 60;
@@ -238,6 +238,11 @@ void vkb_draw(const vkb_draw_t *draw)
       VkDeviceSize zero = 0;
       vk.vkCmdBindVertexBuffers(vkb.cmd, 0, 1, &vb, &zero);
       vkb.boundVertexBuffer = draw->vertexBuffer;
+   }
+   if (draw->shadowVolume)
+   {
+      vkb_shadows_draw(draw);
+      return;
    }
    if (draw->indexBuffer != vkb.boundIndexBuffer || draw->shortIndexes != vkb.boundIndexShort)
    {

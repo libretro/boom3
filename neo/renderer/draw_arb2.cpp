@@ -1170,7 +1170,6 @@ typedef struct {
 } arb2GpuShadow_t;
 
 static arb2GpuShadow_t	rb_gs;
-bool					r_gpuShadowVolumes;
 
 static ID_INLINE int RB_GS_Home( const silEdge_t *key ) {
 	return (int)( ( (unsigned int)( (uintptr_t)key >> 4 ) * 2654435761u ) & (unsigned int)( rb_gs.maxEntries - 1 ) );
@@ -1210,10 +1209,10 @@ static bool RB_GS_Grow( void ) {
 
 /*
 ==================
-R_ForgetSilEdges
+RB_ARB2_ForgetSilEdges
 ==================
 */
-void R_ForgetSilEdges( const silEdge_t *silEdges ) {
+void RB_ARB2_ForgetSilEdges( const silEdge_t *silEdges ) {
 	arb2SilEntry_t	*e;
 	int				i, j, k;
 
@@ -1417,10 +1416,10 @@ static void RB_GS_Unstore( int i ) {
 
 /*
 ==================
-R_ForgetGpuShadow
+RB_ARB2_ForgetGpuShadow
 ==================
 */
-void R_ForgetGpuShadow( const gpuShadow_t *gs ) {
+void RB_ARB2_ForgetGpuShadow( const gpuShadow_t *gs ) {
 	arb2GsVolume_t *v = RB_GS_Volume( gs );
 
 	if ( v ) {

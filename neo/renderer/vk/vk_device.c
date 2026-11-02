@@ -22,6 +22,7 @@ static PFN_vkGetInstanceProcAddr getInstanceProcAddr;
 static uint32_t instanceVersion = VK_API_VERSION_1_0;
 /* create_device2's, for vkb_init: its reset of vkb comes after */
 static VkPhysicalDeviceFeatures negotiatedFeatures;
+static int negotiatedFloatControls;   /* VK_KHR_shader_float_controls enabled */
 
 /* the newest version anything in the renderer uses */
 #define VKB_API_VERSION_MAX VK_API_VERSION_1_2
@@ -99,6 +100,9 @@ static bool vkb_create_device2(struct retro_vulkan_context *context, VkInstance 
    VkDeviceQueueCreateInfo qci;
    VkDeviceCreateInfo dci;
    VkDevice device;
+   VkPhysicalDeviceProperties props;
+   const char *extensions[1];
+   uint32_t numExtensions = 0;
    float priority = 1.0f;
    (void)surface;
 
@@ -140,11 +144,31 @@ static bool vkb_create_device2(struct retro_vulkan_context *context, VkInstance 
    qci.queueCount       = 1;
    qci.pQueuePriorities = &priority;
 
+   /* Vulkan 1.1 with the extension, or 1.2: the shadow build's denormal
+    * mode can be the CPU's */
+   negotiatedFloatControls = 0;
+   vk.vkGetPhysicalDeviceProperties(gpu, &props);
+   if ((props.apiVersion & ~0xfffu) == VK_API_VERSION_1_1 && instanceVersion >= VK_API_VERSION_1_1)
+   {
+      VkExtensionProperties ext[256];
+      uint32_t n = 256, e;
+      if (vk.vkEnumerateDeviceExtensionProperties(gpu, NULL, &n, ext) >= VK_SUCCESS)
+         for (e = 0; e < n; e++)
+            if (!strcmp(ext[e].extensionName, VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME))
+            {
+               extensions[numExtensions++] = VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME;
+               negotiatedFloatControls     = 1;
+               break;
+            }
+   }
+
    memset(&dci, 0, sizeof(dci));
-   dci.sType                = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-   dci.queueCreateInfoCount = 1;
-   dci.pQueueCreateInfos    = &qci;
-   dci.pEnabledFeatures     = &want;
+   dci.sType                   = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+   dci.queueCreateInfoCount    = 1;
+   dci.pQueueCreateInfos       = &qci;
+   dci.enabledExtensionCount   = numExtensions;
+   dci.ppEnabledExtensionNames = numExtensions ? extensions : NULL;
+   dci.pEnabledFeatures        = &want;
 
    device = wrapper(gpu, opaque, &dci);
    if (!device)
@@ -161,6 +185,32 @@ static bool vkb_create_device2(struct retro_vulkan_context *context, VkInstance 
    vk.vkGetDeviceQueue(device, family, 0, &context->queue);
    context->presentation_queue = context->queue;
    return true;
+}
+
+/* How the shadow build's facing arithmetic treats denormals, made the
+ * CPU's where the device can: SSE's are flushed (FTZ and DAZ are set),
+ * the others' kept.  0 leaves the driver's choice. */
+static unsigned char vkb_denorm_mode(void)
+{
+   PFN_vkGetPhysicalDeviceProperties2 props2;
+   VkPhysicalDeviceFloatControlsProperties fc;
+   VkPhysicalDeviceProperties2 p2;
+   if (vkb.apiVersion < VK_API_VERSION_1_1 || ( vkb.apiVersion < VK_API_VERSION_1_2 && !negotiatedFloatControls ))
+      return 0;
+   props2 = (PFN_vkGetPhysicalDeviceProperties2)getInstanceProcAddr(vkb.instance, "vkGetPhysicalDeviceProperties2");
+   if (!props2)
+      return 0;
+   memset(&fc, 0, sizeof(fc));
+   fc.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FLOAT_CONTROLS_PROPERTIES;
+   memset(&p2, 0, sizeof(p2));
+   p2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+   p2.pNext = &fc;
+   props2(vkb.gpu, &p2);
+#if defined(__i386__) || defined(__x86_64__) || defined(_M_IX86) || defined(_M_X64)
+   return fc.shaderDenormFlushToZeroFloat32 ? 1 : 0;
+#else
+   return fc.shaderDenormPreserveFloat32 ? 2 : 0;
+#endif
 }
 
 static struct retro_hw_render_context_negotiation_interface_vulkan negotiation;
@@ -235,7 +285,7 @@ static int vkb_frames_init(void)
       VkCommandBufferAllocateInfo cai;
       VkFenceCreateInfo fci;
       VkSemaphoreCreateInfo sci;
-      VkDescriptorPoolSize sizes[3];
+      VkDescriptorPoolSize sizes[4];
       VkDescriptorPoolCreateInfo dpi;
 
       memset(&pci, 0, sizeof(pci));
@@ -268,10 +318,12 @@ static int vkb_frames_init(void)
       sizes[1].descriptorCount = VKB_MAX_TEXTURE_UNITS * 16384;
       sizes[2].type            = VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT;
       sizes[2].descriptorCount = 64;
+      sizes[3].type            = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;    /* the shadow build's */
+      sizes[3].descriptorCount = 6 * 4096;
       memset(&dpi, 0, sizeof(dpi));
       dpi.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
       dpi.maxSets       = 16384;
-      dpi.poolSizeCount = 3;
+      dpi.poolSizeCount = 4;
       dpi.pPoolSizes    = sizes;
       if (vk.vkCreateDescriptorPool(vkb.device, &dpi, NULL, &f->descriptors) != VK_SUCCESS)
          return 0;
@@ -308,7 +360,8 @@ static int vkb_ring_init(void)
    bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
    bci.size  = (VkDeviceSize)VKB_RING_SEGMENT_BYTES * VKB_FRAMES;
    bci.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT
-      | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+      | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT
+      | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
    if (vk.vkCreateBuffer(vkb.device, &bci, NULL, &vkb.ring) != VK_SUCCESS)
       return 0;
    vk.vkGetBufferMemoryRequirements(vkb.device, vkb.ring, &req);
@@ -398,6 +451,7 @@ static void vkb_acquire_slot(unsigned slot)
    vk.vkResetCommandPool(vkb.device, f->pool, 0);
    vk.vkResetDescriptorPool(vkb.device, f->descriptors, 0);
    f->ringUsed = 0;
+   vkb_shadows_frame_reset(f);
    vkb_buffers_frame_begin(slot);
    vkb_images_frame_done();
 }
@@ -431,6 +485,7 @@ int vkb_init(const struct retro_hw_render_interface_vulkan *iface, unsigned widt
    vkb.apiVersion = vkb.properties.apiVersion & ~0xfffu;
    if (vkb.apiVersion > instanceVersion)
       vkb.apiVersion = instanceVersion;
+   vkb.denormMode = vkb_denorm_mode();
    vk.vkGetPhysicalDeviceMemoryProperties(vkb.gpu, &vkb.memoryProperties);
    memcpy(vkb.deviceName, vkb.properties.deviceName, sizeof(vkb.deviceName) - 1);
    vkb.deviceName[sizeof(vkb.deviceName) - 1] = '\0';
@@ -450,7 +505,7 @@ int vkb_init(const struct retro_hw_render_interface_vulkan *iface, unsigned widt
    }
 
    if (!vkt_lock_init() || !vkb_frames_init() || !vkb_memory_init() || !vkb_ring_init() || !vkb_images_init()
-         || !vkb_buffers_init() || !vkb_pipelines_init())
+         || !vkb_buffers_init() || !vkb_pipelines_init() || !vkb_shadows_init())
    {
       vkb_shutdown();
       return 0;
@@ -483,6 +538,7 @@ void vkb_shutdown(void)
    for (i = 0; i < 8; i++)
       vkb_target_destroy(&vkb.frameImage[i]);
    vkb_target_destroy(&vkb.scene);
+   vkb_shadows_shutdown();
    vkb_pipelines_shutdown();
    vkb_buffers_shutdown();
    vkb_images_shutdown();
@@ -723,6 +779,7 @@ int vkb_begin_frame(enum vkb_target target, unsigned width, unsigned height,
    /* textures and static data queued since the last frame */
    vkb_images_flush_uploads(vkb.cmd);
    vkb_buffers_flush(vkb.cmd);
+   vkb_shadows_record(vkb.cmd);
 
    vkb_render_pass_begin();
    return 1;

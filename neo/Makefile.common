@@ -407,6 +407,7 @@ ifeq ($(HAVE_VULKAN_RENDERER),1)
 		$(CORE_DIR)/renderer/vk/vk_buffer.c \
 		$(CORE_DIR)/renderer/vk/vk_pipeline.c \
 		$(CORE_DIR)/renderer/vk/vk_draw.c \
+		$(CORE_DIR)/renderer/vk/vk_shadow.c \
 		$(CORE_DIR)/renderer/vk/vk_thread.c
 endif
 endif

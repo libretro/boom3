@@ -1,0 +1,33 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "shadow_build.glsl"
+
+// A sil edge between a triangle facing the light and one facing away:
+// R_CreateVertexProgramTurboShadowVolume's quad, wound by the facings.
+
+layout(local_size_x = 64) in;
+
+void main()
+{
+    uint e = gl_GlobalInvocationID.x;
+    uvec4 s;
+    uint f1, f2, v1, v2, slot, at;
+
+    if (e >= pc.numEdges)
+        return;
+    s  = sil[pc.silBase + e];
+    f1 = facing[pc.facingBase + s.z];
+    f2 = s.w == 0xffffffffu ? 1u : facing[pc.facingBase + s.w];
+    if (f1 == f2)
+        return;
+    v1 = s.x << 1;
+    v2 = s.y << 1;
+    slot = atomicAdd(parms[PARM_SIL_DRAW], 6u);
+    at = parms[PARM_SIL_DRAW + 2u] + slot;
+    outIndex[at + 0u] = v1;
+    outIndex[at + 1u] = v2 ^ f1;
+    outIndex[at + 2u] = v2 ^ f2;
+    outIndex[at + 3u] = v1 ^ f2;
+    outIndex[at + 4u] = v1 ^ f1;
+    outIndex[at + 5u] = v2 ^ 1u;
+}
