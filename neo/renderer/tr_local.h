@@ -1329,6 +1329,16 @@ bool RB_FilterBlend( int drawStateBits );
 bool RB_MaterialReadsCurrentDepth( const idMaterial *material );
 bool RB_ViewReadsCurrentDepth( void );
 bool RB_DepthCaptureWanted( void );
+
+/* Whether a soft particle fragment the fade takes to zero may be dropped:
+ * an alpha blend fades alpha, so a zero fade leaves the destination whole
+ * under ONE_MINUS_SRC_ALPHA or ONE; an add fades colour, which ONE leaves
+ * untouched, and a dropped fragment leaves alpha unwritten as the depth
+ * test does for a particle that is not softened. */
+#define RB_SOFT_FADE_DROPS( bits ) \
+	( ( (bits) & GLS_DSTBLEND_BITS ) == GLS_DSTBLEND_ONE \
+	|| ( (bits) & ( GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS ) ) \
+		== ( GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA ) )
 void RB_LoadShaderTextureMatrix( const float *shaderRegisters, const textureStage_t *texture );
 void RB_GetShaderTextureMatrix( const float *shaderRegisters, const textureStage_t *texture, float matrix[16] );
 void RB_CreateSingleDrawInteractions( const drawSurf_t *surf, void (*DrawInteraction)(const drawInteraction_t *) );

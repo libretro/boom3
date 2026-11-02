@@ -61,6 +61,10 @@ void main()
   // is in front of the scene, and how far it is from the eye
   float fade = clamp((particle_depth - scene_depth + u_vertexParms[0].x) * u_vertexParms[0].y, 0.0, 1.0);
   float near_fade = clamp(particle_depth * -u_vertexParms[0].z, 0.0, 1.0);
+  // a fragment faded to nothing is dropped before its fetch and its
+  // blend where u_vertexParms[0].w says that leaves the colour unchanged
+  if (fade * near_fade == 0.0 && u_vertexParms[0].w != 0.0)
+    discard;
   vec4 channels = clamp(vec4(fade * near_fade) + u_vertexParms[1], 0.0, 1.0);
 
   vec4 c = texture(u_fragmentMap0, var_TexCoord) * channels * u_glColor * var_Color;

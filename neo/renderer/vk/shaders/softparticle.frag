@@ -21,6 +21,10 @@ void main()
     float particle_depth = 1.0 / (gl_FragCoord.z * depth_consts.x + depth_consts.y);
     float fade = clamp((particle_depth - scene_depth + u_draw.vertexParms[0].x) * u_draw.vertexParms[0].y, 0.0, 1.0);
     float near_fade = clamp(particle_depth * -u_draw.vertexParms[0].z, 0.0, 1.0);
+    // a fragment faded to nothing is dropped before its fetch and its
+    // blend where vertexParms[0].w says that leaves the colour unchanged
+    if (fade * near_fade == 0.0 && u_draw.vertexParms[0].w != 0.0)
+        discard;
     vec4 channels = clamp(vec4(fade * near_fade) + u_draw.vertexParms[1], 0.0, 1.0);
     vec4 c = texture(u_map0, var_TexCoord) * channels * u_draw.glColor * var_Color;
     fragColor = vec4(c.rgb * u_draw.hdrParms.x, c.a);

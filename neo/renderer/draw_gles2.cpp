@@ -2085,7 +2085,8 @@ static void RB_GLSL_DrawSoftParticle(const drawSurf_t* surf, const shaderStage_t
   parms[0][0] = radius;
   parms[0][1] = 1.0f / fadeRange;
   parms[0][2] = 1.0f / radius;
-  parms[0][3] = 0.0f;
+  // 1 where a fragment faded to nothing may be dropped
+  parms[0][3] = RB_SOFT_FADE_DROPS( pStage->drawStateBits ) ? 1.0f : 0.0f;
   // an alpha blend fades its alpha, an additive one its colour
   parms[1][0] = parms[1][1] = parms[1][2] = srcBlend == GLS_SRCBLEND_SRC_ALPHA ? 1.0f : 0.0f;
   parms[1][3] = srcBlend == GLS_SRCBLEND_SRC_ALPHA ? 0.0f : 1.0f;

@@ -1106,7 +1106,8 @@ static void RB_VK_DrawSoftParticle( const drawSurf_t *surf, const shaderStage_t 
 	block.vertexParms[0][0] = radius;
 	block.vertexParms[0][1] = 1.0f / fadeRange;
 	block.vertexParms[0][2] = 1.0f / radius;
-	block.vertexParms[0][3] = 0.0f;
+	/* 1 where a fragment faded to nothing may be dropped */
+	block.vertexParms[0][3] = RB_SOFT_FADE_DROPS( pStage->drawStateBits ) ? 1.0f : 0.0f;
 	/* an alpha blend fades its alpha, an additive one its colour */
 	block.vertexParms[1][0] = block.vertexParms[1][1] = block.vertexParms[1][2] = srcBlend == GLS_SRCBLEND_SRC_ALPHA ? 1.0f : 0.0f;
 	block.vertexParms[1][3] = srcBlend == GLS_SRCBLEND_SRC_ALPHA ? 0.0f : 1.0f;
