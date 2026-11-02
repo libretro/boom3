@@ -9887,12 +9887,10 @@ void GLimp_SwapBuffers() {
    }
 #endif
    /*
-      Frame-time fix: flush only when the frontend reads our FBO from a
-      DIFFERENT context - cross-context visibility genuinely needs it.
-      In the default single-context mode, command ordering within the
-      context already guarantees the frontend sees the finished frame,
-      and an unconditional glFlush was one more per-frame driver
-      synchronization with driver-dependent, variable cost.
+      No flush before the handoff: in one context, command order already
+      gives the frontend the finished frame, and a frontend reading it
+      from a shared context flushes ours itself - by making its own
+      context current (an implicit flush), or by its fence and flush.
    */
    /* 30-bit HDR: convert the scene target into the frontend framebuffer
       before presentation; 24-bit mode skips straight past. */
@@ -9913,8 +9911,6 @@ void GLimp_SwapBuffers() {
    if ( R_GLSLRenderer() )
       RB_GLSL_EndFrame();   /* the uniform buffer binding points, untracked by glsm */
 #endif
-   if (libretro_shared_context)
-      glFlush();
    if (!libretro_shared_context)
       glsm_ctl(GLSM_CTL_STATE_UNBIND, NULL);
 
