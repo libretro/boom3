@@ -304,8 +304,7 @@ bool idSmokeParticles::UpdateRenderEntity( renderEntity_s *renderEntity, const r
 
 	particleGen_t g;
 
-	g.renderEnt = renderEntity;
-	g.renderView = renderView;
+	ParticleGenSetView( &g, renderEntity, renderView );
 
 	for ( int activeStageNum = 0; activeStageNum < activeStages.Num(); activeStageNum++ ) {
 		singleSmoke_t *smoke, *next, *last;

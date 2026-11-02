@@ -1071,6 +1071,7 @@ int	idParticleStage::ParticleVerts( particleGen_t *g, idVec3 origin, idDrawVert 
 
 		float height = 1.0f / ( 1 + numTrails );
 		float t = 0;
+		const idVec3 &forwardDir = g->viewAxis[0];
 
 		for ( int i = 0 ; i <= numTrails ; i++ ) {
 			g->random = g->originalRandom;
@@ -1082,9 +1083,6 @@ int	idParticleStage::ParticleVerts( particleGen_t *g, idVec3 origin, idDrawVert 
 
 			up = stepOrigin - oldOrigin;	// along the direction of travel
 
-			idVec3	forwardDir;
-			g->renderEnt->axis.ProjectVector( g->renderView->viewaxis[0], forwardDir );
-
 			up -= ( up * forwardDir ) * forwardDir;
 
 			up.Normalize();
@@ -1093,15 +1091,18 @@ int	idParticleStage::ParticleVerts( particleGen_t *g, idVec3 origin, idDrawVert 
 			left = up.Cross( forwardDir );
 			left *= psize;
 
-			verts_p[0] = verts[0];
-			verts_p[1] = verts[1];
-			verts_p[2] = verts[2];
-			verts_p[3] = verts[3];
-
 			if ( i == 0 ) {
 				verts_p[0].xyz = stepOrigin - left;
 				verts_p[1].xyz = stepOrigin + left;
 			} else {
+				int k;
+				/* the trail quads carry the head quad's normal, tangents and color */
+				for ( k = 0; k < 4; k++ ) {
+					verts_p[k].normal = verts[k].normal;
+					verts_p[k].tangents[0] = verts[k].tangents[0];
+					verts_p[k].tangents[1] = verts[k].tangents[1];
+					verts_p[k].SetColor( verts[k].GetColor() );
+				}
 				verts_p[0].xyz = stepOrigin - stepLeft;
 				verts_p[1].xyz = stepOrigin + stepLeft;
 			}
@@ -1152,8 +1153,8 @@ int	idParticleStage::ParticleVerts( particleGen_t *g, idVec3 origin, idDrawVert 
 	}
 
 	angle = angle / 180 * idMath::PI;
-	float c = idMath::Cos16( angle );
-	float s = idMath::Sin16( angle );
+	float c, s;
+	idMath::SinCos16( angle, s, c );
 
 	if ( orientation  == POR_Z ) {
 		// oriented in entity space
@@ -1181,10 +1182,8 @@ int	idParticleStage::ParticleVerts( particleGen_t *g, idVec3 origin, idDrawVert 
 		up[2] = c;
 	} else {
 		// oriented in viewer space
-		idVec3	entityLeft, entityUp;
-
-		g->renderEnt->axis.ProjectVector( g->renderView->viewaxis[1], entityLeft );
-		g->renderEnt->axis.ProjectVector( g->renderView->viewaxis[2], entityUp );
+		const idVec3 &entityLeft = g->viewAxis[1];
+		const idVec3 &entityUp = g->viewAxis[2];
 
 		left = entityLeft * c + entityUp * s;
 		up = entityUp * c - entityLeft * s;
@@ -1246,10 +1245,29 @@ void idParticleStage::ParticleTexCoords( particleGen_t *g, idDrawVert *verts ) c
 
 /*
 ==================
-idParticleStage::ParticleColors
+ParticleGenSetView
 ==================
 */
-void idParticleStage::ParticleColors( particleGen_t *g, idDrawVert *verts ) const {
+void ParticleGenSetView( particleGen_t *g, const renderEntity_t *renderEnt, const renderView_t *renderView ) {
+	g->renderEnt = renderEnt;
+	g->renderView = renderView;
+	renderEnt->axis.ProjectVector( renderView->viewaxis[0], g->viewAxis[0] );
+	renderEnt->axis.ProjectVector( renderView->viewaxis[1], g->viewAxis[1] );
+	renderEnt->axis.ProjectVector( renderView->viewaxis[2], g->viewAxis[2] );
+}
+
+/*
+==================
+idParticleStage::ParticleColor
+
+The color every vertex of the particle gets, as idDrawVert::GetColor packs it
+==================
+*/
+dword idParticleStage::ParticleColor( const particleGen_t *g ) const {
+	union {
+		byte	b[4];
+		dword	d;
+	} out;
 	float	fadeFraction = 1.0f;
 
 	// most particles fade in at the beginning and fade out at the end
@@ -1269,19 +1287,22 @@ void idParticleStage::ParticleColors( particleGen_t *g, idDrawVert *verts ) cons
 		}
 	}
 
-	for ( int i = 0 ; i < 4 ; i++ ) {
-		float	fcolor = ( ( entityColor ) ? g->renderEnt->shaderParms[i] : color[i] ) * fadeFraction + fadeColor[i] * ( 1.0f - fadeFraction );
-		int		icolor = idMath::FtoiFast( fcolor * 255.0f );
-		if ( icolor < 0 ) {
-			icolor = 0;
-		} else if ( icolor > 255 ) {
-			icolor = 255;
+	{
+		const float	*src = ( entityColor ) ? g->renderEnt->shaderParms : color.ToFloatPtr();
+		const float	fadeOut = 1.0f - fadeFraction;
+		int			i;
+		for ( i = 0 ; i < 4 ; i++ ) {
+			float	fcolor = src[i] * fadeFraction + fadeColor[i] * fadeOut;
+			int		icolor = idMath::FtoiFast( fcolor * 255.0f );
+			if ( icolor < 0 ) {
+				icolor = 0;
+			} else if ( icolor > 255 ) {
+				icolor = 255;
+			}
+			out.b[i] = icolor;
 		}
-		verts[0].color[i] =
-		verts[1].color[i] =
-		verts[2].color[i] =
-		verts[3].color[i] = icolor;
 	}
+	return out.d;
 }
 
 /*
@@ -1300,17 +1321,22 @@ Vertex order is:
 */
 int idParticleStage::CreateParticle( particleGen_t *g, idDrawVert *verts ) const {
 	idVec3	origin;
+	dword	c;
+	int		i;
 
-	verts[0].Clear();
-	verts[1].Clear();
-	verts[2].Clear();
-	verts[3].Clear();
-
-	ParticleColors( g, verts );
+	c = ParticleColor( g );
 
 	// if we are completely faded out, kill the particle
-	if ( verts[0].color[0] == 0 && verts[0].color[1] == 0 && verts[0].color[2] == 0 && verts[0].color[3] == 0 ) {
+	if ( c == 0 ) {
 		return 0;
+	}
+
+	/* xyz and st are written below, everything else here */
+	for ( i = 0 ; i < 4 ; i++ ) {
+		verts[i].normal.Zero();
+		verts[i].tangents[0].Zero();
+		verts[i].tangents[1].Zero();
+		verts[i].SetColor( c );
 	}
 
 	ParticleOrigin( g, origin );
@@ -1327,20 +1353,27 @@ int idParticleStage::CreateParticle( particleGen_t *g, idDrawVert *verts ) const
 	float	width = 1.0f / animationFrames;
 	float	frac = g->animationFrameFrac;
 	float	iFrac = 1.0f - frac;
-	for ( int i = 0 ; i < numVerts ; i++ ) {
-		verts[numVerts + i] = verts[i];
+	idDrawVert	*next = verts + numVerts;
+	union {
+		byte	b[4];
+		dword	d;
+	} in, out, cur;
 
-		verts[numVerts + i].st[0] += width;
-
-		verts[numVerts + i].color[0] *= frac;
-		verts[numVerts + i].color[1] *= frac;
-		verts[numVerts + i].color[2] *= frac;
-		verts[numVerts + i].color[3] *= frac;
-
-		verts[i].color[0] *= iFrac;
-		verts[i].color[1] *= iFrac;
-		verts[i].color[2] *= iFrac;
-		verts[i].color[3] *= iFrac;
+	/* every quad of the particle has the same color */
+	cur.d = c;
+	for ( i = 0 ; i < 4 ; i++ ) {
+		in.b[i] = cur.b[i] * frac;
+		out.b[i] = cur.b[i] * iFrac;
+	}
+	for ( i = 0 ; i < numVerts ; i++ ) {
+		next[i].xyz = verts[i].xyz;
+		next[i].st[0] = verts[i].st[0] + width;
+		next[i].st[1] = verts[i].st[1];
+		next[i].normal.Zero();
+		next[i].tangents[0].Zero();
+		next[i].tangents[1].Zero();
+		next[i].SetColor( in.d );
+		verts[i].SetColor( out.d );
 	}
 
 	return numVerts * 2;

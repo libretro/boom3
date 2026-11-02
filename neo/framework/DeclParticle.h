@@ -103,7 +103,11 @@ typedef struct {
 	float					age;				// in seconds, calculated as fraction * stage->particleLife
 	idRandom				originalRandom;		// needed so aimed particles can reset the random for another origin calculation
 	float					animationFrameFrac;	// set by ParticleTexCoords, used to make the cross faded version
+	idVec3					viewAxis[3];		// renderView->viewaxis in renderEnt space, set by ParticleGenSetView
 } particleGen_t;
+
+// sets renderEnt and renderView, and the view axes every particle of the pass orients by
+void ParticleGenSetView( particleGen_t *g, const renderEntity_t *renderEnt, const renderView_t *renderView );
 
 
 //
@@ -122,7 +126,7 @@ public:
 	void					ParticleOrigin( particleGen_t *g, idVec3 &origin ) const;
 	int						ParticleVerts( particleGen_t *g, const idVec3 origin, idDrawVert *verts ) const;
 	void					ParticleTexCoords( particleGen_t *g, idDrawVert *verts ) const;
-	void					ParticleColors( particleGen_t *g, idDrawVert *verts ) const;
+	dword					ParticleColor( const particleGen_t *g ) const;
 
 	const char *			GetCustomPathName();
 	const char *			GetCustomPathDesc();

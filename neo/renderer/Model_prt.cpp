@@ -111,8 +111,7 @@ idRenderModel *idRenderModelPrt::InstantiateDynamicModel( const struct renderEnt
 
 	particleGen_t g;
 
-	g.renderEnt = renderEntity;
-	g.renderView = &viewDef->renderView;
+	ParticleGenSetView( &g, renderEntity, &viewDef->renderView );
 	g.origin.Zero();
 	g.axis.Identity();
 

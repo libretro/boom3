@@ -1043,8 +1043,7 @@ static void R_ParticleDeform( drawSurf_t *surf, bool useArea ) {
 	//
 	particleGen_t g;
 
-	g.renderEnt = renderEntity;
-	g.renderView = &viewDef->renderView;
+	ParticleGenSetView( &g, renderEntity, &viewDef->renderView );
 	g.origin.Zero();
 	g.axis = mat3_identity;
 
