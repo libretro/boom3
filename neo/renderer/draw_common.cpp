@@ -1288,11 +1288,24 @@ void RB_STD_T_RenderShaderPasses( const drawSurf_t *surf ) {
 				fadeRange = surf->particle_radius;
 			}
 
+			/*
+			   w: whether a fragment the fade takes to zero may be dropped.
+			   An alpha blend fades alpha, so a zero fade leaves the
+			   destination whole under ONE_MINUS_SRC_ALPHA or ONE. An add
+			   fades colour, so its colour is untouched under ONE; its alpha
+			   still carries the texture's, which a dropped fragment leaves
+			   unwritten exactly as the depth test leaves it for a particle
+			   that is not softened.
+			*/
+			const int dst_blend = pStage->drawStateBits & GLS_DSTBLEND_BITS;
+			const bool fadedIsNoop = dst_blend == GLS_DSTBLEND_ONE
+				|| ( src_blend == GLS_SRCBLEND_SRC_ALPHA
+					&& dst_blend == GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA );
 			float parm[4] = {
 				surf->particle_radius,
 				1.0f / ( fadeRange ),
 				1.0f / surf->particle_radius,
-				0.0f
+				fadedIsNoop ? 1.0f : 0.0f
 			};
 			qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, PP_PARTICLE_RADIUS, parm );
 
