@@ -16,6 +16,8 @@ static int vkb_frame_images_make(enum vkb_format format);
 
 static VkApplicationInfo appInfo;
 static PFN_vkGetInstanceProcAddr getInstanceProcAddr;
+/* create_device2's, for vkb_init: its reset of vkb comes after */
+static VkPhysicalDeviceFeatures negotiatedFeatures;
 
 static const VkApplicationInfo *vkb_application_info(void)
 {
@@ -113,7 +115,7 @@ static bool vkb_create_device2(struct retro_vulkan_context *context, VkInstance 
    if (!vkb_load_device_procs(device))
       return false;
 
-   vkb.features = want;
+   negotiatedFeatures = want;
    memset(context, 0, sizeof(*context));
    context->gpu                             = gpu;
    context->device                          = device;
@@ -386,6 +388,7 @@ int vkb_init(const struct retro_hw_render_interface_vulkan *iface, unsigned widt
    if (!vkb_load_instance_procs(vkb.instance) || !vkb_load_device_procs(vkb.device))
       return 0;
    vk.vkGetPhysicalDeviceProperties(vkb.gpu, &vkb.properties);
+   vkb.features = negotiatedFeatures;
    vk.vkGetPhysicalDeviceMemoryProperties(vkb.gpu, &vkb.memoryProperties);
    memcpy(vkb.deviceName, vkb.properties.deviceName, sizeof(vkb.deviceName) - 1);
    vkb.deviceName[sizeof(vkb.deviceName) - 1] = '\0';
