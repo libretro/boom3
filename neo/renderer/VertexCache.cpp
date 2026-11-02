@@ -236,6 +236,7 @@ idVertexCache::Init
 */
 void idVertexCache::Init() {
 	frameTempDest = NULL;
+	frameTempNoOverflow = false;
 	cmdSystem->AddCommand( "listVertexCache", R_ListVertexCache_f, CMD_FL_RENDERER, "lists vertex cache" );
 
 	if ( r_vertexBufferMegs.GetInteger() < 8 ) {
@@ -506,6 +507,31 @@ vertCache_t *idVertexCache::AllocFrameTempInPlace( int size, void **dest ) {
 
 /*
 ===========
+idVertexCache::AllocFrameTempIfRoom
+===========
+*/
+vertCache_t *idVertexCache::AllocFrameTempIfRoom( void *data, int size ) {
+	vertCache_t *block;
+	void *dest = NULL;
+
+	if ( size <= 0 ) {
+		return NULL;
+	}
+	if ( vulkan ) {
+		frameTempNoOverflow = true;
+		block = AllocFrameTemp( data, size );
+		frameTempNoOverflow = false;
+		return block;
+	}
+	block = AllocFrameTempInPlace( size, &dest );
+	if ( block ) {
+		SIMDProcessor->Memcpy( dest, data, size );
+	}
+	return block;
+}
+
+/*
+===========
 idVertexCache::AllocStreamInPlace
 ===========
 */
@@ -560,8 +586,9 @@ void idVertexCache::Touch( vertCache_t *block ) {
 	if ( block->tag == TAG_FREE ) {
 		common->FatalError( "idVertexCache Touch: freed pointer" );
 	}
+	// a frame's temporary block goes with its frame
 	if ( block->tag == TAG_TEMP ) {
-		common->FatalError( "idVertexCache Touch: temporary pointer" );
+		return;
 	}
 
 	block->frameUsed = currentFrame;
@@ -589,8 +616,9 @@ void idVertexCache::Free( vertCache_t *block ) {
 	if ( block->tag == TAG_FREE ) {
 		common->FatalError( "idVertexCache Free: freed pointer" );
 	}
+	// a frame's temporary block goes with its frame
 	if ( block->tag == TAG_TEMP ) {
-		common->FatalError( "idVertexCache Free: temporary pointer" );
+		return;
 	}
 
 	// this block still can't be purged until the frame count has expired,
@@ -643,6 +671,9 @@ vertCache_t	*idVertexCache::AllocFrameTemp( void *data, int size ) {
 	unsigned ringBuf = 0, ringOff = 0;
 	if ( vulkan ) {
 		ringPtr = vkb_ring_alloc( (size_t)size, VERTEX_ALIGN, &ringBuf, &ringOff );
+		if ( !ringPtr && frameTempNoOverflow ) {
+			return NULL;
+		}
 		if ( !ringPtr ) {
 			tempOverflow = true;
 			Alloc( data, size, &block );

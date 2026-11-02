@@ -114,6 +114,12 @@ public:
 	// data and AllocFrameTemp it instead.
 	vertCache_t	*	AllocFrameTempInPlace( int bytes, void **dest );
 
+	// AllocFrameTemp where the frame's ring has room, NULL where it would
+	// overflow into a static block: for vertexes rewritten every frame
+	// that would otherwise be a static block, freed and made again.  The
+	// block goes with the frame; Touch and Free leave it alone.
+	vertCache_t	*	AllocFrameTempIfRoom( void *data, int bytes );
+
 	// AllocStream without the copy: the block's own buffer mapped for the
 	// caller to write its bytes, never read back, before StreamWritten
 	// unmaps it.  NULL when the buffer cannot be mapped - AllocStream the
@@ -210,6 +216,7 @@ private:
 
 	bool			allocatingTempBuffer;	// force GL_STREAM_DRAW_ARB
 	void **			frameTempDest;			// AllocFrameTempInPlace's request, NULL otherwise
+	bool			frameTempNoOverflow;	// AllocFrameTempIfRoom's request: NULL rather than overflow
 
 	vertCache_t		*tempBuffers[NUM_VERTEX_FRAMES];		// allocated at startup
 	bool			tempOverflow;			// had to alloc a temp in static memory

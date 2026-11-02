@@ -87,6 +87,7 @@ typedef struct srfTriangles_s {
 	bool						perfectHull;			// true if there aren't any dangling edges
 	bool						deformedSurface;		// if true, indexes, silIndexes, mirrorVerts, and silEdges are
 														// pointers into the original surface, and should not be freed
+	bool						streamedVerts;			// vertexes rewritten every frame: their cache is the frame's
 
 	int							numVerts;				// number of vertices
 	idDrawVert *				verts;					// vertices, allocated with special allocator

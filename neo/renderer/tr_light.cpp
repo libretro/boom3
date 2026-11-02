@@ -68,7 +68,13 @@ bool R_CreateAmbientCache( srfTriangles_t *tri, bool needsLighting ) {
 		R_DeriveTangents( tri );
 	}
 
-	if ( tri->deformedSurface ) {
+	if ( tri->streamedVerts ) {
+		// in the frame's ring where it has room: written once, read in place
+		tri->ambientCache = vertexCache.AllocFrameTempIfRoom( tri->verts, tri->numVerts * sizeof( tri->verts[0] ) );
+		if ( !tri->ambientCache ) {
+			vertexCache.Alloc( tri->verts, tri->numVerts * sizeof( tri->verts[0] ), &tri->ambientCache );
+		}
+	} else if ( tri->deformedSurface ) {
 		vertexCache.AllocStream( tri->verts, tri->numVerts * sizeof( tri->verts[0] ), &tri->ambientCache );
 	} else {
 		vertexCache.Alloc( tri->verts, tri->numVerts * sizeof( tri->verts[0] ), &tri->ambientCache );

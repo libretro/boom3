@@ -160,6 +160,8 @@ idRenderModel *idRenderModelPrt::InstantiateDynamicModel( const struct renderEnt
 			surf->id = stageNum;
 			surf->shader = stage->material;
 			surf->geometry = R_AllocStaticTriSurf();
+			// made again every frame, so its vertexes go through the frame's ring
+			surf->geometry->streamedVerts = true;
 			R_AllocStaticTriSurfVerts( surf->geometry, 4 * count );
 			R_AllocStaticTriSurfIndexes( surf->geometry, 6 * count );
 			R_AllocStaticTriSurfPlanes( surf->geometry, 6 * count );
