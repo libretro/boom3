@@ -83,6 +83,31 @@ void R_CalcInteractionFacing( const idRenderEntityLocal *ent, const srfTriangles
 
 /*
 =====================
+R_CalcInteractionClipPlanes
+
+The light frustum in surface space, and the planes the whole surface is in front of.
+=====================
+*/
+int R_CalcInteractionClipPlanes( const idRenderEntityLocal *ent, const srfTriangles_t *tri, const idRenderLightLocal *light, idPlane localClipPlanes[6] ) {
+	int i, frontBits;
+
+	frontBits = 0;
+
+	// cull the triangle surface bounding box
+	for ( i = 0; i < 6; i++ ) {
+
+		R_GlobalPlaneToLocal( ent->modelMatrix, -light->frustum[i], localClipPlanes[i] );
+
+		// get front bits for the whole surface
+		if ( tri->bounds.PlaneDistance( localClipPlanes[i] ) >= LIGHT_CLIP_EPSILON ) {
+			frontBits |= 1<<i;
+		}
+	}
+	return frontBits;
+}
+
+/*
+=====================
 R_CalcInteractionCullBits
 
 We want to cull a little on the sloppy side, because the pre-clipping
@@ -98,18 +123,7 @@ void R_CalcInteractionCullBits( const idRenderEntityLocal *ent, const srfTriangl
 		return;
 	}
 
-	frontBits = 0;
-
-	// cull the triangle surface bounding box
-	for ( i = 0; i < 6; i++ ) {
-
-		R_GlobalPlaneToLocal( ent->modelMatrix, -light->frustum[i], cullInfo.localClipPlanes[i] );
-
-		// get front bits for the whole surface
-		if ( tri->bounds.PlaneDistance( cullInfo.localClipPlanes[i] ) >= LIGHT_CLIP_EPSILON ) {
-			frontBits |= 1<<i;
-		}
-	}
+	frontBits = R_CalcInteractionClipPlanes( ent, tri, light, cullInfo.localClipPlanes );
 
 	// if the surface is completely inside the light frustum
 	if ( frontBits == ( ( 1 << 6 ) - 1 ) ) {
@@ -1269,7 +1283,19 @@ void idInteraction::AddActiveInteraction( void ) {
 			// touch the shadow surface so it won't get purged
 			vertexCache.Touch( shadowTris->shadowCache );
 
-			if ( !shadowTris->indexCache && r_useIndexBuffers.GetBool() ) {
+			if ( shadowTris->gpuShadow ) {
+				// built when drawn, from the source surface's shadow cache and indexes
+				srfTriangles_t *src = sint->ambientTris;
+				if ( !r_gpuShadowVolumes ) {
+					continue;
+				}
+				if ( !src->indexCache && r_useIndexBuffers.GetBool() ) {
+					vertexCache.Alloc( src->indexes, src->numIndexes * sizeof( src->indexes[0] ), &src->indexCache, true );
+				}
+				if ( src->indexCache ) {
+					vertexCache.Touch( src->indexCache );
+				}
+			} else if ( !shadowTris->indexCache && r_useIndexBuffers.GetBool() ) {
 				vertexCache.Alloc( shadowTris->indexes, shadowTris->numIndexes * sizeof( shadowTris->indexes[0] ), &shadowTris->indexCache, true );
 				vertexCache.Touch( shadowTris->indexCache );
 			}

@@ -1190,6 +1190,9 @@ void RB_ShowSilhouette( void ) {
 				RB_SimpleSurfaceSetup( surf );
 
 				const srfTriangles_t	*tri = surf->geo;
+				if ( tri->gpuShadow ) {
+					continue;	// no indexes to walk
+				}
 
 				qglVertexPointer( 3, GL_FLOAT, sizeof( shadowCache_t ), vertexCache.Position( tri->shadowCache ) );
 				qglBegin( GL_LINES );
@@ -1263,7 +1266,7 @@ static void RB_ShowShadowCount( void ) {
 				; surf ; surf = (drawSurf_t *)surf->nextOnLight ) {
 				RB_SimpleSurfaceSetup( surf );
 				const srfTriangles_t	*tri = surf->geo;
-				if ( !tri->shadowCache ) {
+				if ( !tri->shadowCache || tri->gpuShadow ) {
 					continue;
 				}
 

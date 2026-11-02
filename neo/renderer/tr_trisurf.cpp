@@ -380,6 +380,7 @@ void R_ReallyFreeStaticTriSurf( srfTriangles_t *tri ) {
 			triSilIndexAllocator.Free( tri->silIndexes );
 		}
 		if ( tri->silEdges != NULL ) {
+			R_ForgetSilEdges( tri->silEdges );
 			triSilEdgeAllocator.Free( tri->silEdges );
 		}
 		if ( tri->dominantTris != NULL ) {
@@ -399,6 +400,10 @@ void R_ReallyFreeStaticTriSurf( srfTriangles_t *tri ) {
 
 	if ( tri->shadowVertexes != NULL ) {
 		triShadowVertexAllocator.Free( tri->shadowVertexes );
+	}
+
+	if ( tri->gpuShadow != NULL ) {
+		R_StaticFree( tri->gpuShadow );
 	}
 
 #ifdef _DEBUG
@@ -630,6 +635,7 @@ R_FreeStaticTriSurfSilEdges
 =================
 */
 void R_FreeStaticTriSurfSilEdges( srfTriangles_t *tri ) {
+	R_ForgetSilEdges( tri->silEdges );
 	triSilEdgeAllocator.Free( tri->silEdges );
 	tri->silEdges = NULL;
 	tri->numSilEdges = 0;
@@ -1933,6 +1939,7 @@ void R_FreeDeformInfo( deformInfo_t *deformInfo ) {
 		triSilIndexAllocator.Free( deformInfo->silIndexes );
 	}
 	if ( deformInfo->silEdges != NULL ) {
+		R_ForgetSilEdges( deformInfo->silEdges );
 		triSilEdgeAllocator.Free( deformInfo->silEdges );
 	}
 	if ( deformInfo->dominantTris != NULL ) {

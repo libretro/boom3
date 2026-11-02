@@ -172,6 +172,13 @@ void gl_caps_init(gl_caps_loader_t load)
    CAPS_GET(GetBufferParameterui64vNV, gl_caps_GetBufferParameterui64vNV_t, "glGetBufferParameterui64vNV", NULL, NULL);
    CAPS_GET(VertexAttribIPointer, gl_caps_VertexAttribIPointer_t, "glVertexAttribIPointer", "glVertexAttribIPointerEXT", NULL);
    CAPS_GET(VertexAttribDivisor, gl_caps_VertexAttribDivisor_t, "glVertexAttribDivisor", "glVertexAttribDivisorARB", NULL);
+   CAPS_GET(TransformFeedbackAttribsNV, gl_caps_TransformFeedbackAttribsNV_t, "glTransformFeedbackAttribsNV", NULL, NULL);
+   CAPS_GET(BeginTransformFeedback, gl_caps_BeginTransformFeedback_t, "glBeginTransformFeedback", "glBeginTransformFeedbackNV", NULL);
+   CAPS_GET(EndTransformFeedback, gl_caps_EndTransformFeedback_t, "glEndTransformFeedback", "glEndTransformFeedbackNV", NULL);
+   CAPS_GET(GenTransformFeedbacks, gl_caps_GenTransformFeedbacks_t, "glGenTransformFeedbacks", "glGenTransformFeedbacksNV", NULL);
+   CAPS_GET(BindTransformFeedback, gl_caps_BindTransformFeedback_t, "glBindTransformFeedback", "glBindTransformFeedbackNV", NULL);
+   CAPS_GET(DrawTransformFeedback, gl_caps_DrawTransformFeedback_t, "glDrawTransformFeedback", "glDrawTransformFeedbackNV", NULL);
+   CAPS_GET(MemoryBarrier, gl_caps_MemoryBarrier_t, "glMemoryBarrierEXT", "glMemoryBarrier", NULL);
 
    /* Each group counts only on a version or extension that promises it:
     * a loader may hand back a stub for a name the context does not
@@ -229,6 +236,15 @@ void gl_caps_init(gl_caps_loader_t load)
       && glCaps.VertexAttribDivisor
       && (caps_at_least(4, 2) || gl_caps_has_extension("GL_ARB_base_instance"))
       && gl_caps_has_extension("GL_NV_shader_buffer_load");
+   glCaps.nvGpuShadows = glCaps.nvBatchDraw && glCaps.BindBufferRange
+      && glCaps.TransformFeedbackAttribsNV && glCaps.BeginTransformFeedback && glCaps.EndTransformFeedback
+      && glCaps.GenTransformFeedbacks && glCaps.BindTransformFeedback && glCaps.DrawTransformFeedback
+      && glCaps.MemoryBarrier
+      && gl_caps_has_extension("GL_NV_geometry_program4")
+      && gl_caps_has_extension("GL_NV_shader_buffer_store")
+      && gl_caps_has_extension("GL_NV_transform_feedback")
+      && (caps_at_least(4, 0) || gl_caps_has_extension("GL_ARB_transform_feedback2")
+         || gl_caps_has_extension("GL_NV_transform_feedback2"));
 
    glCaps.uniformBufferAlign  = 256;
    glCaps.maxUniformBlockSize = 16384;

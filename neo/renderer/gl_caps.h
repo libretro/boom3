@@ -70,6 +70,13 @@ typedef void (APIENTRYP gl_caps_MakeBufferResidentNV_t)(GLenum target, GLenum ac
 typedef void (APIENTRYP gl_caps_GetBufferParameterui64vNV_t)(GLenum target, GLenum pname, unsigned long long *params);
 typedef void (APIENTRYP gl_caps_VertexAttribIPointer_t)(GLuint index, GLint size, GLenum type, GLsizei stride, const void *pointer);
 typedef void (APIENTRYP gl_caps_VertexAttribDivisor_t)(GLuint index, GLuint divisor);
+typedef void (APIENTRYP gl_caps_TransformFeedbackAttribsNV_t)(GLsizei count, const GLint *attribs, GLenum bufferMode);
+typedef void (APIENTRYP gl_caps_BeginTransformFeedback_t)(GLenum primitiveMode);
+typedef void (APIENTRYP gl_caps_EndTransformFeedback_t)(void);
+typedef void (APIENTRYP gl_caps_GenTransformFeedbacks_t)(GLsizei n, GLuint *ids);
+typedef void (APIENTRYP gl_caps_BindTransformFeedback_t)(GLenum target, GLuint id);
+typedef void (APIENTRYP gl_caps_DrawTransformFeedback_t)(GLenum mode, GLuint id);
+typedef void (APIENTRYP gl_caps_MemoryBarrier_t)(GLbitfield barriers);
 
 /* Entry points are NULL when the context lacks them; the flags say which
  * groups are complete.  Members by alignment: pointers first. */
@@ -112,6 +119,13 @@ typedef struct gl_caps_s {
 	gl_caps_GetBufferParameterui64vNV_t   GetBufferParameterui64vNV;
 	gl_caps_VertexAttribIPointer_t        VertexAttribIPointer;
 	gl_caps_VertexAttribDivisor_t         VertexAttribDivisor;
+	gl_caps_TransformFeedbackAttribsNV_t  TransformFeedbackAttribsNV;
+	gl_caps_BeginTransformFeedback_t      BeginTransformFeedback;
+	gl_caps_EndTransformFeedback_t        EndTransformFeedback;
+	gl_caps_GenTransformFeedbacks_t       GenTransformFeedbacks;
+	gl_caps_BindTransformFeedback_t       BindTransformFeedback;
+	gl_caps_DrawTransformFeedback_t       DrawTransformFeedback;
+	gl_caps_MemoryBarrier_t               MemoryBarrier;
 
 	int  major, minor;            /* context version, from GL_VERSION */
 	int  uniformBufferAlign;      /* GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT */
@@ -136,6 +150,8 @@ typedef struct gl_caps_s {
 	unsigned char nvGpuProgram5;  /* NV_gpu_program5 on top of nvGpuProgram4 */
 	unsigned char nvBatchDraw;    /* nvGpuProgram5 with NV_shader_buffer_load global loads, multi-draw-indirect
 	                                 with base instance, instanced integer attributes, a persistent fenced ring */
+	unsigned char nvGpuShadows;   /* nvBatchDraw with NV_geometry_program4, NV_shader_buffer_store and
+	                                 transform feedback of assembly programs into transform feedback objects */
 } gl_caps_t;
 
 extern gl_caps_t glCaps;

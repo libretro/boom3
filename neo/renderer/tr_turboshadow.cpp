@@ -33,6 +33,14 @@ If you have questions concerning this license or the applicable additional terms
 int	c_turboUsedVerts;
 int c_turboUnusedVerts;
 
+#ifndef BOOM3_ARB2_RENDERER
+// only the ARB2 backend builds shadow volumes on the GPU
+bool r_gpuShadowVolumes = false;
+
+void R_ForgetSilEdges( const silEdge_t *silEdges ) {
+}
+#endif
+
 /*
 =====================
 R_CreateVertexProgramTurboShadowVolume
@@ -162,6 +170,40 @@ srfTriangles_t *R_CreateVertexProgramTurboShadowVolume( const idRenderEntityLoca
 		shadowIndexes += 6;
 	}
 
+	return newTri;
+}
+
+/*
+=====================
+R_CreateGpuShadowVolume
+
+What R_CreateVertexProgramTurboShadowVolume would build, left for the
+backend to build when it draws: the light origin facing is measured from
+and the frustum planes its cull tests, in surface space.  A volume that
+casts nothing comes out empty rather than NULL.
+=====================
+*/
+srfTriangles_t *R_CreateGpuShadowVolume( const idRenderEntityLocal *ent,
+										const srfTriangles_t *tri, const idRenderLightLocal *light ) {
+	srfTriangles_t	*newTri;
+	gpuShadow_t		*gs;
+
+	gs = (gpuShadow_t *)R_StaticAlloc( sizeof( *gs ) );
+	memset( gs, 0, sizeof( *gs ) );
+	gs->source = tri;
+	R_GlobalPointToLocal( ent->modelMatrix, R_ShadowGenLightOrigin_ext( light ), gs->lightOrigin );
+	if ( r_useShadowProjectedCull.GetBool() ) {
+		gs->cullPlanes = ~R_CalcInteractionClipPlanes( ent, tri, light, gs->clipPlanes ) & ( ( 1 << 6 ) - 1 );
+	}
+
+	newTri = R_AllocStaticTriSurf();
+	newTri->gpuShadow = gs;
+	newTri->numVerts = tri->numVerts * 2;
+	newTri->numIndexes = 2;
+	newTri->numShadowIndexesNoFrontCaps = 2;
+	newTri->numShadowIndexesNoCaps = 1;
+	newTri->shadowCapPlaneBits = SHADOW_CAP_INFINITE;
+	newTri->bounds.Clear();
 	return newTri;
 }
 

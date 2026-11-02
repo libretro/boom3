@@ -1191,6 +1191,9 @@ srfTriangles_t *R_CreateShadowVolume( const idRenderEntityLocal *ent,
 	// a very simple generation process
 	if ( optimize == SG_DYNAMIC && r_useTurboShadow.GetBool() ) {
 		if ( tr.backEndRendererHasVertexPrograms && r_useShadowVertexProgram.GetBool() ) {
+			if ( r_gpuShadowVolumes ) {
+				return R_CreateGpuShadowVolume( ent, tri, light );
+			}
 			return R_CreateVertexProgramTurboShadowVolume( ent, tri, light, cullInfo );
 		} else {
 			return R_CreateTurboShadowVolume( ent, tri, light, cullInfo );

@@ -176,6 +176,10 @@ void RB_DrawShadowElementsWithCounters( const srfTriangles_t *tri, int numIndexe
 	}
 #endif
 #ifdef BOOM3_ARB2_RENDERER
+	if ( tri->gpuShadow ) {
+		RB_ARB2_DrawGpuShadow( tri, numIndexes );
+		return;
+	}
 	if ( tri->indexCache && r_useIndexBuffers.GetBool() ) {
 		qglDrawElements( GL_TRIANGLES,
 						r_singleTriangle.GetBool() ? 3 : numIndexes,

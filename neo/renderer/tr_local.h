@@ -1420,6 +1420,9 @@ typedef enum {
 	VPROG_NV5_INTERACTION,         // NV5 tier: multi-draw-indirect, a record per draw by global load
 	FPROG_NV5_INTERACTION,         // NV5 tier: textures from a per-batch unit array
 	FPROG_NV5_INTERACTION_AMBIENT, // NV5 tier: ambient lights
+	VPROG_NV5_SHADOW,              // NV5 tier: positions through to the shadow volume geometry programs
+	GPROG_NV5_SHADOW_CAPS,         // NV5 tier: triangle facing and shadow volume caps
+	GPROG_NV5_SHADOW_SIL,          // NV5 tier: shadow volume sil planes
 	//
 	PROG_USER
 } program_t;
@@ -1662,6 +1665,35 @@ srfTriangles_t *R_CreateVertexProgramTurboShadowVolume( const idRenderEntityLoca
 srfTriangles_t *R_CreateTurboShadowVolume( const idRenderEntityLocal *ent,
 									 const srfTriangles_t *tri, const idRenderLightLocal *light,
 									 srfCullInfo_t &cullInfo );
+
+/*
+   A turbo shadow volume the GPU builds each time it is drawn, from the
+   source surface's shadow cache, indexes and sil edges: the facing and
+   frustum cull arithmetic of R_CreateVertexProgramTurboShadowVolume
+   replayed exactly, the same triangles in the same order.  Its index
+   counts are tokens: numShadowIndexesNoCaps < numShadowIndexesNoFrontCaps
+   == numIndexes, so a draw of numIndexes takes the caps and one of
+   numShadowIndexesNoCaps the sil planes alone.
+*/
+typedef struct gpuShadow_s {
+	const srfTriangles_t *	source;
+	idVec3					lightOrigin;		// the facing light origin, in surface space
+	idPlane					clipPlanes[6];		// the light frustum, in surface space
+	int						cullPlanes;			// bit i: cull against clipPlanes[i]; 0 culls nothing
+} gpuShadow_t;
+
+// the backend draws gpuShadow_t volumes: set when its programs load
+extern bool r_gpuShadowVolumes;
+
+srfTriangles_t *R_CreateGpuShadowVolume( const idRenderEntityLocal *ent,
+									 const srfTriangles_t *tri, const idRenderLightLocal *light );
+
+// sil edges about to be freed: the backend drops what it built from them
+void R_ForgetSilEdges( const silEdge_t *silEdges );
+
+// the ARB2 backend's: build a gpuShadow_t volume, then draw it as RB_DrawShadowElementsWithCounters would
+bool RB_ARB2_CaptureGpuShadow( const srfTriangles_t *tri );
+void RB_ARB2_DrawGpuShadow( const srfTriangles_t *tri, int numIndexes );
 
 /*
 ============================================================

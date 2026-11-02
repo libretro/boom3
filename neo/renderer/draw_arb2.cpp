@@ -1054,6 +1054,449 @@ void RB_ARB2_CreateDrawInteractions( const drawSurf_t *surf ) {
 
 
 /*
+   Shadow volumes built on the GPU, on the NV5 tier where the context has
+   geometry programs, global stores and transform feedback.
+
+   R_CreateVertexProgramTurboShadowVolume finds which triangles face the
+   light, counts the ones outside the light frustum as facing, and writes
+   a quad for each sil edge between a facing and a back-facing triangle,
+   then the two caps of each back-facing triangle, as indexes into the
+   shadow cache.  Here two geometry programs do the same from the source
+   surface's shadow cache when the volume is drawn:
+
+   - the cap program, over the surface's triangles, finds each one's
+     facing with R_DeriveFacePlanes' plane and the dot with the light
+     origin - the CPU's operations in the CPU's order, each .PREC so none
+     is fused or reordered, and idMath::RSqrt's integer step on the
+     float's bits - then the frustum cull the same way; it stores the
+     facing for the sil pass and emits the back-facing triangle's caps;
+
+   - the sil program, over the sil edges drawn as lines (v1, v2), loads
+     the facing of the edge's two triangles from a table of them and
+     emits the quad when they differ.
+
+   Each captures positions with transform feedback, rasterizer off, and
+   the stencil passes draw the captures through shadow.vp: the vertexes
+   the CPU's indexes name, in the same order, so the same pixels.  The
+   facing array is a frame's linear allocation, a barrier ahead of the
+   capture that reuses its memory.
+*/
+#ifndef GL_GEOMETRY_PROGRAM_NV
+#define GL_GEOMETRY_PROGRAM_NV                  0x8C26
+#endif
+#ifndef GL_TRANSFORM_FEEDBACK
+#define GL_TRANSFORM_FEEDBACK                   0x8E22
+#endif
+#ifndef GL_TRANSFORM_FEEDBACK_BUFFER
+#define GL_TRANSFORM_FEEDBACK_BUFFER            0x8C8E
+#endif
+#ifndef GL_RASTERIZER_DISCARD
+#define GL_RASTERIZER_DISCARD                   0x8C89
+#endif
+#ifndef GL_INTERLEAVED_ATTRIBS
+#define GL_INTERLEAVED_ATTRIBS                  0x8C8C
+#endif
+#ifndef GL_COPY_READ_BUFFER
+#define GL_COPY_READ_BUFFER                     0x8F36
+#endif
+#ifndef GL_READ_WRITE
+#define GL_READ_WRITE                           0x88BA
+#endif
+#ifndef GL_SHADER_GLOBAL_ACCESS_BARRIER_BIT_NV
+#define GL_SHADER_GLOBAL_ACCESS_BARRIER_BIT_NV  0x00000010
+#endif
+
+#define ARB2_GS_ENV_FLOATS		11			// geometry program.env[0..10]: light origin, planes, cull masks
+#define ARB2_GS_ENV_FACING		11			// uint: the capture's facing array address, low and high words
+#define ARB2_GS_ENV_TABLE		12			// uint: the sil edges' triangle table address
+#define ARB2_GS_STORE_BYTES		0x100000	// a sil edge store buffer, or the one edge set that outgrows it
+#define ARB2_GS_MAX_STORES		32
+#define ARB2_GS_NO_FACE			0xffffffffu	// a dangling edge's missing triangle, which counts as facing
+
+/* The sil edges a store holds: per edge v1 v2 as line indexes, then per
+ * edge p1 p2. */
+typedef struct {
+	const silEdge_t	*key;		// NULL in an empty slot
+	int				numEdges;
+	int				store;
+	unsigned int	offset;
+	unsigned int	bytes;
+} arb2SilEntry_t;
+
+typedef struct {
+	arb2SilEntry_t		*entries;		// open addressing on the key, linear probes
+	unsigned long long	storeAddress[ARB2_GS_MAX_STORES];
+	range_alloc_t		storeRanges[ARB2_GS_MAX_STORES];
+	GLuint				store[ARB2_GS_MAX_STORES];
+	unsigned long long	facingAddress;
+	GLuint				tfo[2];			// the sil planes, the caps
+	GLuint				tfBuffer[2];
+	GLuint				facing;			// a float per triangle, written by the cap program
+	int					tfBytes[2];
+	int					numStores;
+	int					numEntries;
+	int					maxEntries;		// a power of two, 0 when none
+	int					facingBytes;
+	int					facingUsed;		// what this frame's captures took
+	int					facingFrame;
+	bool				buffers;		// the transform feedback objects and buffers exist
+} arb2GpuShadow_t;
+
+static arb2GpuShadow_t	rb_gs;
+bool					r_gpuShadowVolumes;
+
+static ID_INLINE int RB_GS_Home( const silEdge_t *key ) {
+	return (int)( ( (unsigned int)( (uintptr_t)key >> 4 ) * 2654435761u ) & (unsigned int)( rb_gs.maxEntries - 1 ) );
+}
+
+// the slot holding key, or the empty slot it would go in
+static int RB_GS_Slot( const silEdge_t *key ) {
+	int i = RB_GS_Home( key );
+	while ( rb_gs.entries[i].key != NULL && rb_gs.entries[i].key != key ) {
+		i = ( i + 1 ) & ( rb_gs.maxEntries - 1 );
+	}
+	return i;
+}
+
+static bool RB_GS_Grow( void ) {
+	arb2SilEntry_t	*old;
+	int				oldMax;
+	int				i;
+
+	old = rb_gs.entries;
+	oldMax = rb_gs.maxEntries;
+	rb_gs.maxEntries = oldMax ? oldMax * 2 : 256;
+	rb_gs.entries = (arb2SilEntry_t *)Mem_ClearedAlloc( rb_gs.maxEntries * sizeof( arb2SilEntry_t ) );
+	if ( !rb_gs.entries ) {
+		rb_gs.entries = old;
+		rb_gs.maxEntries = oldMax;
+		return false;
+	}
+	for ( i = 0; i < oldMax; i++ ) {
+		if ( old[i].key ) {
+			rb_gs.entries[RB_GS_Slot( old[i].key )] = old[i];
+		}
+	}
+	Mem_Free( old );
+	return true;
+}
+
+/*
+==================
+R_ForgetSilEdges
+==================
+*/
+void R_ForgetSilEdges( const silEdge_t *silEdges ) {
+	arb2SilEntry_t	*e;
+	int				i, j, k;
+
+	if ( !rb_gs.numEntries || !silEdges ) {
+		return;
+	}
+	i = RB_GS_Slot( silEdges );
+	e = rb_gs.entries;
+	if ( e[i].key == NULL ) {
+		return;
+	}
+	range_alloc_free( &rb_gs.storeRanges[e[i].store], e[i].offset, e[i].bytes );
+	rb_gs.numEntries--;
+
+	// close the gap: pull back each later entry of the run that may live here
+	j = i;
+	for ( ;; ) {
+		j = ( j + 1 ) & ( rb_gs.maxEntries - 1 );
+		if ( e[j].key == NULL ) {
+			break;
+		}
+		k = RB_GS_Home( e[j].key );
+		if ( i <= j ? ( i < k && k <= j ) : ( i < k || k <= j ) ) {
+			continue;
+		}
+		e[i] = e[j];
+		i = j;
+	}
+	e[i].key = NULL;
+}
+
+// a buffer for the sil edge stores, resident for the sil program's loads
+static bool RB_GS_NewStore( unsigned int bytes ) {
+	const int	n = rb_gs.numStores;
+	GLuint		buffer;
+
+	if ( n == ARB2_GS_MAX_STORES || !range_alloc_init( &rb_gs.storeRanges[n], bytes ) ) {
+		return false;
+	}
+	buffer = 0;
+	qglGenBuffersARB( 1, &buffer );
+	qglBindBufferARB( GL_COPY_WRITE_BUFFER, buffer );
+	qglBufferDataARB( GL_COPY_WRITE_BUFFER, bytes, NULL, GL_STATIC_DRAW_ARB );
+	glCaps.MakeBufferResidentNV( GL_COPY_WRITE_BUFFER, GL_READ_ONLY );
+	glCaps.GetBufferParameterui64vNV( GL_COPY_WRITE_BUFFER, GL_BUFFER_GPU_ADDRESS_NV, &rb_gs.storeAddress[n] );
+	qglBindBufferARB( GL_COPY_WRITE_BUFFER, 0 );
+	rb_gs.store[n] = buffer;
+	rb_gs.numStores++;
+	return true;
+}
+
+// the store entry of a surface's sil edges, made the first time they are drawn
+static const arb2SilEntry_t *RB_GS_SilEntry( const srfTriangles_t *src ) {
+	arb2SilEntry_t	*e;
+	GLuint			*dst;
+	GLuint			*data;
+	GLuint			ring;
+	unsigned int	bytes;
+	unsigned int	offset;
+	int				ringOffset;
+	int				numFaces;
+	int				store;
+	int				i;
+
+	if ( !rb_gs.maxEntries || ( rb_gs.numEntries + 1 ) * 2 > rb_gs.maxEntries ) {
+		if ( !RB_GS_Grow() ) {
+			return NULL;
+		}
+	}
+	e = &rb_gs.entries[RB_GS_Slot( src->silEdges )];
+	if ( e->key ) {
+		return e;
+	}
+
+	bytes = (unsigned int)src->numSilEdges * 16;
+	for ( store = 0; store < rb_gs.numStores; store++ ) {
+		if ( range_alloc_alloc( &rb_gs.storeRanges[store], bytes, 16, &offset ) ) {
+			break;
+		}
+	}
+	if ( store == rb_gs.numStores ) {
+		if ( !RB_GS_NewStore( bytes > ARB2_GS_STORE_BYTES ? bytes : ARB2_GS_STORE_BYTES )
+				|| !range_alloc_alloc( &rb_gs.storeRanges[store], bytes, 16, &offset ) ) {
+			return NULL;
+		}
+	}
+
+	// written into the ring and copied on the GPU, or staged where it is full
+	dst = glCaps.copyBuffer ? (GLuint *)vertexCache.RingReserve( (int)bytes, 16, &ring, &ringOffset ) : NULL;
+	data = dst ? dst : (GLuint *)Mem_Alloc( bytes );
+	numFaces = src->numIndexes / 3;
+	for ( i = 0; i < src->numSilEdges; i++ ) {
+		const silEdge_t *sil = &src->silEdges[i];
+		data[i * 2 + 0] = (GLuint)sil->v1;
+		data[i * 2 + 1] = (GLuint)sil->v2;
+		data[src->numSilEdges * 2 + i * 2 + 0] = (GLuint)sil->p1;
+		data[src->numSilEdges * 2 + i * 2 + 1] = sil->p2 < numFaces ? (GLuint)sil->p2 : ARB2_GS_NO_FACE;
+	}
+	if ( dst ) {
+		qglBindBufferARB( GL_COPY_READ_BUFFER, ring );
+		qglBindBufferARB( GL_COPY_WRITE_BUFFER, rb_gs.store[store] );
+		glCaps.CopyBufferSubData( GL_COPY_READ_BUFFER, GL_COPY_WRITE_BUFFER, ringOffset, offset, bytes );
+		qglBindBufferARB( GL_COPY_READ_BUFFER, 0 );
+	} else {
+		qglBindBufferARB( GL_COPY_WRITE_BUFFER, rb_gs.store[store] );
+		qglBufferSubDataARB( GL_COPY_WRITE_BUFFER, offset, bytes, data );
+		Mem_Free( data );
+	}
+	qglBindBufferARB( GL_COPY_WRITE_BUFFER, 0 );
+
+	e->key = src->silEdges;
+	e->numEdges = src->numSilEdges;
+	e->store = store;
+	e->offset = offset;
+	e->bytes = bytes;
+	rb_gs.numEntries++;
+	return e;
+}
+
+// a transform feedback buffer of at least bytes, bound to its object
+static void RB_GS_Feedback( int i, int bytes ) {
+	if ( rb_gs.tfBytes[i] < bytes ) {
+		int size = rb_gs.tfBytes[i] ? rb_gs.tfBytes[i] : 0x40000;
+		while ( size < bytes ) {
+			size *= 2;
+		}
+		qglBindBufferARB( GL_TRANSFORM_FEEDBACK_BUFFER, rb_gs.tfBuffer[i] );
+		qglBufferDataARB( GL_TRANSFORM_FEEDBACK_BUFFER, size, NULL, GL_STREAM_COPY_ARB );
+		rb_gs.tfBytes[i] = size;
+	}
+	glCaps.BindTransformFeedback( GL_TRANSFORM_FEEDBACK, rb_gs.tfo[i] );
+	glCaps.BindBufferRange( GL_TRANSFORM_FEEDBACK_BUFFER, 0, rb_gs.tfBuffer[i], 0, rb_gs.tfBytes[i] );
+}
+
+/*
+==================
+RB_ARB2_CaptureGpuShadow
+
+Builds a gpuShadow_t volume into the transform feedback buffers, for
+RB_ARB2_DrawGpuShadow to draw.  Called with shadow.vp bound, which it
+leaves bound.
+==================
+*/
+bool RB_ARB2_CaptureGpuShadow( const srfTriangles_t *tri ) {
+	static const GLint	attribs[3] = { GL_POSITION, 4, 0 };
+	const gpuShadow_t	*gs = tri->gpuShadow;
+	const srfTriangles_t *src = gs->source;
+	const arb2SilEntry_t *sil;
+	unsigned long long	address;
+	float				env[ARB2_GS_ENV_FLOATS][4];
+	int					numFaces;
+	int					need;
+	int					i;
+	bool				reuse;
+
+	if ( !r_gpuShadowVolumes || !tri->shadowCache || src->numSilEdges <= 0 ) {
+		return false;
+	}
+	sil = RB_GS_SilEntry( src );
+	if ( !sil ) {
+		return false;
+	}
+
+	// this capture's facing array
+	numFaces = src->numIndexes / 3;
+	need = ( numFaces * 4 + 15 ) & ~15;
+	reuse = false;
+	if ( rb_gs.facingFrame != backEnd.frameCount ) {
+		rb_gs.facingFrame = backEnd.frameCount;
+		rb_gs.facingUsed = 0;
+		reuse = true;
+	}
+	if ( rb_gs.facingUsed + need > rb_gs.facingBytes ) {
+		if ( need > rb_gs.facingBytes ) {
+			int size = rb_gs.facingBytes ? rb_gs.facingBytes : 0x40000;
+			while ( size < need ) {
+				size *= 2;
+			}
+			// respecifying the store makes the buffer non-resident
+			qglBindBufferARB( GL_COPY_WRITE_BUFFER, rb_gs.facing );
+			qglBufferDataARB( GL_COPY_WRITE_BUFFER, size, NULL, GL_STREAM_COPY_ARB );
+			glCaps.MakeBufferResidentNV( GL_COPY_WRITE_BUFFER, GL_READ_WRITE );
+			glCaps.GetBufferParameterui64vNV( GL_COPY_WRITE_BUFFER, GL_BUFFER_GPU_ADDRESS_NV, &rb_gs.facingAddress );
+			qglBindBufferARB( GL_COPY_WRITE_BUFFER, 0 );
+			rb_gs.facingBytes = size;
+		}
+		rb_gs.facingUsed = 0;
+		reuse = true;
+	}
+
+	// the programs' parameters: planes four to a vector, one component each
+	memset( env, 0, sizeof( env ) );
+	env[0][0] = gs->lightOrigin[0];
+	env[0][1] = gs->lightOrigin[1];
+	env[0][2] = gs->lightOrigin[2];
+	for ( i = 0; i < 6; i++ ) {
+		const int v = i < 4 ? 1 : 5;
+		const int c = i < 4 ? i : i - 4;
+		env[v + 0][c] = gs->clipPlanes[i][0];
+		env[v + 1][c] = gs->clipPlanes[i][1];
+		env[v + 2][c] = gs->clipPlanes[i][2];
+		env[v + 3][c] = gs->clipPlanes[i][3];
+		env[i < 4 ? 9 : 10][c] = ( gs->cullPlanes & ( 1 << i ) ) ? 1.0f : 0.0f;
+	}
+	if ( glCaps.programEnvParameters ) {
+		glCaps.ProgramEnvParameters4fvEXT( GL_GEOMETRY_PROGRAM_NV, 0, ARB2_GS_ENV_FLOATS, env[0] );
+	} else {
+		for ( i = 0; i < ARB2_GS_ENV_FLOATS; i++ ) {
+			qglProgramEnvParameter4fvARB( GL_GEOMETRY_PROGRAM_NV, i, env[i] );
+		}
+	}
+	address = rb_gs.facingAddress + (unsigned long long)rb_gs.facingUsed;
+	glCaps.ProgramEnvParameterI4uiNV( GL_GEOMETRY_PROGRAM_NV, ARB2_GS_ENV_FACING,
+		(GLuint)( address & 0xffffffffu ), (GLuint)( address >> 32 ), 0, 0 );
+	address = rb_gs.storeAddress[sil->store] + (unsigned long long)( sil->offset + (unsigned int)sil->numEdges * 8 );
+	glCaps.ProgramEnvParameterI4uiNV( GL_GEOMETRY_PROGRAM_NV, ARB2_GS_ENV_TABLE,
+		(GLuint)( address & 0xffffffffu ), (GLuint)( address >> 32 ), 0, 0 );
+	rb_gs.facingUsed += need;
+
+	qglBindProgramARB( GL_VERTEX_PROGRAM_ARB, VPROG_NV5_SHADOW );
+	qglEnable( GL_GEOMETRY_PROGRAM_NV );
+	qglEnable( GL_RASTERIZER_DISCARD );
+	glCaps.TransformFeedbackAttribsNV( 1, attribs, GL_INTERLEAVED_ATTRIBS );
+
+	// the shadow cache's w = 1 vertexes
+	qglVertexPointer( 4, GL_FLOAT, 2 * sizeof( shadowCache_t ), vertexCache.Position( tri->shadowCache ) );
+
+	// facing, and the caps
+	if ( reuse ) {
+		glCaps.MemoryBarrier( GL_SHADER_GLOBAL_ACCESS_BARRIER_BIT_NV );
+	}
+	qglBindProgramARB( GL_GEOMETRY_PROGRAM_NV, GPROG_NV5_SHADOW_CAPS );
+	RB_GS_Feedback( 1, numFaces * 6 * 16 );
+	glCaps.BeginTransformFeedback( GL_TRIANGLES );
+	if ( src->indexCache && r_useIndexBuffers.GetBool() ) {
+		qglDrawElements( GL_TRIANGLES, src->numIndexes, vertexCache.IndexType( src->indexCache ),
+			vertexCache.Position( src->indexCache ) );
+	} else {
+		vertexCache.UnbindIndex();
+		qglDrawElements( GL_TRIANGLES, src->numIndexes, GL_INDEX_TYPE, src->indexes );
+	}
+	glCaps.EndTransformFeedback();
+	glCaps.MemoryBarrier( GL_SHADER_GLOBAL_ACCESS_BARRIER_BIT_NV );
+
+	// the sil planes
+	qglBindProgramARB( GL_GEOMETRY_PROGRAM_NV, GPROG_NV5_SHADOW_SIL );
+	RB_GS_Feedback( 0, sil->numEdges * 6 * 16 );
+	qglBindBufferARB( GL_ELEMENT_ARRAY_BUFFER_ARB, rb_gs.store[sil->store] );
+	glCaps.BeginTransformFeedback( GL_TRIANGLES );
+	qglDrawElements( GL_LINES, sil->numEdges * 2, GL_UNSIGNED_INT, (const void *)(intptr_t)sil->offset );
+	glCaps.EndTransformFeedback();
+
+	glCaps.BindTransformFeedback( GL_TRANSFORM_FEEDBACK, 0 );
+	qglDisable( GL_RASTERIZER_DISCARD );
+	qglDisable( GL_GEOMETRY_PROGRAM_NV );
+	qglBindProgramARB( GL_VERTEX_PROGRAM_ARB, VPROG_STENCIL_SHADOW );
+	vertexCache.InvalidateBindings();
+	return true;
+}
+
+/*
+==================
+RB_ARB2_DrawGpuShadow
+
+The captured sil planes, and the caps when numIndexes asks for them.
+==================
+*/
+void RB_ARB2_DrawGpuShadow( const srfTriangles_t *tri, int numIndexes ) {
+	int i;
+
+	for ( i = 0; i < ( numIndexes == tri->numIndexes ? 2 : 1 ); i++ ) {
+		qglBindBufferARB( GL_ARRAY_BUFFER_ARB, rb_gs.tfBuffer[i] );
+		qglVertexPointer( 4, GL_FLOAT, sizeof( shadowCache_t ), (const void *)NULL );
+		glCaps.DrawTransformFeedback( GL_TRIANGLES, rb_gs.tfo[i] );
+	}
+	vertexCache.InvalidateBindings();
+}
+
+// the transform feedback objects and buffers, made with the tier
+static void RB_GS_Init( void ) {
+	int i;
+
+	while ( qglGetError() != GL_NO_ERROR ) {
+	}
+	glCaps.GenTransformFeedbacks( 2, rb_gs.tfo );
+	qglGenBuffersARB( 2, rb_gs.tfBuffer );
+	qglGenBuffersARB( 1, &rb_gs.facing );
+	rb_gs.buffers = qglGetError() == GL_NO_ERROR && rb_gs.tfo[0] && rb_gs.tfo[1]
+		&& rb_gs.tfBuffer[0] && rb_gs.tfBuffer[1] && rb_gs.facing;
+	for ( i = 0; i < 2; i++ ) {
+		rb_gs.tfBytes[i] = 0;
+	}
+	rb_gs.facingFrame = -1;
+}
+
+// a new context: the old one's buffers went with it, and its stores' contents
+static void RB_GS_Reset( void ) {
+	int i;
+
+	for ( i = 0; i < rb_gs.numStores; i++ ) {
+		range_alloc_deinit( &rb_gs.storeRanges[i] );
+	}
+	if ( rb_gs.entries ) {
+		Mem_Free( rb_gs.entries );
+	}
+	memset( &rb_gs, 0, sizeof( rb_gs ) );
+	r_gpuShadowVolumes = false;
+}
+
+/*
 ==================
 RB_ARB2_DrawInteractions
 ==================
@@ -1200,6 +1643,9 @@ static progDef_t	progs[MAX_GLPROGS] = {
 	{ GL_VERTEX_PROGRAM_ARB, VPROG_NV5_INTERACTION, "nv5_interaction.vp" },
 	{ GL_FRAGMENT_PROGRAM_ARB, FPROG_NV5_INTERACTION, "nv5_interaction.fp" },
 	{ GL_FRAGMENT_PROGRAM_ARB, FPROG_NV5_INTERACTION_AMBIENT, "nv5_interactionAmbient.fp" },
+	{ GL_VERTEX_PROGRAM_ARB, VPROG_NV5_SHADOW, "nv5_shadow.vp" },
+	{ GL_GEOMETRY_PROGRAM_NV, GPROG_NV5_SHADOW_CAPS, "nv5_shadowCaps.gp" },
+	{ GL_GEOMETRY_PROGRAM_NV, GPROG_NV5_SHADOW_SIL, "nv5_shadowSil.gp" },
 
 	// additional programs can be dynamically specified in materials
 };
@@ -1576,6 +2022,179 @@ static const char nv5InteractionVP[] =
 	"KIL -R1.x;\n" \
 	"END\n"
 
+/*
+   The NV5 tier's shadow volume programs, RB_ARB2_CaptureGpuShadow's.
+
+   Geometry program.env[0] is the light origin, [1..4] the x, y, z and d
+   of frustum planes 0-3 and [5..8] of planes 4-5 in .xy, [9] and [10]
+   1.0 for each of them the cull tests; [11].xy the address of the
+   capture's facing array, [12].xy that of the sil edges' triangles.
+   Every operation the CPU's facing and cull take is .PREC and in the
+   CPU's order - the plane as R_DeriveFacePlanes builds it, the light's
+   dot as SIMDProcessor->Dot takes it - and the inverse square root is
+   idMath::RSqrt's: its integer step reads the float's bits, which the
+   NV programs' typeless temporaries hand over as they are.
+*/
+static const char nv5ShadowVP[] =
+	"!!NVvp5.0\n"
+	"MOV result.position, vertex.position;\n"
+	"END\n";
+
+// the distance of vertex v from four planes, as Dot( plane, drawVert ) adds it
+#define NV5_SHADOW_DIST( v, x, y, z, d ) \
+	"MUL.PREC t, " v ".x, " x ";\n" \
+	"MUL.PREC u, " v ".y, " y ";\n" \
+	"ADD.PREC t, t, u;\n" \
+	"MUL.PREC u, " v ".z, " z ";\n" \
+	"ADD.PREC t, t, u;\n" \
+	"ADD.PREC t, t, " d ";\n"
+
+// the planes of four, masked, that all three vertexes are behind
+#define NV5_SHADOW_CULL( c, x, y, z, d, mask ) \
+	NV5_SHADOW_DIST( "a", x, y, z, d ) \
+	"SLT " c ", t, 0.1;\n" \
+	NV5_SHADOW_DIST( "b", x, y, z, d ) \
+	"SLT u, t, 0.1;\n" \
+	"MUL " c ", " c ", u;\n" \
+	NV5_SHADOW_DIST( "c", x, y, z, d ) \
+	"SLT u, t, 0.1;\n" \
+	"MUL " c ", " c ", u;\n" \
+	"MUL " c ", " c ", " mask ";\n"
+
+static const char nv5ShadowCapsGP[] =
+	"!!NVgp5.0\n"
+	"PRIMITIVE_IN TRIANGLES;\n"
+	"PRIMITIVE_OUT TRIANGLE_STRIP;\n"
+	"VERTICES_OUT 6;\n"
+	"PARAM light = program.env[0];\n"
+	"PARAM px = program.env[1];\n"
+	"PARAM py = program.env[2];\n"
+	"PARAM pz = program.env[3];\n"
+	"PARAM pd = program.env[4];\n"
+	"PARAM qx = program.env[5];\n"
+	"PARAM qy = program.env[6];\n"
+	"PARAM qz = program.env[7];\n"
+	"PARAM qd = program.env[8];\n"
+	"PARAM pm = program.env[9];\n"
+	"PARAM qm = program.env[10];\n"
+	"TEMP a, b, c, d0, d1, n, m, r, t, u, cp, cq, face;\n"
+	"UINT TEMP k;\n"
+	"LONG TEMP addr, step;\n"
+	"MOV a, vertex[0].position;\n"
+	"MOV b, vertex[1].position;\n"
+	"MOV c, vertex[2].position;\n"
+	"ADD.PREC d0.xyz, b, -a;\n"
+	"ADD.PREC d1.xyz, c, -a;\n"
+	"MUL.PREC n.xyz, d1.yzxw, d0.zxyw;\n"
+	"MUL.PREC m.xyz, d1.zxyw, d0.yzxw;\n"
+	"ADD.PREC n.xyz, n, -m;\n"
+	"MUL.PREC m.xyz, n, n;\n"
+	"ADD.PREC m.x, m.x, m.y;\n"
+	"ADD.PREC m.x, m.x, m.z;\n"
+	"MUL.PREC m.y, m.x, 0.5;\n"
+	"SHR.S r.x, m.x, 1;\n"
+	"SUB.S r.x, 1597463007, r.x;\n"
+	"MUL.PREC m.z, r.x, r.x;\n"
+	"MUL.PREC m.z, m.z, m.y;\n"
+	"ADD.PREC m.z, 1.5, -m.z;\n"
+	"MUL.PREC m.z, r.x, m.z;\n"
+	"MUL.PREC n.xyz, n, m.z;\n"
+	"MUL.PREC t.xyz, n, a;\n"
+	"ADD.PREC t.x, t.x, t.y;\n"
+	"ADD.PREC t.x, t.x, t.z;\n"
+	"MUL.PREC u.xyz, n, light;\n"
+	"ADD.PREC u.x, u.x, u.y;\n"
+	"ADD.PREC u.x, u.x, u.z;\n"
+	"ADD.PREC face.x, u.x, -t.x;\n"
+	"SGE face.x, face.x, 0.0;\n"
+	NV5_SHADOW_CULL( "cp", "px", "py", "pz", "pd", "pm" )
+	NV5_SHADOW_CULL( "cq", "qx", "qy", "qz", "qd", "qm" )
+	"MAX cp, cp, cq;\n"
+	"MAX cp.xy, cp, cp.zwzw;\n"
+	"MAX face.x, face.x, cp.x;\n"
+	"MAX face.x, face.x, cp.y;\n"
+	"MOV.U k, { 0, 0, 0, 0 };\n"
+	"MUL.U k.x, primitive.id, 4;\n"
+	"PK64.U step.x, k;\n"
+	"PK64.U addr.x, program.env[11];\n"
+	"ADD.U64 addr.x, addr.x, step.x;\n"
+	"STORE.F32 face, addr.x;\n"
+	"SEQ.CC face.y, face.x, 0.0;\n"
+	"IF NE.y;\n"
+	"MOV result.position, c;\n"
+	"EMIT;\n"
+	"MOV result.position, b;\n"
+	"EMIT;\n"
+	"MOV result.position, a;\n"
+	"EMIT;\n"
+	"ENDPRIM;\n"
+	"MOV a.w, 0.0;\n"
+	"MOV b.w, 0.0;\n"
+	"MOV c.w, 0.0;\n"
+	"MOV result.position, a;\n"
+	"EMIT;\n"
+	"MOV result.position, b;\n"
+	"EMIT;\n"
+	"MOV result.position, c;\n"
+	"EMIT;\n"
+	"ENDPRIM;\n"
+	"ENDIF;\n"
+	"END\n";
+
+static const char nv5ShadowSilGP[] =
+	"!!NVgp5.0\n"
+	"PRIMITIVE_IN LINES;\n"
+	"PRIMITIVE_OUT TRIANGLE_STRIP;\n"
+	"VERTICES_OUT 6;\n"
+	"TEMP a, b, f, w;\n"
+	"UINT TEMP k, e;\n"
+	"LONG TEMP addr, step, base;\n"
+	"MOV a, vertex[0].position;\n"
+	"MOV b, vertex[1].position;\n"
+	"MOV.U k, { 0, 0, 0, 0 };\n"
+	"MUL.U k.x, primitive.id, 8;\n"
+	"PK64.U step.x, k;\n"
+	"PK64.U addr.x, program.env[12];\n"
+	"ADD.U64 addr.x, addr.x, step.x;\n"
+	"LOAD.U32X2 e.xy, addr.x;\n"
+	"PK64.U base.x, program.env[11];\n"
+	"MUL.U k.x, e.x, 4;\n"
+	"PK64.U step.x, k;\n"
+	"ADD.U64 addr.x, base.x, step.x;\n"
+	"MOV f, { 1, 1, 0, 0 };\n"
+	"LOAD.F32 f.x, addr.x;\n"
+	"SNE.U.CC k.z, e.y, 0xffffffff;\n"
+	"IF NE.z;\n"
+	"MUL.U k.x, e.y, 4;\n"
+	"PK64.U step.x, k;\n"
+	"ADD.U64 addr.x, base.x, step.x;\n"
+	"LOAD.F32 f.y, addr.x;\n"
+	"ENDIF;\n"
+	"SNE.CC w.z, f.x, f.y;\n"
+	"IF NE.z;\n"
+	"ADD w.xy, 1.0, -f;\n"
+	"MOV result.position, a;\n"
+	"EMIT;\n"
+	"MOV b.w, w.x;\n"
+	"MOV result.position, b;\n"
+	"EMIT;\n"
+	"MOV b.w, w.y;\n"
+	"MOV result.position, b;\n"
+	"EMIT;\n"
+	"ENDPRIM;\n"
+	"MOV a.w, w.y;\n"
+	"MOV result.position, a;\n"
+	"EMIT;\n"
+	"MOV a.w, w.x;\n"
+	"MOV result.position, a;\n"
+	"EMIT;\n"
+	"MOV b.w, 0.0;\n"
+	"MOV result.position, b;\n"
+	"EMIT;\n"
+	"ENDPRIM;\n"
+	"ENDIF;\n"
+	"END\n";
+
 static char nv5InteractionFP[2048];
 static char nv5InteractionAmbientFP[2048];
 
@@ -1594,6 +2213,10 @@ static void R_ARB2NV5_BuildPrograms( int lastUnit ) {
 static ID_INLINE bool R_ARB2NV5Program( int ident ) {
 	return ident == VPROG_NV5_INTERACTION || ident == FPROG_NV5_INTERACTION
 		|| ident == FPROG_NV5_INTERACTION_AMBIENT;
+}
+
+static ID_INLINE bool R_ARB2ShadowProgram( int ident ) {
+	return ident == VPROG_NV5_SHADOW || ident == GPROG_NV5_SHADOW_CAPS || ident == GPROG_NV5_SHADOW_SIL;
 }
 
 static ID_INLINE bool R_ARB2NVProgram( int ident ) {
@@ -1672,7 +2295,8 @@ void R_LoadARBProgram( int progIndex ) {
 	bool	interactionFP;
 
 	progs[progIndex].loaded = false;
-	nvProg = R_ARB2NVProgram( progs[progIndex].ident ) || R_ARB2NV5Program( progs[progIndex].ident );
+	nvProg = R_ARB2NVProgram( progs[progIndex].ident ) || R_ARB2NV5Program( progs[progIndex].ident )
+		|| R_ARB2ShadowProgram( progs[progIndex].ident );
 	interactionFP = progs[progIndex].ident == FPROG_INTERACTION
 		|| progs[progIndex].ident == FPROG_NV_INTERACTION
 		|| progs[progIndex].ident == FPROG_NV_INTERACTION_AMBIENT
@@ -1684,12 +2308,18 @@ void R_LoadARBProgram( int progIndex ) {
 		if ( arb2Tier < ( R_ARB2NV5Program( progs[progIndex].ident ) ? ARB2_TIER_NV5 : ARB2_TIER_NV4 ) ) {
 			return;
 		}
+		if ( R_ARB2ShadowProgram( progs[progIndex].ident ) && ( arb2Tier < ARB2_TIER_NV5 || !rb_gs.buffers ) ) {
+			return;
+		}
 		switch ( progs[progIndex].ident ) {
 		case VPROG_NV_INTERACTION:			nvSrc = nvInteractionVP; break;
 		case FPROG_NV_INTERACTION:			nvSrc = nvInteractionFP; break;
 		case FPROG_NV_INTERACTION_AMBIENT:	nvSrc = nvInteractionAmbientFP; break;
 		case VPROG_NV5_INTERACTION:			nvSrc = nv5InteractionVP; break;
 		case FPROG_NV5_INTERACTION:			nvSrc = nv5InteractionFP; break;
+		case VPROG_NV5_SHADOW:				nvSrc = nv5ShadowVP; break;
+		case GPROG_NV5_SHADOW_CAPS:			nvSrc = nv5ShadowCapsGP; break;
+		case GPROG_NV5_SHADOW_SIL:			nvSrc = nv5ShadowSilGP; break;
 		default:							nvSrc = nv5InteractionAmbientFP; break;
 		}
 		common->Printf( "<internal> %s", progs[progIndex].name );
@@ -2296,10 +2926,12 @@ void R_ReloadARBPrograms_f( const idCmdArgs &args ) {
 	int		i;
 	int		nvLoaded;
 	int		nv5Loaded;
+	int		shadowLoaded;
 
 	common->Printf( "----- R_ReloadARBPrograms -----\n" );
 	nvLoaded = 0;
 	nv5Loaded = 0;
+	shadowLoaded = 0;
 	for ( i = 0 ; progs[i].name[0] ; i++ ) {
 		R_LoadARBProgram( i );
 		if ( progs[i].loaded && R_ARB2NVProgram( progs[i].ident ) ) {
@@ -2307,6 +2939,9 @@ void R_ReloadARBPrograms_f( const idCmdArgs &args ) {
 		}
 		if ( progs[i].loaded && R_ARB2NV5Program( progs[i].ident ) ) {
 			nv5Loaded++;
+		}
+		if ( progs[i].loaded && R_ARB2ShadowProgram( progs[i].ident ) ) {
+			shadowLoaded++;
 		}
 	}
 
@@ -2325,6 +2960,17 @@ void R_ReloadARBPrograms_f( const idCmdArgs &args ) {
 		common->Printf( "ARB2: NV5 batched interactions not available, interactions use %s\n",
 			rb_nvInteraction ? "the NV4 programs" : "the ARB programs" );
 	}
+
+	/* Shadow volumes the GPU builds replay the CPU's facing arithmetic,
+	   which 32-bit MSVC builds take through other routines. */
+#if defined( _MSC_VER ) && defined( _M_IX86 )
+	r_gpuShadowVolumes = false;
+#else
+	r_gpuShadowVolumes = rb_nv5.programs && rb_gs.buffers && shadowLoaded == 3;
+	if ( rb_gs.buffers && !r_gpuShadowVolumes ) {
+		common->Printf( "ARB2: NV5 shadow volume programs not available, shadow volumes are built on the CPU\n" );
+	}
+#endif
 }
 
 /*
@@ -2400,6 +3046,10 @@ static void R_ARB2_SelectTier( void ) {
 		}
 	}
 
+	if ( tier >= ARB2_TIER_NV5 && glCaps.nvGpuShadows ) {
+		RB_GS_Init();
+	}
+
 	arb2Tier = tier;
 	common->Printf( "ARB2 program tier: %s\n", tierNames[tier] );
 }
@@ -2418,6 +3068,7 @@ void R_ARB2_Init( void ) {
 	rb_nvParmBuffer = 0;
 	rb_nvInteraction = false;
 	memset( &rb_nv5, 0, sizeof( rb_nv5 ) );
+	RB_GS_Reset();
 
 	common->Printf( "ARB2 renderer: " );
 

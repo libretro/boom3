@@ -181,6 +181,7 @@ private:
 
 void R_CalcInteractionFacing( const idRenderEntityLocal *ent, const srfTriangles_t *tri, const idRenderLightLocal *light, srfCullInfo_t &cullInfo );
 void R_CalcInteractionCullBits( const idRenderEntityLocal *ent, const srfTriangles_t *tri, const idRenderLightLocal *light, srfCullInfo_t &cullInfo );
+int R_CalcInteractionClipPlanes( const idRenderEntityLocal *ent, const srfTriangles_t *tri, const idRenderLightLocal *light, idPlane localClipPlanes[6] );
 void R_FreeInteractionCullInfo( srfCullInfo_t &cullInfo );
 
 void R_ShowInteractionMemory_f( const idCmdArgs &args );

@@ -130,6 +130,8 @@ typedef struct srfTriangles_s {
 	struct vertCache_s *		ambientCache;			// idDrawVert
 	struct vertCache_s *		lightingCache;			// lightingCache_t
 	struct vertCache_s *		shadowCache;			// shadowCache_t
+
+	struct gpuShadow_s *		gpuShadow;				// a shadow volume the GPU builds from its source surface when drawn
 } srfTriangles_t;
 
 typedef idList<srfTriangles_t *> idTriList;
