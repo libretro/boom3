@@ -719,9 +719,9 @@ idCommonLocal::Quit
 ==================
 */
 void idCommonLocal::Quit( void ) {
-	// don't try to shutdown if we are in a recursive error
-	if ( !com_errorEntered )
-		Shutdown();
+	/* the frontend unloads the game, which shuts the engine down; the
+	   process belongs to the frontend, which still has its own state to
+	   write */
 	Sys_Quit();
 }
 

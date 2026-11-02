@@ -833,6 +833,20 @@ static retro_video_refresh_t video_cb;
 static retro_audio_sample_t audio_cb;
 retro_audio_sample_batch_t audio_batch_cb;
 retro_environment_t environ_cb;
+
+/* The game's own quit: the frontend is asked to close the content, and
+ * its unload shuts the engine down through retro_unload_game.  Asked once;
+ * the frames until then run as before. */
+static bool quit_requested;
+
+void LibRetro_RequestShutdown( void )
+{
+	if ( quit_requested || !environ_cb )
+		return;
+	quit_requested = environ_cb( RETRO_ENVIRONMENT_SHUTDOWN, NULL );
+	if ( !quit_requested && log_cb )
+		log_cb( RETRO_LOG_WARN, "[boom3] quit: the frontend does not close content on request\n" );
+}
 static retro_input_poll_t poll_cb;
 static retro_input_state_t input_cb;
 retro_perf_get_time_usec_t perf_get_time_usec = NULL;
@@ -10021,6 +10035,7 @@ void retro_unload_game(void)
 	memset(&audio_float_cb, 0, sizeof(audio_float_cb));
 	first_boot = true;
 	initial_resolution_set = false;
+	quit_requested = false;
 #ifdef BOOM3_VR
 	if ( vr_hold_state.active )
 		vr_clear_map();

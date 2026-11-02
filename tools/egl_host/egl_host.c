@@ -17,6 +17,9 @@
  * frame n; shots=<n>,<n>,... with ppm=<prefix> writes those frames as
  * <prefix>_<n>.ppm.
  *
+ * A core that asks to shut down (RETRO_ENVIRONMENT_SHUTDOWN) runs no more
+ * frames: the host unloads it as a frontend would, and says so.
+ *
  * Linux: Mesa's EGL and GL (libegl-dev libgl-dev libgles-dev).
  *   cc -std=c89 -O1 -g -o egl_host egl_host.c -ldl -lEGL -Wl,--no-as-needed -lm
  */
@@ -271,6 +274,8 @@ static bool display_metadata(void *data)
    return true;
 }
 
+static int shutdown_asked;
+
 static bool env_cb(unsigned cmd, void *data)
 {
    int i;
@@ -325,6 +330,9 @@ static bool env_cb(unsigned cmd, void *data)
    }
    case RETRO_ENVIRONMENT_GET_CAN_DUPE:
       *(bool *)data = true;
+      return true;
+   case RETRO_ENVIRONMENT_SHUTDOWN:
+      shutdown_asked = 1;
       return true;
    case RETRO_ENVIRONMENT_SET_GEOMETRY:
    case RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO:
@@ -552,8 +560,13 @@ int main(int argc, char **argv)
    if (hw.context_reset)
       hw.context_reset();
 
-   for (frame_index = 0; frame_index < frames; frame_index++)
+   for (frame_index = 0; frame_index < frames && !shutdown_asked; frame_index++)
       r_run();
+   if (shutdown_asked)
+   {
+      fprintf(stderr, "egl_host: the core asked to shut down after frame %d\n", frame_index - 1);
+      frames = frame_index;
+   }
 
    if (ppm_path && presented && !shots)
    {

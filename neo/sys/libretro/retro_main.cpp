@@ -125,7 +125,7 @@ Sys_Quit
 ================
 */
 void Sys_Quit(void) {
-	LibRetro_Exit( EXIT_SUCCESS );
+	LibRetro_RequestShutdown();
 }
 
 /*

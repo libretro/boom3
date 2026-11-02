@@ -36,6 +36,7 @@ If you have questions concerning this license or the applicable additional terms
 const char*	LibRetro_Cwd( void );
 
 void		LibRetro_Exit( int ret );
+void		LibRetro_RequestShutdown( void ); // ask the frontend to unload the game
 void		LibRetro_SetExit(int ret); // override the exit code
 void		LibRetro_SetExitSpawn( const char *exeName ); // set the process to be spawned when we quit
 
