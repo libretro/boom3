@@ -1089,8 +1089,8 @@ static void R_ParticleDeform( drawSurf_t *surf, bool useArea ) {
 			int	stageCycle = stageAge / stage->cycleMsec;
 
 			// some particles will be in this cycle, some will be in the previous cycle
-			steppingRandom.SetSeed( (( stageCycle << 10 ) & idRandom::MAX_RAND) ^ (int)( renderEntity->shaderParms[SHADERPARM_DIVERSITY] * idRandom::MAX_RAND )  );
-			steppingRandom2.SetSeed( (( (stageCycle-1) << 10 ) & idRandom::MAX_RAND) ^ (int)( renderEntity->shaderParms[SHADERPARM_DIVERSITY] * idRandom::MAX_RAND )  );
+			steppingRandom.SetSeed( (int)( ( (unsigned int)stageCycle << 10 ) & idRandom::MAX_RAND ) ^ (int)( renderEntity->shaderParms[SHADERPARM_DIVERSITY] * idRandom::MAX_RAND )  );
+			steppingRandom2.SetSeed( (int)( ( (unsigned int)( stageCycle - 1 ) << 10 ) & idRandom::MAX_RAND ) ^ (int)( renderEntity->shaderParms[SHADERPARM_DIVERSITY] * idRandom::MAX_RAND )  );
 
 			for ( int index = 0 ; index < totalParticles ; index++ ) {
 				g.index = index;
