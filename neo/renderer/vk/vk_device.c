@@ -859,7 +859,11 @@ int vkb_begin_frame(enum vkb_target target, unsigned width, unsigned height,
    bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
    if (vk.vkBeginCommandBuffer(vkb.cmd, &bi) != VK_SUCCESS)
       return 0;
+   /* under the lock the main thread reads it under, deciding whether an
+    * upload between frames may go to the device now */
+   vkt_lock();
    vkb.frameOpen = 1;
+   vkt_unlock();
    vkb.drawn     = 0;
    vkb.frameComposited = 0;
    vkb.compositeProgram = VKB_PROGRAM_BLIT;
@@ -1005,9 +1009,9 @@ int vkb_end_frame(void)
          VK_QUEUE_FAMILY_IGNORED);
    vkb.unpresented = f->done;
 
-   vkb.frameOpen = 0;
    vkb.cmd       = VK_NULL_HANDLE;
    vkt_lock();
+   vkb.frameOpen = 0;
    vkb.frameCount++;
    vkt_unlock();
    return 1;
