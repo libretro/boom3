@@ -16,8 +16,15 @@ static int vkb_frame_images_make(enum vkb_format format);
 
 static VkApplicationInfo appInfo;
 static PFN_vkGetInstanceProcAddr getInstanceProcAddr;
+/* The renderer's floor is Vulkan 1.0; newer versions only add optional
+ * features.  The instance version is known when this core made the
+ * instance, and taken as 1.0 when the frontend did. */
+static uint32_t instanceVersion = VK_API_VERSION_1_0;
 /* create_device2's, for vkb_init: its reset of vkb comes after */
 static VkPhysicalDeviceFeatures negotiatedFeatures;
+
+/* the newest version anything in the renderer uses */
+#define VKB_API_VERSION_MAX VK_API_VERSION_1_2
 
 static const VkApplicationInfo *vkb_application_info(void)
 {
@@ -25,8 +32,38 @@ static const VkApplicationInfo *vkb_application_info(void)
    appInfo.sType            = VK_STRUCTURE_TYPE_APPLICATION_INFO;
    appInfo.pApplicationName = "boom3";
    appInfo.pEngineName      = "idTech4";
-   appInfo.apiVersion       = VK_API_VERSION_1_1;
+   appInfo.apiVersion       = VK_API_VERSION_1_0;
    return &appInfo;
+}
+
+/* The frontend's application info, asking for the newest version the
+ * loader and the renderer both know, never less than the frontend's. */
+static VkInstance vkb_create_instance(PFN_vkGetInstanceProcAddr gipa,
+      const VkApplicationInfo *app, retro_vulkan_create_instance_wrapper_t wrapper,
+      void *opaque)
+{
+   PFN_vkEnumerateInstanceVersion enumerateVersion;
+   VkApplicationInfo ai;
+   VkInstanceCreateInfo ici;
+   VkInstance instance;
+   uint32_t loader = VK_API_VERSION_1_0;
+
+   ai = app ? *app : *vkb_application_info();
+   enumerateVersion = (PFN_vkEnumerateInstanceVersion)gipa(VK_NULL_HANDLE, "vkEnumerateInstanceVersion");
+   if (!enumerateVersion || enumerateVersion(&loader) != VK_SUCCESS)
+      loader = VK_API_VERSION_1_0;
+   loader &= ~0xfffu;
+   if (loader > VKB_API_VERSION_MAX)
+      loader = VKB_API_VERSION_MAX;
+   if (ai.apiVersion < loader)
+      ai.apiVersion = loader;
+
+   memset(&ici, 0, sizeof(ici));
+   ici.sType            = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+   ici.pApplicationInfo = &ai;
+   instance = wrapper(opaque, &ici);
+   instanceVersion = instance ? ( ai.apiVersion & ~0xfffu ) : VK_API_VERSION_1_0;
+   return instance;
 }
 
 static int vkb_load_instance_procs(VkInstance instance)
@@ -131,9 +168,11 @@ static struct retro_hw_render_context_negotiation_interface_vulkan negotiation;
 const struct retro_hw_render_context_negotiation_interface_vulkan *vkb_negotiation(void)
 {
    memset(&negotiation, 0, sizeof(negotiation));
+   instanceVersion = VK_API_VERSION_1_0;
    negotiation.interface_type       = RETRO_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE_VULKAN;
    negotiation.interface_version    = RETRO_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE_VULKAN_VERSION;
    negotiation.get_application_info = vkb_application_info;
+   negotiation.create_instance      = vkb_create_instance;
    negotiation.create_device2       = vkb_create_device2;
    return &negotiation;
 }
@@ -389,6 +428,9 @@ int vkb_init(const struct retro_hw_render_interface_vulkan *iface, unsigned widt
       return 0;
    vk.vkGetPhysicalDeviceProperties(vkb.gpu, &vkb.properties);
    vkb.features = negotiatedFeatures;
+   vkb.apiVersion = vkb.properties.apiVersion & ~0xfffu;
+   if (vkb.apiVersion > instanceVersion)
+      vkb.apiVersion = instanceVersion;
    vk.vkGetPhysicalDeviceMemoryProperties(vkb.gpu, &vkb.memoryProperties);
    memcpy(vkb.deviceName, vkb.properties.deviceName, sizeof(vkb.deviceName) - 1);
    vkb.deviceName[sizeof(vkb.deviceName) - 1] = '\0';

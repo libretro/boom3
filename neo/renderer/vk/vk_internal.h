@@ -343,6 +343,7 @@ typedef struct vkb_state
    unsigned compositeLut;
 
    char deviceName[256];
+   uint32_t apiVersion;        /* what the instance and device both offer, patch level dropped */
    unsigned char ready;
    unsigned char hasBC;
 } vkb_state_t;

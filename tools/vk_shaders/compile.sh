@@ -58,9 +58,9 @@ hdr_composite_inplace_frag hdr_composite.frag -DINPLACE=1
 "
 echo "$variants" | while read -r name file defines; do
 	[ -z "$name" ] && continue
-	glslangValidator -V --target-env vulkan1.1 -I"$src" $defines -o "$tmp/$name.spv" "$src/$file" > "$tmp/log" 2>&1 \
+	glslangValidator -V --target-env vulkan1.0 -I"$src" $defines -o "$tmp/$name.spv" "$src/$file" > "$tmp/log" 2>&1 \
 		|| { cat "$tmp/log"; exit 1; }
-	spirv-val --target-env vulkan1.1 "$tmp/$name.spv"
+	spirv-val --target-env vulkan1.0 "$tmp/$name.spv"
 	{
 		echo "/* $file $defines - made by tools/vk_shaders/compile.sh, do not edit */"
 		echo "static const unsigned int spirv_${name}[] = {"
