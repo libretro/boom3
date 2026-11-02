@@ -1820,27 +1820,32 @@ Shadow volumes built on the GPU
 
 A gpuShadow_t volume is queued with the backend while the frame's
 commands are prepared, built by compute at the frame's start and drawn
-from what it wrote.  Its sil edges go up once, to a static block: per
-edge v1 v2 p1 p2, a dangling edge's missing triangle as 0xffffffff.
-The table of those blocks is the main thread's.
+from what it wrote.  What it reads of its source goes up once, to a
+static block, by the pointer it came from: the sil edges (per edge v1 v2
+p1 p2, a dangling edge's missing triangle as 0xffffffff) and the face
+planes of a surface that keeps them; a surface rewritten every frame
+sends its planes through the frame's ring.  The table of those blocks
+is the main thread's.
 ====================
 */
 typedef struct {
-	const silEdge_t *	key;		// NULL in an empty slot
+	const void *		key;		// NULL in an empty slot
 	unsigned			buffer;
 	unsigned			offset;
 	unsigned			bytes;
 } vkSilBlock_t;
 
+typedef void ( *vkShadowFill_t )( const srfTriangles_t *src, void *data );
+
 static vkSilBlock_t *	vkSil;
 static int				vkSilMax;		// a power of two, 0 when none
 static int				vkSilCount;
 
-static int RB_VK_SilHome( const silEdge_t *key ) {
+static int RB_VK_SilHome( const void *key ) {
 	return (int)( ( (unsigned)( (uintptr_t)key >> 4 ) * 2654435761u ) & (unsigned)( vkSilMax - 1 ) );
 }
 
-static int RB_VK_SilSlot( const silEdge_t *key ) {
+static int RB_VK_SilSlot( const void *key ) {
 	int i = RB_VK_SilHome( key );
 	while ( vkSil[i].key != NULL && vkSil[i].key != key ) {
 		i = ( i + 1 ) & ( vkSilMax - 1 );
@@ -1868,25 +1873,10 @@ static bool RB_VK_SilGrow( void ) {
 	return true;
 }
 
-static const vkSilBlock_t *RB_VK_SilEdges( const srfTriangles_t *src ) {
-	vkSilBlock_t *b;
-	unsigned *data;
+static void RB_VK_FillSilEdges( const srfTriangles_t *src, void *out ) {
+	unsigned *data = (unsigned *)out;
 	const int numFaces = src->numIndexes / 3;
 	int i;
-	if ( !vkSilMax || ( vkSilCount + 1 ) * 2 > vkSilMax ) {
-		if ( !RB_VK_SilGrow() ) {
-			return NULL;
-		}
-	}
-	b = &vkSil[RB_VK_SilSlot( src->silEdges )];
-	if ( b->key ) {
-		return b;
-	}
-	b->bytes = (unsigned)src->numSilEdges * 16;
-	if ( !vkb_static_alloc( b->bytes, 0, &b->buffer, &b->offset ) ) {
-		return NULL;
-	}
-	data = (unsigned *)Mem_Alloc( b->bytes );
 	for ( i = 0; i < src->numSilEdges; i++ ) {
 		const silEdge_t *e = &src->silEdges[i];
 		data[i * 4 + 0] = (unsigned)e->v1;
@@ -1894,19 +1884,45 @@ static const vkSilBlock_t *RB_VK_SilEdges( const srfTriangles_t *src ) {
 		data[i * 4 + 2] = (unsigned)e->p1;
 		data[i * 4 + 3] = e->p2 < numFaces ? (unsigned)e->p2 : 0xffffffffu;
 	}
-	vkb_static_upload( b->buffer, b->offset, data, b->bytes );
+}
+
+static void RB_VK_FillPlanes( const srfTriangles_t *src, void *out ) {
+	memcpy( out, src->facePlanes, ( src->numIndexes / 3 ) * sizeof( src->facePlanes[0] ) );
+}
+
+// the static block made from key, uploaded by fill the first time
+static const vkSilBlock_t *RB_VK_ShadowData( const void *key, unsigned bytes, vkShadowFill_t fill,
+		const srfTriangles_t *src ) {
+	vkSilBlock_t *b;
+	void *data;
+	if ( !vkSilMax || ( vkSilCount + 1 ) * 2 > vkSilMax ) {
+		if ( !RB_VK_SilGrow() ) {
+			return NULL;
+		}
+	}
+	b = &vkSil[RB_VK_SilSlot( key )];
+	if ( b->key ) {
+		return b;
+	}
+	if ( !vkb_static_alloc( bytes, 0, &b->buffer, &b->offset ) ) {
+		return NULL;
+	}
+	b->bytes = bytes;
+	data = Mem_Alloc( bytes );
+	fill( src, data );
+	vkb_static_upload( b->buffer, b->offset, data, bytes );
 	Mem_Free( data );
-	b->key = src->silEdges;
+	b->key = key;
 	vkSilCount++;
 	return b;
 }
 
-void RB_VK_ForgetSilEdges( const silEdge_t *silEdges ) {
+void RB_VK_ForgetShadowData( const void *key ) {
 	int i, j, k;
-	if ( !vkSilCount || !silEdges ) {
+	if ( !vkSilCount || !key ) {
 		return;
 	}
-	i = RB_VK_SilSlot( silEdges );
+	i = RB_VK_SilSlot( key );
 	if ( vkSil[i].key == NULL ) {
 		return;
 	}
@@ -1930,12 +1946,7 @@ void RB_VK_ForgetSilEdges( const silEdge_t *silEdges ) {
 }
 
 void RB_VK_ShadowsUp( void ) {
-#if defined( _MSC_VER ) && defined( _M_IX86 )
-	// the CPU's face planes there come from routines the build does not replay
-	r_gpuShadowVolumes = false;
-#else
 	r_gpuShadowVolumes = vkb_shadows_available() != 0;
-#endif
 }
 
 // the device's static blocks went with it
@@ -1957,18 +1968,39 @@ static void RB_VK_PrepareShadows( const drawSurf_t *surf ) {
 		const vertCache_t *vc = tri->shadowCache;
 		const vertCache_t *ic;
 		const vkSilBlock_t *sil;
+		const vkSilBlock_t *planes;
 		vkb_shadow_volume_t v;
+		int numFaces;
 		int i;
 		if ( !gs || !vc || vc->virtMem ) {
 			continue;
 		}
 		src = gs->source;
 		ic = src->indexCache;
-		sil = RB_VK_SilEdges( src );
+		numFaces = src->numIndexes / 3;
+		if ( !src->facePlanes || !src->facePlanesCalculated ) {
+			continue;
+		}
+		sil = RB_VK_ShadowData( src->silEdges, (unsigned)src->numSilEdges * 16, RB_VK_FillSilEdges, src );
 		if ( !sil ) {
 			continue;
 		}
 		memset( &v, 0, sizeof( v ) );
+		if ( src->deformedSurface ) {
+			void *p = vkb_ring_alloc( numFaces * sizeof( src->facePlanes[0] ), 16, &v.planeBuffer, &v.planeOffset );
+			if ( !p ) {
+				continue;
+			}
+			RB_VK_FillPlanes( src, p );
+		} else {
+			planes = RB_VK_ShadowData( src->facePlanes, (unsigned)numFaces * sizeof( src->facePlanes[0] ),
+				RB_VK_FillPlanes, src );
+			if ( !planes ) {
+				continue;
+			}
+			v.planeBuffer = planes->buffer;
+			v.planeOffset = planes->offset;
+		}
 		v.vertexBuffer = vc->vbo;
 		v.vertexOffset = (unsigned)vc->offset;
 		if ( ic && !ic->virtMem ) {
@@ -1987,6 +2019,7 @@ static void RB_VK_PrepareShadows( const drawSurf_t *surf ) {
 		v.silOffset = sil->offset;
 		v.numSilEdges = (unsigned)src->numSilEdges;
 		v.cullPlanes = (unsigned)gs->cullPlanes;
+		v.dotOrder = (unsigned char)R_ShadowDotOrder();
 		v.lightOrigin[0] = gs->lightOrigin[0];
 		v.lightOrigin[1] = gs->lightOrigin[1];
 		v.lightOrigin[2] = gs->lightOrigin[2];

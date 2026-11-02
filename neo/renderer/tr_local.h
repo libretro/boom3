@@ -1667,10 +1667,10 @@ srfTriangles_t *R_CreateTurboShadowVolume( const idRenderEntityLocal *ent,
 									 srfCullInfo_t &cullInfo );
 
 /*
-   A turbo shadow volume the GPU builds each time it is drawn, from the
-   source surface's shadow cache, indexes and sil edges: the facing and
-   frustum cull arithmetic of R_CreateVertexProgramTurboShadowVolume
-   replayed exactly, the same triangles in the same order.  Its index
+   A turbo shadow volume the GPU builds when it is drawn, from the source
+   surface's shadow cache, indexes, sil edges and face planes: the facing
+   and frustum cull of R_CreateVertexProgramTurboShadowVolume replayed
+   exactly on the CPU's own planes, the same triangles.  Its index
    counts are tokens: numShadowIndexesNoCaps < numShadowIndexesNoFrontCaps
    == numIndexes, so a draw of numIndexes takes the caps and one of
    numShadowIndexesNoCaps the sil planes alone.
@@ -1693,16 +1693,20 @@ extern bool r_gpuShadowVolumes;
 srfTriangles_t *R_CreateGpuShadowVolume( const idRenderEntityLocal *ent,
 									 const srfTriangles_t *tri, const idRenderLightLocal *light );
 
-// sil edges about to be freed: the backend drops what it built from them
-void R_ForgetSilEdges( const silEdge_t *silEdges );
+// sil edges or face planes about to be freed or rewritten: the backends drop what they uploaded of them
+void R_ForgetShadowData( const void *key );
+
+// the order SIMDProcessor->Dot adds a plane's terms in, for the backends to replay:
+// 0 ( ( x + y ) + z ) + d, 1 ( ( x + d ) + y ) + z
+int R_ShadowDotOrder( void );
 
 // a volume about to be freed: the backend drops its kept capture
 void R_ForgetGpuShadow( const gpuShadow_t *gs );
 
-// the backends' parts of R_ForgetSilEdges and R_ForgetGpuShadow
-void RB_ARB2_ForgetSilEdges( const silEdge_t *silEdges );
+// the backends' parts of R_ForgetShadowData and R_ForgetGpuShadow
+void RB_ARB2_ForgetShadowData( const void *key );
 void RB_ARB2_ForgetGpuShadow( const gpuShadow_t *gs );
-void RB_VK_ForgetSilEdges( const silEdge_t *silEdges );
+void RB_VK_ForgetShadowData( const void *key );
 
 // the ARB2 backend's: build a gpuShadow_t volume, then draw it as RB_DrawShadowElementsWithCounters would
 bool RB_ARB2_CaptureGpuShadow( const srfTriangles_t *tri );

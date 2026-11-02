@@ -11,10 +11,10 @@ spirv_execution_mode(extensions = ["SPV_KHR_float_controls"], capabilities = [44
 #endif
 #include "shadow_build.glsl"
 
-// A triangle's facing, as R_CalcInteractionFacing finds it from the plane
-// R_DeriveFacePlanes builds, then the frustum cull: every operation the
-// CPU's, in its order, none fused (precise), and idMath::RSqrt's integer
-// step on the float's bits.  Then the caps of a triangle facing away.
+// A triangle's facing, as R_CalcInteractionFacing finds it from the CPU's
+// own face plane - its dot with the light origin, each operation the
+// CPU's, in its order, none fused (precise) - then the frustum cull the
+// same way.  Then the caps of a triangle facing away.
 
 layout(local_size_x = 64) in;
 
@@ -28,6 +28,25 @@ uint fetchIndex(uint i)
     return (ix[at >> 1] >> ((at & 1u) * 16u)) & 0xffffu;
 }
 
+// ((x + y) + z) + d, or ((x + d) + y) + z
+float dot4(float x, float y, float z, float d)
+{
+    precise float t;
+    if (parms[pc.parmBase + 38u] == 0u)
+    {
+        t = x + y;
+        t = t + z;
+        t = t + d;
+    }
+    else
+    {
+        t = x + d;
+        t = t + y;
+        t = t + z;
+    }
+    return t;
+}
+
 // the planes of a group behind which a vertex lies, as Dot( plane, drawVert ) < LIGHT_CLIP_EPSILON
 uint behind(vec3 p, uint group)
 {
@@ -36,13 +55,10 @@ uint behind(vec3 p, uint group)
     for (k = 0u; k < 4u; k++)
     {
         uint b = 4u + group * 16u;
-        precise float t = p.x * parm(b + k);
-        precise float u = p.y * parm(b + 4u + k);
-        t = t + u;
-        u = p.z * parm(b + 8u + k);
-        t = t + u;
-        t = t + parm(b + 12u + k);
-        if (t < 0.1)
+        precise float x = p.x * parm(b + k);
+        precise float y = p.y * parm(b + 4u + k);
+        precise float z = p.z * parm(b + 8u + k);
+        if (dot4(x, y, z, parm(b + 12u + k)) < 0.1)
             bits |= 1u << k;
     }
     return bits;
@@ -53,41 +69,24 @@ void main()
     uint tri = gl_GlobalInvocationID.x;
     uint i0, i1, i2, face, cull, slot, at;
     vec3 a, b, c;
-    precise float d0x, d0y, d0z, d1x, d1y, d1z, nx, ny, nz, m, sq, y, r2, f, t, u, pv;
-    precise float rf;
-    int ri;
+    vec4 pl;
+    precise float x, y, z;
 
     if (tri >= pc.numFaces)
         return;
     i0 = fetchIndex(tri * 3u + 0u);
     i1 = fetchIndex(tri * 3u + 1u);
     i2 = fetchIndex(tri * 3u + 2u);
+
+    pl = facePlane[pc.planeBase + tri];
+    x = pl.x * parm(0u);
+    y = pl.y * parm(1u);
+    z = pl.z * parm(2u);
+    face = dot4(x, y, z, pl.w) >= 0.0 ? 1u : 0u;
+
     a = sc[pc.vertexBase + 2u * i0].xyz;
     b = sc[pc.vertexBase + 2u * i1].xyz;
     c = sc[pc.vertexBase + 2u * i2].xyz;
-
-    d0x = b.x - a.x; d0y = b.y - a.y; d0z = b.z - a.z;
-    d1x = c.x - a.x; d1y = c.y - a.y; d1z = c.z - a.z;
-    nx = d1y * d0z; m = d1z * d0y; nx = nx - m;
-    ny = d1z * d0x; m = d1x * d0z; ny = ny - m;
-    nz = d1x * d0y; m = d1y * d0x; nz = nz - m;
-    sq = nx * nx; m = ny * ny; sq = sq + m; m = nz * nz; sq = sq + m;
-
-    y  = sq * 0.5;
-    ri = 0x5f3759df - (floatBitsToInt(sq) >> 1);
-    rf = intBitsToFloat(ri);
-    r2 = rf * rf;
-    r2 = r2 * y;
-    r2 = 1.5 - r2;
-    f  = rf * r2;
-    nx = nx * f; ny = ny * f; nz = nz * f;
-
-    // FitThroughPoint's dot, then the light's, as SIMDProcessor->Dot adds them
-    t = nx * a.x; m = ny * a.y; t = t + m; m = nz * a.z; t = t + m;
-    u = nx * parm(0u); m = ny * parm(1u); u = u + m; m = nz * parm(2u); u = u + m;
-    pv = u + -t;
-    face = pv >= 0.0 ? 1u : 0u;
-
     if (face == 0u)
     {
         cull = behind(a, 0u) & behind(b, 0u) & behind(c, 0u) & parms[pc.parmBase + 36u];

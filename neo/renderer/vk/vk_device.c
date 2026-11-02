@@ -319,7 +319,7 @@ static int vkb_frames_init(void)
       sizes[2].type            = VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT;
       sizes[2].descriptorCount = 64;
       sizes[3].type            = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;    /* the shadow build's */
-      sizes[3].descriptorCount = 6 * 4096;
+      sizes[3].descriptorCount = 7 * 4096;
       memset(&dpi, 0, sizeof(dpi));
       dpi.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
       dpi.maxSets       = 16384;

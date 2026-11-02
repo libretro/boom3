@@ -2,8 +2,8 @@
  * vk_shadow: turbo shadow volumes built by compute at the start of the
  * frame that draws them, ahead of its render pass.
  *
- * Per volume, one pass over its triangles finds each one's facing and
- * writes the caps of the ones facing away; after a barrier, one pass over
+ * Per volume, one pass over its triangles finds each one's facing from
+ * the CPU's face planes and writes the caps of the ones facing away; after a barrier, one pass over
  * its sil edges writes the quads between a facing and a back-facing
  * triangle.  The indexes are R_CreateVertexProgramTurboShadowVolume's,
  * appended by atomic counters in the volume's two indexed indirect draws,
@@ -24,7 +24,7 @@
 #include "spirv/shadow_caps_preserve_comp.h"
 #include "spirv/shadow_sil_comp.h"
 
-#define VKB_SHADOW_BINDINGS 6
+#define VKB_SHADOW_BINDINGS 7
 #define VKB_SHADOW_PARM_UINTS 50       /* shadow_build.glsl: floats 0-37, draws at 40 and 45 */
 #define VKB_SHADOW_SIL_DRAW 40
 #define VKB_SHADOW_CAP_DRAW 45
@@ -40,6 +40,7 @@ typedef struct vkb_shadow_push
    uint32_t silBase;
    uint32_t facingBase;
    uint32_t parmBase;
+   uint32_t planeBase;
 } vkb_shadow_push_t;
 
 static VkPipeline vkb_shadow_pipeline(const unsigned int *code, size_t bytes)
@@ -290,6 +291,7 @@ static VkDescriptorSet vkb_shadow_set(vkb_frame_t *f, const vkb_shadow_job_t *jo
    buffers[3].buffer = f->shadowFacing;
    buffers[4].buffer = f->shadowIndexes;
    buffers[5].buffer = vkb.ring;
+   buffers[6].buffer = vkb_static_vk_buffer(job->volume.planeBuffer);
    for (i = 0; i < VKB_SHADOW_BINDINGS; i++)
    {
       if (!buffers[i].buffer)
@@ -341,6 +343,7 @@ static void vkb_shadow_push(VkCommandBuffer cmd, const vkb_shadow_job_t *job)
    pc.silBase      = v->silOffset / 16;
    pc.facingBase   = job->facingFirst;
    pc.parmBase     = job->parmOffset / 4;
+   pc.planeBase    = v->planeOffset / 16;
    vk.vkCmdPushConstants(cmd, vkb.shadowLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
 }
 
@@ -400,6 +403,7 @@ void vkb_shadows_record(VkCommandBuffer cmd)
       }
       parm[36] = v->cullPlanes & 15u;
       parm[37] = ( v->cullPlanes >> 4 ) & 3u;
+      parm[38] = v->dotOrder;
       job->silFirst    = (unsigned)indexes;
       job->capFirst    = (unsigned)indexes + v->numSilEdges * 6;
       job->facingFirst = (unsigned)faces;

@@ -36,12 +36,28 @@ int c_turboUnusedVerts;
 // set by the backend that builds them: ARB2's NV5 tier, or Vulkan
 bool r_gpuShadowVolumes = false;
 
-void R_ForgetSilEdges( const silEdge_t *silEdges ) {
+void R_ForgetShadowData( const void *key ) {
 #ifdef BOOM3_ARB2_RENDERER
-	RB_ARB2_ForgetSilEdges( silEdges );
+	RB_ARB2_ForgetShadowData( key );
 #endif
 #ifdef BOOM3_VULKAN_RENDERER
-	RB_VK_ForgetSilEdges( silEdges );
+	RB_VK_ForgetShadowData( key );
+#endif
+}
+
+/*
+=====================
+R_ShadowDotOrder
+
+32-bit MSVC's SSE routines add a plane's d right after its x term;
+everything else, the generic routine included, adds it last.
+=====================
+*/
+int R_ShadowDotOrder( void ) {
+#if defined( _MSC_VER ) && defined( _M_IX86 )
+	return ( SIMDProcessor->cpuid & CPUID_SSE ) ? 1 : 0;
+#else
+	return 0;
 #endif
 }
 

@@ -501,6 +501,18 @@ typedef struct {
 
 static arb2Nv5_t	rb_nv5;
 
+// the GPU address of the vertex cache's ring, made resident the first time
+static unsigned long long RB_ARB2NV5_RingAddress( GLuint ring ) {
+	if ( ring != rb_nv5.ring ) {
+		qglBindBufferARB( GL_COPY_WRITE_BUFFER, ring );
+		glCaps.MakeBufferResidentNV( GL_COPY_WRITE_BUFFER, GL_READ_ONLY );
+		glCaps.GetBufferParameterui64vNV( GL_COPY_WRITE_BUFFER, GL_BUFFER_GPU_ADDRESS_NV, &rb_nv5.ringAddress );
+		qglBindBufferARB( GL_COPY_WRITE_BUFFER, 0 );
+		rb_nv5.ring = ring;
+	}
+	return rb_nv5.ringAddress;
+}
+
 /* Forget what the slot units hold: the textures may have been deleted
  * and their names reused since. */
 static void RB_ARB2NV5_ResetSlots( void ) {
@@ -845,14 +857,7 @@ static bool RB_ARB2NV5_AddSurface( const drawSurf_t *surf ) {
 		rb_nv5.recOffset = rb_nv5.chunkRecOffset + rb_nv5.chunkUsed * ARB2_NV5_REC_BYTES;
 		rb_nv5.cmdOffset = rb_nv5.chunkCmdOffset + rb_nv5.chunkUsed * (int)sizeof( arb2Nv5Command_t );
 		ring = rb_nv5.chunkRing;
-		if ( ring != rb_nv5.ring ) {
-			// a ring this context has not made resident yet
-			qglBindBufferARB( GL_COPY_WRITE_BUFFER, ring );
-			glCaps.MakeBufferResidentNV( GL_COPY_WRITE_BUFFER, GL_READ_ONLY );
-			glCaps.GetBufferParameterui64vNV( GL_COPY_WRITE_BUFFER, GL_BUFFER_GPU_ADDRESS_NV, &rb_nv5.ringAddress );
-			qglBindBufferARB( GL_COPY_WRITE_BUFFER, 0 );
-			rb_nv5.ring = ring;
-		}
+		RB_ARB2NV5_RingAddress( ring );
 		qglBindBufferARB( GL_DRAW_INDIRECT_BUFFER, ring );
 	}
 
@@ -1102,6 +1107,9 @@ void RB_ARB2_CreateDrawInteractions( const drawSurf_t *surf ) {
 #ifndef GL_READ_WRITE
 #define GL_READ_WRITE                           0x88BA
 #endif
+#ifndef GL_ALL_BARRIER_BITS
+#define GL_ALL_BARRIER_BITS                     0xFFFFFFFF
+#endif
 #ifndef GL_SHADER_GLOBAL_ACCESS_BARRIER_BIT_NV
 #define GL_SHADER_GLOBAL_ACCESS_BARRIER_BIT_NV  0x00000010
 #endif
@@ -1109,19 +1117,22 @@ void RB_ARB2_CreateDrawInteractions( const drawSurf_t *surf ) {
 #define ARB2_GS_ENV_FLOATS		11			// geometry program.env[0..10]: light origin, planes, cull masks
 #define ARB2_GS_ENV_FACING		11			// uint: the capture's facing array address, low and high words
 #define ARB2_GS_ENV_TABLE		12			// uint: the sil edges' triangle table address
+#define ARB2_GS_ENV_PLANES		13			// uint: the source's face planes' address
 #define ARB2_GS_STORE_BYTES		0x100000	// a sil edge store buffer, or the one edge set that outgrows it
 #define ARB2_GS_MAX_STORES		32
 #define ARB2_GS_NO_FACE			0xffffffffu	// a dangling edge's missing triangle, which counts as facing
 #define ARB2_GS_MAX_VOLUME_STORES	16		// stores of volumes kept between frames
 
-/* The sil edges a store holds: per edge v1 v2 as line indexes, then per
- * edge p1 p2. */
+/* What a store holds for a surface, by the pointer it was made from: its
+ * sil edges (per edge v1 v2 as line indexes, then per edge p1 p2), or its
+ * face planes. */
 typedef struct {
-	const silEdge_t	*key;		// NULL in an empty slot
+	const void		*key;		// NULL in an empty slot
 	int				numEdges;
 	int				store;
 	unsigned int	offset;
 	unsigned int	bytes;
+	unsigned int	serial;		// which upload of the key this is
 } arb2SilEntry_t;
 
 // a volume kept between frames: its owner's gpuShadow_t names it by index
@@ -1137,6 +1148,7 @@ typedef struct {
 	int					lastFrame;
 	int					retryFrame;
 	int					state;
+	unsigned int		planeSerial;	// the face planes its capture was made from
 } arb2GsVolume_t;
 
 typedef struct {
@@ -1150,6 +1162,7 @@ typedef struct {
 	GLuint				facing;			// a float per triangle, written by the cap program
 	int					tfBytes[2];
 	int					numStores;
+	unsigned int		serial;
 	int					numEntries;
 	int					maxEntries;		// a power of two, 0 when none
 	int					facingBytes;
@@ -1171,12 +1184,12 @@ typedef struct {
 
 static arb2GpuShadow_t	rb_gs;
 
-static ID_INLINE int RB_GS_Home( const silEdge_t *key ) {
+static ID_INLINE int RB_GS_Home( const void *key ) {
 	return (int)( ( (unsigned int)( (uintptr_t)key >> 4 ) * 2654435761u ) & (unsigned int)( rb_gs.maxEntries - 1 ) );
 }
 
 // the slot holding key, or the empty slot it would go in
-static int RB_GS_Slot( const silEdge_t *key ) {
+static int RB_GS_Slot( const void *key ) {
 	int i = RB_GS_Home( key );
 	while ( rb_gs.entries[i].key != NULL && rb_gs.entries[i].key != key ) {
 		i = ( i + 1 ) & ( rb_gs.maxEntries - 1 );
@@ -1209,17 +1222,17 @@ static bool RB_GS_Grow( void ) {
 
 /*
 ==================
-RB_ARB2_ForgetSilEdges
+RB_ARB2_ForgetShadowData
 ==================
 */
-void RB_ARB2_ForgetSilEdges( const silEdge_t *silEdges ) {
+void RB_ARB2_ForgetShadowData( const void *key ) {
 	arb2SilEntry_t	*e;
 	int				i, j, k;
 
-	if ( !rb_gs.numEntries || !silEdges ) {
+	if ( !rb_gs.numEntries || !key ) {
 		return;
 	}
-	i = RB_GS_Slot( silEdges );
+	i = RB_GS_Slot( key );
 	e = rb_gs.entries;
 	if ( e[i].key == NULL ) {
 		return;
@@ -1264,30 +1277,67 @@ static bool RB_GS_NewStore( unsigned int bytes ) {
 	return true;
 }
 
-// the store entry of a surface's sil edges, made the first time they are drawn
-static const arb2SilEntry_t *RB_GS_SilEntry( const srfTriangles_t *src ) {
+typedef void ( *arb2GsFill_t )( const srfTriangles_t *src, void *data );
+
+static void RB_GS_FillSilEdges( const srfTriangles_t *src, void *out ) {
+	GLuint		*data = (GLuint *)out;
+	const int	numFaces = src->numIndexes / 3;
+	int			i;
+
+	for ( i = 0; i < src->numSilEdges; i++ ) {
+		const silEdge_t *sil = &src->silEdges[i];
+		data[i * 2 + 0] = (GLuint)sil->v1;
+		data[i * 2 + 1] = (GLuint)sil->v2;
+		data[src->numSilEdges * 2 + i * 2 + 0] = (GLuint)sil->p1;
+		data[src->numSilEdges * 2 + i * 2 + 1] = sil->p2 < numFaces ? (GLuint)sil->p2 : ARB2_GS_NO_FACE;
+	}
+}
+
+static void RB_GS_FillPlanes( const srfTriangles_t *src, void *out ) {
+	memcpy( out, src->facePlanes, ( src->numIndexes / 3 ) * sizeof( src->facePlanes[0] ) );
+}
+
+// bytes into buffer at offset, made by fill: in the ring and copied on the GPU, or staged where it is full
+static void RB_GS_Write( GLuint buffer, unsigned int offset, unsigned int bytes, arb2GsFill_t fill,
+		const srfTriangles_t *src ) {
+	void	*dst;
+	void	*data;
+	GLuint	ring;
+	int		ringOffset;
+
+	dst = glCaps.copyBuffer ? vertexCache.RingReserve( (int)bytes, 16, &ring, &ringOffset ) : NULL;
+	data = dst ? dst : Mem_Alloc( bytes );
+	fill( src, data );
+	if ( dst ) {
+		qglBindBufferARB( GL_COPY_READ_BUFFER, ring );
+		qglBindBufferARB( GL_COPY_WRITE_BUFFER, buffer );
+		glCaps.CopyBufferSubData( GL_COPY_READ_BUFFER, GL_COPY_WRITE_BUFFER, ringOffset, offset, bytes );
+		qglBindBufferARB( GL_COPY_READ_BUFFER, 0 );
+	} else {
+		qglBindBufferARB( GL_COPY_WRITE_BUFFER, buffer );
+		qglBufferSubDataARB( GL_COPY_WRITE_BUFFER, offset, bytes, data );
+		Mem_Free( data );
+	}
+	qglBindBufferARB( GL_COPY_WRITE_BUFFER, 0 );
+}
+
+// the store entry made from key, uploaded by fill the first time it is drawn
+static const arb2SilEntry_t *RB_GS_Entry( const void *key, unsigned int bytes, arb2GsFill_t fill,
+		const srfTriangles_t *src ) {
 	arb2SilEntry_t	*e;
-	GLuint			*dst;
-	GLuint			*data;
-	GLuint			ring;
-	unsigned int	bytes;
 	unsigned int	offset;
-	int				ringOffset;
-	int				numFaces;
 	int				store;
-	int				i;
 
 	if ( !rb_gs.maxEntries || ( rb_gs.numEntries + 1 ) * 2 > rb_gs.maxEntries ) {
 		if ( !RB_GS_Grow() ) {
 			return NULL;
 		}
 	}
-	e = &rb_gs.entries[RB_GS_Slot( src->silEdges )];
+	e = &rb_gs.entries[RB_GS_Slot( key )];
 	if ( e->key ) {
 		return e;
 	}
 
-	bytes = (unsigned int)src->numSilEdges * 16;
 	for ( store = 0; store < rb_gs.numStores; store++ ) {
 		if ( range_alloc_alloc( &rb_gs.storeRanges[store], bytes, 16, &offset ) ) {
 			break;
@@ -1300,34 +1350,14 @@ static const arb2SilEntry_t *RB_GS_SilEntry( const srfTriangles_t *src ) {
 		}
 	}
 
-	// written into the ring and copied on the GPU, or staged where it is full
-	dst = glCaps.copyBuffer ? (GLuint *)vertexCache.RingReserve( (int)bytes, 16, &ring, &ringOffset ) : NULL;
-	data = dst ? dst : (GLuint *)Mem_Alloc( bytes );
-	numFaces = src->numIndexes / 3;
-	for ( i = 0; i < src->numSilEdges; i++ ) {
-		const silEdge_t *sil = &src->silEdges[i];
-		data[i * 2 + 0] = (GLuint)sil->v1;
-		data[i * 2 + 1] = (GLuint)sil->v2;
-		data[src->numSilEdges * 2 + i * 2 + 0] = (GLuint)sil->p1;
-		data[src->numSilEdges * 2 + i * 2 + 1] = sil->p2 < numFaces ? (GLuint)sil->p2 : ARB2_GS_NO_FACE;
-	}
-	if ( dst ) {
-		qglBindBufferARB( GL_COPY_READ_BUFFER, ring );
-		qglBindBufferARB( GL_COPY_WRITE_BUFFER, rb_gs.store[store] );
-		glCaps.CopyBufferSubData( GL_COPY_READ_BUFFER, GL_COPY_WRITE_BUFFER, ringOffset, offset, bytes );
-		qglBindBufferARB( GL_COPY_READ_BUFFER, 0 );
-	} else {
-		qglBindBufferARB( GL_COPY_WRITE_BUFFER, rb_gs.store[store] );
-		qglBufferSubDataARB( GL_COPY_WRITE_BUFFER, offset, bytes, data );
-		Mem_Free( data );
-	}
-	qglBindBufferARB( GL_COPY_WRITE_BUFFER, 0 );
+	RB_GS_Write( rb_gs.store[store], offset, bytes, fill, src );
 
-	e->key = src->silEdges;
+	e->key = key;
 	e->numEdges = src->numSilEdges;
 	e->store = store;
 	e->offset = offset;
 	e->bytes = bytes;
+	e->serial = ++rb_gs.serial;
 	rb_gs.numEntries++;
 	return e;
 }
@@ -1529,22 +1559,40 @@ static bool RB_GS_Counted( arb2GsVolume_t *v ) {
 /*
    The two capture passes: into the transform feedback buffers when v is
    NULL or not stored, counted when it is pending, else into its range.
+   The face planes are planes' when the source keeps them, else this
+   frame's, read where they were written in the ring; behind the facing
+   array, in the rare frame the ring is full.
 */
-static void RB_GS_Run( const srfTriangles_t *tri, const arb2SilEntry_t *sil, const arb2GsVolume_t *v, bool count ) {
+static void RB_GS_Run( const srfTriangles_t *tri, const arb2SilEntry_t *sil, const arb2SilEntry_t *planes,
+		const arb2GsVolume_t *v, bool count ) {
 	static const GLint	attribs[3] = { GL_POSITION, 4, 0 };
 	const gpuShadow_t	*gs = tri->gpuShadow;
 	const srfTriangles_t *src = gs->source;
 	const bool			stored = v && v->state == ARB2_GS_STORED;
 	unsigned long long	address;
 	float				env[ARB2_GS_ENV_FLOATS][4];
+	unsigned long long	planeAddress = 0;
 	int					numFaces;
+	int					facingBytes;
 	int					need;
 	int					i;
 	bool				reuse;
 
-	// this capture's facing array
+	// this capture's facing array, and the face planes of a source rewritten every frame
 	numFaces = src->numIndexes / 3;
-	need = ( numFaces * 4 + 15 ) & ~15;
+	facingBytes = ( numFaces * 4 + 15 ) & ~15;
+	need = facingBytes;
+	if ( !planes ) {
+		GLuint	ring;
+		int		ringOffset;
+		void	*p = vertexCache.RingReserve( numFaces * 16, 16, &ring, &ringOffset );
+		if ( p ) {
+			RB_GS_FillPlanes( src, p );
+			planeAddress = RB_ARB2NV5_RingAddress( ring ) + (unsigned long long)ringOffset;
+		} else {
+			need += numFaces * 16;
+		}
+	}
 	reuse = false;
 	if ( rb_gs.facingFrame != backEnd.frameCount ) {
 		rb_gs.facingFrame = backEnd.frameCount;
@@ -1574,6 +1622,7 @@ static void RB_GS_Run( const srfTriangles_t *tri, const arb2SilEntry_t *sil, con
 	env[0][0] = gs->lightOrigin[0];
 	env[0][1] = gs->lightOrigin[1];
 	env[0][2] = gs->lightOrigin[2];
+	env[0][3] = (float)R_ShadowDotOrder();
 	for ( i = 0; i < 6; i++ ) {
 		const int v4 = i < 4 ? 1 : 5;
 		const int c = i < 4 ? i : i - 4;
@@ -1595,6 +1644,19 @@ static void RB_GS_Run( const srfTriangles_t *tri, const arb2SilEntry_t *sil, con
 		(GLuint)( address & 0xffffffffu ), (GLuint)( address >> 32 ), 0, 0 );
 	address = rb_gs.storeAddress[sil->store] + (unsigned long long)( sil->offset + (unsigned int)sil->numEdges * 8 );
 	glCaps.ProgramEnvParameterI4uiNV( GL_GEOMETRY_PROGRAM_NV, ARB2_GS_ENV_TABLE,
+		(GLuint)( address & 0xffffffffu ), (GLuint)( address >> 32 ), 0, 0 );
+	if ( planes ) {
+		address = rb_gs.storeAddress[planes->store] + (unsigned long long)planes->offset;
+	} else if ( planeAddress ) {
+		address = planeAddress;
+	} else {
+		// the copy must not overtake reads of the bytes it replaces
+		glCaps.MemoryBarrier( GL_ALL_BARRIER_BITS );
+		RB_GS_Write( rb_gs.facing, (unsigned int)( rb_gs.facingUsed + facingBytes ),
+			(unsigned int)numFaces * 16, RB_GS_FillPlanes, src );
+		address = rb_gs.facingAddress + (unsigned long long)( rb_gs.facingUsed + facingBytes );
+	}
+	glCaps.ProgramEnvParameterI4uiNV( GL_GEOMETRY_PROGRAM_NV, ARB2_GS_ENV_PLANES,
 		(GLuint)( address & 0xffffffffu ), (GLuint)( address >> 32 ), 0, 0 );
 	rb_gs.facingUsed += need;
 
@@ -1677,20 +1739,35 @@ bool RB_ARB2_CaptureGpuShadow( const srfTriangles_t *tri ) {
 	gpuShadow_t			*gs = tri->gpuShadow;
 	const srfTriangles_t *src = gs->source;
 	const arb2SilEntry_t *sil;
+	const arb2SilEntry_t *planes;
 	arb2GsVolume_t		*v;
 	bool				count;
 
-	if ( !r_gpuShadowVolumes || !tri->shadowCache || src->numSilEdges <= 0 ) {
+	if ( !r_gpuShadowVolumes || !tri->shadowCache || src->numSilEdges <= 0
+			|| !src->facePlanes || !src->facePlanesCalculated ) {
 		return false;
 	}
-	sil = RB_GS_SilEntry( src );
+	sil = RB_GS_Entry( src->silEdges, (unsigned int)src->numSilEdges * 16, RB_GS_FillSilEdges, src );
+	planes = NULL;
+	if ( !src->deformedSurface ) {
+		planes = RB_GS_Entry( src->facePlanes, (unsigned int)( src->numIndexes / 3 ) * 16, RB_GS_FillPlanes, src );
+		if ( !planes ) {
+			return false;
+		}
+	}
 	if ( !sil ) {
 		return false;
 	}
 
 	/* A volume is kept from its second frame on: one built for a single
-	   frame never pays for its queries. */
+	   frame never pays for its queries.  One made from face planes since
+	   rewritten is made again. */
 	v = RB_GS_Volume( gs );
+	if ( v && planes && v->planeSerial != planes->serial ) {
+		RB_ARB2_ForgetGpuShadow( gs );
+		gs->firstFrame = 0;
+		v = NULL;
+	}
 	count = false;
 	if ( !v && rb_gs.queries && !src->deformedSurface ) {
 		if ( !gs->firstFrame ) {
@@ -1698,6 +1775,9 @@ bool RB_ARB2_CaptureGpuShadow( const srfTriangles_t *tri ) {
 		} else if ( gs->firstFrame != backEnd.frameCount + 1 ) {
 			v = RB_GS_NewVolume( gs );
 			count = v != NULL;
+			if ( v ) {
+				v->planeSerial = planes ? planes->serial : 0;
+			}
 		}
 	}
 
@@ -1711,7 +1791,7 @@ bool RB_ARB2_CaptureGpuShadow( const srfTriangles_t *tri ) {
 			} else if ( RB_GS_StoreRange( v ) ) {
 				v->state = ARB2_GS_STORED;
 				v->lastFrame = backEnd.frameCount;
-				RB_GS_Run( tri, sil, v, false );
+				RB_GS_Run( tri, sil, planes, v, false );
 			} else {
 				v->retryFrame = backEnd.frameCount + ARB2_GS_RETRY;
 			}
@@ -1734,7 +1814,7 @@ bool RB_ARB2_CaptureGpuShadow( const srfTriangles_t *tri ) {
 		}
 	}
 
-	RB_GS_Run( tri, sil, v, count );
+	RB_GS_Run( tri, sil, planes, v, count );
 	rb_gs.drawn = NULL;
 	return true;
 }
@@ -2343,29 +2423,33 @@ static const char nv5InteractionVP[] =
 /*
    The NV5 tier's shadow volume programs, RB_ARB2_CaptureGpuShadow's.
 
-   Geometry program.env[0] is the light origin, [1..4] the x, y, z and d
-   of frustum planes 0-3 and [5..8] of planes 4-5 in .xy, [9] and [10]
-   1.0 for each of them the cull tests; [11].xy the address of the
-   capture's facing array, [12].xy that of the sil edges' triangles.
-   Every operation the CPU's facing and cull take is .PREC and in the
-   CPU's order - the plane as R_DeriveFacePlanes builds it, the light's
-   dot as SIMDProcessor->Dot takes it - and the inverse square root is
-   idMath::RSqrt's: its integer step reads the float's bits, which the
-   NV programs' typeless temporaries hand over as they are.
+   Geometry program.env[0] is the light origin, its w the order the CPU's
+   dot products add in (R_ShadowDotOrder); [1..4] the x, y, z and d of
+   frustum planes 0-3 and [5..8] of planes 4-5 in .xy, [9] and [10] 1.0
+   for each of them the cull tests; [11].xy the address of the capture's
+   facing array, [12].xy that of the sil edges' triangles, [13].xy that
+   of the source's face planes - the CPU's own, so facing is the CPU's
+   last step alone: the plane's dot with the light origin, each operation
+   .PREC and in the CPU's order.
 */
 static const char nv5ShadowVP[] =
 	"!!NVvp5.0\n"
 	"MOV result.position, vertex.position;\n"
 	"END\n";
 
-// the distance of vertex v from four planes, as Dot( plane, drawVert ) adds it
+/* the distance of vertex v from four planes, as Dot( plane, drawVert )
+ * adds it: d last (u), or right after x (t), picked by the order */
 #define NV5_SHADOW_DIST( v, x, y, z, d ) \
 	"MUL.PREC t, " v ".x, " x ";\n" \
-	"MUL.PREC u, " v ".y, " y ";\n" \
-	"ADD.PREC t, t, u;\n" \
-	"MUL.PREC u, " v ".z, " z ";\n" \
-	"ADD.PREC t, t, u;\n" \
-	"ADD.PREC t, t, " d ";\n"
+	"MUL.PREC w, " v ".y, " y ";\n" \
+	"ADD.PREC u, t, w;\n" \
+	"ADD.PREC t, t, " d ";\n" \
+	"ADD.PREC t, t, w;\n" \
+	"MUL.PREC w, " v ".z, " z ";\n" \
+	"ADD.PREC u, u, w;\n" \
+	"ADD.PREC t, t, w;\n" \
+	"ADD.PREC u, u, " d ";\n" \
+	"CMP t, -light.w, t, u;\n"
 
 // the planes of four, masked, that all three vertexes are behind
 #define NV5_SHADOW_CULL( c, x, y, z, d, mask ) \
@@ -2395,35 +2479,26 @@ static const char nv5ShadowCapsGP[] =
 	"PARAM qd = program.env[8];\n"
 	"PARAM pm = program.env[9];\n"
 	"PARAM qm = program.env[10];\n"
-	"TEMP a, b, c, d0, d1, n, m, r, t, u, cp, cq, face;\n"
+	"TEMP a, b, c, pl, t, u, w, cp, cq, face;\n"
 	"UINT TEMP k;\n"
 	"LONG TEMP addr, step;\n"
 	"MOV a, vertex[0].position;\n"
 	"MOV b, vertex[1].position;\n"
 	"MOV c, vertex[2].position;\n"
-	"ADD.PREC d0.xyz, b, -a;\n"
-	"ADD.PREC d1.xyz, c, -a;\n"
-	"MUL.PREC n.xyz, d1.yzxw, d0.zxyw;\n"
-	"MUL.PREC m.xyz, d1.zxyw, d0.yzxw;\n"
-	"ADD.PREC n.xyz, n, -m;\n"
-	"MUL.PREC m.xyz, n, n;\n"
-	"ADD.PREC m.x, m.x, m.y;\n"
-	"ADD.PREC m.x, m.x, m.z;\n"
-	"MUL.PREC m.y, m.x, 0.5;\n"
-	"SHR.S r.x, m.x, 1;\n"
-	"SUB.S r.x, 1597463007, r.x;\n"
-	"MUL.PREC m.z, r.x, r.x;\n"
-	"MUL.PREC m.z, m.z, m.y;\n"
-	"ADD.PREC m.z, 1.5, -m.z;\n"
-	"MUL.PREC m.z, r.x, m.z;\n"
-	"MUL.PREC n.xyz, n, m.z;\n"
-	"MUL.PREC t.xyz, n, a;\n"
-	"ADD.PREC t.x, t.x, t.y;\n"
-	"ADD.PREC t.x, t.x, t.z;\n"
-	"MUL.PREC u.xyz, n, light;\n"
-	"ADD.PREC u.x, u.x, u.y;\n"
-	"ADD.PREC u.x, u.x, u.z;\n"
-	"ADD.PREC face.x, u.x, -t.x;\n"
+	"MOV.U k, { 0, 0, 0, 0 };\n"
+	"MUL.U k.x, primitive.id, 16;\n"
+	"PK64.U step.x, k;\n"
+	"PK64.U addr.x, program.env[13];\n"
+	"ADD.U64 addr.x, addr.x, step.x;\n"
+	"LOAD.F32X4 pl, addr.x;\n"
+	"MUL.PREC t.xyz, pl, light;\n"
+	"ADD.PREC u.x, t.x, t.y;\n"
+	"ADD.PREC u.x, u.x, t.z;\n"
+	"ADD.PREC u.x, u.x, pl.w;\n"
+	"ADD.PREC w.x, t.x, pl.w;\n"
+	"ADD.PREC w.x, w.x, t.y;\n"
+	"ADD.PREC w.x, w.x, t.z;\n"
+	"CMP face.x, -light.w, w.x, u.x;\n"
 	"SGE face.x, face.x, 0.0;\n"
 	NV5_SHADOW_CULL( "cp", "px", "py", "pz", "pd", "pm" )
 	NV5_SHADOW_CULL( "cq", "qx", "qy", "qz", "qd", "qm" )
@@ -2431,7 +2506,6 @@ static const char nv5ShadowCapsGP[] =
 	"MAX cp.xy, cp, cp.zwzw;\n"
 	"MAX face.x, face.x, cp.x;\n"
 	"MAX face.x, face.x, cp.y;\n"
-	"MOV.U k, { 0, 0, 0, 0 };\n"
 	"MUL.U k.x, primitive.id, 4;\n"
 	"PK64.U step.x, k;\n"
 	"PK64.U addr.x, program.env[11];\n"
@@ -3279,16 +3353,10 @@ void R_ReloadARBPrograms_f( const idCmdArgs &args ) {
 			rb_nvInteraction ? "the NV4 programs" : "the ARB programs" );
 	}
 
-	/* Shadow volumes the GPU builds replay the CPU's facing arithmetic,
-	   which 32-bit MSVC builds take through other routines. */
-#if defined( _MSC_VER ) && defined( _M_IX86 )
-	r_gpuShadowVolumes = false;
-#else
 	r_gpuShadowVolumes = rb_nv5.programs && rb_gs.buffers && shadowLoaded == 3;
 	if ( rb_gs.buffers && !r_gpuShadowVolumes ) {
 		common->Printf( "ARB2: NV5 shadow volume programs not available, shadow volumes are built on the CPU\n" );
 	}
-#endif
 }
 
 /*

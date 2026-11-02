@@ -307,8 +307,9 @@ void vkb_draw_fullscreen(const vkb_draw_t *draw);
 /* --- shadow volumes built on the GPU ------------------------------------- */
 
 /* What R_CreateVertexProgramTurboShadowVolume would build from a surface,
- * built by compute at the start of the frame it is drawn in: the same
- * indexes, in no particular order, which the stencil counts the same. */
+ * built by compute at the start of the frame it is drawn in from the
+ * CPU's face planes: the same indexes, in no particular order, which the
+ * stencil counts the same. */
 typedef struct vkb_shadow_volume
 {
    unsigned vertexBuffer;       /* the shadow cache: per vertex w 1, then w 0 */
@@ -319,10 +320,13 @@ typedef struct vkb_shadow_volume
    unsigned silBuffer;          /* per sil edge v1 v2 p1 p2, p2 0xffffffff when dangling */
    unsigned silOffset;          /* bytes */
    unsigned numSilEdges;
+   unsigned planeBuffer;        /* the CPU's face planes, an idPlane per triangle */
+   unsigned planeOffset;        /* bytes */
    unsigned cullPlanes;         /* bit i: cull against clipPlanes[i] */
    float lightOrigin[3];        /* facing's, in surface space */
    float clipPlanes[6][4];      /* the light frustum, in surface space */
    unsigned char shortIndexes;
+   unsigned char dotOrder;      /* R_ShadowDotOrder */
 } vkb_shadow_volume_t;
 
 /* whether the device builds them */

@@ -1289,6 +1289,10 @@ void idInteraction::AddActiveInteraction( void ) {
 				if ( !r_gpuShadowVolumes ) {
 					continue;
 				}
+				// the facing is measured from the CPU's own face planes
+				if ( !src->facePlanes || !src->facePlanesCalculated ) {
+					R_DeriveFacePlanes( src );
+				}
 				if ( !src->indexCache && r_useIndexBuffers.GetBool() ) {
 					vertexCache.Alloc( src->indexes, src->numIndexes * sizeof( src->indexes[0] ), &src->indexCache, true );
 				}

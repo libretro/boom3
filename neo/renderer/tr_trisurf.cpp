@@ -380,7 +380,7 @@ void R_ReallyFreeStaticTriSurf( srfTriangles_t *tri ) {
 			triSilIndexAllocator.Free( tri->silIndexes );
 		}
 		if ( tri->silEdges != NULL ) {
-			R_ForgetSilEdges( tri->silEdges );
+			R_ForgetShadowData( tri->silEdges );
 			triSilEdgeAllocator.Free( tri->silEdges );
 		}
 		if ( tri->dominantTris != NULL ) {
@@ -395,6 +395,7 @@ void R_ReallyFreeStaticTriSurf( srfTriangles_t *tri ) {
 	}
 
 	if ( tri->facePlanes != NULL ) {
+		R_ForgetShadowData( tri->facePlanes );
 		triPlaneAllocator.Free( tri->facePlanes );
 	}
 
@@ -570,6 +571,7 @@ R_AllocStaticTriSurfPlanes
 */
 void R_AllocStaticTriSurfPlanes( srfTriangles_t *tri, int numIndexes ) {
 	if ( tri->facePlanes ) {
+		R_ForgetShadowData( tri->facePlanes );
 		triPlaneAllocator.Free( tri->facePlanes );
 	}
 	tri->facePlanes = triPlaneAllocator.Alloc( numIndexes / 3 );
@@ -636,7 +638,7 @@ R_FreeStaticTriSurfSilEdges
 =================
 */
 void R_FreeStaticTriSurfSilEdges( srfTriangles_t *tri ) {
-	R_ForgetSilEdges( tri->silEdges );
+	R_ForgetShadowData( tri->silEdges );
 	triSilEdgeAllocator.Free( tri->silEdges );
 	tri->silEdges = NULL;
 	tri->numSilEdges = 0;
@@ -832,6 +834,7 @@ void R_DeriveFacePlanes( srfTriangles_t *tri ) {
 	if ( !tri->facePlanes )
 		R_AllocStaticTriSurfPlanes( tri, tri->numIndexes );
 	planes = tri->facePlanes;
+	R_ForgetShadowData( planes );
 
 	SIMDProcessor->DeriveTriPlanes( planes, tri->verts, tri->numVerts, tri->indexes, tri->numIndexes );
 
@@ -1533,6 +1536,9 @@ void R_DeriveTangents( srfTriangles_t *tri, bool allocFacePlanes ) {
 		planes = (idPlane *)Mem_MallocA( ( tri->numIndexes / 3 ) * sizeof( planes[0] ), planesOnStack );
 	}
 
+	if ( planes == tri->facePlanes ) {
+		R_ForgetShadowData( planes );
+	}
 	SIMDProcessor->DeriveTangents( planes, tri->verts, tri->numVerts, tri->indexes, tri->numIndexes );
 
 	int *dupVerts = tri->dupVerts;
@@ -1921,6 +1927,7 @@ deformInfo_t *R_BuildDeformInfo( int numVerts, const idDrawVert *verts, int numI
 	}
 
 	if ( tri.facePlanes ) {
+		R_ForgetShadowData( tri.facePlanes );
 		triPlaneAllocator.Free( tri.facePlanes );
 	}
 
@@ -1940,7 +1947,7 @@ void R_FreeDeformInfo( deformInfo_t *deformInfo ) {
 		triSilIndexAllocator.Free( deformInfo->silIndexes );
 	}
 	if ( deformInfo->silEdges != NULL ) {
-		R_ForgetSilEdges( deformInfo->silEdges );
+		R_ForgetShadowData( deformInfo->silEdges );
 		triSilEdgeAllocator.Free( deformInfo->silEdges );
 	}
 	if ( deformInfo->dominantTris != NULL ) {

@@ -8,6 +8,8 @@ layout(std430, set = 0, binding = 3) buffer Facing { uint facing[]; };
 layout(std430, set = 0, binding = 4) writeonly buffer Out { uint outIndex[]; };
 // the light, planes and masks as float bits, then the sil and cap draws' indexed indirect commands
 layout(std430, set = 0, binding = 5) buffer Parms { uint parms[]; };
+// the CPU's face planes: normal, then d
+layout(std430, set = 0, binding = 6) readonly buffer FacePlanes { vec4 facePlane[]; };
 
 layout(push_constant) uniform Volume {
     uint vertexBase;    // vec4s
@@ -18,8 +20,10 @@ layout(push_constant) uniform Volume {
     uint silBase;       // edges
     uint facingBase;
     uint parmBase;      // uints
+    uint planeBase;     // planes
 } pc;
 
-// floats: the light 0-3, planes 0-3 x y z d 4-19, planes 4-5 in lanes 0-1 20-35; masks 36-37
+// floats: the light 0-3, planes 0-3 x y z d 4-19, planes 4-5 in lanes 0-1 20-35; masks 36-37;
+// 38 the order SIMDProcessor->Dot adds in: 0 ((x + y) + z) + d, 1 ((x + d) + y) + z
 #define PARM_SIL_DRAW (pc.parmBase + 40u)
 #define PARM_CAP_DRAW (pc.parmBase + 45u)
