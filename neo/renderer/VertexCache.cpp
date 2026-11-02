@@ -237,6 +237,7 @@ idVertexCache::Init
 void idVertexCache::Init() {
 	frameTempDest = NULL;
 	frameTempNoOverflow = false;
+	frameTempEpoch = 0;
 	cmdSystem->AddCommand( "listVertexCache", R_ListVertexCache_f, CMD_FL_RENDERER, "lists vertex cache" );
 
 	if ( r_vertexBufferMegs.GetInteger() < 8 ) {
@@ -820,6 +821,7 @@ void idVertexCache::EndFrame() {
 	}
 
 	// free all the frame temp headers
+	frameTempEpoch++;
 	vertCache_t	*block = dynamicHeaders.next;
 	if ( block != &dynamicHeaders ) {
 		block->prev = &freeDynamicHeaders;

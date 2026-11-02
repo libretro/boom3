@@ -60,8 +60,18 @@ Create it if needed
 ==================
 */
 bool R_CreateAmbientCache( srfTriangles_t *tri, bool needsLighting ) {
+	const int bytes = tri->numVerts * sizeof( tri->verts[0] );
 	if ( tri->ambientCache ) {
-		return true;
+		if ( !tri->ambientCacheInFrame || tri->ambientCacheFrame == vertexCache.FrameTempEpoch() ) {
+			return true;
+		}
+		/* A deformed surface drawn again without being made again: its
+		 * frame's block went with that frame, and vertexes that stay take
+		 * a block of their own, as one never made in the ring does. */
+		tri->ambientCache = NULL;
+		tri->ambientCacheInFrame = false;
+		vertexCache.AllocStream( tri->verts, bytes, &tri->ambientCache );
+		return tri->ambientCache != NULL;
 	}
 	// we are going to use it for drawing, so make sure we have the tangents and normals
 	if ( needsLighting && !tri->tangentsCalculated ) {
@@ -75,7 +85,16 @@ bool R_CreateAmbientCache( srfTriangles_t *tri, bool needsLighting ) {
 			vertexCache.Alloc( tri->verts, tri->numVerts * sizeof( tri->verts[0] ), &tri->ambientCache );
 		}
 	} else if ( tri->deformedSurface ) {
-		vertexCache.AllocStream( tri->verts, tri->numVerts * sizeof( tri->verts[0] ), &tri->ambientCache );
+		/* made again this frame: in the ring where it has room, written
+		 * once and read in place, rather than a buffer of its own the
+		 * driver fills */
+		tri->ambientCache = vertexCache.AllocFrameTempIfRoom( tri->verts, bytes );
+		if ( tri->ambientCache ) {
+			tri->ambientCacheInFrame = true;
+			tri->ambientCacheFrame = vertexCache.FrameTempEpoch();
+		} else {
+			vertexCache.AllocStream( tri->verts, bytes, &tri->ambientCache );
+		}
 	} else {
 		vertexCache.Alloc( tri->verts, tri->numVerts * sizeof( tri->verts[0] ), &tri->ambientCache );
 	}

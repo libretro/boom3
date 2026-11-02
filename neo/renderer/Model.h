@@ -80,6 +80,7 @@ typedef struct srfTriangles_s {
 	idBounds					bounds;					// for culling
 
 	int							ambientViewCount;		// if == tr.viewCount, it is visible this view
+	int							ambientCacheFrame;		// see ambientCacheInFrame
 
 	bool						generateNormals;		// create normals from geometry, instead of using explicit ones
 	bool						tangentsCalculated;		// set when the vertex tangents have been calculated
@@ -88,6 +89,7 @@ typedef struct srfTriangles_s {
 	bool						deformedSurface;		// if true, indexes, silIndexes, mirrorVerts, and silEdges are
 														// pointers into the original surface, and should not be freed
 	bool						streamedVerts;			// vertexes rewritten every frame: their cache is the frame's
+	bool						ambientCacheInFrame;	// ambientCache is a temporary block of frame ambientCacheFrame
 
 	int							numVerts;				// number of vertices
 	idDrawVert *				verts;					// vertices, allocated with special allocator

@@ -120,6 +120,10 @@ public:
 	// block goes with the frame; Touch and Free leave it alone.
 	vertCache_t	*	AllocFrameTempIfRoom( void *data, int bytes );
 
+	// which frame's temporary blocks are being made: a block from another
+	// is gone
+	int				FrameTempEpoch( void ) const { return frameTempEpoch; }
+
 	// AllocStream without the copy: the block's own buffer mapped for the
 	// caller to write its bytes, never read back, before StreamWritten
 	// unmaps it.  NULL when the buffer cannot be mapped - AllocStream the
@@ -216,6 +220,7 @@ private:
 
 	bool			allocatingTempBuffer;	// force GL_STREAM_DRAW_ARB
 	void **			frameTempDest;			// AllocFrameTempInPlace's request, NULL otherwise
+	int				frameTempEpoch;			// counts the frames whose temporary blocks have gone
 	bool			frameTempNoOverflow;	// AllocFrameTempIfRoom's request: NULL rather than overflow
 
 	vertCache_t		*tempBuffers[NUM_VERTEX_FRAMES];		// allocated at startup
