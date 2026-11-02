@@ -179,6 +179,10 @@ void gl_caps_init(gl_caps_loader_t load)
    CAPS_GET(BindTransformFeedback, gl_caps_BindTransformFeedback_t, "glBindTransformFeedback", "glBindTransformFeedbackNV", NULL);
    CAPS_GET(DrawTransformFeedback, gl_caps_DrawTransformFeedback_t, "glDrawTransformFeedback", "glDrawTransformFeedbackNV", NULL);
    CAPS_GET(MemoryBarrier, gl_caps_MemoryBarrier_t, "glMemoryBarrierEXT", "glMemoryBarrier", NULL);
+   CAPS_GET(GenQueries, gl_caps_GenQueries_t, "glGenQueries", "glGenQueriesARB", "glGenQueriesEXT");
+   CAPS_GET(BeginQuery, gl_caps_BeginQuery_t, "glBeginQuery", "glBeginQueryARB", "glBeginQueryEXT");
+   CAPS_GET(EndQuery, gl_caps_EndQuery_t, "glEndQuery", "glEndQueryARB", "glEndQueryEXT");
+   CAPS_GET(GetQueryObjectuiv, gl_caps_GetQueryObjectuiv_t, "glGetQueryObjectuiv", "glGetQueryObjectuivARB", "glGetQueryObjectuivEXT");
 
    /* Each group counts only on a version or extension that promises it:
     * a loader may hand back a stub for a name the context does not
@@ -245,6 +249,9 @@ void gl_caps_init(gl_caps_loader_t load)
       && gl_caps_has_extension("GL_NV_transform_feedback")
       && (caps_at_least(4, 0) || gl_caps_has_extension("GL_ARB_transform_feedback2")
          || gl_caps_has_extension("GL_NV_transform_feedback2"));
+
+   glCaps.queries = glCaps.GenQueries && glCaps.BeginQuery && glCaps.EndQuery && glCaps.GetQueryObjectuiv
+      && (glCaps.es ? caps_at_least(3, 0) : (caps_at_least(1, 5) || gl_caps_has_extension("GL_ARB_occlusion_query")));
 
    glCaps.uniformBufferAlign  = 256;
    glCaps.maxUniformBlockSize = 16384;

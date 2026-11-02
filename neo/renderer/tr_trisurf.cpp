@@ -403,6 +403,7 @@ void R_ReallyFreeStaticTriSurf( srfTriangles_t *tri ) {
 	}
 
 	if ( tri->gpuShadow != NULL ) {
+		R_ForgetGpuShadow( tri->gpuShadow );
 		R_StaticFree( tri->gpuShadow );
 	}
 

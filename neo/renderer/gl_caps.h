@@ -77,6 +77,10 @@ typedef void (APIENTRYP gl_caps_GenTransformFeedbacks_t)(GLsizei n, GLuint *ids)
 typedef void (APIENTRYP gl_caps_BindTransformFeedback_t)(GLenum target, GLuint id);
 typedef void (APIENTRYP gl_caps_DrawTransformFeedback_t)(GLenum mode, GLuint id);
 typedef void (APIENTRYP gl_caps_MemoryBarrier_t)(GLbitfield barriers);
+typedef void (APIENTRYP gl_caps_GenQueries_t)(GLsizei n, GLuint *ids);
+typedef void (APIENTRYP gl_caps_BeginQuery_t)(GLenum target, GLuint id);
+typedef void (APIENTRYP gl_caps_EndQuery_t)(GLenum target);
+typedef void (APIENTRYP gl_caps_GetQueryObjectuiv_t)(GLuint id, GLenum pname, GLuint *params);
 
 /* Entry points are NULL when the context lacks them; the flags say which
  * groups are complete.  Members by alignment: pointers first. */
@@ -126,6 +130,10 @@ typedef struct gl_caps_s {
 	gl_caps_BindTransformFeedback_t       BindTransformFeedback;
 	gl_caps_DrawTransformFeedback_t       DrawTransformFeedback;
 	gl_caps_MemoryBarrier_t               MemoryBarrier;
+	gl_caps_GenQueries_t                  GenQueries;
+	gl_caps_BeginQuery_t                  BeginQuery;
+	gl_caps_EndQuery_t                    EndQuery;
+	gl_caps_GetQueryObjectuiv_t           GetQueryObjectuiv;
 
 	int  major, minor;            /* context version, from GL_VERSION */
 	int  uniformBufferAlign;      /* GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT */
@@ -152,6 +160,7 @@ typedef struct gl_caps_s {
 	                                 with base instance, instanced integer attributes, a persistent fenced ring */
 	unsigned char nvGpuShadows;   /* nvBatchDraw with NV_geometry_program4, NV_shader_buffer_store and
 	                                 transform feedback of assembly programs into transform feedback objects */
+	unsigned char queries;        /* query objects, transform feedback primitive counts among them on nvGpuShadows */
 } gl_caps_t;
 
 extern gl_caps_t glCaps;

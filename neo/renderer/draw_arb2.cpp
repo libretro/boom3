@@ -1112,6 +1112,7 @@ void RB_ARB2_CreateDrawInteractions( const drawSurf_t *surf ) {
 #define ARB2_GS_STORE_BYTES		0x100000	// a sil edge store buffer, or the one edge set that outgrows it
 #define ARB2_GS_MAX_STORES		32
 #define ARB2_GS_NO_FACE			0xffffffffu	// a dangling edge's missing triangle, which counts as facing
+#define ARB2_GS_MAX_VOLUME_STORES	16		// stores of volumes kept between frames
 
 /* The sil edges a store holds: per edge v1 v2 as line indexes, then per
  * edge p1 p2. */
@@ -1122,6 +1123,21 @@ typedef struct {
 	unsigned int	offset;
 	unsigned int	bytes;
 } arb2SilEntry_t;
+
+// a volume kept between frames: its owner's gpuShadow_t names it by index
+typedef struct {
+	const gpuShadow_t	*owner;			// NULL when free
+	GLuint				query[2];		// primitives the sil and cap passes wrote
+	unsigned int		offset;			// in volumeStore[store]: the sil planes, then the caps
+	unsigned int		bytes;
+	int					store;
+	int					silVerts;
+	int					capVerts;
+	int					prev, next;		// stored volumes, most recently drawn first; free ones through next
+	int					lastFrame;
+	int					retryFrame;
+	int					state;
+} arb2GsVolume_t;
 
 typedef struct {
 	arb2SilEntry_t		*entries;		// open addressing on the key, linear probes
@@ -1139,7 +1155,18 @@ typedef struct {
 	int					facingBytes;
 	int					facingUsed;		// what this frame's captures took
 	int					facingFrame;
+	arb2GsVolume_t		*volumes;
+	const arb2GsVolume_t *drawn;		// what RB_ARB2_DrawGpuShadow draws; NULL: the transform feedback buffers
+	range_alloc_t		volumeRanges[ARB2_GS_MAX_VOLUME_STORES];
+	GLuint				volumeStore[ARB2_GS_MAX_VOLUME_STORES];
+	int					numVolumeStores;
+	int					numVolumes;
+	int					maxVolumes;
+	int					freeVolume;
+	int					lruHead, lruTail;
+	int					epoch;			// a new context's volumes are new ones
 	bool				buffers;		// the transform feedback objects and buffers exist
+	bool				queries;		// volumes are kept
 } arb2GpuShadow_t;
 
 static arb2GpuShadow_t	rb_gs;
@@ -1322,33 +1349,199 @@ static void RB_GS_Feedback( int i, int bytes ) {
 }
 
 /*
-==================
-RB_ARB2_CaptureGpuShadow
+   A volume whose source surface is not rewritten every frame - a static
+   entity's, a fixed light's - captures the same triangles each time it
+   is drawn, so it is captured once and drawn from its own range of a
+   volume store afterwards.  Its first capture counts what it writes with
+   queries, read when the GPU has answered, never waited on; once known,
+   a capture into a range of exactly that size keeps it.  Ranges come
+   from a few stores, least recently drawn evicted when they are full.
+   A deformed source, and a volume rebuilt every frame, never gets that
+   far and is captured each time it is drawn.
+*/
+#define ARB2_GS_VOLUME_BYTES	0x400000	// a volume store, or the one volume that outgrows it
+#define ARB2_GS_RETRY			64			// frames before a volume that found no room tries again
 
-Builds a gpuShadow_t volume into the transform feedback buffers, for
-RB_ARB2_DrawGpuShadow to draw.  Called with shadow.vp bound, which it
-leaves bound.
+#ifndef GL_TRANSFORM_FEEDBACK_PRIMITIVES_WRITTEN
+#define GL_TRANSFORM_FEEDBACK_PRIMITIVES_WRITTEN	0x8C88
+#endif
+#ifndef GL_QUERY_RESULT
+#define GL_QUERY_RESULT							0x8866
+#endif
+#ifndef GL_QUERY_RESULT_AVAILABLE
+#define GL_QUERY_RESULT_AVAILABLE				0x8867
+#endif
+
+enum {
+	ARB2_GS_PENDING = 1,	// counting queries in flight
+	ARB2_GS_COUNTED,		// sizes known, nothing stored
+	ARB2_GS_STORED			// in volumeStore[store] at offset, or empty
+};
+
+static ID_INLINE arb2GsVolume_t *RB_GS_Volume( const gpuShadow_t *gs ) {
+	if ( gs->volumeEpoch != rb_gs.epoch || gs->volume < 0 || gs->volume >= rb_gs.numVolumes
+			|| rb_gs.volumes[gs->volume].owner != gs ) {
+		return NULL;
+	}
+	return &rb_gs.volumes[gs->volume];
+}
+
+static void RB_GS_Unlink( int i ) {
+	arb2GsVolume_t *v = &rb_gs.volumes[i];
+
+	if ( v->prev >= 0 ) {
+		rb_gs.volumes[v->prev].next = v->next;
+	} else {
+		rb_gs.lruHead = v->next;
+	}
+	if ( v->next >= 0 ) {
+		rb_gs.volumes[v->next].prev = v->prev;
+	} else {
+		rb_gs.lruTail = v->prev;
+	}
+	v->prev = v->next = -1;
+}
+
+// its range given back; it is captured again when next drawn
+static void RB_GS_Unstore( int i ) {
+	arb2GsVolume_t *v = &rb_gs.volumes[i];
+
+	if ( v->state == ARB2_GS_STORED && v->bytes ) {
+		range_alloc_free( &rb_gs.volumeRanges[v->store], v->offset, v->bytes );
+		RB_GS_Unlink( i );
+	}
+	if ( v->state == ARB2_GS_STORED ) {
+		v->state = ARB2_GS_COUNTED;
+	}
+}
+
+/*
+==================
+R_ForgetGpuShadow
 ==================
 */
-bool RB_ARB2_CaptureGpuShadow( const srfTriangles_t *tri ) {
+void R_ForgetGpuShadow( const gpuShadow_t *gs ) {
+	arb2GsVolume_t *v = RB_GS_Volume( gs );
+
+	if ( v ) {
+		RB_GS_Unstore( gs->volume );
+		v->owner = NULL;
+		v->next = rb_gs.freeVolume;
+		rb_gs.freeVolume = gs->volume;
+	}
+}
+
+// a volume entry for gs, counting queries and all
+static arb2GsVolume_t *RB_GS_NewVolume( gpuShadow_t *gs ) {
+	arb2GsVolume_t	*v;
+	int				i;
+
+	if ( rb_gs.freeVolume >= 0 ) {
+		i = rb_gs.freeVolume;
+		rb_gs.freeVolume = rb_gs.volumes[i].next;
+	} else {
+		if ( rb_gs.numVolumes == rb_gs.maxVolumes ) {
+			const int		max = rb_gs.maxVolumes ? rb_gs.maxVolumes * 2 : 256;
+			arb2GsVolume_t	*grown = (arb2GsVolume_t *)Mem_ClearedAlloc( max * sizeof( arb2GsVolume_t ) );
+			if ( !grown ) {
+				return NULL;
+			}
+			if ( rb_gs.volumes ) {
+				memcpy( grown, rb_gs.volumes, rb_gs.numVolumes * sizeof( arb2GsVolume_t ) );
+				Mem_Free( rb_gs.volumes );
+			}
+			rb_gs.volumes = grown;
+			rb_gs.maxVolumes = max;
+		}
+		i = rb_gs.numVolumes;
+		glCaps.GenQueries( 2, rb_gs.volumes[i].query );
+		if ( !rb_gs.volumes[i].query[0] || !rb_gs.volumes[i].query[1] ) {
+			return NULL;
+		}
+		rb_gs.numVolumes++;
+	}
+	v = &rb_gs.volumes[i];
+	v->owner = gs;
+	v->state = ARB2_GS_PENDING;
+	v->store = -1;
+	v->bytes = 0;
+	v->prev = v->next = -1;
+	v->retryFrame = 0;
+	gs->volume = i;
+	gs->volumeEpoch = rb_gs.epoch;
+	return v;
+}
+
+// a range of a volume store, evicting what was not drawn this frame
+static bool RB_GS_StoreRange( arb2GsVolume_t *v ) {
+	int s;
+
+	for ( ;; ) {
+		for ( s = 0; s < rb_gs.numVolumeStores; s++ ) {
+			if ( range_alloc_alloc( &rb_gs.volumeRanges[s], v->bytes, 16, &v->offset ) ) {
+				v->store = s;
+				return true;
+			}
+		}
+		if ( rb_gs.numVolumeStores < ARB2_GS_MAX_VOLUME_STORES ) {
+			const unsigned int size = v->bytes > ARB2_GS_VOLUME_BYTES ? v->bytes : ARB2_GS_VOLUME_BYTES;
+			GLuint buffer = 0;
+			if ( !range_alloc_init( &rb_gs.volumeRanges[s], size ) ) {
+				return false;
+			}
+			qglGenBuffersARB( 1, &buffer );
+			qglBindBufferARB( GL_COPY_WRITE_BUFFER, buffer );
+			qglBufferDataARB( GL_COPY_WRITE_BUFFER, size, NULL, GL_STATIC_COPY_ARB );
+			qglBindBufferARB( GL_COPY_WRITE_BUFFER, 0 );
+			rb_gs.volumeStore[s] = buffer;
+			rb_gs.numVolumeStores++;
+			continue;
+		}
+		if ( rb_gs.lruTail < 0 || rb_gs.volumes[rb_gs.lruTail].lastFrame == backEnd.frameCount ) {
+			return false;
+		}
+		RB_GS_Unstore( rb_gs.lruTail );
+	}
+}
+
+// what the queries counted, when the GPU has answered
+static bool RB_GS_Counted( arb2GsVolume_t *v ) {
+	GLuint	available[2];
+	GLuint	written[2];
+	int		i;
+
+	for ( i = 0; i < 2; i++ ) {
+		available[i] = 0;
+		glCaps.GetQueryObjectuiv( v->query[i], GL_QUERY_RESULT_AVAILABLE, &available[i] );
+	}
+	if ( !available[0] || !available[1] ) {
+		return false;
+	}
+	for ( i = 0; i < 2; i++ ) {
+		written[i] = 0;
+		glCaps.GetQueryObjectuiv( v->query[i], GL_QUERY_RESULT, &written[i] );
+	}
+	v->silVerts = (int)written[0] * 3;
+	v->capVerts = (int)written[1] * 3;
+	v->bytes = (unsigned int)( v->silVerts + v->capVerts ) * 16;
+	return true;
+}
+
+/*
+   The two capture passes: into the transform feedback buffers when v is
+   NULL or not stored, counted when it is pending, else into its range.
+*/
+static void RB_GS_Run( const srfTriangles_t *tri, const arb2SilEntry_t *sil, const arb2GsVolume_t *v, bool count ) {
 	static const GLint	attribs[3] = { GL_POSITION, 4, 0 };
 	const gpuShadow_t	*gs = tri->gpuShadow;
 	const srfTriangles_t *src = gs->source;
-	const arb2SilEntry_t *sil;
+	const bool			stored = v && v->state == ARB2_GS_STORED;
 	unsigned long long	address;
 	float				env[ARB2_GS_ENV_FLOATS][4];
 	int					numFaces;
 	int					need;
 	int					i;
 	bool				reuse;
-
-	if ( !r_gpuShadowVolumes || !tri->shadowCache || src->numSilEdges <= 0 ) {
-		return false;
-	}
-	sil = RB_GS_SilEntry( src );
-	if ( !sil ) {
-		return false;
-	}
 
 	// this capture's facing array
 	numFaces = src->numIndexes / 3;
@@ -1383,12 +1576,12 @@ bool RB_ARB2_CaptureGpuShadow( const srfTriangles_t *tri ) {
 	env[0][1] = gs->lightOrigin[1];
 	env[0][2] = gs->lightOrigin[2];
 	for ( i = 0; i < 6; i++ ) {
-		const int v = i < 4 ? 1 : 5;
+		const int v4 = i < 4 ? 1 : 5;
 		const int c = i < 4 ? i : i - 4;
-		env[v + 0][c] = gs->clipPlanes[i][0];
-		env[v + 1][c] = gs->clipPlanes[i][1];
-		env[v + 2][c] = gs->clipPlanes[i][2];
-		env[v + 3][c] = gs->clipPlanes[i][3];
+		env[v4 + 0][c] = gs->clipPlanes[i][0];
+		env[v4 + 1][c] = gs->clipPlanes[i][1];
+		env[v4 + 2][c] = gs->clipPlanes[i][2];
+		env[v4 + 3][c] = gs->clipPlanes[i][3];
 		env[i < 4 ? 9 : 10][c] = ( gs->cullPlanes & ( 1 << i ) ) ? 1.0f : 0.0f;
 	}
 	if ( glCaps.programEnvParameters ) {
@@ -1414,12 +1607,21 @@ bool RB_ARB2_CaptureGpuShadow( const srfTriangles_t *tri ) {
 	// the shadow cache's w = 1 vertexes
 	qglVertexPointer( 4, GL_FLOAT, 2 * sizeof( shadowCache_t ), vertexCache.Position( tri->shadowCache ) );
 
-	// facing, and the caps
+	// facing, and the caps; a stored volume without caps still needs the facing
 	if ( reuse ) {
 		glCaps.MemoryBarrier( GL_SHADER_GLOBAL_ACCESS_BARRIER_BIT_NV );
 	}
 	qglBindProgramARB( GL_GEOMETRY_PROGRAM_NV, GPROG_NV5_SHADOW_CAPS );
-	RB_GS_Feedback( 1, numFaces * 6 * 16 );
+	if ( stored && v->capVerts ) {
+		glCaps.BindTransformFeedback( GL_TRANSFORM_FEEDBACK, rb_gs.tfo[1] );
+		glCaps.BindBufferRange( GL_TRANSFORM_FEEDBACK_BUFFER, 0, rb_gs.volumeStore[v->store],
+			v->offset + v->silVerts * 16, v->capVerts * 16 );
+	} else {
+		RB_GS_Feedback( 1, stored ? 16 : numFaces * 6 * 16 );
+	}
+	if ( count ) {
+		glCaps.BeginQuery( GL_TRANSFORM_FEEDBACK_PRIMITIVES_WRITTEN, v->query[1] );
+	}
 	glCaps.BeginTransformFeedback( GL_TRIANGLES );
 	if ( src->indexCache && r_useIndexBuffers.GetBool() ) {
 		qglDrawElements( GL_TRIANGLES, src->numIndexes, vertexCache.IndexType( src->indexCache ),
@@ -1429,21 +1631,112 @@ bool RB_ARB2_CaptureGpuShadow( const srfTriangles_t *tri ) {
 		qglDrawElements( GL_TRIANGLES, src->numIndexes, GL_INDEX_TYPE, src->indexes );
 	}
 	glCaps.EndTransformFeedback();
+	if ( count ) {
+		glCaps.EndQuery( GL_TRANSFORM_FEEDBACK_PRIMITIVES_WRITTEN );
+	}
 	glCaps.MemoryBarrier( GL_SHADER_GLOBAL_ACCESS_BARRIER_BIT_NV );
 
 	// the sil planes
-	qglBindProgramARB( GL_GEOMETRY_PROGRAM_NV, GPROG_NV5_SHADOW_SIL );
-	RB_GS_Feedback( 0, sil->numEdges * 6 * 16 );
-	qglBindBufferARB( GL_ELEMENT_ARRAY_BUFFER_ARB, rb_gs.store[sil->store] );
-	glCaps.BeginTransformFeedback( GL_TRIANGLES );
-	qglDrawElements( GL_LINES, sil->numEdges * 2, GL_UNSIGNED_INT, (const void *)(intptr_t)sil->offset );
-	glCaps.EndTransformFeedback();
+	if ( !stored || v->silVerts ) {
+		qglBindProgramARB( GL_GEOMETRY_PROGRAM_NV, GPROG_NV5_SHADOW_SIL );
+		if ( stored ) {
+			glCaps.BindTransformFeedback( GL_TRANSFORM_FEEDBACK, rb_gs.tfo[0] );
+			glCaps.BindBufferRange( GL_TRANSFORM_FEEDBACK_BUFFER, 0, rb_gs.volumeStore[v->store],
+				v->offset, v->silVerts * 16 );
+		} else {
+			RB_GS_Feedback( 0, sil->numEdges * 6 * 16 );
+		}
+		qglBindBufferARB( GL_ELEMENT_ARRAY_BUFFER_ARB, rb_gs.store[sil->store] );
+		if ( count ) {
+			glCaps.BeginQuery( GL_TRANSFORM_FEEDBACK_PRIMITIVES_WRITTEN, v->query[0] );
+		}
+		glCaps.BeginTransformFeedback( GL_TRIANGLES );
+		qglDrawElements( GL_LINES, sil->numEdges * 2, GL_UNSIGNED_INT, (const void *)(intptr_t)sil->offset );
+		glCaps.EndTransformFeedback();
+		if ( count ) {
+			glCaps.EndQuery( GL_TRANSFORM_FEEDBACK_PRIMITIVES_WRITTEN );
+		}
+	}
 
 	glCaps.BindTransformFeedback( GL_TRANSFORM_FEEDBACK, 0 );
 	qglDisable( GL_RASTERIZER_DISCARD );
 	qglDisable( GL_GEOMETRY_PROGRAM_NV );
 	qglBindProgramARB( GL_VERTEX_PROGRAM_ARB, VPROG_STENCIL_SHADOW );
 	vertexCache.InvalidateBindings();
+}
+
+/*
+==================
+RB_ARB2_CaptureGpuShadow
+
+Readies a gpuShadow_t volume for RB_ARB2_DrawGpuShadow: from its range
+of a volume store, or captured into the transform feedback buffers.
+Called with shadow.vp bound, which it leaves bound.
+==================
+*/
+bool RB_ARB2_CaptureGpuShadow( const srfTriangles_t *tri ) {
+	gpuShadow_t			*gs = tri->gpuShadow;
+	const srfTriangles_t *src = gs->source;
+	const arb2SilEntry_t *sil;
+	arb2GsVolume_t		*v;
+	bool				count;
+
+	if ( !r_gpuShadowVolumes || !tri->shadowCache || src->numSilEdges <= 0 ) {
+		return false;
+	}
+	sil = RB_GS_SilEntry( src );
+	if ( !sil ) {
+		return false;
+	}
+
+	/* A volume is kept from its second frame on: one built for a single
+	   frame never pays for its queries. */
+	v = RB_GS_Volume( gs );
+	count = false;
+	if ( !v && rb_gs.queries && !src->deformedSurface ) {
+		if ( !gs->firstFrame ) {
+			gs->firstFrame = backEnd.frameCount + 1;
+		} else if ( gs->firstFrame != backEnd.frameCount + 1 ) {
+			v = RB_GS_NewVolume( gs );
+			count = v != NULL;
+		}
+	}
+
+	if ( v && !count ) {
+		if ( v->state == ARB2_GS_PENDING && RB_GS_Counted( v ) ) {
+			v->state = ARB2_GS_COUNTED;
+		}
+		if ( v->state == ARB2_GS_COUNTED && backEnd.frameCount >= v->retryFrame ) {
+			if ( !v->bytes ) {
+				v->state = ARB2_GS_STORED;
+			} else if ( RB_GS_StoreRange( v ) ) {
+				v->state = ARB2_GS_STORED;
+				v->lastFrame = backEnd.frameCount;
+				RB_GS_Run( tri, sil, v, false );
+			} else {
+				v->retryFrame = backEnd.frameCount + ARB2_GS_RETRY;
+			}
+		}
+		if ( v->state == ARB2_GS_STORED ) {
+			if ( v->bytes ) {
+				const int i = (int)( v - rb_gs.volumes );
+				RB_GS_Unlink( i );
+				v->next = rb_gs.lruHead;
+				if ( rb_gs.lruHead >= 0 ) {
+					rb_gs.volumes[rb_gs.lruHead].prev = i;
+				} else {
+					rb_gs.lruTail = i;
+				}
+				rb_gs.lruHead = i;
+			}
+			v->lastFrame = backEnd.frameCount;
+			rb_gs.drawn = v;
+			return true;
+		}
+	}
+
+	RB_GS_Run( tri, sil, v, count );
+	rb_gs.drawn = NULL;
 	return true;
 }
 
@@ -1451,16 +1744,28 @@ bool RB_ARB2_CaptureGpuShadow( const srfTriangles_t *tri ) {
 ==================
 RB_ARB2_DrawGpuShadow
 
-The captured sil planes, and the caps when numIndexes asks for them.
+The sil planes, and the caps when numIndexes asks for them.
 ==================
 */
 void RB_ARB2_DrawGpuShadow( const srfTriangles_t *tri, int numIndexes ) {
-	int i;
+	const arb2GsVolume_t	*v = rb_gs.drawn;
+	const bool				caps = numIndexes == tri->numIndexes;
+	int						i;
 
-	for ( i = 0; i < ( numIndexes == tri->numIndexes ? 2 : 1 ); i++ ) {
-		qglBindBufferARB( GL_ARRAY_BUFFER_ARB, rb_gs.tfBuffer[i] );
-		qglVertexPointer( 4, GL_FLOAT, sizeof( shadowCache_t ), (const void *)NULL );
-		glCaps.DrawTransformFeedback( GL_TRIANGLES, rb_gs.tfo[i] );
+	if ( v ) {
+		if ( v->bytes ) {
+			qglBindBufferARB( GL_ARRAY_BUFFER_ARB, rb_gs.volumeStore[v->store] );
+			qglVertexPointer( 4, GL_FLOAT, sizeof( shadowCache_t ), (const void *)(intptr_t)v->offset );
+			if ( caps ? v->silVerts + v->capVerts : v->silVerts ) {
+				qglDrawArrays( GL_TRIANGLES, 0, caps ? v->silVerts + v->capVerts : v->silVerts );
+			}
+		}
+	} else {
+		for ( i = 0; i < ( caps ? 2 : 1 ); i++ ) {
+			qglBindBufferARB( GL_ARRAY_BUFFER_ARB, rb_gs.tfBuffer[i] );
+			qglVertexPointer( 4, GL_FLOAT, sizeof( shadowCache_t ), (const void *)NULL );
+			glCaps.DrawTransformFeedback( GL_TRIANGLES, rb_gs.tfo[i] );
+		}
 	}
 	vertexCache.InvalidateBindings();
 }
@@ -1480,19 +1785,33 @@ static void RB_GS_Init( void ) {
 		rb_gs.tfBytes[i] = 0;
 	}
 	rb_gs.facingFrame = -1;
+	rb_gs.freeVolume = -1;
+	rb_gs.lruHead = rb_gs.lruTail = -1;
+	rb_gs.queries = glCaps.queries != 0;
 }
 
 // a new context: the old one's buffers went with it, and its stores' contents
 static void RB_GS_Reset( void ) {
 	int i;
+	int epoch;
 
 	for ( i = 0; i < rb_gs.numStores; i++ ) {
 		range_alloc_deinit( &rb_gs.storeRanges[i] );
 	}
+	for ( i = 0; i < rb_gs.numVolumeStores; i++ ) {
+		range_alloc_deinit( &rb_gs.volumeRanges[i] );
+	}
 	if ( rb_gs.entries ) {
 		Mem_Free( rb_gs.entries );
 	}
+	if ( rb_gs.volumes ) {
+		Mem_Free( rb_gs.volumes );
+	}
+	epoch = rb_gs.epoch;
 	memset( &rb_gs, 0, sizeof( rb_gs ) );
+	rb_gs.epoch = epoch + 1;
+	rb_gs.freeVolume = -1;
+	rb_gs.lruHead = rb_gs.lruTail = -1;
 	r_gpuShadowVolumes = false;
 }
 

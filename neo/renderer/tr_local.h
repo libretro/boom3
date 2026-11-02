@@ -1680,6 +1680,11 @@ typedef struct gpuShadow_s {
 	idVec3					lightOrigin;		// the facing light origin, in surface space
 	idPlane					clipPlanes[6];		// the light frustum, in surface space
 	int						cullPlanes;			// bit i: cull against clipPlanes[i]; 0 culls nothing
+
+	// the backend's: the frame after it was first drawn, and its kept capture
+	int						firstFrame;
+	int						volume;
+	int						volumeEpoch;
 } gpuShadow_t;
 
 // the backend draws gpuShadow_t volumes: set when its programs load
@@ -1690,6 +1695,9 @@ srfTriangles_t *R_CreateGpuShadowVolume( const idRenderEntityLocal *ent,
 
 // sil edges about to be freed: the backend drops what it built from them
 void R_ForgetSilEdges( const silEdge_t *silEdges );
+
+// a volume about to be freed: the backend drops its kept capture
+void R_ForgetGpuShadow( const gpuShadow_t *gs );
 
 // the ARB2 backend's: build a gpuShadow_t volume, then draw it as RB_DrawShadowElementsWithCounters would
 bool RB_ARB2_CaptureGpuShadow( const srfTriangles_t *tri );

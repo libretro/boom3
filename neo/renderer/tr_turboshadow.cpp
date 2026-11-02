@@ -39,6 +39,9 @@ bool r_gpuShadowVolumes = false;
 
 void R_ForgetSilEdges( const silEdge_t *silEdges ) {
 }
+
+void R_ForgetGpuShadow( const gpuShadow_t *gs ) {
+}
 #endif
 
 /*
