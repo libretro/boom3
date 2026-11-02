@@ -2392,13 +2392,13 @@ static const char nv5InteractionVP[] =
 	"FLAT ATTRIB units2 = fragment.attrib[3];\n" \
 	"FLAT ATTRIB clip = fragment.attrib[4];\n" \
 	"TEXTURE tex[] = { texture[8..%d] };\n" \
-	"ADDRESS A0, A1;\n" \
+	"INT TEMP A0, A1;\n" \
 	"TEMP light, color, R1, R2, localNormal, specular, proj, fall;\n" \
 	"PARAM subOne = { -1, -1, -1, -1 };\n" \
 	"PARAM scaleTwo = { 2, 2, 2, 2 };\n" \
 	"PARAM one = { 1, 1, 1, 1 };\n" \
-	"ARL A0, units;\n" \
-	"ARL A1.x, units2.x;\n" \
+	"ROUND.S A0, units;\n" \
+	"ROUND.S A1.x, units2.x;\n" \
 	"DP3 specular, fragment.texcoord[6], fragment.texcoord[6];\n" \
 	"RSQ specular, specular.x;\n" \
 	"MUL specular, specular.x, fragment.texcoord[6];\n"
@@ -2566,7 +2566,7 @@ static const char nv5ShadowSilGP[] =
 	"ADD.U64 addr.x, base.x, step.x;\n"
 	"MOV f, { 1, 1, 0, 0 };\n"
 	"LOAD.F32 f.x, addr.x;\n"
-	"SNE.U.CC k.z, e.y, 0xffffffff;\n"
+	"SNE.U.CC k.z, e.y, 4294967295;\n"
 	"IF NE.z;\n"
 	"MUL.U k.x, e.y, 4;\n"
 	"PK64.U step.x, k;\n"

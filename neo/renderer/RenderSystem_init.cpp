@@ -470,7 +470,7 @@ static void R_CheckGLSLDesktopExtensions( void ) {
 	qglActiveStencilFaceEXT = (PFNGLACTIVESTENCILFACEEXTPROC)R_GLNoOpTexture;
 	qglDepthBoundsEXT = (PFNGLDEPTHBOUNDSEXTPROC)R_GLNoOpDepthBounds;
 	// the soft particles' depth bounds, where the context has the test
-	if ( R_CheckExtension( "EXT_depth_bounds_test" ) ) {
+	if ( R_CheckExtension( "GL_EXT_depth_bounds_test" ) ) {
 		qglDepthBoundsEXT = (PFNGLDEPTHBOUNDSEXTPROC)GLimp_ExtensionPointer( "glDepthBoundsEXT" );
 		glConfig.depthBoundsTestAvailable = qglDepthBoundsEXT != NULL;
 		if ( !glConfig.depthBoundsTestAvailable ) {
@@ -890,7 +890,7 @@ static void R_CheckPortableExtensions( void ) {
 	}
 
 	// GL_EXT_depth_bounds_test
-	glConfig.depthBoundsTestAvailable = R_CheckExtension( "EXT_depth_bounds_test" );
+	glConfig.depthBoundsTestAvailable = R_CheckExtension( "GL_EXT_depth_bounds_test" );
 	if ( glConfig.depthBoundsTestAvailable ) {
 		qglDepthBoundsEXT = (PFNGLDEPTHBOUNDSEXTPROC)GLimp_ExtensionPointer( "glDepthBoundsEXT" );
 	}
