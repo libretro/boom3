@@ -1330,6 +1330,7 @@ bool RB_FilterBlend( int drawStateBits );
 bool RB_MaterialReadsCurrentDepth( const idMaterial *material );
 bool RB_ViewReadsCurrentDepth( void );
 bool RB_DepthCaptureWanted( void );
+bool RB_DepthSoftOnly( void );
 bool RB_DepthCaptureInPlace( void );
 bool RB_DepthInPlace( float recip[2] );
 void RB_BindDepthInPlace( void );

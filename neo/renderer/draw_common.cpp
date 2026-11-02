@@ -358,21 +358,26 @@ and says whether the copy can be skipped.  The texture stays bound only
 while soft particles draw.
 =====================
 */
+/* every renderer's condition: the view's depth is wanted, by soft
+ * particles alone, and the view starts at the target's corner */
+bool RB_DepthSoftOnly( void ) {
+	const viewDef_t *view = backEnd.viewDef;
+	return view->viewport.x1 == 0 && view->viewport.y1 == 0
+		&& RB_DepthCaptureWanted()
+		&& RB_ViewDepthReaders() == RB_DEPTH_READ_SOFT;
+}
+
 static GLuint	rbDepthInPlace;			// the view's depth texture, 0 when the copy serves
 static float	rbDepthInPlaceRecip[2];	// window position to its texcoord
 static bool		rbDepthBarrierDone;		// the barrier for this view's reads is issued
 
 bool RB_DepthCaptureInPlace( void ) {
-	const viewDef_t *view = backEnd.viewDef;
 	int w = 0, h = 0;
 	GLuint tex;
 
 	rbDepthInPlace = 0;
 	rbDepthBarrierDone = false;
-	if ( R_VulkanRenderer() || !glCaps.textureBarrier
-		|| view->viewport.x1 != 0 || view->viewport.y1 != 0
-		|| !RB_DepthCaptureWanted()
-		|| RB_ViewDepthReaders() != RB_DEPTH_READ_SOFT ) {
+	if ( R_VulkanRenderer() || !glCaps.textureBarrier || !RB_DepthSoftOnly() ) {
 		return false;
 	}
 	tex = GLimp_ViewDepthTexture( &w, &h );

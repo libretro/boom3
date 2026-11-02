@@ -23,6 +23,7 @@ static uint32_t instanceVersion = VK_API_VERSION_1_0;
 /* create_device2's, for vkb_init: its reset of vkb comes after */
 static VkPhysicalDeviceFeatures negotiatedFeatures;
 static int negotiatedFloatControls;   /* VK_KHR_shader_float_controls enabled */
+static int negotiatedStoreOpNone;     /* an attachment store that writes nothing: KHR, EXT or QCOM */
 
 /* the newest version anything in the renderer uses */
 #define VKB_API_VERSION_MAX VK_API_VERSION_1_2
@@ -101,7 +102,7 @@ static bool vkb_create_device2(struct retro_vulkan_context *context, VkInstance 
    VkDeviceCreateInfo dci;
    VkDevice device;
    VkPhysicalDeviceProperties props;
-   const char *extensions[1];
+   const char *extensions[2];
    uint32_t numExtensions = 0;
    float priority = 1.0f;
    (void)surface;
@@ -144,22 +145,44 @@ static bool vkb_create_device2(struct retro_vulkan_context *context, VkInstance 
    qci.queueCount       = 1;
    qci.pQueuePriorities = &priority;
 
-   /* Vulkan 1.1 with the extension, or 1.2: the shadow build's denormal
-    * mode can be the CPU's */
    negotiatedFloatControls = 0;
+   negotiatedStoreOpNone   = 0;
    vk.vkGetPhysicalDeviceProperties(gpu, &props);
-   if ((props.apiVersion & ~0xfffu) == VK_API_VERSION_1_1 && instanceVersion >= VK_API_VERSION_1_1)
    {
+      static const char *const storeNone[3] = {
+         "VK_EXT_load_store_op_none", "VK_KHR_load_store_op_none", "VK_QCOM_render_pass_store_ops"
+      };
       VkExtensionProperties ext[256];
-      uint32_t n = 256, e;
-      if (vk.vkEnumerateDeviceExtensionProperties(gpu, NULL, &n, ext) >= VK_SUCCESS)
+      uint32_t n = 256, e, k;
+      const char *store = NULL;
+      if (vk.vkEnumerateDeviceExtensionProperties(gpu, NULL, &n, ext) < VK_SUCCESS)
+         n = 0;
+      for (e = 0; e < n; e++)
+      {
+         /* Vulkan 1.1 with the extension, or 1.2: the shadow build's
+          * denormal mode can be the CPU's */
+         if ((props.apiVersion & ~0xfffu) == VK_API_VERSION_1_1 && instanceVersion >= VK_API_VERSION_1_1
+               && !negotiatedFloatControls
+               && !strcmp(ext[e].extensionName, VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME))
+         {
+            extensions[numExtensions++] = VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME;
+            negotiatedFloatControls     = 1;
+         }
+      }
+      /* a store that leaves an attachment as it was, for the read-only
+       * depth pass soft particles sample the depth in: the first offered */
+      for (k = 0; k < 3 && !store; k++)
          for (e = 0; e < n; e++)
-            if (!strcmp(ext[e].extensionName, VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME))
+            if (!strcmp(ext[e].extensionName, storeNone[k]))
             {
-               extensions[numExtensions++] = VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME;
-               negotiatedFloatControls     = 1;
+               store = storeNone[k];
                break;
             }
+      if (store)
+      {
+         extensions[numExtensions++] = store;
+         negotiatedStoreOpNone       = 1;
+      }
    }
 
    memset(&dci, 0, sizeof(dci));
@@ -482,6 +505,7 @@ int vkb_init(const struct retro_hw_render_interface_vulkan *iface, unsigned widt
       return 0;
    vk.vkGetPhysicalDeviceProperties(vkb.gpu, &vkb.properties);
    vkb.features = negotiatedFeatures;
+   vkb.storeOpNone = (unsigned char)negotiatedStoreOpNone;
    vkb.apiVersion = vkb.properties.apiVersion & ~0xfffu;
    if (vkb.apiVersion > instanceVersion)
       vkb.apiVersion = instanceVersion;
@@ -608,7 +632,8 @@ void vkb_render_pass_begin(void)
    }
    memset(&rbi, 0, sizeof(rbi));
    rbi.sType                    = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-   rbi.renderPass               = inplace ? vkb.inplacePass[t->format] : t->renderPass;
+   rbi.renderPass               = inplace ? vkb.inplacePass[t->format]
+      : vkb.depthReadOnly ? vkb.readDepthPass[t->format] : t->renderPass;
    rbi.framebuffer              = inplace ? t->inplaceFramebuffer : t->framebuffer;
    rbi.renderArea.extent.width  = t->width;
    rbi.renderArea.extent.height = t->height;
@@ -639,6 +664,69 @@ void vkb_render_pass_end(void)
    vkb.target->layoutReady = 1;
    if (vkb.targetKind == VKB_TARGET_POST && vkb.postImage)
       vkb.images[vkb.postImage].layoutReady = 1;
+   /* every other pass and copy takes the depth as an attachment */
+   if (vkb.depthReadOnly)
+   {
+      vkb_image_barrier(vkb.cmd, vkb.target->depth, VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT,
+            VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+            VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_SHADER_READ_BIT,
+            VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+            VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT
+            | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+            VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT);
+      vkb.depthReadOnly = 0;
+   }
+}
+
+/*
+ * The target's depth read in place: the pass reopens with the depth-stencil
+ * read-only, which the fragment shader may sample while the depth test
+ * reads it, and the next pass end hands it back as an attachment.  A draw
+ * or a clear that writes depth or stencil ends it first.
+ */
+int vkb_depth_read_ready(void)
+{
+   const vkb_target_t *t = vkb.target;
+   if (!vkb.storeOpNone || !vkb.frameOpen || !t || !t->depth
+         || (vkb.targetKind != VKB_TARGET_FRAME && vkb.targetKind != VKB_TARGET_SCENE))
+      return 0;
+   return vkb_read_depth_render_pass((enum vkb_format)t->format) != VK_NULL_HANDLE;
+}
+
+int vkb_depth_read_begin(void)
+{
+   if (vkb.depthReadOnly)
+      return 1;
+   if (!vkb.inRenderPass || !vkb_depth_read_ready())
+      return 0;
+   vkb_leave_render_pass();
+   vkb_image_barrier(vkb.cmd, vkb.target->depth, VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT,
+         VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+         VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+         VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_SHADER_READ_BIT,
+         VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+         VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT
+         | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+   vkb.depthReadOnly = 1;
+   vkb_enter_render_pass();
+   return 1;
+}
+
+/* the open target's size, which the in-place depth is sampled across */
+void vkb_target_extent(unsigned *width, unsigned *height)
+{
+   *width  = vkb.target ? vkb.target->width : 0;
+   *height = vkb.target ? vkb.target->height : 0;
+}
+
+/* a write to depth or stencil in the read-only pass: back to the
+ * attachment pass first */
+void vkb_depth_writable(void)
+{
+   if (!vkb.depthReadOnly)
+      return;
+   vkb_leave_render_pass();
+   vkb_enter_render_pass();
 }
 
 /* --- the post chain --------------------------------------------------------- */
@@ -931,6 +1019,8 @@ void vkb_clear(int color, int depth, int stencil, const float rgba[4], unsigned 
    unsigned n = 0;
    if (!vkb.inRenderPass)
       return;
+   if (depth || stencil)
+      vkb_depth_writable();
    if (color)
    {
       att[n].aspectMask      = VK_IMAGE_ASPECT_COLOR_BIT;

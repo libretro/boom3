@@ -96,6 +96,14 @@ unsigned vkb_image_create_target(unsigned width, unsigned height, enum vkb_forma
 /* the scene image, as a texture the post passes sample; 0 when the frame
  * draws straight into the frontend's image */
 unsigned vkb_image_scene_ref(void);
+/* The open target's depth, sampled in place by soft particles: ready says
+ * whether the target can do it, begin reopens the pass with the depth
+ * read-only (until a write to depth or stencil, or the pass's end), and
+ * the image reference samples it there. */
+int vkb_depth_read_ready(void);
+int vkb_depth_read_begin(void);
+unsigned vkb_image_target_depth_ref(void);
+void vkb_target_extent(unsigned *width, unsigned *height);
 void vkb_image_destroy(unsigned image);
 void vkb_image_filter(unsigned image, enum vkb_filter filter, enum vkb_wrap wrap, int anisotropy);
 

@@ -26,6 +26,7 @@ extern bool  HDR_GuiCorrectionActive( unsigned int *tex );
 static vkb_view_block_t rbVkView;
 static bool rbVkViewSet;
 static bool rbVkDepthCopied;    /* this view's depth is in _currentDepth */
+static bool rbVkDepthInPlace;   /* ... or read from the target in place */
 static int rbVkSceneWidth, rbVkSceneHeight;   /* glConfig's at hand-over: the render thread reads these */
 extern float hdr_scene_encode_scale;
 
@@ -787,6 +788,7 @@ static void RB_VK_T_FillDepthBuffer( const drawSurf_t *surf ) {
 static void RB_VK_FillDepthBuffer( drawSurf_t **drawSurfs, int numDrawSurfs ) {
 	int i;
 	rbVkDepthCopied = false;
+	rbVkDepthInPlace = false;
 	if ( !backEnd.viewDef->viewEntitys ) {
 		return;
 	}
@@ -804,9 +806,11 @@ static void RB_VK_FillDepthBuffer( drawSurf_t **drawSurfs, int numDrawSurfs ) {
 		}
 		RB_VK_T_FillDepthBuffer( drawSurfs[i] );
 	}
-	/* the early depth, for the stages that read it (#3877) */
-	rbVkDepthCopied = RB_DepthCaptureWanted();
-	if ( rbVkDepthCopied ) {
+	/* the early depth, for the stages that read it (#3877): soft
+	 * particles alone read the target's own in place, else it is copied */
+	rbVkDepthInPlace = RB_DepthSoftOnly() && vkb_depth_read_ready();
+	rbVkDepthCopied = rbVkDepthInPlace || RB_DepthCaptureWanted();
+	if ( rbVkDepthCopied && !rbVkDepthInPlace ) {
 		R_VK_CopyDepthbuffer( globalImages->currentDepthImage, backEnd.viewDef->viewport.x1,
 			backEnd.viewDef->viewport.y1, backEnd.viewDef->viewport.x2 - backEnd.viewDef->viewport.x1 + 1,
 			backEnd.viewDef->viewport.y2 - backEnd.viewDef->viewport.y1 + 1 );
@@ -1081,6 +1085,7 @@ static void RB_VK_DrawSoftParticle( const drawSurf_t *surf, const shaderStage_t 
 	const float p14 = backEnd.viewDef->projectionMatrix[14];
 	vkb_draw_t draw;
 	vkb_draw_block_t block;
+	unsigned depthImage;
 
 	RB_VK_DrawBegin( &draw, &block, surf );
 	if ( !RB_VK_Geometry( surf->geo, &draw ) ) {
@@ -1111,13 +1116,22 @@ static void RB_VK_DrawSoftParticle( const drawSurf_t *surf, const shaderStage_t 
 	/* an alpha blend fades its alpha, an additive one its colour */
 	block.vertexParms[1][0] = block.vertexParms[1][1] = block.vertexParms[1][2] = srcBlend == GLS_SRCBLEND_SRC_ALPHA ? 1.0f : 0.0f;
 	block.vertexParms[1][3] = srcBlend == GLS_SRCBLEND_SRC_ALPHA ? 0.0f : 1.0f;
-	block.screenParms[0] = 1.0f / globalImages->currentDepthImage->uploadWidth;
-	block.screenParms[1] = 1.0f / globalImages->currentDepthImage->uploadHeight;
+	if ( rbVkDepthInPlace && vkb_depth_read_begin() ) {
+		unsigned tw, th;
+		vkb_target_extent( &tw, &th );
+		block.screenParms[0] = 1.0f / tw;
+		block.screenParms[1] = 1.0f / th;
+		depthImage = vkb_image_target_depth_ref();
+	} else {
+		block.screenParms[0] = 1.0f / globalImages->currentDepthImage->uploadWidth;
+		block.screenParms[1] = 1.0f / globalImages->currentDepthImage->uploadHeight;
+		depthImage = RB_VK_Image( globalImages->currentDepthImage );
+	}
 	/* the scene encoding fold alone: no gamma or clamp on a blended particle */
 	block.hdrParms[0] = block.hdrParms[1] = block.hdrParms[2] = hdr_scene_encode_scale;
 	block.hdrParms[3] = 1.0f;
 	draw.image[0] = RB_VK_StageImage( &pStage->texture );
-	draw.image[1] = RB_VK_Image( globalImages->currentDepthImage );
+	draw.image[1] = depthImage;
 	vkb_draw( &draw );
 }
 

@@ -13,7 +13,7 @@
 #include "vk_internal.h"
 
 #define VKB_IMAGE_SCENE 1
-#define VKB_IMAGE_SCENE_DEPTH 2
+#define VKB_IMAGE_TARGET_DEPTH 2
 #define VKB_IMAGE_FIRST 3
 
 VkFormat vkb_vk_format(enum vkb_format format)
@@ -102,7 +102,7 @@ int vkb_images_init(void)
 {
    memset(vkb.images, 0, sizeof(vkb.images));
    vkb.images[VKB_IMAGE_SCENE].used       = 1;
-   vkb.images[VKB_IMAGE_SCENE_DEPTH].used = 1;
+   vkb.images[VKB_IMAGE_TARGET_DEPTH].used = 1;
    vkb.uploadCount = 0;
    depthFormat = 0;
    return 1;
@@ -154,10 +154,11 @@ const vkb_image_t *vkb_image_get(unsigned image)
       im->levels  = 1;
       im->sampler = vkb_sampler(VKB_FILTER_LINEAR_NOMIP, VKB_WRAP_CLAMP, 0, 0);
    }
-   else if (image == VKB_IMAGE_SCENE_DEPTH)
+   else if (image == VKB_IMAGE_TARGET_DEPTH)
    {
+      /* the open target's depth, sampled in the read-only-depth pass */
       vkb_image_t *im = &vkb.images[image];
-      const vkb_target_t *t = vkb.sceneTarget ? vkb.sceneTarget : &vkb.scene;
+      const vkb_target_t *t = vkb.target ? vkb.target : &vkb.scene;
       im->image   = t->depth;
       im->view    = t->depthView;
       im->width   = t->width;
@@ -169,7 +170,7 @@ const vkb_image_t *vkb_image_get(unsigned image)
 }
 
 unsigned vkb_image_scene_ref(void) { return VKB_IMAGE_SCENE; }
-unsigned vkb_image_scene_depth_ref(void) { return VKB_IMAGE_SCENE_DEPTH; }
+unsigned vkb_image_target_depth_ref(void) { return VKB_IMAGE_TARGET_DEPTH; }
 
 static unsigned vkb_image_slot(void)
 {

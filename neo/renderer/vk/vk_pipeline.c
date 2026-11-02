@@ -114,16 +114,19 @@ static VkShaderModule vkb_module(const unsigned int *code, size_t bytes)
 
 /* The render pass for a colour format: colour and depth-stencil, both
  * loaded (the engine clears what it clears per view) and kept.  The
- * frontend's image ends readable; the scene's too, for the composite. */
-VkRenderPass vkb_render_pass(enum vkb_format colorFormat, int frontend)
+ * frontend's image ends readable; the scene's too, for the composite.
+ * Its read-only variant keeps the depth-stencil in the read-only layout,
+ * so the fragment shader can sample it while the depth test reads it. */
+static VkRenderPass vkb_scene_render_pass(enum vkb_format colorFormat, int depthReadOnly)
 {
    VkAttachmentDescription att[2];
    VkAttachmentReference colorRef, depthRef;
    VkSubpassDescription sub;
    VkSubpassDependency deps[2];
    VkRenderPassCreateInfo rci;
-   VkRenderPass *slot = &vkb.renderPass[colorFormat];
-   (void)frontend;
+   VkRenderPass *slot = depthReadOnly ? &vkb.readDepthPass[colorFormat] : &vkb.renderPass[colorFormat];
+   const VkImageLayout depthLayout = depthReadOnly
+      ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
    if (*slot)
       return *slot;
 
@@ -142,13 +145,20 @@ VkRenderPass vkb_render_pass(enum vkb_format colorFormat, int frontend)
    att[1].storeOp        = VK_ATTACHMENT_STORE_OP_STORE;
    att[1].stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_LOAD;
    att[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_STORE;
-   att[1].initialLayout  = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-   att[1].finalLayout    = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+   if (depthReadOnly)
+   {
+      /* nothing written: the contents stay without a store to order
+       * after the fragment shader's reads */
+      att[1].storeOp        = VK_ATTACHMENT_STORE_OP_NONE_EXT;
+      att[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_NONE_EXT;
+   }
+   att[1].initialLayout  = depthLayout;
+   att[1].finalLayout    = depthLayout;
 
    colorRef.attachment = 0;
    colorRef.layout     = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
    depthRef.attachment = 1;
-   depthRef.layout     = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+   depthRef.layout     = depthLayout;
    memset(&sub, 0, sizeof(sub));
    sub.pipelineBindPoint       = VK_PIPELINE_BIND_POINT_GRAPHICS;
    sub.colorAttachmentCount    = 1;
@@ -185,6 +195,17 @@ VkRenderPass vkb_render_pass(enum vkb_format colorFormat, int frontend)
    if (vk.vkCreateRenderPass(vkb.device, &rci, NULL, slot) != VK_SUCCESS)
       *slot = VK_NULL_HANDLE;
    return *slot;
+}
+
+VkRenderPass vkb_render_pass(enum vkb_format colorFormat, int frontend)
+{
+   (void)frontend;
+   return vkb_scene_render_pass(colorFormat, 0);
+}
+
+VkRenderPass vkb_read_depth_render_pass(enum vkb_format colorFormat)
+{
+   return vkb_scene_render_pass(colorFormat, 1);
 }
 
 /* a colour-only pass for the post chain's targets: loaded, stored,
@@ -389,6 +410,11 @@ void vkb_pipelines_shutdown(void)
       {
          vk.vkDestroyRenderPass(vkb.device, vkb.inplacePass[i], NULL);
          vkb.inplacePass[i] = VK_NULL_HANDLE;
+      }
+      if (vkb.readDepthPass[i])
+      {
+         vk.vkDestroyRenderPass(vkb.device, vkb.readDepthPass[i], NULL);
+         vkb.readDepthPass[i] = VK_NULL_HANDLE;
       }
       if (vkb.postPass[i])
       {

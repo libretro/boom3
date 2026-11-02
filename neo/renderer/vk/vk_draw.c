@@ -11,6 +11,9 @@
 
 #include "vk_internal.h"
 
+/* tr_local.h's GLS_DEPTHMASK: the draw leaves depth unwritten */
+#define VKB_GLS_DEPTHMASK 0x00000100
+
 static unsigned ringOffsetOf(unsigned buffer, unsigned offset)
 {
    (void)buffer;
@@ -135,7 +138,8 @@ static VkDescriptorSet vkb_descriptor_set(const vkb_draw_t *draw)
       }
       images[i].sampler     = im->sampler;
       images[i].imageView   = im->view;
-      images[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+      images[i].imageLayout = im == vkb_image_get(vkb_image_target_depth_ref())
+         ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
       writes[2 + i].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
       writes[2 + i].dstSet          = set;
       writes[2 + i].dstBinding      = 2 + i;
@@ -210,6 +214,25 @@ static void vkb_bind(const vkb_draw_t *draw, VkDescriptorSet set, unsigned block
    }
 }
 
+/* The pass the draw needs: one sampling the target's depth runs in the
+ * read-only-depth pass, which an upload mid-frame may have closed; one
+ * writing depth or stencil cannot run there (testing the stencil with
+ * every op KEEP can). */
+static void vkb_draw_depth_access(const vkb_draw_t *draw)
+{
+   const unsigned targetDepth = vkb_image_target_depth_ref();
+   unsigned i;
+   for (i = 0; i < VKB_MAX_TEXTURE_UNITS; i++)
+      if (draw->image[i] == targetDepth)
+      {
+         vkb_depth_read_begin();
+         return;
+      }
+   if (vkb.depthReadOnly
+         && (!(draw->stateBits & VKB_GLS_DEPTHMASK) || draw->stencil > VKB_STENCIL_TEST))
+      vkb_depth_writable();
+}
+
 void vkb_draw(const vkb_draw_t *draw)
 {
    unsigned buffer, offset, stride;
@@ -223,6 +246,7 @@ void vkb_draw(const vkb_draw_t *draw)
       return;
    memcpy(p, draw->block, vkb_block_bytes(draw));
    vkb_uploads_mid_frame(draw);
+   vkb_draw_depth_access(draw);
    set = vkb_descriptor_set(draw);
    if (!set)
       return;
@@ -268,6 +292,7 @@ void vkb_draw_fullscreen(const vkb_draw_t *draw)
       return;
    memcpy(p, draw->block, vkb_block_bytes(draw));
    vkb_uploads_mid_frame(draw);
+   vkb_draw_depth_access(draw);
    set = vkb_descriptor_set(draw);
    if (!set)
       return;

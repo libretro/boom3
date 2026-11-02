@@ -291,6 +291,7 @@ typedef struct vkb_state
    VkRenderPass renderPass[VKB_FORMAT_COUNT];   /* by colour format */
    VkRenderPass postPass[VKB_FORMAT_COUNT];        /* colour only, for the post chain */
    VkRenderPass inplacePass[VKB_FORMAT_COUNT];     /* the frame image as input and colour attachment at once */
+   VkRenderPass readDepthPass[VKB_FORMAT_COUNT];   /* renderPass with the depth-stencil read-only, sampled as it is tested */
    vkb_target_t postTarget;                     /* the post pass's target image, as a target */
    unsigned postImage;
    VkSampler samplers[VKB_FILTER_COUNT][4][2];   /* filter, wrap, anisotropy */
@@ -342,6 +343,7 @@ typedef struct vkb_state
    VkCommandBuffer cmd;
    vkb_target_t *target;
    unsigned char targetKind;    /* enum vkb_target, VKB_TARGET_POST or VKB_TARGET_INPLACE */
+   unsigned char depthReadOnly; /* the open pass is the target's read-only-depth one */
    vkb_target_t *sceneTarget;   /* where the frame's scene was drawn: the scene image, or the frame image itself */
    unsigned char frameComposited; /* the post chain drew the frame image */
    unsigned char inRenderPass;
@@ -371,6 +373,7 @@ typedef struct vkb_state
    char deviceName[256];
    uint32_t apiVersion;        /* what the instance and device both offer, patch level dropped */
    unsigned char denormMode;   /* the shadow build's: 0 the driver's, 1 flushed, 2 preserved */
+   unsigned char storeOpNone;  /* VK_ATTACHMENT_STORE_OP_NONE is enabled */
    VkDescriptorSetLayout shadowSetLayout;
    VkPipelineLayout shadowLayout;
    VkPipeline shadowCaps;
@@ -406,6 +409,7 @@ void vkb_transfer_now(void);
 VkFormat vkb_vk_format(enum vkb_format format);
 VkRenderPass vkb_post_render_pass(enum vkb_format colorFormat);
 VkRenderPass vkb_inplace_render_pass(enum vkb_format colorFormat);
+VkRenderPass vkb_read_depth_render_pass(enum vkb_format colorFormat);
 int  vkb_image_post_framebuffer(unsigned image, VkFramebuffer *framebuffer, vkb_image_t **im);
 VkFormat vkb_depth_stencil_format(void);
 int  vkb_images_init(void);
@@ -419,7 +423,6 @@ int  vkb_target_create(vkb_target_t *t, unsigned width, unsigned height, enum vk
 void vkb_target_destroy(vkb_target_t *t);
 void vkb_target_view_info(const vkb_target_t *t, VkImageViewCreateInfo *info);
 /* the image ids that wrap the scene target's colour and depth */
-unsigned vkb_image_scene_depth_ref(void);
 const vkb_image_t *vkb_image_get(unsigned image);
 
 /* vk_buffer.c */
@@ -434,6 +437,7 @@ VkBuffer vkb_static_vk_buffer(unsigned buffer);
 /* vk_device.c: the render pass on the current target */
 void vkb_render_pass_begin(void);
 void vkb_render_pass_end(void);
+void vkb_depth_writable(void);
 
 /* vk_draw.c */
 /* around a copy out of the target: the pass closes and reopens with the
