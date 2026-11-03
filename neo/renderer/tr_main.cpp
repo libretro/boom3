@@ -657,7 +657,7 @@ Returns true if the box is outside the given global frustum, (positive sides are
 bool R_CornerCullLocalBox( const idBounds &bounds, const float modelMatrix[16], int numPlanes, const idPlane *planes ) {
 	int			i, j;
 	idVec3		transformed[8];
-	float		dists[8];
+	unsigned	inWorld = 0;	// the corners transformed so far, a bit each
 	idVec3		v;
 	const idPlane *frust;
 
@@ -666,21 +666,19 @@ bool R_CornerCullLocalBox( const idBounds &bounds, const float modelMatrix[16], 
 		return false;
 	}
 
-	// transform into world space
-	for ( i = 0 ; i < 8 ; i++ ) {
-		v[0] = bounds[i&1][0];
-		v[1] = bounds[(i>>1)&1][1];
-		v[2] = bounds[(i>>2)&1][2];
-
-		R_LocalPointToGlobal( modelMatrix, v, transformed[i] );
-	}
-
-	// check against frustum planes
+	// check against frustum planes, each corner into world space the first
+	// time a plane test reaches it
 	for ( i = 0 ; i < numPlanes ; i++ ) {
 		frust = planes + i;
 		for ( j = 0 ; j < 8 ; j++ ) {
-			dists[j] = frust->Distance( transformed[j] );
-			if ( dists[j] < 0 ) {
+			if ( !( inWorld & ( 1u << j ) ) ) {
+				v[0] = bounds[j&1][0];
+				v[1] = bounds[(j>>1)&1][1];
+				v[2] = bounds[(j>>2)&1][2];
+				R_LocalPointToGlobal( modelMatrix, v, transformed[j] );
+				inWorld |= 1u << j;
+			}
+			if ( frust->Distance( transformed[j] ) < 0 ) {
 				break;
 			}
 		}

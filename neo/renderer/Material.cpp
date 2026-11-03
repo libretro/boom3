@@ -93,6 +93,7 @@ void idMaterial::CommonInit() {
 	coverage = MC_BAD;
 	cullType = CT_FRONT_SIDED;
 	deform = DFRM_NONE;
+	texgen = TG_EXPLICIT;
 	numOps = 0;
 	ops = NULL;
 	numRegisters = 0;
@@ -177,6 +178,7 @@ void idMaterial::FreeData() {
 		R_StaticFree( stages );
 		stages = NULL;
 	}
+	texgen = TG_EXPLICIT;
 	if ( expressionRegisters != NULL ) {
 		R_StaticFree( expressionRegisters );
 		expressionRegisters = NULL;
@@ -2308,6 +2310,17 @@ bool idMaterial::Parse( const char *text, const int textLength ) {
 		stages = (shaderStage_t *)R_StaticAlloc( numStages * sizeof( stages[0] ) );
 		memcpy( stages, pd->parseStages, numStages * sizeof( stages[0] ) );
 	}
+	// the first stage's texgen that is not explicit, which every surface asks for
+	{
+		int i;
+		texgen = TG_EXPLICIT;
+		for ( i = 0; i < numStages; i++ ) {
+			if ( stages[ i ].texture.texgen != TG_EXPLICIT ) {
+				texgen = stages[ i ].texture.texgen;
+				break;
+			}
+		}
+	}
 
 	if ( numOps ) {
 		ops = (expOp_t *)R_StaticAlloc( numOps * sizeof( ops[0] ) );
@@ -2502,23 +2515,6 @@ void idMaterial::EvaluateRegisters( float *registers, const float shaderParms[MA
 		}
 	}
 
-}
-
-/*
-=============
-idMaterial::Texgen
-=============
-*/
-texgen_t idMaterial::Texgen() const {
-	if ( stages ) {
-		for ( int i = 0; i < numStages; i++ ) {
-			if ( stages[ i ].texture.texgen != TG_EXPLICIT ) {
-				return stages[ i ].texture.texgen;
-			}
-		}
-	}
-
-	return TG_EXPLICIT;
 }
 
 /*

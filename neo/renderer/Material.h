@@ -540,7 +540,7 @@ public:
 	const idDecl		*GetDeformDecl( void ) const { return deformDecl; }
 
 						// currently a surface can only have one unique texgen for all the stages
-	texgen_t			Texgen() const;
+	texgen_t			Texgen() const { return texgen; }
 
 						// wobble sky parms
 	const int *			GetTexGenRegisters( void ) const { return texGenRegisters; }
@@ -659,6 +659,7 @@ private:
 
 	mutable	float		sort;				// lower numbered shaders draw before higher numbered
 	deform_t			deform;
+	texgen_t			texgen;				// the first stage's texgen that is not TG_EXPLICIT, else TG_EXPLICIT
 	int					deformRegisters[4];		// numeric parameter for deforms
 	const idDecl		*deformDecl;			// for surface emitted particle deforms and tables
 
