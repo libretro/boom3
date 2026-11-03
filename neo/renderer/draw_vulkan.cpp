@@ -652,6 +652,27 @@ RB_VK_DrawBegin
 The parts of a draw every pass sets the same way.
 ====================
 */
+/*
+====================
+Half resolution particles
+
+RB_LowResRun's passes on this backend: side targets for the depth range
+and for the run, through which the scene's depth is sampled read-only;
+the marks and the composite in the scene's pass; the marked pixels drawn
+again by the run at full resolution.
+====================
+*/
+static struct {
+	drawSurf_t		*halves;		// the run with its scissors halved
+	int				numHalves;
+	unsigned		accum, range, depth;
+	int				w, h;
+	int				mark;			// the stencil value of the last run
+	unsigned		sceneW, sceneH;	// the scene depth the run's soft particles read
+	bool			active;			// the run draws at half resolution
+	unsigned char	stencil;		// the full resolution redraw's test, VKB_STENCIL_OFF otherwise
+} rbVkLowRes;
+
 static void RB_VK_DrawBegin( vkb_draw_t *draw, vkb_draw_block_t *block, const drawSurf_t *surf ) {
 	memset( draw, 0, sizeof( *draw ) );
 	memset( block, 0, sizeof( *block ) );
@@ -669,6 +690,12 @@ static void RB_VK_DrawBegin( vkb_draw_t *draw, vkb_draw_block_t *block, const dr
 	draw->mirror = backEnd.viewDef->isMirror;
 	draw->cull = VKB_CULL_NONE;
 	draw->stencil = VKB_STENCIL_OFF;
+	draw->transmit = rbVkLowRes.active ? 1 : 0;
+	if ( rbVkLowRes.stencil != VKB_STENCIL_OFF ) {
+		draw->stencil = rbVkLowRes.stencil;
+		draw->stencilRef = (unsigned)rbVkLowRes.mark;
+		draw->stencilMask = 255;
+	}
 }
 
 static unsigned char RB_VK_Cull( cullType_t cullType ) {
@@ -1100,7 +1127,7 @@ static void RB_VK_DrawSoftParticle( const drawSurf_t *surf, const shaderStage_t 
 	}
 	/* the softening replaces the model depth hack; the weapon's stays */
 	block.colorModulateAdd[2] = surf->space->weaponDepthHack ? p14 * 0.25f - p14 : 0.0f;
-	draw.program = VKB_PROGRAM_SOFT_PARTICLE;
+	draw.program = rbVkLowRes.stencil != VKB_STENCIL_OFF ? VKB_PROGRAM_SOFT_PARTICLE_KEEP : VKB_PROGRAM_SOFT_PARTICLE;
 	draw.cull = RB_VK_Cull( surf->material->GetCullType() );
 	/* the program decides the depth test, so the particle can overdraw */
 	draw.stateBits = (unsigned)pStage->drawStateBits | GLS_DEPTHFUNC_ALWAYS;
@@ -1123,7 +1150,12 @@ static void RB_VK_DrawSoftParticle( const drawSurf_t *surf, const shaderStage_t 
 	/* an alpha blend fades its alpha, an additive one its colour */
 	block.vertexParms[1][0] = block.vertexParms[1][1] = block.vertexParms[1][2] = srcBlend == GLS_SRCBLEND_SRC_ALPHA ? 1.0f : 0.0f;
 	block.vertexParms[1][3] = srcBlend == GLS_SRCBLEND_SRC_ALPHA ? 0.0f : 1.0f;
-	if ( rbVkDepthInPlace && vkb_depth_read_begin() ) {
+	if ( rbVkLowRes.active ) {
+		// the scene's depth, read-only under the side target
+		block.screenParms[0] = 2.0f / rbVkLowRes.sceneW;
+		block.screenParms[1] = 2.0f / rbVkLowRes.sceneH;
+		depthImage = vkb_image_scene_depth_ref();
+	} else if ( rbVkDepthInPlace && vkb_depth_read_begin() ) {
 		unsigned tw, th;
 		vkb_target_extent( &tw, &th );
 		block.screenParms[0] = 1.0f / tw;
@@ -1696,6 +1728,179 @@ Returns the number of surfaces drawn; the post-process ones wait for
 _currentRender.
 =====================
 */
+static void RB_VK_LowResPass( int program, unsigned image, unsigned stateBits, unsigned char stencil,
+	const float parm[4] ) {
+	vkb_draw_t draw;
+	vkb_draw_block_t block;
+	memset( &draw, 0, sizeof( draw ) );
+	memset( &block, 0, sizeof( block ) );
+	draw.block = &block;
+	draw.program = (unsigned char)program;
+	draw.stateBits = stateBits;
+	draw.cull = VKB_CULL_NONE;
+	draw.stencil = stencil;
+	draw.stencilRef = (unsigned)rbVkLowRes.mark;
+	draw.stencilMask = 255;
+	draw.image[0] = image;
+	memcpy( block.screenParms, parm, sizeof( block.screenParms ) );
+	vkb_draw_fullscreen( &draw );
+}
+
+/* the images at w x h */
+static bool RB_VK_LowResImages( int w, int h ) {
+	if ( rbVkLowRes.accum && rbVkLowRes.w == w && rbVkLowRes.h == h ) {
+		return true;
+	}
+	if ( rbVkLowRes.accum ) {
+		vkb_image_destroy( rbVkLowRes.accum );
+		vkb_image_destroy( rbVkLowRes.range );
+		vkb_image_destroy( rbVkLowRes.depth );
+	}
+	rbVkLowRes.w = w;
+	rbVkLowRes.h = h;
+	rbVkLowRes.accum = vkb_image_create_target( w, h, VKB_FORMAT_RGBA16F );
+	rbVkLowRes.range = vkb_image_create_target( w, h, VKB_FORMAT_RG32F );
+	rbVkLowRes.depth = vkb_image_create_target( w, h, VKB_FORMAT_DEPTH );
+	if ( !rbVkLowRes.accum || !rbVkLowRes.range || !rbVkLowRes.depth ) {
+		vkb_image_destroy( rbVkLowRes.accum );
+		vkb_image_destroy( rbVkLowRes.range );
+		vkb_image_destroy( rbVkLowRes.depth );
+		rbVkLowRes.accum = rbVkLowRes.range = rbVkLowRes.depth = 0;
+		return false;
+	}
+	vkb_image_filter( rbVkLowRes.range, VKB_FILTER_NEAREST, VKB_WRAP_CLAMP, 0 );
+	return true;
+}
+
+static int RB_VK_LowResRun( drawSurf_t **drawSurfs, int first, int numDrawSurfs ) {
+	const viewDef_t *view = backEnd.viewDef;
+	const float *proj = view->projectionMatrix;
+	unsigned tw = 0, th = 0;
+	float parm[4];
+	int end, i, vw, vh, lw, lh;
+	int x1, y1, x2, y2, lx1, ly1, lx2, ly2;
+
+	if ( !r_particleHalfRes || !RB_LowResEligible( drawSurfs[first] ) ) {
+		return 0;
+	}
+	if ( view->viewEntitys == NULL || view->isSubview || view->renderView.viewID < 0
+		|| view->viewport.x1 != 0 || view->viewport.y1 != 0 ) {
+		return 0;
+	}
+	vw = view->viewport.x2 + 1;
+	vh = view->viewport.y2 + 1;
+	vkb_target_extent( &tw, &th );
+	if ( (int)tw != vw || (int)th != vh ) {
+		return 0;
+	}
+	lw = ( vw + 1 ) >> 1;
+	lh = ( vh + 1 ) >> 1;
+	if ( !RB_VK_LowResImages( lw, lh ) ) {
+		return 0;
+	}
+
+	// the run, and the part of the view it can draw on
+	x1 = vw;
+	y1 = vh;
+	x2 = y2 = -1;
+	for ( end = first; end < numDrawSurfs && RB_LowResEligible( drawSurfs[end] ); end++ ) {
+		const idScreenRect &r = r_useScissor.GetBool() ? drawSurfs[end]->scissorRect : view->scissor;
+		x1 = Min( x1, (int)r.x1 );
+		y1 = Min( y1, (int)r.y1 );
+		x2 = Max( x2, (int)r.x2 );
+		y2 = Max( y2, (int)r.y2 );
+	}
+	x1 = Max( x1, Max( 0, (int)view->scissor.x1 ) );
+	y1 = Max( y1, Max( 0, (int)view->scissor.y1 ) );
+	x2 = Min( x2, Min( vw - 1, (int)view->scissor.x2 ) );
+	y2 = Min( y2, Min( vh - 1, (int)view->scissor.y2 ) );
+	if ( x1 > x2 || y1 > y2 ) {
+		return end - first;		// every surface is scissored away
+	}
+	// a pixel's composite reads the 2x2 of half resolution pixels around it
+	lx1 = Max( 0, ( x1 >> 1 ) - 1 );
+	ly1 = Max( 0, ( y1 >> 1 ) - 1 );
+	lx2 = Min( lw - 1, ( x2 >> 1 ) + 1 );
+	ly2 = Min( lh - 1, ( y2 >> 1 ) + 1 );
+
+	if ( rbVkLowRes.numHalves < end - first ) {
+		Mem_Free( rbVkLowRes.halves );
+		rbVkLowRes.numHalves = Max( 64, end - first );
+		rbVkLowRes.halves = (drawSurf_t *)Mem_Alloc( rbVkLowRes.numHalves * sizeof( drawSurf_t ) );
+	}
+	for ( i = first; i < end; i++ ) {
+		drawSurf_t *half = &rbVkLowRes.halves[i - first];
+		*half = *drawSurfs[i];
+		half->scissorRect.x1 = drawSurfs[i]->scissorRect.x1 >> 1;
+		half->scissorRect.y1 = drawSurfs[i]->scissorRect.y1 >> 1;
+		half->scissorRect.x2 = drawSurfs[i]->scissorRect.x2 >> 1;
+		half->scissorRect.y2 = drawSurfs[i]->scissorRect.y2 >> 1;
+	}
+
+	// the farthest depth and the distance range of each 2x2
+	if ( !vkb_side_begin( rbVkLowRes.range, rbVkLowRes.depth ) ) {
+		return 0;
+	}
+	vkb_viewport( 0, 0, lw, lh );
+	vkb_scissor( lx1, ly1, lx2 + 1 - lx1, ly2 + 1 - ly1 );
+	parm[0] = 1.0f / tw;
+	parm[1] = 1.0f / th;
+	parm[2] = proj[10];
+	parm[3] = proj[14];
+	RB_VK_LowResPass( VKB_PROGRAM_LOWRES_DOWN, vkb_image_scene_depth_ref(), GLS_DEPTHFUNC_ALWAYS, VKB_STENCIL_OFF, parm );
+
+	// the run at half resolution, onto nothing added over all of the scene
+	if ( vkb_side_begin( rbVkLowRes.accum, rbVkLowRes.depth ) ) {
+		static const float clear[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+		vkb_viewport( 0, 0, lw, lh );
+		vkb_scissor( lx1, ly1, lx2 + 1 - lx1, ly2 + 1 - ly1 );
+		vkb_clear( 1, 0, 0, clear, 0 );
+		rbVkLowRes.active = true;
+		rbVkLowRes.sceneW = tw;
+		rbVkLowRes.sceneH = th;
+		backEnd.currentScissor.Clear();
+		for ( i = 0; i < end - first; i++ ) {
+			RB_VK_T_RenderShaderPasses( &rbVkLowRes.halves[i] );
+		}
+		rbVkLowRes.active = false;
+	} else {
+		end = first;
+	}
+	vkb_side_end();
+	vkb_viewport( tr.viewportOffset[0] + view->viewport.x1, tr.viewportOffset[1] + view->viewport.y1, vw, vh );
+	backEnd.currentScissor.Clear();
+	if ( end == first ) {
+		vkb_scissor( tr.viewportOffset[0] + view->scissor.x1, tr.viewportOffset[1] + view->scissor.y1,
+			view->scissor.x2 + 1 - view->scissor.x1, view->scissor.y2 + 1 - view->scissor.y1 );
+		return 0;
+	}
+
+	// back on the scene: mark where the 2x2s break, put the rest on
+	vkb_scissor( x1, y1, x2 + 1 - x1, y2 + 1 - y1 );
+	rbVkLowRes.mark = rbVkLowRes.mark % 64 + 1;
+	parm[0] = 1.0f / lw;
+	parm[1] = 1.0f / lh;
+	parm[2] = RB_LOWRES_EDGE;
+	parm[3] = 0.0f;
+	RB_VK_LowResPass( VKB_PROGRAM_LOWRES_MARK, rbVkLowRes.range,
+		GLS_DEPTHMASK | GLS_DEPTHFUNC_ALWAYS | GLS_COLORMASK | GLS_ALPHAMASK, VKB_STENCIL_MARK, parm );
+	parm[0] = 0.5f / lw;
+	parm[1] = 0.5f / lh;
+	parm[2] = parm[3] = 0.0f;
+	RB_VK_LowResPass( VKB_PROGRAM_LOWRES_COMPOSITE, rbVkLowRes.accum,
+		GLS_SRCBLEND_ONE | GLS_DSTBLEND_SRC_ALPHA | GLS_DEPTHMASK | GLS_DEPTHFUNC_ALWAYS | GLS_ALPHAMASK,
+		VKB_STENCIL_UNMARKED, parm );
+
+	// the marked pixels at full resolution
+	rbVkLowRes.stencil = VKB_STENCIL_MARKED;
+	for ( i = first; i < end; i++ ) {
+		RB_VK_T_RenderShaderPasses( drawSurfs[i] );
+	}
+	rbVkLowRes.stencil = VKB_STENCIL_OFF;
+	backEnd.currentScissor.Clear();
+	return end - first;
+}
+
 static int RB_VK_DrawShaderPasses( drawSurf_t **drawSurfs, int numDrawSurfs ) {
 	int i;
 	if ( numDrawSurfs == 0 || r_skipAmbient.GetBool() ) {
@@ -1724,6 +1929,13 @@ static int RB_VK_DrawShaderPasses( drawSurf_t **drawSurfs, int numDrawSurfs ) {
 		}
 		if ( drawSurfs[i]->material->GetSort() >= SS_POST_PROCESS && !backEnd.currentRenderCopied ) {
 			break;
+		}
+		{
+			const int run = RB_VK_LowResRun( drawSurfs, i, numDrawSurfs );
+			if ( run > 0 ) {
+				i += run - 1;
+				continue;
+			}
 		}
 		RB_VK_T_RenderShaderPasses( drawSurfs[i] );
 		backEnd.currentSpace = drawSurfs[i]->space;
@@ -2210,4 +2422,7 @@ void RB_VK_ExecuteBackEndCommands( const emptyCommand_t *cmds ) {
 void RB_VK_Shutdown( void ) {
 	RB_VK_Sync();
 	vkt_stop();
+	// the images go with the device
+	Mem_Free( rbVkLowRes.halves );
+	memset( &rbVkLowRes, 0, sizeof( rbVkLowRes ) );
 }

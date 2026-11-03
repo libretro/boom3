@@ -39,6 +39,7 @@ extern idCVar r_useStencilOpSeparate;
 #endif
 #include "renderer/gl_caps.h"
 #include "renderer/glsl_translate.h"
+#include "renderer/vr.h"
 
 /*
 =====================
@@ -614,6 +615,624 @@ void RB_UnbindDepthInPlace( void ) {
 	qglBindTexture( GL_TEXTURE_2D, 0 );
 	tmu->current2DMap = -1;
 }
+
+/*
+=====================
+Half resolution particles
+
+r_particleHalfRes draws a run of particle surfaces into a target half the
+view's width and height.  Its colour gathers what the run adds and its
+alpha what is left of the scene behind the run - each blend's destination
+factor applied to alpha alone (GL_State) - so one blend, colour plus the
+scene times alpha, puts the run on the scene.  The target's depth is the
+farthest of each 2x2 of the view's, so a half resolution pixel draws a
+particle any of its four would.
+
+Where the scene's depth breaks inside the 2x2s a pixel's composite reads
+from, the half resolution answer is not that pixel's: those pixels are
+marked in the stencil, left out of the composite, and drawn again by the
+run at full resolution.  The marks use values the shadow counts around
+128 do not reach, and nothing after the shader passes tests the stencil.
+
+A surface goes into a run when it is a particle system's and every stage
+it draws blends without reading the destination, onto it scaled by ZERO,
+ONE or the source's alpha; writes neither depth nor only some colours;
+tests depth as LESS; and reads no window position: no program stage, no
+screen texgen, no _currentRender or _currentDepth image (soft particles
+read the depth through their own path, at twice the scale while the run
+draws, RB_LowResScale).  A view qualifies when it is the 3D view at the
+corner of a target whose depth is a texture (GLimp_ViewDepthTexture).
+=====================
+*/
+bool RB_LowResEligible( const drawSurf_t *surf ) {
+	const idMaterial *material = surf->material;
+	int i;
+	if ( !( surf->dsFlags & DSF_PARTICLE ) || material == NULL
+		|| material->GetSort() >= SS_POST_PROCESS || material->SuppressInSubview() ) {
+		return false;
+	}
+	for ( i = 0; i < material->GetNumStages(); i++ ) {
+		const shaderStage_t *stage = material->GetStage( i );
+		const int bits = stage->drawStateBits;
+		const int src = bits & GLS_SRCBLEND_BITS;
+		const int dst = bits & GLS_DSTBLEND_BITS;
+		if ( stage->lighting != SL_AMBIENT
+			|| ( bits & ( GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS ) ) == ( GLS_SRCBLEND_ZERO | GLS_DSTBLEND_ONE ) ) {
+			continue;
+		}
+		if ( stage->newStage
+			|| !( bits & GLS_DEPTHMASK )
+			|| ( bits & ( GLS_REDMASK | GLS_GREENMASK | GLS_BLUEMASK | GLS_DEPTHFUNC_EQUAL ) )
+			|| stage->texture.texgen == TG_SCREEN || stage->texture.texgen == TG_SCREEN2
+			|| stage->texture.texgen == TG_GLASSWARP
+			|| stage->texture.image == globalImages->currentRenderImage
+			|| stage->texture.image == globalImages->currentDepthImage ) {
+			return false;
+		}
+		if ( src != GLS_SRCBLEND_ZERO && src != GLS_SRCBLEND_ONE
+			&& src != GLS_SRCBLEND_SRC_ALPHA && src != GLS_SRCBLEND_ONE_MINUS_SRC_ALPHA ) {
+			return false;
+		}
+		if ( dst != GLS_DSTBLEND_ZERO && dst != GLS_DSTBLEND_ONE
+			&& dst != GLS_DSTBLEND_SRC_ALPHA && dst != GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA ) {
+			return false;
+		}
+	}
+	return true;
+}
+
+#ifndef HAVE_OPENGLES
+
+enum {
+	RB_LOWRES_DOWN,		// the depth's farthest and the distance range, per 2x2
+	RB_LOWRES_MARK,		// stencil marks where the range breaks
+	RB_LOWRES_COMPOSITE,	// colour plus the scene times alpha
+	RB_LOWRES_PROGRAMS
+};
+
+typedef struct {
+	drawSurf_t	*surfs;				// the run with its scissors halved
+	GLuint		fboDown, fboDraw;	// distance range + depth; colour + depth
+	GLuint		accum, range, depth;
+	GLuint		vbo;				// the GLSL programs' triangle
+	GLuint		prog[RB_LOWRES_PROGRAMS];
+	GLint		parm[RB_LOWRES_PROGRAMS];
+	GLuint		arb[RB_LOWRES_PROGRAMS];
+	int			numSurfs;			// surfs' room
+	int			w, h;				// the targets'
+	int			mark;				// the stencil value of the last run
+	bool		failed;				// the context cannot, for good
+	bool		active;				// the run is drawing at half resolution
+	bool		redraw;				// the run is drawing its marked pixels at full resolution
+} rbLowRes_t;
+
+static rbLowRes_t rbLowRes;
+
+#ifdef BOOM3_ARB2_RENDERER
+void RB_SetProgramEnvironment( bool isPostProcess );
+
+static const char * const rbLowResARB[RB_LOWRES_PROGRAMS] = {
+	// local[0]: 1/depth width, 1/depth height, projection [10] and [14]
+	"!!ARBfp1.0\n"
+	"PARAM p = program.local[0];\n"
+	"PARAM eps = { -0.000001, -0.000001, 0, 0 };\n"
+	"TEMP c, t, d, n, l;\n"
+	"MUL c.xy, fragment.position, 2.0;\n"
+	"ADD t.xy, c, { -0.5, -0.5, 0, 0 };\n"
+	"MUL t.xy, t, p;\n"
+	"TEX t, t, texture[0], 2D;\n"
+	"MOV d.x, t.x;\n"
+	"ADD t.xy, c, { 0.5, -0.5, 0, 0 };\n"
+	"MUL t.xy, t, p;\n"
+	"TEX t, t, texture[0], 2D;\n"
+	"MOV d.y, t.x;\n"
+	"ADD t.xy, c, { -0.5, 0.5, 0, 0 };\n"
+	"MUL t.xy, t, p;\n"
+	"TEX t, t, texture[0], 2D;\n"
+	"MOV d.z, t.x;\n"
+	"ADD t.xy, c, { 0.5, 0.5, 0, 0 };\n"
+	"MUL t.xy, t, p;\n"
+	"TEX t, t, texture[0], 2D;\n"
+	"MOV d.w, t.x;\n"
+	"MIN n.x, d.x, d.y;\n"
+	"MIN n.z, d.z, d.w;\n"
+	"MIN n.x, n.x, n.z;\n"
+	"MAX n.y, d.x, d.y;\n"
+	"MAX n.w, d.z, d.w;\n"
+	"MAX n.y, n.y, n.w;\n"
+	"MOV result.depth.z, n.y;\n"
+	"MAD l.xy, n, 2.0, -1.0;\n"
+	"ADD l.xy, l, p.z;\n"
+	"MIN l.xy, l, eps;\n"
+	"RCP l.x, l.x;\n"
+	"RCP l.y, l.y;\n"
+	"MUL result.color, l.xyyy, p.w;\n"
+	"END\n",
+	// local[0]: 1/width and 1/height of the range, the edge fraction
+	"!!ARBfp1.0\n"
+	"PARAM q = program.local[0];\n"
+	"TEMP f, u, a, b, s;\n"
+	"MAD u.xy, fragment.position, 0.5, -0.5;\n"
+	"FLR f.xy, u;\n"
+	"ADD f.xy, f, 0.5;\n"
+	"MUL u.xy, f, q;\n"
+	"TEX a, u, texture[0], 2D;\n"
+	"ADD u.xy, f, { 1, 0, 0, 0 };\n"
+	"MUL u.xy, u, q;\n"
+	"TEX b, u, texture[0], 2D;\n"
+	"MIN s.x, a.x, b.x;\n"
+	"MAX s.y, a.y, b.y;\n"
+	"ADD u.xy, f, { 0, 1, 0, 0 };\n"
+	"MUL u.xy, u, q;\n"
+	"TEX a, u, texture[0], 2D;\n"
+	"ADD u.xy, f, { 1, 1, 0, 0 };\n"
+	"MUL u.xy, u, q;\n"
+	"TEX b, u, texture[0], 2D;\n"
+	"MIN a.x, a.x, b.x;\n"
+	"MAX a.y, a.y, b.y;\n"
+	"MIN s.x, s.x, a.x;\n"
+	"MAX s.y, s.y, a.y;\n"
+	"SUB s.y, s.y, s.x;\n"
+	"MUL s.x, s.x, q.z;\n"
+	"SUB s.x, s.y, s.x;\n"
+	"KIL s.x;\n"
+	"MOV result.color, { 0, 0, 0, 0 };\n"
+	"END\n",
+	// local[0]: half of 1/width and 1/height of the colour
+	"!!ARBfp1.0\n"
+	"PARAM q = program.local[0];\n"
+	"TEMP u;\n"
+	"MUL u, fragment.position, q;\n"
+	"TEX result.color, u, texture[0], 2D;\n"
+	"END\n"
+};
+#endif
+
+static const char rbLowResVS[] =
+	"#version 100\n"
+	"attribute vec2 attr_Vertex;\n"
+	"void main() {\n"
+	"  gl_Position = vec4( attr_Vertex, 0.0, 1.0 );\n"
+	"}\n";
+
+static const char * const rbLowResFS[RB_LOWRES_PROGRAMS] = {
+	"#version 100\n"
+	"precision highp float;\n"
+	"uniform sampler2D u_map;\n"
+	"uniform vec4 u_parm;\n"
+	"void main() {\n"
+	"  vec2 c = gl_FragCoord.xy * 2.0;\n"
+	"  float a = texture2D( u_map, ( c + vec2( -0.5, -0.5 ) ) * u_parm.xy ).x;\n"
+	"  float b = texture2D( u_map, ( c + vec2( 0.5, -0.5 ) ) * u_parm.xy ).x;\n"
+	"  float d = texture2D( u_map, ( c + vec2( -0.5, 0.5 ) ) * u_parm.xy ).x;\n"
+	"  float e = texture2D( u_map, ( c + vec2( 0.5, 0.5 ) ) * u_parm.xy ).x;\n"
+	"  float n = min( min( a, b ), min( d, e ) );\n"
+	"  float f = max( max( a, b ), max( d, e ) );\n"
+	"  vec2 l = min( vec2( n, f ) * 2.0 - 1.0 + u_parm.z, vec2( -0.000001 ) );\n"
+	"  gl_FragDepth = f;\n"
+	"  gl_FragColor = vec4( u_parm.w / l, 0.0, 1.0 );\n"
+	"}\n",
+	"#version 100\n"
+	"precision highp float;\n"
+	"uniform sampler2D u_map;\n"
+	"uniform vec4 u_parm;\n"
+	"void main() {\n"
+	"  vec2 f = floor( gl_FragCoord.xy * 0.5 - 0.5 ) + 0.5;\n"
+	"  vec2 a = texture2D( u_map, f * u_parm.xy ).xy;\n"
+	"  vec2 b = texture2D( u_map, ( f + vec2( 1.0, 0.0 ) ) * u_parm.xy ).xy;\n"
+	"  vec2 c = texture2D( u_map, ( f + vec2( 0.0, 1.0 ) ) * u_parm.xy ).xy;\n"
+	"  vec2 d = texture2D( u_map, ( f + vec2( 1.0, 1.0 ) ) * u_parm.xy ).xy;\n"
+	"  float n = min( min( a.x, b.x ), min( c.x, d.x ) );\n"
+	"  float x = max( max( a.y, b.y ), max( c.y, d.y ) );\n"
+	"  if ( x - n < u_parm.z * n ) {\n"
+	"    discard;\n"
+	"  }\n"
+	"  gl_FragColor = vec4( 0.0 );\n"
+	"}\n",
+	"#version 100\n"
+	"precision highp float;\n"
+	"uniform sampler2D u_map;\n"
+	"uniform vec4 u_parm;\n"
+	"void main() {\n"
+	"  gl_FragColor = texture2D( u_map, gl_FragCoord.xy * u_parm.xy );\n"
+	"}\n"
+};
+
+float RB_LowResScale( void ) {
+	return rbLowRes.active ? 2.0f : 1.0f;
+}
+
+bool RB_LowResRedraw( void ) {
+	return rbLowRes.redraw;
+}
+
+void RB_LowResForget( void ) {
+	Mem_Free( rbLowRes.surfs );
+	memset( &rbLowRes, 0, sizeof( rbLowRes ) );
+}
+
+static GLuint RB_LowResShader( GLenum type, const char *text ) {
+	idStr source( text );
+	GLuint shader;
+	GLint ok = 0;
+	R_GLSLSourceForContext( source, type );
+	text = source.c_str();
+	shader = glCreateShader( type );
+	glShaderSource( shader, 1, &text, NULL );
+	glCompileShader( shader );
+	glGetShaderiv( shader, GL_COMPILE_STATUS, &ok );
+	if ( !ok ) {
+		char log[1024];
+		glGetShaderInfoLog( shader, sizeof( log ), NULL, log );
+		common->Printf( "half resolution particles: %s\n", log );
+		glDeleteShader( shader );
+		return 0;
+	}
+	return shader;
+}
+
+/* the passes' programs, on first use */
+static bool RB_LowResPrograms( void ) {
+	int i;
+#ifdef BOOM3_ARB2_RENDERER
+	if ( !R_GLSLRenderer() ) {
+		if ( rbLowRes.arb[0] ) {
+			return true;
+		}
+		qglGenProgramsARB( RB_LOWRES_PROGRAMS, rbLowRes.arb );
+		for ( i = 0; i < RB_LOWRES_PROGRAMS; i++ ) {
+			GLint err = -1;
+			qglBindProgramARB( GL_FRAGMENT_PROGRAM_ARB, rbLowRes.arb[i] );
+			qglProgramStringARB( GL_FRAGMENT_PROGRAM_ARB, GL_PROGRAM_FORMAT_ASCII_ARB,
+				(GLsizei)strlen( rbLowResARB[i] ), rbLowResARB[i] );
+			qglGetIntegerv( GL_PROGRAM_ERROR_POSITION_ARB, &err );
+			if ( err != -1 ) {
+				common->Printf( "half resolution particles: %s\n",
+					(const char *)glGetString( GL_PROGRAM_ERROR_STRING_ARB ) );
+				rbLowRes.failed = true;
+			}
+		}
+		qglBindProgramARB( GL_FRAGMENT_PROGRAM_ARB, 0 );
+		return !rbLowRes.failed;
+	}
+#endif
+	if ( rbLowRes.prog[0] ) {
+		return true;
+	}
+	{
+		static const float tri[6] = { -1.0f, -1.0f, 3.0f, -1.0f, -1.0f, 3.0f };
+		const GLuint vs = RB_LowResShader( GL_VERTEX_SHADER, rbLowResVS );
+		for ( i = 0; i < RB_LOWRES_PROGRAMS; i++ ) {
+			const GLuint fs = RB_LowResShader( GL_FRAGMENT_SHADER, rbLowResFS[i] );
+			GLint ok = 0;
+			rbLowRes.prog[i] = glCreateProgram();
+			if ( vs == 0 || fs == 0 ) {
+				rbLowRes.failed = true;
+				continue;
+			}
+			glAttachShader( rbLowRes.prog[i], vs );
+			glAttachShader( rbLowRes.prog[i], fs );
+			glBindAttribLocation( rbLowRes.prog[i], 0, "attr_Vertex" );
+			glLinkProgram( rbLowRes.prog[i] );
+			glDeleteShader( fs );
+			glGetProgramiv( rbLowRes.prog[i], GL_LINK_STATUS, &ok );
+			if ( !ok ) {
+				rbLowRes.failed = true;
+				continue;
+			}
+			glUseProgram( rbLowRes.prog[i] );
+			glUniform1i( glGetUniformLocation( rbLowRes.prog[i], "u_map" ), 0 );
+			rbLowRes.parm[i] = glGetUniformLocation( rbLowRes.prog[i], "u_parm" );
+		}
+		if ( vs ) {
+			glDeleteShader( vs );
+		}
+		glUseProgram( 0 );
+		backEnd.glState.currentProgram = NULL;
+		glGenBuffers( 1, &rbLowRes.vbo );
+		glBindBuffer( GL_ARRAY_BUFFER, rbLowRes.vbo );
+		glBufferData( GL_ARRAY_BUFFER, sizeof( tri ), tri, GL_STATIC_DRAW );
+		vertexCache.InvalidateBindings();
+	}
+	return !rbLowRes.failed;
+}
+
+static GLuint RB_LowResTexture( GLenum internal, GLenum format, GLenum type, GLint filter, int w, int h ) {
+	GLuint tex;
+	glGenTextures( 1, &tex );
+	glBindTexture( GL_TEXTURE_2D, tex );
+	glTexImage2D( GL_TEXTURE_2D, 0, internal, w, h, 0, format, type, NULL );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
+	return tex;
+}
+
+static GLuint RB_LowResFramebuffer( GLuint color ) {
+	GLuint fbo;
+	glGenFramebuffers( 1, &fbo );
+	glBindFramebuffer( GL_FRAMEBUFFER, fbo );
+	glFramebufferTexture2D( GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, color, 0 );
+	glFramebufferTexture2D( GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, rbLowRes.depth, 0 );
+	if ( glCheckFramebufferStatus( GL_FRAMEBUFFER ) != GL_FRAMEBUFFER_COMPLETE ) {
+		rbLowRes.failed = true;
+	}
+	return fbo;
+}
+
+/* the targets at w x h; leaves the view's framebuffer bound */
+static bool RB_LowResTargets( int w, int h ) {
+	tmu_t *tmu = &backEnd.glState.tmu[backEnd.glState.currenttmu];
+	if ( rbLowRes.fboDraw && rbLowRes.w == w && rbLowRes.h == h ) {
+		return true;
+	}
+	if ( rbLowRes.fboDraw ) {
+		const GLuint fbos[2] = { rbLowRes.fboDown, rbLowRes.fboDraw };
+		const GLuint texs[3] = { rbLowRes.accum, rbLowRes.range, rbLowRes.depth };
+		glDeleteFramebuffers( 2, fbos );
+		glDeleteTextures( 3, texs );
+	}
+	rbLowRes.w = w;
+	rbLowRes.h = h;
+	rbLowRes.accum = RB_LowResTexture( GL_RGBA16F, GL_RGBA, GL_FLOAT, GL_LINEAR, w, h );
+	rbLowRes.range = RB_LowResTexture( GL_RG32F, GL_RG, GL_FLOAT, GL_NEAREST, w, h );
+	rbLowRes.depth = RB_LowResTexture( GL_DEPTH_COMPONENT24, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, GL_NEAREST, w, h );
+	glBindTexture( GL_TEXTURE_2D, 0 );
+	tmu->current2DMap = -1;
+	rbLowRes.fboDown = RB_LowResFramebuffer( rbLowRes.range );
+	rbLowRes.fboDraw = RB_LowResFramebuffer( rbLowRes.accum );
+	glBindFramebuffer( GL_FRAMEBUFFER, GLimp_ViewFramebuffer() );
+	return !rbLowRes.failed;
+}
+
+/* one of the programs over the bound target, reading tex on unit 0 */
+static void RB_LowResPass( int prog, GLuint tex, const float parm[4] ) {
+	tmu_t *tmu;
+	GL_SelectTexture( 0 );
+	globalImages->BindNull();
+	tmu = &backEnd.glState.tmu[0];
+	glBindTexture( GL_TEXTURE_2D, tex );
+	tmu->current2DMap = tex;
+#ifdef BOOM3_ARB2_RENDERER
+	if ( !R_GLSLRenderer() ) {
+		qglBindProgramARB( GL_FRAGMENT_PROGRAM_ARB, rbLowRes.arb[prog] );
+		qglEnable( GL_FRAGMENT_PROGRAM_ARB );
+		qglProgramLocalParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 0, parm );
+		qglMatrixMode( GL_PROJECTION );
+		qglPushMatrix();
+		qglLoadIdentity();
+		qglMatrixMode( GL_MODELVIEW );
+		qglPushMatrix();
+		qglLoadIdentity();
+		qglBegin( GL_TRIANGLES );
+		qglVertex2f( -1.0f, -1.0f );
+		qglVertex2f( 3.0f, -1.0f );
+		qglVertex2f( -1.0f, 3.0f );
+		qglEnd();
+		qglPopMatrix();
+		qglMatrixMode( GL_PROJECTION );
+		qglPopMatrix();
+		qglMatrixMode( GL_MODELVIEW );
+		qglDisable( GL_FRAGMENT_PROGRAM_ARB );
+	} else
+#endif
+	{
+		GLint enabled[6];
+		int a;
+		tmu->textureType = TT_2D;
+		glUseProgram( rbLowRes.prog[prog] );
+		glUniform4fv( rbLowRes.parm[prog], 1, parm );
+		for ( a = 0; a < 6; a++ ) {
+			glGetVertexAttribiv( a, GL_VERTEX_ATTRIB_ARRAY_ENABLED, &enabled[a] );
+			if ( a > 0 && enabled[a] ) {
+				glDisableVertexAttribArray( a );
+			}
+		}
+		glEnableVertexAttribArray( 0 );
+		glBindBuffer( GL_ARRAY_BUFFER, rbLowRes.vbo );
+		vertexCache.InvalidateBindings();
+		glVertexAttribPointer( 0, 2, GL_FLOAT, GL_FALSE, 0, NULL );
+		glDrawArrays( GL_TRIANGLES, 0, 3 );
+		for ( a = 0; a < 6; a++ ) {
+			if ( a == 0 && !enabled[a] ) {
+				glDisableVertexAttribArray( a );
+			} else if ( a > 0 && enabled[a] ) {
+				glEnableVertexAttribArray( a );
+			}
+		}
+		glUseProgram( 0 );
+		backEnd.glState.currentProgram = NULL;
+	}
+	glBindTexture( GL_TEXTURE_2D, 0 );
+	tmu->current2DMap = -1;
+}
+
+/* the program environment the run's draws read, at the current scale */
+static void RB_LowResEnvironment( void ) {
+#ifdef BOOM3_ARB2_RENDERER
+	if ( !R_GLSLRenderer() ) {
+		RB_SetProgramEnvironment( false );
+	}
+#endif
+}
+
+int RB_LowResRun( drawSurf_t **drawSurfs, int first, int numDrawSurfs, void (*draw)( const drawSurf_t *surf ) ) {
+	const viewDef_t *view = backEnd.viewDef;
+	const float *proj = view->projectionMatrix;
+	GLint stencil[7];
+	GLboolean stencilTest;
+	GLuint depthTex, sceneFbo;
+	float parm[4];
+	int end, i, vw, vh, lw, lh, dw = 0, dh = 0;
+	int x1, y1, x2, y2, lx1, ly1, lx2, ly2;
+
+	if ( !r_particleHalfRes || rbLowRes.failed || !RB_LowResEligible( drawSurfs[first] ) ) {
+		return 0;
+	}
+	if ( view->viewEntitys == NULL || view->isSubview || view->renderView.viewID < 0
+		|| view->viewport.x1 != 0 || view->viewport.y1 != 0
+		|| R_VulkanRenderer() || glCaps.es || glCaps.major < 3 || VR_Active() ) {
+		return 0;
+	}
+	vw = view->viewport.x2 + 1;
+	vh = view->viewport.y2 + 1;
+	depthTex = GLimp_ViewDepthTexture( &dw, &dh );
+	if ( depthTex == 0 || dw < vw || dh < vh ) {
+		return 0;
+	}
+	lw = ( vw + 1 ) >> 1;
+	lh = ( vh + 1 ) >> 1;
+	if ( !RB_LowResPrograms() || !RB_LowResTargets( lw, lh ) ) {
+		return 0;
+	}
+
+	// the run, and the part of the view it can draw on
+	x1 = vw;
+	y1 = vh;
+	x2 = y2 = -1;
+	for ( end = first; end < numDrawSurfs && RB_LowResEligible( drawSurfs[end] ); end++ ) {
+		const idScreenRect &r = r_useScissor.GetBool() ? drawSurfs[end]->scissorRect : view->scissor;
+		x1 = Min( x1, (int)r.x1 );
+		y1 = Min( y1, (int)r.y1 );
+		x2 = Max( x2, (int)r.x2 );
+		y2 = Max( y2, (int)r.y2 );
+	}
+	x1 = Max( x1, Max( 0, (int)view->scissor.x1 ) );
+	y1 = Max( y1, Max( 0, (int)view->scissor.y1 ) );
+	x2 = Min( x2, Min( vw - 1, (int)view->scissor.x2 ) );
+	y2 = Min( y2, Min( vh - 1, (int)view->scissor.y2 ) );
+	if ( x1 > x2 || y1 > y2 ) {
+		return end - first;		// every surface is scissored away
+	}
+	// a pixel's composite reads the 2x2 of half resolution pixels around it
+	lx1 = Max( 0, ( x1 >> 1 ) - 1 );
+	ly1 = Max( 0, ( y1 >> 1 ) - 1 );
+	lx2 = Min( lw - 1, ( x2 >> 1 ) + 1 );
+	ly2 = Min( lh - 1, ( y2 >> 1 ) + 1 );
+
+	if ( rbLowRes.numSurfs < end - first ) {
+		Mem_Free( rbLowRes.surfs );
+		rbLowRes.numSurfs = Max( 64, end - first );
+		rbLowRes.surfs = (drawSurf_t *)Mem_Alloc( rbLowRes.numSurfs * sizeof( drawSurf_t ) );
+	}
+
+	sceneFbo = GLimp_ViewFramebuffer();
+	stencilTest = glIsEnabled( GL_STENCIL_TEST );
+	glGetIntegerv( GL_STENCIL_FUNC, &stencil[0] );
+	glGetIntegerv( GL_STENCIL_REF, &stencil[1] );
+	glGetIntegerv( GL_STENCIL_VALUE_MASK, &stencil[2] );
+	glGetIntegerv( GL_STENCIL_FAIL, &stencil[3] );
+	glGetIntegerv( GL_STENCIL_PASS_DEPTH_FAIL, &stencil[4] );
+	glGetIntegerv( GL_STENCIL_PASS_DEPTH_PASS, &stencil[5] );
+	glGetIntegerv( GL_STENCIL_WRITEMASK, &stencil[6] );
+
+	// the farthest depth and the distance range of each 2x2, and the colour
+	// cleared to nothing added over all of the scene
+	glBindFramebuffer( GL_FRAMEBUFFER, rbLowRes.fboDown );
+	glViewport( 0, 0, lw, lh );
+	qglScissor( lx1, ly1, lx2 + 1 - lx1, ly2 + 1 - ly1 );
+	qglDisable( GL_STENCIL_TEST );
+	GL_Cull( CT_TWO_SIDED );
+	GL_State( GLS_DEPTHFUNC_ALWAYS );
+	parm[0] = 1.0f / dw;
+	parm[1] = 1.0f / dh;
+	parm[2] = proj[10];
+	parm[3] = proj[14];
+	RB_LowResPass( RB_LOWRES_DOWN, depthTex, parm );
+	glBindFramebuffer( GL_FRAMEBUFFER, rbLowRes.fboDraw );
+	qglClearColor( 0.0f, 0.0f, 0.0f, 1.0f );
+	qglClear( GL_COLOR_BUFFER_BIT );
+
+	// the run at half resolution
+	for ( i = first; i < end; i++ ) {
+		drawSurf_t *half = &rbLowRes.surfs[i - first];
+		*half = *drawSurfs[i];
+		half->scissorRect.x1 = drawSurfs[i]->scissorRect.x1 >> 1;
+		half->scissorRect.y1 = drawSurfs[i]->scissorRect.y1 >> 1;
+		half->scissorRect.x2 = drawSurfs[i]->scissorRect.x2 >> 1;
+		half->scissorRect.y2 = drawSurfs[i]->scissorRect.y2 >> 1;
+	}
+	rbLowRes.active = true;
+	backEnd.glState.lowResBlend = true;
+	backEnd.glState.forceGlState = true;
+	RB_LowResEnvironment();
+	backEnd.currentScissor.Clear();
+	qglScissor( lx1, ly1, lx2 + 1 - lx1, ly2 + 1 - ly1 );
+	for ( i = 0; i < end - first; i++ ) {
+		draw( &rbLowRes.surfs[i] );
+	}
+	rbLowRes.active = false;
+	backEnd.glState.lowResBlend = false;
+	backEnd.glState.forceGlState = true;
+	RB_LowResEnvironment();
+
+	// back on the scene: mark where the 2x2s break, put the rest on
+	glBindFramebuffer( GL_FRAMEBUFFER, sceneFbo );
+	qglViewport( tr.viewportOffset[0] + view->viewport.x1, tr.viewportOffset[1] + view->viewport.y1,
+		vw - view->viewport.x1, vh - view->viewport.y1 );
+	qglScissor( x1, y1, x2 + 1 - x1, y2 + 1 - y1 );
+	rbLowRes.mark = rbLowRes.mark % 64 + 1;
+	qglEnable( GL_STENCIL_TEST );
+	qglStencilMask( 255 );
+	qglStencilFunc( GL_ALWAYS, rbLowRes.mark, 255 );
+	qglStencilOp( GL_KEEP, GL_KEEP, GL_REPLACE );
+	GL_Cull( CT_TWO_SIDED );
+	GL_State( GLS_DEPTHMASK | GLS_DEPTHFUNC_ALWAYS | GLS_COLORMASK | GLS_ALPHAMASK );
+	parm[0] = 1.0f / lw;
+	parm[1] = 1.0f / lh;
+	parm[2] = RB_LOWRES_EDGE;
+	parm[3] = 0.0f;
+	RB_LowResPass( RB_LOWRES_MARK, rbLowRes.range, parm );
+	qglStencilFunc( GL_NOTEQUAL, rbLowRes.mark, 255 );
+	qglStencilOp( GL_KEEP, GL_KEEP, GL_KEEP );
+	GL_State( GLS_SRCBLEND_ONE | GLS_DSTBLEND_SRC_ALPHA | GLS_DEPTHMASK | GLS_DEPTHFUNC_ALWAYS | GLS_ALPHAMASK );
+	parm[0] = 0.5f / lw;
+	parm[1] = 0.5f / lh;
+	parm[2] = parm[3] = 0.0f;
+	RB_LowResPass( RB_LOWRES_COMPOSITE, rbLowRes.accum, parm );
+
+	// the marked pixels at full resolution; the marks were written into
+	// the depth texture soft particles read, so their barrier is due again
+	qglStencilFunc( GL_EQUAL, rbLowRes.mark, 255 );
+	rbDepthBarrierDone = false;
+	backEnd.currentScissor.Clear();
+	rbLowRes.redraw = true;
+	for ( i = first; i < end; i++ ) {
+		draw( drawSurfs[i] );
+	}
+	rbLowRes.redraw = false;
+
+	if ( stencilTest ) {
+		qglEnable( GL_STENCIL_TEST );
+	} else {
+		qglDisable( GL_STENCIL_TEST );
+	}
+	qglStencilFunc( stencil[0], stencil[1], stencil[2] );
+	qglStencilOp( stencil[3], stencil[4], stencil[5] );
+	qglStencilMask( stencil[6] );
+	backEnd.currentScissor.Clear();
+	return end - first;
+}
+
+#else
+
+int RB_LowResRun( drawSurf_t **drawSurfs, int first, int numDrawSurfs, void (*draw)( const drawSurf_t *surf ) ) {
+	return 0;
+}
+
+float RB_LowResScale( void ) {
+	return 1.0f;
+}
+
+bool RB_LowResRedraw( void ) {
+	return false;
+}
+
+void RB_LowResForget( void ) {
+}
+
+#endif
 
 #ifdef BOOM3_ARB2_RENDERER
 
@@ -1216,6 +1835,8 @@ void RB_SetProgramEnvironment( bool isPostProcess ) {
 		parm[0] = 1.0f / globalImages->currentDepthImage->uploadWidth;
 		parm[1] = 1.0f / globalImages->currentDepthImage->uploadHeight;
 	}
+	parm[0] *= RB_LowResScale();
+	parm[1] *= RB_LowResScale();
 	parm[2] = static_cast<float>(globalImages->currentRenderImage->uploadWidth) / globalImages->currentDepthImage->uploadWidth;
 	parm[3] = static_cast<float>(globalImages->currentRenderImage->uploadHeight) / globalImages->currentDepthImage->uploadHeight;
 	qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, PP_CURDEPTH_RECIPR, parm );
@@ -1541,7 +2162,7 @@ void RB_STD_T_RenderShaderPasses( const drawSurf_t *surf ) {
 				globalImages->currentDepthImage->Bind();
 			}
 
-			qglBindProgramARB( GL_FRAGMENT_PROGRAM_ARB, FPROG_SOFT_PARTICLE );
+			qglBindProgramARB( GL_FRAGMENT_PROGRAM_ARB, RB_LowResRedraw() ? FPROG_SOFT_PARTICLE_KEEP : FPROG_SOFT_PARTICLE );
 			qglEnable( GL_FRAGMENT_PROGRAM_ARB );
 
 			// DG: some particle materials (at least the muzzle flash in dentonmod) set the
@@ -1976,6 +2597,13 @@ int RB_STD_DrawShaderPasses( drawSurf_t **drawSurfs, int numDrawSurfs ) {
 			break;
 		}
 
+		{
+			const int run = RB_LowResRun( drawSurfs, i, numDrawSurfs, RB_STD_T_RenderShaderPasses );
+			if ( run > 0 ) {
+				i += run - 1;
+				continue;
+			}
+		}
 		RB_STD_T_RenderShaderPasses( drawSurfs[i] );
 	}
 

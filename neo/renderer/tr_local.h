@@ -110,6 +110,7 @@ SURFACES
 // drawSurf_t are always allocated and freed every frame, they are never cached
 static const int	DSF_VIEW_INSIDE_SHADOW	= 1;
 static const int	DSF_SOFT_PARTICLE		= 2; // #3878 - soft particles
+static const int	DSF_PARTICLE			= 4; // a particle system's quads, which may draw at half resolution
 
 typedef struct drawSurf_s {
 	const srfTriangles_t	*geo;
@@ -659,6 +660,9 @@ typedef struct {
 	// added to every index of the next draws: the vertex block the
 	// attribute pointers are at, when they start at its shared buffer
 	int			baseVertex;
+	// drawing into the half resolution particle target: blends also
+	// carry the destination's transmittance in alpha (RB_LowResRun)
+	bool		lowResBlend;
 } glstate_t;
 
 
@@ -1340,6 +1344,26 @@ bool RB_DepthInPlace( float recip[2] );
 void RB_BindDepthInPlace( void );
 void RB_UnbindDepthInPlace( void );
 
+/* Half resolution particles (r_particleHalfRes): a run of particle
+ * surfaces from first, drawn by draw at half resolution and composited,
+ * then again at full resolution where the scene's depth breaks inside a
+ * half resolution pixel.  Returns how many surfaces it drew, 0 when the
+ * view or the surface does not qualify and the caller draws it itself. */
+extern int r_particleHalfRes;
+bool RB_LowResEligible( const drawSurf_t *surf );
+int RB_LowResRun( drawSurf_t **drawSurfs, int first, int numDrawSurfs, void (*draw)( const drawSurf_t *surf ) );
+/* a 2x2's depth spread, as a fraction of its nearest, that marks an edge */
+#define RB_LOWRES_EDGE	0.05f
+/* 2 while the half resolution particles draw, else 1: what a window
+ * position's map onto a full resolution texture is scaled by */
+float RB_LowResScale( void );
+/* the run draws again at full resolution where it was marked: a soft
+ * particle's stencil test is what drops its fragments, so its program
+ * keeps every one, sparing a GPU that would shade first and test after */
+bool RB_LowResRedraw( void );
+/* drops the GL names after a context reset */
+void RB_LowResForget( void );
+
 /* Whether a soft particle fragment the fade takes to zero may be dropped:
  * an alpha blend fades alpha, so a zero fade leaves the destination whole
  * under ONE_MINUS_SRC_ALPHA or ONE; an add fades colour, which ONE leaves
@@ -1444,6 +1468,7 @@ typedef enum {
 	VPROG_NV5_SHADOW,              // NV5 tier: positions through to the shadow volume geometry programs
 	GPROG_NV5_SHADOW_CAPS,         // NV5 tier: triangle facing and shadow volume caps
 	GPROG_NV5_SHADOW_SIL,          // NV5 tier: shadow volume sil planes
+	FPROG_SOFT_PARTICLE_KEEP,      // FPROG_SOFT_PARTICLE dropping no fragment: the half resolution particles' redraw
 	//
 	PROG_USER
 } program_t;

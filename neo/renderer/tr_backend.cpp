@@ -359,7 +359,14 @@ void GL_State( int stateBits ) {
 			break;
 		}
 
-		qglBlendFunc( srcFactor, dstFactor );
+		if ( backEnd.glState.lowResBlend ) {
+			/* the half resolution particles keep what remains of the
+			   scene behind them in alpha: the colour's destination
+			   factor, applied to it alone */
+			glBlendFuncSeparate( srcFactor, dstFactor, GL_ZERO, dstFactor );
+		} else {
+			qglBlendFunc( srcFactor, dstFactor );
+		}
 	}
 
 	//
@@ -379,7 +386,7 @@ void GL_State( int stateBits ) {
 		r = ( stateBits & GLS_REDMASK ) ? 0 : 1;
 		g = ( stateBits & GLS_GREENMASK ) ? 0 : 1;
 		b = ( stateBits & GLS_BLUEMASK ) ? 0 : 1;
-		a = ( stateBits & GLS_ALPHAMASK ) ? 0 : 1;
+		a = ( ( stateBits & GLS_ALPHAMASK ) && !backEnd.glState.lowResBlend ) ? 0 : 1;
 		qglColorMask( r, g, b, a );
 	}
 

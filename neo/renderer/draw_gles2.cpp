@@ -56,6 +56,8 @@ shaderProgram_t stencilShadowShader;
 // the custom stage programs, by glslStageProgram_t; GLSL_STAGE_NONE unused
 shaderProgram_t stageShaders[GLSL_STAGE_COUNT];
 shaderProgram_t softParticleShader;
+// softParticleShader keeping every fragment: the half resolution particles' redraw
+shaderProgram_t softParticleKeepShader;
 static bool depthCopied;    // this view's depth is in _currentDepth
 
 
@@ -478,6 +480,21 @@ static bool RB_GLSL_InitShaders(void) {
   }
   else {
     RB_GLSL_GetUniformLocations(&softParticleShader);
+  }
+
+  // and without its drop
+  memset(&softParticleKeepShader, 0, sizeof(shaderProgram_t));
+  {
+    idStr keep(softParticleShaderFP);
+    keep.Replace("  if (fade * near_fade == 0.0 && u_vertexParms[0].w != 0.0)\n    discard;\n", "");
+    R_LoadGLSLShader(diffuseMapShaderVP, &softParticleKeepShader, GL_VERTEX_SHADER);
+    R_LoadGLSLShader(keep.c_str(), &softParticleKeepShader, GL_FRAGMENT_SHADER);
+  }
+  if ( !R_LinkGLSLShader(&softParticleKeepShader, "softParticleKeep") && !R_ValidateGLSLProgram(&softParticleKeepShader)) {
+    return false;
+  }
+  else {
+    RB_GLSL_GetUniformLocations(&softParticleKeepShader);
   }
 
   // Skybox cubemap shader
@@ -2053,7 +2070,7 @@ static void RB_GLSL_DrawSoftParticle(const drawSurf_t* surf, const shaderStage_t
   float sp[4];
   float hp[4];
 
-  GL_UseProgram(&softParticleShader);
+  GL_UseProgram(RB_LowResRedraw() && softParticleKeepShader.program ? &softParticleKeepShader : &softParticleShader);
   // the softening replaces the model depth hack; the weapon's stays
   RB_ComputeMVPHack(surf, false, mvp);
   GL_UniformMatrix4fv(offsetof(shaderProgram_t, modelViewProjectionMatrix), mvp);
@@ -2092,12 +2109,15 @@ static void RB_GLSL_DrawSoftParticle(const drawSurf_t* surf, const shaderStage_t
   // an alpha blend fades its alpha, an additive one its colour
   parms[1][0] = parms[1][1] = parms[1][2] = srcBlend == GLS_SRCBLEND_SRC_ALPHA ? 1.0f : 0.0f;
   parms[1][3] = srcBlend == GLS_SRCBLEND_SRC_ALPHA ? 0.0f : 1.0f;
-  qglUniform4fv(softParticleShader.vertexParms, 2, &parms[0][0]);
+  qglUniform4fv(backEnd.glState.currentProgram->vertexParms, 2, &parms[0][0]);
 
   if ( !RB_DepthInPlace( sp ) ) {
     sp[0] = 1.0f / globalImages->currentDepthImage->uploadWidth;
     sp[1] = 1.0f / globalImages->currentDepthImage->uploadHeight;
   }
+  // twice the scale while a run draws at half resolution
+  sp[0] *= RB_LowResScale();
+  sp[1] *= RB_LowResScale();
   sp[2] = sp[3] = 0.0f;
   GL_Uniform4fv(offsetof(shaderProgram_t, screenParms), sp);
 
@@ -2635,6 +2655,34 @@ RB_GLSL_DrawShaderPasses
 Draw non-light dependent passes
 =====================
 */
+static float rbAmbientMVP[16];	// the current space's, for RB_GLSL_DrawAmbientSurf
+
+static void RB_GLSL_DrawAmbientSurf(const drawSurf_t* surf) {
+  // Change the MVP matrix if needed
+  if ( surf->space != backEnd.currentSpace ) {
+    RB_ComputeMVP(surf, rbAmbientMVP);
+    // We can't set the uniform now, as we still don't know which shader to use
+  }
+
+  // Hack Depth Range if necessary
+  bool bNeedRestoreDepthRange = false;
+  if (surf->space->weaponDepthHack && surf->space->modelDepthHack == 0.0f) {
+    qglDepthRangef(0.0f, 0.5f);
+    bNeedRestoreDepthRange = true;
+  }
+
+  ////////////////////
+  // Do the real work
+  ////////////////////
+  RB_GLSL_T_RenderShaderPasses(surf, rbAmbientMVP);
+
+  if (bNeedRestoreDepthRange) {
+    qglDepthRangef(0.0f, 1.0f);
+  }
+
+  backEnd.currentSpace = surf->space;
+}
+
 int RB_GLSL_DrawShaderPasses(drawSurf_t** drawSurfs, int numDrawSurfs) {
 
   //////////////
@@ -2684,7 +2732,6 @@ int RB_GLSL_DrawShaderPasses(drawSurf_t** drawSurfs, int numDrawSurfs) {
   // For each surface loop
   /////////////////////////
 
-  float mvp[16];
   backEnd.currentSpace = NULL;
 
   int i;
@@ -2710,30 +2757,14 @@ int RB_GLSL_DrawShaderPasses(drawSurf_t** drawSurfs, int numDrawSurfs) {
       break;
     }
 
-
-    // Change the MVP matrix if needed
-    if ( drawSurfs[i]->space != backEnd.currentSpace ) {
-      RB_ComputeMVP(drawSurfs[i], mvp);
-      // We can't set the uniform now, as we still don't know which shader to use
+    {
+      const int run = RB_LowResRun(drawSurfs, i, numDrawSurfs, RB_GLSL_DrawAmbientSurf);
+      if ( run > 0 ) {
+        i += run - 1;
+        continue;
+      }
     }
-
-    // Hack Depth Range if necessary
-    bool bNeedRestoreDepthRange = false;
-    if (drawSurfs[i]->space->weaponDepthHack && drawSurfs[i]->space->modelDepthHack == 0.0f) {
-      qglDepthRangef(0.0f, 0.5f);
-      bNeedRestoreDepthRange = true;
-    }
-
-    ////////////////////
-    // Do the real work
-    ////////////////////
-    RB_GLSL_T_RenderShaderPasses(drawSurfs[i], mvp);
-
-    if (bNeedRestoreDepthRange) {
-      qglDepthRangef(0.0f, 1.0f);
-    }
-
-    backEnd.currentSpace = drawSurfs[i]->space;
+    RB_GLSL_DrawAmbientSurf(drawSurfs[i]);
   }
 
   /////////////////////////////////////////////

@@ -537,6 +537,30 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "disabled"
    },
    {
+      "doom_particle_resolution",
+      "Particle Resolution",
+      NULL,
+      "Draws particle systems (smoke, steam, fire, sparks) at half the "
+      "scene's width and height and blends them onto it in one pass, a "
+      "quarter of the fill cost where particles pile up. Where the "
+      "scene's depth breaks behind a particle - an edge in front of it - "
+      "those pixels are drawn again at full resolution, so particles stay "
+      "sharp against geometry. With Supersampling this shades particles "
+      "at the output resolution. 'Half' is close to 'Full' but not "
+      "identical: soft gradients can differ by a step or two. Needs a "
+      "scene target the core owns (Supersampling or 30-bit HDR on "
+      "OpenGL, any Vulkan setup); elsewhere particles draw at full "
+      "resolution. Live-switchable.",
+      NULL,
+      NULL,
+      {
+         { "full", "Full" },
+         { "half", "Half" },
+         { NULL, NULL },
+      },
+      "full"
+   },
+   {
       "doom_hdr_chromatic",
       "Chromatic Aberration",
       NULL,

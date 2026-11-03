@@ -2047,6 +2047,7 @@ static progDef_t	progs[MAX_GLPROGS] = {
 	{ GL_VERTEX_PROGRAM_ARB, VPROG_NV5_SHADOW, "nv5_shadow.vp" },
 	{ GL_GEOMETRY_PROGRAM_NV, GPROG_NV5_SHADOW_CAPS, "nv5_shadowCaps.gp" },
 	{ GL_GEOMETRY_PROGRAM_NV, GPROG_NV5_SHADOW_SIL, "nv5_shadowSil.gp" },
+	{ GL_FRAGMENT_PROGRAM_ARB, FPROG_SOFT_PARTICLE_KEEP, "soft_particle.vfp" },
 
 	// additional programs can be dynamically specified in materials
 };
@@ -2781,6 +2782,7 @@ void R_LoadARBProgram( int progIndex ) {
 	else
 #if D3_INTEGRATE_SOFTPART_SHADERS
 	if ( progs[progIndex].ident == VPROG_SOFT_PARTICLE || progs[progIndex].ident == FPROG_SOFT_PARTICLE
+	     || progs[progIndex].ident == FPROG_SOFT_PARTICLE_KEEP
 	     || progs[progIndex].ident == FPROG_FF_GAMMA || progs[progIndex].ident == FPROG_FF_GAMMA_CUBE
 	     || progs[progIndex].ident == FPROG_FF_GAMMA_GUI ) {
 		/*
@@ -2855,7 +2857,8 @@ void R_LoadARBProgram( int progIndex ) {
 		// these shaders are loaded directly from a string
 		common->Printf( "<internal> %s", progs[progIndex].name );
 		const char* srcstr = (progs[progIndex].ident == VPROG_SOFT_PARTICLE) ? softpartVShader
-			: (progs[progIndex].ident == FPROG_SOFT_PARTICLE) ? softpartFShader
+			: (progs[progIndex].ident == FPROG_SOFT_PARTICLE || progs[progIndex].ident == FPROG_SOFT_PARTICLE_KEEP)
+			? softpartFShader
 			: (progs[progIndex].ident == FPROG_FF_GAMMA) ? ffGammaFShader
 			: (progs[progIndex].ident == FPROG_FF_GAMMA_GUI) ? ffGammaGuiFShader
 			: ffGammaCubeFShader;
@@ -2886,6 +2889,14 @@ void R_LoadARBProgram( int progIndex ) {
 		buffer = (char *)_alloca( strlen( fileBuffer ) + 1 );
 		strcpy( buffer, fileBuffer );
 		fileSystem->FreeFile( fileBuffer );
+	}
+
+	if ( progs[progIndex].ident == FPROG_SOFT_PARTICLE_KEEP ) {
+		// the soft particle program without its drop: the KIL becomes a comment
+		char *kil = strstr( buffer, "KIL      -tmp.x;" );
+		if ( kil ) {
+			kil[0] = '#';
+		}
 	}
 
 	if ( !glConfig.isInitialized ) {

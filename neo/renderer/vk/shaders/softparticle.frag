@@ -6,6 +6,11 @@
 // vertexParms[0] the radius, 1/fade range and 1/radius; vertexParms[1]
 // the channels the fade applies to; screenParms.xy 1/depth image size
 
+// DROP 0: every fragment kept, for a draw a stencil test already prunes
+#ifndef DROP
+#define DROP 1
+#endif
+
 layout(location = 0) in vec2 var_TexCoord;
 layout(location = 1) in vec4 var_Color;
 layout(location = 0) out vec4 fragColor;
@@ -23,8 +28,10 @@ void main()
     float near_fade = clamp(particle_depth * -u_draw.vertexParms[0].z, 0.0, 1.0);
     // a fragment faded to nothing is dropped before its fetch and its
     // blend where vertexParms[0].w says that leaves the colour unchanged
+#if DROP
     if (fade * near_fade == 0.0 && u_draw.vertexParms[0].w != 0.0)
         discard;
+#endif
     vec4 channels = clamp(vec4(fade * near_fade) + u_draw.vertexParms[1], 0.0, 1.0);
     vec4 c = texture(u_map0, var_TexCoord) * channels * u_draw.glColor * var_Color;
     fragColor = vec4(c.rgb * u_draw.hdrParms.x, c.a);

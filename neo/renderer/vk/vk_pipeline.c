@@ -46,6 +46,10 @@
 #include "spirv/hdr_blur_frag.h"
 #include "spirv/hdr_composite_frag.h"
 #include "spirv/hdr_composite_inplace_frag.h"
+#include "spirv/lowres_down_frag.h"
+#include "spirv/lowres_mark_frag.h"
+#include "spirv/lowres_composite_frag.h"
+#include "spirv/softparticle_keep_frag.h"
 
 /* the engine's state bits (tr_local.h) */
 #define GLS_SRCBLEND_BITS      0x0000000f
@@ -96,7 +100,11 @@ static const vkb_program_source_t sources[VKB_PROGRAM_COUNT] = {
    { SPV(blit_vert), SPV(hdr_up_frag) },
    { SPV(blit_vert), SPV(hdr_blur_frag) },
    { SPV(blit_vert), SPV(hdr_composite_frag) },
-   { SPV(blit_vert), SPV(hdr_composite_inplace_frag) }
+   { SPV(blit_vert), SPV(hdr_composite_inplace_frag) },
+   { SPV(blit_vert), SPV(lowres_down_frag) },
+   { SPV(blit_vert), SPV(lowres_mark_frag) },
+   { SPV(blit_vert), SPV(lowres_composite_frag) },
+   { SPV(diffuse_vert), SPV(softparticle_keep_frag) }
 };
 
 static VkShaderModule vkb_module(const unsigned int *code, size_t bytes)
@@ -604,6 +612,15 @@ static VkPipeline vkb_pipeline_make(const vkb_pipeline_key_t *key)
             front.depthFailOp = VK_STENCIL_OP_DECREMENT_AND_CLAMP;
             back.depthFailOp  = VK_STENCIL_OP_INCREMENT_AND_CLAMP;
             break;
+         case VKB_STENCIL_MARK:
+            front.passOp = back.passOp = VK_STENCIL_OP_REPLACE;
+            break;
+         case VKB_STENCIL_MARKED:
+            front.compareOp = back.compareOp = VK_COMPARE_OP_EQUAL;
+            break;
+         case VKB_STENCIL_UNMARKED:
+            front.compareOp = back.compareOp = VK_COMPARE_OP_NOT_EQUAL;
+            break;
          default:
             break;
       }
@@ -633,6 +650,13 @@ static VkPipeline vkb_pipeline_make(const vkb_pipeline_key_t *key)
       | ((stateBits & GLS_GREENMASK) ? 0 : VK_COLOR_COMPONENT_G_BIT)
       | ((stateBits & GLS_BLUEMASK) ? 0 : VK_COLOR_COMPONENT_B_BIT)
       | ((stateBits & GLS_ALPHAMASK) ? 0 : VK_COLOR_COMPONENT_A_BIT);
+   if (key->transmit)
+   {
+      /* alpha keeps what is left of the destination */
+      blend.blendEnable         = VK_TRUE;
+      blend.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+      blend.colorWriteMask     |= VK_COLOR_COMPONENT_A_BIT;
+   }
    memset(&cb, 0, sizeof(cb));
    cb.sType           = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
    cb.attachmentCount = 1;

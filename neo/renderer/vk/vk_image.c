@@ -4,8 +4,9 @@
  * A texture is created in device memory with optimal tiling; its data
  * takes the one copy through a staging buffer that tiling makes
  * unavoidable, recorded ahead of the next frame's drawing.  Image ids 1
- * and 2 wrap the scene target's colour and depth for the composite and
- * the stages that read the scene.
+ * and 2 wrap the scene target's colour and the open target's depth for
+ * the composite and the stages that read the scene; 3 the scene's depth
+ * while a side target draws.
  */
 #include <stdlib.h>
 #include <string.h>
@@ -14,7 +15,8 @@
 
 #define VKB_IMAGE_SCENE 1
 #define VKB_IMAGE_TARGET_DEPTH 2
-#define VKB_IMAGE_FIRST 3
+#define VKB_IMAGE_SCENE_DEPTH 3
+#define VKB_IMAGE_FIRST 4
 
 VkFormat vkb_vk_format(enum vkb_format format)
 {
@@ -34,6 +36,7 @@ VkFormat vkb_vk_format(enum vkb_format format)
       case VKB_FORMAT_RGBA32F:    return VK_FORMAT_R32G32B32A32_SFLOAT;
       case VKB_FORMAT_RGBA16:     return VK_FORMAT_R16G16B16A16_UNORM;
       case VKB_FORMAT_DEPTH:      return vkb_depth_stencil_format();
+      case VKB_FORMAT_RG32F:      return VK_FORMAT_R32G32_SFLOAT;
       default:                    return VK_FORMAT_UNDEFINED;
    }
 }
@@ -103,6 +106,7 @@ int vkb_images_init(void)
    memset(vkb.images, 0, sizeof(vkb.images));
    vkb.images[VKB_IMAGE_SCENE].used       = 1;
    vkb.images[VKB_IMAGE_TARGET_DEPTH].used = 1;
+   vkb.images[VKB_IMAGE_SCENE_DEPTH].used = 1;
    vkb.uploadCount = 0;
    depthFormat = 0;
    return 1;
@@ -166,11 +170,24 @@ const vkb_image_t *vkb_image_get(unsigned image)
       im->levels  = 1;
       im->sampler = vkb_sampler(VKB_FILTER_NEAREST, VKB_WRAP_CLAMP, 0, 0);
    }
+   else if (image == VKB_IMAGE_SCENE_DEPTH)
+   {
+      /* the scene's depth, read-only while a side target draws */
+      vkb_image_t *im = &vkb.images[image];
+      const vkb_target_t *t = vkb.sceneTarget ? vkb.sceneTarget : &vkb.scene;
+      im->image   = t->depth;
+      im->view    = t->depthView;
+      im->width   = t->width;
+      im->height  = t->height;
+      im->levels  = 1;
+      im->sampler = vkb_sampler(VKB_FILTER_NEAREST, VKB_WRAP_CLAMP, 0, 0);
+   }
    return &vkb.images[image];
 }
 
 unsigned vkb_image_scene_ref(void) { return VKB_IMAGE_SCENE; }
 unsigned vkb_image_target_depth_ref(void) { return VKB_IMAGE_TARGET_DEPTH; }
+unsigned vkb_image_scene_depth_ref(void) { return VKB_IMAGE_SCENE_DEPTH; }
 
 static unsigned vkb_image_slot(void)
 {
@@ -555,6 +572,55 @@ int vkb_image_post_framebuffer(unsigned image, VkFramebuffer *framebuffer, vkb_i
    }
    *framebuffer = im->framebuffer;
    *out = im;
+   return 1;
+}
+
+/* A side target's framebuffer: the colour image's, with the one depth
+ * image it is drawn with */
+int vkb_image_side_framebuffer(unsigned color, unsigned depth, VkFramebuffer *framebuffer,
+      vkb_image_t **colorOut, vkb_image_t **depthOut)
+{
+   vkb_image_t *ci, *di;
+   VkFramebufferCreateInfo fci;
+   VkImageView views[2];
+   VkRenderPass pass;
+   if (color < VKB_IMAGE_FIRST || color >= VKB_MAX_IMAGES || !vkb.images[color].used || !vkb.images[color].target
+         || depth < VKB_IMAGE_FIRST || depth >= VKB_MAX_IMAGES || !vkb.images[depth].used
+         || vkb.images[depth].format != VKB_FORMAT_DEPTH || vkb.images[color].format == VKB_FORMAT_DEPTH)
+      return 0;
+   ci = &vkb.images[color];
+   di = &vkb.images[depth];
+   if (ci->width != di->width || ci->height != di->height)
+      return 0;
+   /* one depth image per colour image: a framebuffer in use is not
+    * remade under the frames in flight */
+   if (ci->framebuffer && ci->sideDepth != depth)
+      return 0;
+   if (!ci->framebuffer)
+   {
+      pass = vkb_render_pass((enum vkb_format)ci->format, 0);
+      if (!pass)
+         return 0;
+      views[0] = ci->view;
+      views[1] = di->view;
+      memset(&fci, 0, sizeof(fci));
+      fci.sType           = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+      fci.renderPass      = pass;
+      fci.attachmentCount = 2;
+      fci.pAttachments    = views;
+      fci.width           = ci->width;
+      fci.height          = ci->height;
+      fci.layers          = 1;
+      if (vk.vkCreateFramebuffer(vkb.device, &fci, NULL, &ci->framebuffer) != VK_SUCCESS)
+      {
+         ci->framebuffer = VK_NULL_HANDLE;
+         return 0;
+      }
+      ci->sideDepth = depth;
+   }
+   *framebuffer = ci->framebuffer;
+   *colorOut = ci;
+   *depthOut = di;
    return 1;
 }
 

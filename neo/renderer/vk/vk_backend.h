@@ -63,6 +63,7 @@ enum vkb_format
    VKB_FORMAT_RGBA32F,
    VKB_FORMAT_RGBA16,        /* 16-bit normalised: the tone curves' tables */
    VKB_FORMAT_DEPTH,         /* the scene's depth-stencil format */
+   VKB_FORMAT_RG32F,         /* two floats: the half resolution particles' depth range */
    VKB_FORMAT_COUNT
 };
 
@@ -104,6 +105,9 @@ int vkb_depth_read_ready(void);
 int vkb_depth_read_begin(void);
 unsigned vkb_image_target_depth_ref(void);
 void vkb_target_extent(unsigned *width, unsigned *height);
+/* The scene's depth while a side target draws (vkb_side_begin): sampled
+ * in the read-only layout the side passes keep it in. */
+unsigned vkb_image_scene_depth_ref(void);
 void vkb_image_destroy(unsigned image);
 void vkb_image_filter(unsigned image, enum vkb_filter filter, enum vkb_wrap wrap, int anisotropy);
 
@@ -213,6 +217,10 @@ enum vkb_program
    VKB_PROGRAM_HDR_BLUR,      /* the two-band blur */
    VKB_PROGRAM_HDR_COMPOSITE, /* the display transform: its block is vkb_hdr_block_t */
    VKB_PROGRAM_HDR_COMPOSITE_INPLACE, /* the same on the frame image itself, through the input attachment */
+   VKB_PROGRAM_LOWRES_DOWN,   /* half resolution particles: a 2x2's farthest depth and its distance range */
+   VKB_PROGRAM_LOWRES_MARK,   /* where the range breaks, into the stencil */
+   VKB_PROGRAM_LOWRES_COMPOSITE, /* colour plus the scene times alpha */
+   VKB_PROGRAM_SOFT_PARTICLE_KEEP, /* VKB_PROGRAM_SOFT_PARTICLE dropping no fragment */
    VKB_PROGRAM_COUNT
 };
 
@@ -238,6 +246,9 @@ enum vkb_stencil
    VKB_STENCIL_TEST,          /* keep; passes where the stencil is at most the reference */
    VKB_STENCIL_SHADOW_PASS,   /* depth-pass volumes: GL's back faces incr, front decr on pass */
    VKB_STENCIL_SHADOW_FAIL,   /* depth-fail volumes: GL's back faces decr, front incr on depth fail */
+   VKB_STENCIL_MARK,          /* the reference written wherever the draw passes */
+   VKB_STENCIL_MARKED,        /* passes where the stencil is the reference */
+   VKB_STENCIL_UNMARKED,      /* passes where it is not */
    VKB_STENCIL_COUNT
 };
 
@@ -305,6 +316,9 @@ typedef struct vkb_draw
    unsigned char lineMode;
    unsigned char mirror;        /* the view is mirrored: the shadow ops swap faces */
    unsigned char shadowCaps;    /* with shadowVolume: the caps as well as the sil planes */
+   unsigned char transmit;      /* alpha keeps what is left of the destination: the colour's
+                                   destination factor applied to it alone, written whatever
+                                   the alpha mask (the half resolution particles' target) */
    unsigned shadowVolume;       /* a volume vkb_shadow_queue built: its indexes and counts replace the draw's */
 } vkb_draw_t;
 
@@ -355,6 +369,16 @@ void vkb_copy_depth(unsigned image, int x, int y, int w, int h);
  * corner) alone, into an image that holds the rest; all of it into one
  * that holds nothing yet */
 void vkb_copy_color_part(unsigned image, int x, int y, int w, int h, int px, int py, int pw, int ph);
+
+/* A side target: a colour image and a depth image of one size, both from
+ * vkb_image_create_target (the depth VKB_FORMAT_DEPTH), drawn with the
+ * scene's pipelines.  The scene's pass closes, its depth goes read-only
+ * for vkb_image_scene_depth_ref, and a pass on these opens with the
+ * viewport and scissor on all of them; another begin moves to another
+ * pair.  End reopens the scene's pass, its depth writable again, with the
+ * viewport and scissor on all of it. */
+int  vkb_side_begin(unsigned color, unsigned depth);
+void vkb_side_end(void);
 
 /* the composite: the scene image into the frame image with the given
  * program, its parms, and a LUT image when the program takes one */

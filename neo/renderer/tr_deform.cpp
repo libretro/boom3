@@ -1197,6 +1197,7 @@ static void R_ParticleDeform( drawSurf_t *surf, bool useArea ) {
 				if ( tri->ambientCache ) {
 					// add the drawsurf
 					R_AddDrawSurf( tri, surf->space, renderEntity, stage->material, surf->scissorRect );
+					tr.viewDef->drawSurfs[tr.viewDef->numDrawSurfs - 1]->dsFlags |= DSF_PARTICLE;
 				}
 			}
 		}

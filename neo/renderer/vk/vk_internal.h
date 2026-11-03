@@ -134,6 +134,7 @@ extern vkb_procs_t vk;
 #define VKB_BLOCK_RANGE 1024          /* the largest block a program reads */
 #define VKB_TARGET_POST 0x40          /* a pipeline key's target: a colour-only pass */
 #define VKB_TARGET_INPLACE 0x80       /* a pipeline key's target: the frame image read and written in place */
+#define VKB_TARGET_SIDE 0x20          /* targetKind: a side target (vkb_side_begin), drawn with the scene's passes */
 #define VKB_BINDING_INPUT (2 + VKB_MAX_TEXTURE_UNITS)   /* the input attachment's descriptor binding */
 #define VKB_MAX_TEXTURE_UNITS 6
 #define VKB_PIPELINE_SLOTS 1024
@@ -162,7 +163,8 @@ typedef struct vkb_image
    unsigned char target;       /* a render target: colour attachment, transfer dst */
    unsigned char layoutReady;  /* transitioned to shader read once */
    unsigned char used;
-   VkFramebuffer framebuffer;  /* a target's, for the post passes */
+   VkFramebuffer framebuffer;  /* a target's, for the post passes or as a side target */
+   unsigned sideDepth;         /* the depth image framebuffer has as a side target */
    unsigned char inTransfer;   /* during a flush: already moved to transfer */
    unsigned char uploadPending; /* an upload queued for the next flush */
 } vkb_image_t;
@@ -249,6 +251,7 @@ typedef struct vkb_pipeline_key
    unsigned char polygonOffset;
    unsigned char mirror;
    unsigned char depthBounds;  /* the depth bounds test, its bounds dynamic */
+   unsigned char transmit;     /* vkb_draw_t's */
 } vkb_pipeline_key_t;
 
 typedef struct vkb_pipeline_slot
@@ -295,6 +298,10 @@ typedef struct vkb_state
    VkRenderPass inplacePass[VKB_FORMAT_COUNT];     /* the frame image as input and colour attachment at once */
    VkRenderPass readDepthPass[VKB_FORMAT_COUNT];   /* renderPass with the depth-stencil read-only, sampled as it is tested */
    vkb_target_t postTarget;                     /* the post pass's target image, as a target */
+   vkb_target_t sideTarget;                     /* the side pass's images, as a target */
+   vkb_target_t *sideScene;                     /* the target the side passes left */
+   unsigned sideColor, sideDepth;               /* their image ids */
+   unsigned char sideSceneKind;
    unsigned postImage;
    VkSampler samplers[VKB_FILTER_COUNT][4][2];   /* filter, wrap, anisotropy */
 
@@ -413,6 +420,8 @@ VkRenderPass vkb_post_render_pass(enum vkb_format colorFormat);
 VkRenderPass vkb_inplace_render_pass(enum vkb_format colorFormat);
 VkRenderPass vkb_read_depth_render_pass(enum vkb_format colorFormat);
 int  vkb_image_post_framebuffer(unsigned image, VkFramebuffer *framebuffer, vkb_image_t **im);
+int  vkb_image_side_framebuffer(unsigned color, unsigned depth, VkFramebuffer *framebuffer,
+      vkb_image_t **colorOut, vkb_image_t **depthOut);
 VkFormat vkb_depth_stencil_format(void);
 int  vkb_images_init(void);
 void vkb_images_shutdown(void);

@@ -62,6 +62,8 @@ shaderProgram_t stencilShadowShader;
 // the custom stage programs, by glslStageProgram_t; GLSL_STAGE_NONE unused
 shaderProgram_t stageShaders[GLSL_STAGE_COUNT];
 shaderProgram_t softParticleShader;
+// softParticleShader keeping every fragment: the half resolution particles' redraw
+shaderProgram_t softParticleKeepShader;
 // _currentDepth's framebuffer, the view's depth blitted into it after the depth fill
 static GLuint		depthCopyFbo;
 static bool		depthCopied;		// this view's depth is in _currentDepth
@@ -1199,6 +1201,19 @@ static bool RB_GLSL_InitShaders(void) {
 	} else {
 		RB_GLSL_GetUniformLocations(&softParticleShader);
 	}
+	// and without its drop
+	R_FreeGLSLShader(&softParticleKeepShader);
+	{
+		idStr keep(softParticleShaderFP);
+		keep.Replace("  if (fade * near_fade == 0.0 && u_vertexParms[0].w != 0.0)\n    discard;\n", "");
+		R_LoadGLSLShader(diffuseMapShaderVP, &softParticleKeepShader, GL_VERTEX_SHADER);
+		R_LoadGLSLShader(keep.c_str(), &softParticleKeepShader, GL_FRAGMENT_SHADER);
+	}
+	if ( !R_LinkGLSLShader(&softParticleKeepShader, "softParticleKeep") && !R_ValidateGLSLProgram(&softParticleKeepShader)) {
+		return false;
+	} else {
+		RB_GLSL_GetUniformLocations(&softParticleKeepShader);
+	}
 
 	// the custom stage programs
 	{
@@ -1254,6 +1269,7 @@ void R_ReloadGLSLPrograms_f(const idCmdArgs& args) {
 		}
 		memset(stageShaders, 0, sizeof(stageShaders));
 		memset(&softParticleShader, 0, sizeof(softParticleShader));
+		memset(&softParticleKeepShader, 0, sizeof(softParticleKeepShader));
 		depthCopyFbo = 0;
 		depthBlitRefused = false;
 		viewMatricesBuffer = 0;
@@ -3153,7 +3169,7 @@ static void RB_GLSL_DrawSoftParticle(const drawSurf_t* surf, const shaderStage_t
 	float sp[4];
 	float hp[4];
 
-	GL_UseProgram(&softParticleShader);
+	GL_UseProgram(RB_LowResRedraw() && softParticleKeepShader.program ? &softParticleKeepShader : &softParticleShader);
 	// the softening replaces the model depth hack; the weapon's stays
 	{
 		const float p14 = backEnd.viewDef->projectionMatrix[14];
@@ -3196,12 +3212,15 @@ static void RB_GLSL_DrawSoftParticle(const drawSurf_t* surf, const shaderStage_t
 	// an alpha blend fades its alpha, an additive one its colour
 	parms[1][0] = parms[1][1] = parms[1][2] = srcBlend == GLS_SRCBLEND_SRC_ALPHA ? 1.0f : 0.0f;
 	parms[1][3] = srcBlend == GLS_SRCBLEND_SRC_ALPHA ? 0.0f : 1.0f;
-	qglUniform4fv(softParticleShader.vertexParms, 2, &parms[0][0]);
+	qglUniform4fv(backEnd.glState.currentProgram->vertexParms, 2, &parms[0][0]);
 
 	if ( !RB_DepthInPlace( sp ) ) {
 		sp[0] = 1.0f / globalImages->currentDepthImage->uploadWidth;
 		sp[1] = 1.0f / globalImages->currentDepthImage->uploadHeight;
 	}
+	// twice the scale while a run draws at half resolution
+	sp[0] *= RB_LowResScale();
+	sp[1] *= RB_LowResScale();
 	sp[2] = sp[3] = 0.0f;
 	GL_Uniform4fv(offsetof(shaderProgram_t, screenParms), sp);
 
@@ -3735,6 +3754,26 @@ RB_GLSL_DrawShaderPasses
 Draw non-light dependent passes
 =====================
 */
+static void RB_GLSL_DrawAmbientSurf(const drawSurf_t* surf) {
+	// Hack Depth Range if necessary
+	bool bNeedRestoreDepthRange = false;
+	if (surf->space->weaponDepthHack && surf->space->modelDepthHack == 0.0f) {
+		qglDepthRangef(0.0f, 0.5f);
+		bNeedRestoreDepthRange = true;
+	}
+
+	////////////////////
+	// Do the real work
+	////////////////////
+	RB_GLSL_T_RenderShaderPasses(surf);
+
+	if (bNeedRestoreDepthRange) {
+		qglDepthRangef(0.0f, 1.0f);
+	}
+
+	backEnd.currentSpace = surf->space;
+}
+
 int RB_GLSL_DrawShaderPasses(drawSurf_t** drawSurfs, int numDrawSurfs) {
 
 	//////////////
@@ -3810,24 +3849,14 @@ int RB_GLSL_DrawShaderPasses(drawSurf_t** drawSurfs, int numDrawSurfs) {
 			break;
 		}
 
-
-		// Hack Depth Range if necessary
-		bool bNeedRestoreDepthRange = false;
-		if (drawSurfs[i]->space->weaponDepthHack && drawSurfs[i]->space->modelDepthHack == 0.0f) {
-			qglDepthRangef(0.0f, 0.5f);
-			bNeedRestoreDepthRange = true;
+		{
+			const int run = RB_LowResRun(drawSurfs, i, numDrawSurfs, RB_GLSL_DrawAmbientSurf);
+			if ( run > 0 ) {
+				i += run - 1;
+				continue;
+			}
 		}
-
-		////////////////////
-		// Do the real work
-		////////////////////
-		RB_GLSL_T_RenderShaderPasses(drawSurfs[i]);
-
-		if (bNeedRestoreDepthRange) {
-			qglDepthRangef(0.0f, 1.0f);
-		}
-
-		backEnd.currentSpace = drawSurfs[i]->space;
+		RB_GLSL_DrawAmbientSurf(drawSurfs[i]);
 	}
 
 	/////////////////////////////////////////////

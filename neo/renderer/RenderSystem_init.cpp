@@ -276,6 +276,8 @@ idCVar r_vidRestartAlwaysFull( "r_vidRestartAlwaysFull", 0, CVAR_RENDERER | CVAR
 idCVar r_enableDepthCapture( "r_enableDepthCapture", "-1", CVAR_RENDERER | CVAR_INTEGER,
 		"enable capturing depth buffer to texture. -1: enable automatically (if soft particles are enabled), 0: disable, 1: enable", -1, 1 ); // #3877
 idCVar r_useSoftParticles( "r_useSoftParticles", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "Soften particle transitions when player walks through them or they cross solid geometry. Needs r_enableDepthCapture. Can slow down rendering!" ); // #3878
+// the core option: particle systems drawn at half resolution (RB_LowResRun)
+int r_particleHalfRes = 0;
 
 idCVar r_glDebugContext( "r_glDebugContext", "0", CVAR_RENDERER | CVAR_BOOL, "Enable OpenGL Debug context - requires vid_restart, needs SDL2" );
 
@@ -1209,6 +1211,7 @@ void R_InitOpenGL( void ) {
 
 	// recheck all the extensions (FIXME: this might be dangerous)
 	R_CheckPortableExtensions();
+	RB_LowResForget();
 
 #ifdef BOOM3_GLSL_RENDERERS
 	if ( R_GLSLRenderer() ) {
@@ -1287,6 +1290,7 @@ void R_ReinitOpenGL( void ) {
     glConfig.isInitialized = true;
 
     R_CheckPortableExtensions();
+    RB_LowResForget();
 #ifdef BOOM3_GLSL_RENDERERS
 	if ( R_GLSLRenderer() ) {
 		R_ReloadGLSLPrograms_f( idCmdArgs() );

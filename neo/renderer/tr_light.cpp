@@ -1600,6 +1600,9 @@ static void R_AddAmbientDrawsurfs( viewEntity_t *vEntity ) {
 
 			// add the surface for drawing
 			R_AddDrawSurf( tri, vEntity, &vEntity->entityDef->parms, shader, vEntity->scissorRect, particle_radius );
+			if ( r_particleHalfRes && dynamic_cast<const idRenderModelPrt *>( def->parms.hModel ) ) {
+				tr.viewDef->drawSurfs[tr.viewDef->numDrawSurfs - 1]->dsFlags |= DSF_PARTICLE;
+			}
 
 			// ambientViewCount is used to allow light interactions to be rejected
 			// if the ambient surface isn't visible at all

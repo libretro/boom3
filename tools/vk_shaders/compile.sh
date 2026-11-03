@@ -40,6 +40,7 @@ fog_vert fog.vert -DBLEND=0
 blendlight_vert fog.vert -DBLEND=1
 fog_frag fog.frag
 softparticle_frag softparticle.frag
+softparticle_keep_frag softparticle.frag -DDROP=0
 heathaze_vert heathaze.vert
 heathaze_frag heathaze.frag -DMASK=0
 heathaze_mask_frag heathaze.frag -DMASK=1
@@ -55,6 +56,9 @@ hdr_up_frag hdr_up.frag
 hdr_blur_frag hdr_blur.frag
 hdr_composite_frag hdr_composite.frag -DINPLACE=0
 hdr_composite_inplace_frag hdr_composite.frag -DINPLACE=1
+lowres_down_frag lowres_down.frag
+lowres_mark_frag lowres_mark.frag
+lowres_composite_frag lowres_composite.frag
 shadow_caps_comp shadow_caps.comp -DDENORM=0
 shadow_caps_ftz_comp shadow_caps.comp -DDENORM=1
 shadow_caps_preserve_comp shadow_caps.comp -DDENORM=2

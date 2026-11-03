@@ -2708,6 +2708,13 @@ static void update_variables(bool startup)
 		}
 	}
 
+	var.key = "doom_particle_resolution";
+	var.value = NULL;
+	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) {
+		extern int r_particleHalfRes;
+		r_particleHalfRes = strcmp(var.value, "half") == 0 ? 1 : 0;
+	}
+
 	var.key = "doom_hdr_particle_lights";
 	var.value = NULL;
 	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) {

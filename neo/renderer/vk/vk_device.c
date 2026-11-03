@@ -665,6 +665,12 @@ void vkb_render_pass_end(void)
    vkb.target->layoutReady = 1;
    if (vkb.targetKind == VKB_TARGET_POST && vkb.postImage)
       vkb.images[vkb.postImage].layoutReady = 1;
+   if (vkb.targetKind == VKB_TARGET_SIDE)
+   {
+      /* the images remember their layouts for the next side pass */
+      vkb.images[vkb.sideColor].layoutReady = 1;
+      vkb.images[vkb.sideDepth].layoutReady = vkb.target->depthReady;
+   }
    /* every other pass and copy takes the depth as an attachment */
    if (vkb.depthReadOnly)
    {
@@ -728,6 +734,84 @@ void vkb_depth_writable(void)
       return;
    vkb_leave_render_pass();
    vkb_enter_render_pass();
+}
+
+/* --- side targets ----------------------------------------------------------- */
+
+static void vkb_scene_depth_barrier(int readOnly)
+{
+   const VkPipelineStageFlags tests = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT
+      | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+   if (readOnly)
+      vkb_image_barrier(vkb.cmd, vkb.sideScene->depth, VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT,
+            VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+            VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+            VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_SHADER_READ_BIT,
+            tests, tests | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+   else
+      vkb_image_barrier(vkb.cmd, vkb.sideScene->depth, VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT,
+            VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+            VK_ACCESS_SHADER_READ_BIT,
+            VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, tests);
+}
+
+int vkb_side_begin(unsigned color, unsigned depth)
+{
+   VkFramebuffer fb;
+   vkb_image_t *ci, *di;
+   const int first = vkb.targetKind != VKB_TARGET_SIDE;
+   if (!vkb.frameOpen || !vkb.target || !vkb.inRenderPass)
+      return 0;
+   if (first && vkb.targetKind != VKB_TARGET_FRAME && vkb.targetKind != VKB_TARGET_SCENE)
+      return 0;
+   vkt_lock();
+   if (!vkb_image_side_framebuffer(color, depth, &fb, &ci, &di))
+   {
+      vkt_unlock();
+      return 0;
+   }
+   vkt_unlock();
+   /* the open pass ends on what it drew, the previous side pair included */
+   vkb_render_pass_end();
+   vkt_lock();
+   memset(&vkb.sideTarget, 0, sizeof(vkb.sideTarget));
+   vkb.sideTarget.color       = ci->image;
+   vkb.sideTarget.colorView   = ci->view;
+   vkb.sideTarget.depth       = di->image;
+   vkb.sideTarget.depthView   = di->view;
+   vkb.sideTarget.framebuffer = fb;
+   vkb.sideTarget.renderPass  = vkb_render_pass((enum vkb_format)ci->format, 0);
+   vkb.sideTarget.width       = ci->width;
+   vkb.sideTarget.height      = ci->height;
+   vkb.sideTarget.format      = ci->format;
+   vkb.sideTarget.layoutReady = ci->layoutReady;
+   vkb.sideTarget.depthReady  = di->layoutReady;
+   vkt_unlock();
+   if (first)
+   {
+      /* sampled while the side passes draw */
+      vkb.sideScene     = vkb.target;
+      vkb.sideSceneKind = vkb.targetKind;
+      vkb_scene_depth_barrier(1);
+   }
+   vkb.sideColor  = color;
+   vkb.sideDepth  = depth;
+   vkb.target     = &vkb.sideTarget;
+   vkb.targetKind = VKB_TARGET_SIDE;
+   vkb_render_pass_begin();
+   return 1;
+}
+
+void vkb_side_end(void)
+{
+   if (vkb.targetKind != VKB_TARGET_SIDE)
+      return;
+   vkb_render_pass_end();
+   vkb_scene_depth_barrier(0);
+   vkb.target     = vkb.sideScene;
+   vkb.targetKind = vkb.sideSceneKind;
+   vkb_render_pass_begin();
 }
 
 /* --- the post chain --------------------------------------------------------- */

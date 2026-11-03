@@ -139,6 +139,7 @@ static VkDescriptorSet vkb_descriptor_set(const vkb_draw_t *draw)
       images[i].sampler     = im->sampler;
       images[i].imageView   = im->view;
       images[i].imageLayout = im == vkb_image_get(vkb_image_target_depth_ref())
+            || im == vkb_image_get(vkb_image_scene_depth_ref())
          ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
       writes[2 + i].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
       writes[2 + i].dstSet          = set;
@@ -193,6 +194,7 @@ static void vkb_bind(const vkb_draw_t *draw, VkDescriptorSet set, unsigned block
    key.polygonOffset = (draw->depthBias[0] != 0.0f || draw->depthBias[1] != 0.0f) ? 1 : 0;
    key.mirror        = draw->mirror;
    key.depthBounds   = draw->depthMin > 0.0f && vkb.features.depthBounds ? 1 : 0;
+   key.transmit      = draw->transmit;
    pipeline = vkb_pipeline(&key);
    if (!pipeline)
       return;
@@ -220,7 +222,7 @@ static void vkb_bind(const vkb_draw_t *draw, VkDescriptorSet set, unsigned block
 /* The pass the draw needs: one sampling the target's depth runs in the
  * read-only-depth pass, which an upload mid-frame may have closed; one
  * writing depth or stencil cannot run there (testing the stencil with
- * every op KEEP can). */
+ * every op KEEP can: VKB_STENCIL_TEST, MARKED and UNMARKED). */
 static void vkb_draw_depth_access(const vkb_draw_t *draw)
 {
    const unsigned targetDepth = vkb_image_target_depth_ref();
@@ -232,7 +234,8 @@ static void vkb_draw_depth_access(const vkb_draw_t *draw)
          return;
       }
    if (vkb.depthReadOnly
-         && (!(draw->stateBits & VKB_GLS_DEPTHMASK) || draw->stencil > VKB_STENCIL_TEST))
+         && (!(draw->stateBits & VKB_GLS_DEPTHMASK) || draw->stencil == VKB_STENCIL_SHADOW_PASS
+            || draw->stencil == VKB_STENCIL_SHADOW_FAIL || draw->stencil == VKB_STENCIL_MARK))
       vkb_depth_writable();
 }
 
