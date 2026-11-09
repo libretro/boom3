@@ -1,10 +1,11 @@
-/* Regression test for the sinc resampler stream state boom3 relies on:
- * the handle pool's reset must give output identical to a fresh handle,
- * and a state saved mid-stream and restored into another, already used
- * handle must continue the stream bit-exactly. Covers the fixed ratios
- * snd_decoder runs and ratios driven below the design ratio, where the
- * cascaded decimation stages engage and crossfade in, so their rings and
- * counters are live stream state.
+/* Regression test for the sinc resampler stream state boom3 relies on,
+ * through the resampler interface's reset and state: the handle pool's
+ * reset must give output identical to a fresh handle, and a state saved
+ * mid-stream and loaded into another, already used handle must continue
+ * the stream bit-exactly. Covers the fixed ratios snd_decoder runs and
+ * ratios driven below the design ratio, where the cascaded decimation
+ * stages engage and crossfade in, so their rings and counters are live
+ * stream state.
  *
  * build: make -C tools/sinc_state
  * run:   make -C tools/sinc_state check */
@@ -16,9 +17,6 @@
 #include <audio/audio_resampler.h>
 
 extern retro_resampler_t sinc_resampler;
-size_t rarch_sinc_resampler_state_size(void *re_);
-void rarch_sinc_resampler_get_state(void *re_, void *out);
-void rarch_sinc_resampler_set_state(void *re_, const void *in);
 
 #define BLOCK  512
 #define BLOCKS 64
@@ -93,20 +91,22 @@ static int check_ratio(double design, double ratio, unsigned split)
    /* Savestate: save after split, restore into a used handle, go on. */
    re    = sinc_resampler.init(NULL, design, RESAMPLER_QUALITY_HIGHER, 0);
    n_a   = run(re, ratio, 0, split, cont);
-   sz    = rarch_sinc_resampler_state_size(re);
+   sz    = sinc_resampler.state(re, NULL, 0, 0);
    state = (unsigned char*)malloc(sz);
-   rarch_sinc_resampler_get_state(re, state);
+   if (sinc_resampler.state(re, state, sz, 0) != sz)
+   {
+      printf("FAIL %.4f@%.4f: state save refused\n", ratio, design);
+      fail = 1;
+   }
    sinc_resampler.free(re);
 
    re2 = sinc_resampler.init(NULL, design, RESAMPLER_QUALITY_HIGHER, 0);
    run(re2, ratio, 7, 7 + split / 2 + 2, dirty);
-   if (rarch_sinc_resampler_state_size(re2) != sz)
+   if (sinc_resampler.state(re2, state, sz, 1) != sz)
    {
-      printf("FAIL %.4f@%.4f: state size differs between handles\n",
-            ratio, design);
+      printf("FAIL %.4f@%.4f: state load refused\n", ratio, design);
       fail = 1;
    }
-   rarch_sinc_resampler_set_state(re2, state);
    n_b = run(re2, ratio, split, BLOCKS, cont + 2 * n_a);
    sinc_resampler.free(re2);
    free(state);

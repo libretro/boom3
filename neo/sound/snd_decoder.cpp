@@ -408,10 +408,6 @@ restored stream continue bit-exactly. The vorbis side needs nothing: the
 seek is sample-exact, so the PCM feed equals the continuous timeline's.
 ====================
 */
-extern "C" size_t rarch_sinc_resampler_state_size( void *re_ );
-extern "C" void rarch_sinc_resampler_get_state( void *re_, void *out );
-extern "C" void rarch_sinc_resampler_set_state( void *re_, const void *in );
-
 void idSampleDecoderLocal::WriteStreamState( idFile *f ) {
 	int has = ( rsHandle != NULL ) ? 1 : 0;
 	f->WriteInt( has );
@@ -420,11 +416,14 @@ void idSampleDecoderLocal::WriteStreamState( idFile *f ) {
 	}
 	f->WriteInt( rsSrcRate );
 	f->WriteInt( rsDstRate );
-	int sz = (int)rarch_sinc_resampler_state_size( rsHandle );
+	// the resampler's state through its interface: some 15 KiB, so not
+	// on the stack
+	int sz = (int)sinc_resampler.state( rsHandle, NULL, 0, 0 );
 	f->WriteInt( sz );
-	byte *tmp = (byte *)_alloca( sz );
-	rarch_sinc_resampler_get_state( rsHandle, tmp );
+	byte *tmp = (byte *)Mem_Alloc( sz );
+	sinc_resampler.state( rsHandle, tmp, sz, 0 );
 	f->Write( tmp, sz );
+	Mem_Free( tmp );
 	f->WriteInt( rsCarryFrames );
 	if ( rsCarryFrames > 0 ) {
 		f->Write( rsCarry, rsCarryFrames * 2 * sizeof( float ) );
@@ -795,8 +794,7 @@ int idSampleDecoderLocal::DecodeOGG( idSoundSample *sample, int outputOffset, in
 			   seek's own reset), then the stream continues bit-exactly.
 			*/
 			if ( pendSinc != NULL && pendSrcRate == srcRate && pendDstRate == dstRate
-					&& (int)rarch_sinc_resampler_state_size( rsHandle ) == pendSincSize ) {
-				rarch_sinc_resampler_set_state( rsHandle, pendSinc );
+					&& sinc_resampler.state( rsHandle, pendSinc, pendSincSize, 1 ) ) {
 				if ( pendCarryFrames > 0 ) {
 					memcpy( rsCarry, pendCarry, pendCarryFrames * 2 * sizeof( float ) );
 					rsCarryFrames = pendCarryFrames;

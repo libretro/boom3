@@ -154,8 +154,6 @@ declarations at the top of the block, and builds with both toolchains.
 `libretro-common/`, never the standalone repository: it takes only the
 files this core builds and the headers they reach, and a resync is a
 copy, nothing merged. Core adaptations go in the core's files, never in
-a libretro-common file. The one exception standing is the savestate
-accessors at the end of `audio/resampler/drivers/sinc_resampler.c`,
-which read the resampler's private struct; they leave when the state
-accessors land in RetroArch's resampler interface, and nothing joins
-them.
+a libretro-common file; what a core needs of a libretro-common module
+and cannot reach goes into RetroArch's interface first (the resampler's
+`state()` came that way) and arrives here by resync.

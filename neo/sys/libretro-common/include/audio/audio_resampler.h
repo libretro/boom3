@@ -48,6 +48,7 @@ RETRO_BEGIN_DECLS
 #define RESAMPLER_SIMD_AVX2     (1 << 12)
 #define RESAMPLER_SIMD_VFPU     (1 << 13)
 #define RESAMPLER_SIMD_PS       (1 << 14)
+#define RESAMPLER_SIMD_AVX512   (1 << 22)
 
 enum resampler_quality
 {
@@ -169,6 +170,25 @@ typedef void (*resampler_reset_t)(void *data);
  * freed like any other. */
 typedef void *(*resampler_sibling_t)(void *data);
 
+/* The most input frames, at most @max_input, whose process() at @ratio
+ * is sure to produce no more than @max_output frames - exact for this
+ * stream's state, where the backend can tell, so a caller producing into
+ * a buffer of @max_output frames fills it to within the frames one
+ * input frame makes. 0 where it cannot tell (the caller then sizes from
+ * a bound), or where no input fits. The stream is not changed. */
+typedef size_t (*resampler_fit_t)(void *data, double ratio,
+      size_t max_output, size_t max_input);
+
+/* The stream's state as bytes, for a savestate: everything reset()
+ * forgets, nothing of the configuration. With @buf NULL, the size.
+ * Otherwise copies the state out to @buf (@write 0) or in from it
+ * (@write 1) and returns the bytes moved, or 0 when @len is not the
+ * size, which leaves the stream as it was: a state from an instance of
+ * another configuration is refused, and the caller resets instead. The
+ * instance read into has the configuration the state came from. */
+typedef size_t (*resampler_state_t)(void *data, void *buf, size_t len,
+      int write);
+
 /* What a backend reads of the settings the frontend exposes. One that
  * reads neither leaves this zero, and the frontend has no control to
  * offer for it. */
@@ -201,6 +221,14 @@ typedef struct retro_resampler
    /* Optional: NULL where the backend has no tables worth sharing, and
     * the caller makes a fresh instance instead. */
    resampler_sibling_t  sibling;
+
+   /* Optional; last, so a backend that does not set it is NULL here, and
+    * the caller sizes its output from a bound instead. */
+   resampler_fit_t      fit;
+
+   /* Optional; NULL where the stream cannot be saved, and the caller
+    * resets it on restore. */
+   resampler_state_t    state;
 } retro_resampler_t;
 
 typedef struct audio_frame_float
