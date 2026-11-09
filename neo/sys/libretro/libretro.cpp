@@ -2584,17 +2584,20 @@ static void update_variables(bool startup)
 		if (log_cb)
 			log_cb(RETRO_LOG_INFO, "Got size: %u x %u.\n", scr_width, scr_height);
 
-		if(pch)
-		{
-			/* the engine renders at the supersampled size; scr_width
-			 * stays the presentation size the frontend sees */
-			glConfig.vidWidth  = scr_width * hdr_ssaa;
-			glConfig.vidHeight = scr_height * hdr_ssaa;
-			glConfig.winWidth  = scr_width * hdr_ssaa;
-			glConfig.winHeight = scr_height * hdr_ssaa;
-		}
-
 		initial_resolution_set = true;
+	}
+	if (startup)
+	{
+		/* the engine renders at the supersampled size; scr_width stays
+		 * the presentation size the frontend sees.  Set whether or not
+		 * the frontend answered the option: left unanswered, the engine
+		 * ran with a 0x0 screen and every render crop (the wipe, the GUI
+		 * textures, the objective screenshots) mapped through a
+		 * zero-size viewport. */
+		glConfig.vidWidth  = scr_width * hdr_ssaa;
+		glConfig.vidHeight = scr_height * hdr_ssaa;
+		glConfig.winWidth  = scr_width * hdr_ssaa;
+		glConfig.winHeight = scr_height * hdr_ssaa;
 	}
    
 	var.key = "doom_invert_y_axis";

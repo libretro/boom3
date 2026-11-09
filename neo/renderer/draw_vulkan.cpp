@@ -2535,19 +2535,21 @@ void RB_VK_WarmMaterial( const idMaterial *shader ) {
 			draw.program = VKB_PROGRAM_REFLECT;
 			break;
 		default:
-			draw.program = VKB_PROGRAM_DIFFUSE;
-			RB_VK_WarmStage( &draw, format, (unsigned)pStage->drawStateBits );
 			// the same stage through a GUI's output transform: GUIs draw in
 			// the 2D view, with its depth state
 			draw.program = VKB_PROGRAM_DIFFUSE_GUI;
 			draw.stateBits = ( (unsigned)pStage->drawStateBits & ~(unsigned)( GLS_DEPTHFUNC_ALWAYS | GLS_DEPTHFUNC_EQUAL ) )
 				| GLS_DEPTHFUNC_ALWAYS | GLS_DEPTHMASK;
 			RB_VK_WarmViews( &draw, format, VKB_PASS_SCENE );
-			continue;
+			draw.program = VKB_PROGRAM_DIFFUSE;
+			break;
 		}
 		RB_VK_WarmStage( &draw, format, (unsigned)pStage->drawStateBits );
-		// as a soft particle: the program decides the depth test
-		if ( shader->GetSort() >= SS_DECAL && shader->Coverage() == MC_TRANSLUCENT ) {
+		// as a soft particle, which the particle system decides per surface:
+		// any stage blending from one or source alpha can be one
+		// (RB_VK_T_RenderShaderPasses); the program decides the depth test
+		if ( ( pStage->drawStateBits & GLS_SRCBLEND_BITS ) == GLS_SRCBLEND_ONE
+				|| ( pStage->drawStateBits & GLS_SRCBLEND_BITS ) == GLS_SRCBLEND_SRC_ALPHA ) {
 			draw.stencil = VKB_STENCIL_OFF;
 			draw.transmit = 0;
 			draw.program = VKB_PROGRAM_SOFT_PARTICLE;

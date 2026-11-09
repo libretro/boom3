@@ -79,6 +79,7 @@ static int frame_index;
 static int print_from;
 static const char *ppm_path;
 static const char *shots;
+static const struct retro_core_option_v2_definition *core_options;
 static unsigned char *pixels;
 
 static long draw_path_pipelines = -1;
@@ -660,13 +661,31 @@ static bool env_cb(unsigned cmd_id, void *data)
    case RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY:
       *(const char **)data = "/tmp/vk_host_sys";
       return true;
+   case RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION:
+      *(unsigned *)data = 2;
+      return true;
+   case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2:
+      core_options = ((const struct retro_core_options_v2 *)data)->definitions;
+      return true;
+   case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL:
+      core_options = ((const struct retro_core_options_v2_intl *)data)->us->definitions;
+      return true;
    case RETRO_ENVIRONMENT_GET_VARIABLE:
    {
+      /* the command line's value, else the default the core declared,
+       * as a frontend answers: a core must not see an option unanswered */
       struct retro_variable *v = (struct retro_variable *)data;
+      const struct retro_core_option_v2_definition *d;
       for (i = 0; i < num_opts; i++)
          if (!strcmp(v->key, opt_key[i]))
          {
             v->value = opt_val[i];
+            return true;
+         }
+      for (d = core_options; d && d->key; d++)
+         if (!strcmp(v->key, d->key) && d->default_value)
+         {
+            v->value = d->default_value;
             return true;
          }
       v->value = NULL;
