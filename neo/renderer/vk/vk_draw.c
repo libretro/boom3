@@ -175,26 +175,48 @@ static VkDescriptorSet vkb_descriptor_set(const vkb_draw_t *draw)
    return set;
 }
 
+/* The pipeline key of a draw on a target: the one place it is derived,
+ * so a draw warmed ahead of time and the same draw drawn agree. */
+static void vkb_draw_key(vkb_pipeline_key_t *key, const vkb_draw_t *draw, unsigned target)
+{
+   memset(key, 0, sizeof(*key));
+   key->stateBits     = draw->stateBits;
+   key->program       = draw->program;
+   key->layout        = draw->layout;
+   key->cull          = draw->cull;
+   key->stencil       = draw->stencil;
+   key->target        = (unsigned char)target;
+   key->lineMode      = draw->lineMode;
+   key->polygonOffset = (draw->depthBias[0] != 0.0f || draw->depthBias[1] != 0.0f) ? 1 : 0;
+   key->mirror        = draw->mirror;
+   key->depthBounds   = draw->depthMin > 0.0f && vkb.features.depthBounds ? 1 : 0;
+   key->transmit      = draw->transmit;
+}
+
+static unsigned vkb_current_target(void)
+{
+   return vkb.target->format
+        | (vkb.targetKind == VKB_TARGET_POST ? VKB_TARGET_POST : 0)
+        | (vkb.targetKind == VKB_TARGET_INPLACE ? VKB_TARGET_INPLACE : 0);
+}
+
+void vkb_warm(const vkb_draw_t *draw, enum vkb_format format, enum vkb_pass pass)
+{
+   vkb_pipeline_key_t key;
+   unsigned target = (unsigned)format
+        | (pass == VKB_PASS_POST ? VKB_TARGET_POST : 0)
+        | (pass == VKB_PASS_INPLACE ? VKB_TARGET_INPLACE : 0);
+   vkb_draw_key(&key, draw, target);
+   vkb_pipeline_warm(&key);
+}
+
 static void vkb_bind(const vkb_draw_t *draw, VkDescriptorSet set, unsigned blockOffset)
 {
    vkb_pipeline_key_t key;
    VkPipeline pipeline;
    uint32_t offsets[2];
 
-   memset(&key, 0, sizeof(key));
-   key.stateBits     = draw->stateBits;
-   key.program       = draw->program;
-   key.layout        = draw->layout;
-   key.cull          = draw->cull;
-   key.stencil       = draw->stencil;
-   key.target        = vkb.target->format
-                     | (vkb.targetKind == VKB_TARGET_POST ? VKB_TARGET_POST : 0)
-                     | (vkb.targetKind == VKB_TARGET_INPLACE ? VKB_TARGET_INPLACE : 0);
-   key.lineMode      = draw->lineMode;
-   key.polygonOffset = (draw->depthBias[0] != 0.0f || draw->depthBias[1] != 0.0f) ? 1 : 0;
-   key.mirror        = draw->mirror;
-   key.depthBounds   = draw->depthMin > 0.0f && vkb.features.depthBounds ? 1 : 0;
-   key.transmit      = draw->transmit;
+   vkb_draw_key(&key, draw, vkb_current_target());
    pipeline = vkb_pipeline(&key);
    if (!pipeline)
       return;

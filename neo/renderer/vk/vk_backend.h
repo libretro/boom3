@@ -324,6 +324,24 @@ typedef struct vkb_draw
 
 void vkb_set_view(const vkb_view_block_t *view);
 void vkb_draw(const vkb_draw_t *draw);
+
+/* The pass a draw runs in, for warming its pipeline. */
+enum vkb_pass
+{
+   VKB_PASS_SCENE = 0,  /* the scene or frame image, depth attached */
+   VKB_PASS_POST,       /* a colour-only post pass (vkb_post_begin) */
+   VKB_PASS_INPLACE     /* the frame image read and written in place */
+};
+
+/* Builds the pipeline a draw would bind, ahead of the draw: the draw
+ * filled as for vkb_draw, on a colour target of the given format, in
+ * the given pass.  Nothing is drawn.  Every pipeline a frame binds is
+ * meant to have been warmed at init or as its material loaded;
+ * vkb_pipeline_misses counts the ones that were not, and is meant to
+ * read 0. */
+void vkb_warm(const vkb_draw_t *draw, enum vkb_format format, enum vkb_pass pass);
+unsigned vkb_pipeline_misses(void);
+unsigned vkb_pipeline_count(void);
 /* a post pass's fullscreen triangle: no geometry, the block and textures */
 void vkb_draw_fullscreen(const vkb_draw_t *draw);
 

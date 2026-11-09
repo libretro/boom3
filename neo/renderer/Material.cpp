@@ -2343,6 +2343,10 @@ bool idMaterial::Parse( const char *text, const int textLength ) {
 		MakeDefault();
 		return false;
 	}
+#ifdef BOOM3_VULKAN_RENDERER
+	// the pipelines the stages bind are built now, not at their first draw
+	RB_VK_WarmMaterial( this );
+#endif
 	return true;
 }
 

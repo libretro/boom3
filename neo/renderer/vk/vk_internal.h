@@ -346,6 +346,7 @@ typedef struct vkb_state
    VkFence uploadFence;
 
    vkb_pipeline_slot_t pipelines[VKB_PIPELINE_SLOTS];
+   unsigned pipelineMisses;      /* pipelines made on the draw path; meant to stay 0 */
    unsigned pipelineCount;
 
    /* the frame being recorded */
@@ -467,6 +468,8 @@ void vkb_shadows_draw(const vkb_draw_t *draw);
 int  vkb_pipelines_init(void);
 void vkb_pipelines_shutdown(void);
 VkPipeline vkb_pipeline(const vkb_pipeline_key_t *key);
+void vkb_pipeline_key_normalize(vkb_pipeline_key_t *key);
+void vkb_pipeline_warm(const vkb_pipeline_key_t *key);
 VkRenderPass vkb_render_pass(enum vkb_format colorFormat, int frontend);
 
 #endif

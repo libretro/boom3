@@ -3050,6 +3050,10 @@ static void context_reset(void)
          return;
       }
       RB_VK_ShadowsUp();
+      /* the pipelines of the fixed passes, and of every material already
+       * parsed, before the first frame; RB_VK_BeginFrame re-warms on a
+       * scene format change */
+      RB_VK_WarmPipelines();
       if (!first_boot)
       {
          R_ReinitOpenGL();
@@ -3198,6 +3202,11 @@ static void context_destroy(void)
 #ifdef BOOM3_VULKAN_RENDERER
     if (LR_VULKAN()) {
         RB_VK_Shutdown();
+        /* pipelines made on the draw path, for the host's gate: every
+         * one is meant to have been warmed, so this is meant to be 0 */
+        if (log_cb)
+            log_cb(RETRO_LOG_INFO, "boom3: vulkan pipelines %u, made on the draw path %u\n",
+                  vkb_pipeline_count(), vkb_pipeline_misses());
         RB_VK_ShadowsDown();
         vkb_shutdown();
     }
@@ -9917,6 +9926,15 @@ static void vk_present( void ) {
 void RB_VK_BeginFrame( void ) {
 	if ( !vkb_ready() ) {
 		return;
+	}
+	/* a changed scene format (an HDR toggle) means a new set of
+	 * pipelines: built here, before the frame, not at its draws */
+	{
+		static enum vkb_format warmed = VKB_FORMAT_COUNT;
+		if ( RB_VK_SceneFormat() != warmed ) {
+			warmed = RB_VK_SceneFormat();
+			RB_VK_WarmPipelines();
+		}
 	}
 	/* The scene pipeline draws into the frame image itself and the
 	 * display transform runs on it in place: the frame image takes the

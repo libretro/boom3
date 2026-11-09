@@ -1903,6 +1903,8 @@ void RB_VK_SetThreaded( bool threaded );
 bool RB_VK_Deferred( void );   // a frame is on the thread: EndFrame leaves its memory alone
 void RB_VK_Sync( void );
 void RB_VK_Shutdown( void );
+void RB_VK_WarmPipelines( void );
+void RB_VK_WarmMaterial( const idMaterial *shader );
 void RB_VK_SceneSize( int *width, int *height );   // the frame's scene size, as handed over
 void RB_VK_ShadowsUp( void );     // after vkb_init: whether shadow volumes are built on the GPU
 void RB_VK_ShadowsDown( void );   // before vkb_shutdown

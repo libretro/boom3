@@ -388,7 +388,8 @@ int vkb_pipelines_init(void)
       if (!vkb.modules[i][0] || !vkb.modules[i][1])
          return 0;
    }
-   vkb.pipelineCount = 0;
+   vkb.pipelineCount  = 0;
+   vkb.pipelineMisses = 0;
    return 1;
 }
 
@@ -695,17 +696,85 @@ static VkPipeline vkb_pipeline_make(const vkb_pipeline_key_t *key)
    return pipeline;
 }
 
-/* The pipeline for a key, made on first use.  A linear table: a frame
- * reuses a few dozen pipelines and the lookup is a memcmp each. */
-VkPipeline vkb_pipeline(const vkb_pipeline_key_t *key)
+/* The state bits a pipeline reads: blend factors, the depth and colour
+ * masks, the line fill mode and the depth function.  The alpha test
+ * bits are the shader's, through its block, so two stages apart only in
+ * those share a pipeline. */
+#define VKB_PIPELINE_STATE_BITS (GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS | GLS_DEPTHMASK \
+      | GLS_REDMASK | GLS_GREENMASK | GLS_BLUEMASK | GLS_ALPHAMASK | GLS_POLYMODE_LINE \
+      | GLS_DEPTHFUNC_ALWAYS | GLS_DEPTHFUNC_EQUAL)
+
+void vkb_pipeline_key_normalize(vkb_pipeline_key_t *key)
+{
+   key->stateBits &= VKB_PIPELINE_STATE_BITS;
+   /* line mode is one thing whichever way it is asked for */
+   if (key->stateBits & GLS_POLYMODE_LINE)
+   {
+      key->stateBits &= ~(unsigned)GLS_POLYMODE_LINE;
+      key->lineMode = 1;
+   }
+   if (!vkb.features.fillModeNonSolid)
+      key->lineMode = 0;
+   if (!vkb.features.depthBounds)
+      key->depthBounds = 0;
+   /* a mirror view swaps the stencil's faces; with the stencil off, or
+    * a face-symmetric test, the pipeline is the same one */
+   if (key->stencil == VKB_STENCIL_OFF || key->stencil == VKB_STENCIL_TEST)
+      key->mirror = 0;
+}
+
+static VkPipeline vkb_pipeline_find(const vkb_pipeline_key_t *key)
 {
    unsigned i;
    for (i = 0; i < vkb.pipelineCount; i++)
       if (memcmp(&vkb.pipelines[i].key, key, sizeof(*key)) == 0)
          return vkb.pipelines[i].pipeline;
+   return VK_NULL_HANDLE;
+}
+
+static VkPipeline vkb_pipeline_add(const vkb_pipeline_key_t *key)
+{
    if (vkb.pipelineCount == VKB_PIPELINE_SLOTS)
       return VK_NULL_HANDLE;
    vkb.pipelines[vkb.pipelineCount].key      = *key;
    vkb.pipelines[vkb.pipelineCount].pipeline = vkb_pipeline_make(key);
    return vkb.pipelines[vkb.pipelineCount++].pipeline;
+}
+
+/* Builds the pipeline for a key ahead of any draw, off the draw path:
+ * at init for the passes whose state is fixed, as a material is loaded
+ * for its stages.  Idempotent. */
+void vkb_pipeline_warm(const vkb_pipeline_key_t *key)
+{
+   vkb_pipeline_key_t k = *key;
+   vkb_pipeline_key_normalize(&k);
+   if (vkb_pipeline_find(&k))
+      return;
+   vkb_pipeline_add(&k);
+}
+
+/* The pipeline for a draw's key.  A linear table: a frame reuses a few
+ * dozen pipelines and the lookup is a memcmp each.  Every key is meant
+ * to be warm; one that is not is made here so the draw still renders,
+ * and counted, since that is a compile on the draw path. */
+VkPipeline vkb_pipeline(const vkb_pipeline_key_t *key)
+{
+   vkb_pipeline_key_t k = *key;
+   VkPipeline pipeline;
+   vkb_pipeline_key_normalize(&k);
+   pipeline = vkb_pipeline_find(&k);
+   if (pipeline)
+      return pipeline;
+   vkb.pipelineMisses++;
+   return vkb_pipeline_add(&k);
+}
+
+unsigned vkb_pipeline_misses(void)
+{
+   return vkb.pipelineMisses;
+}
+
+unsigned vkb_pipeline_count(void)
+{
+   return vkb.pipelineCount;
 }

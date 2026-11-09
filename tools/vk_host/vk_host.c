@@ -18,6 +18,10 @@
  * with ppm=<prefix> writes those frames as <prefix>_<n>.ppm.  Alpha is
  * the frontend's to ignore and is left out of the hash.
  *
+ * Nothing compiles on the draw path: the core reports at unload how many
+ * pipelines it made at a draw rather than ahead of it, and the host exits
+ * 3 unless that is 0.
+ *
  * Linux: the Vulkan loader (libvulkan-dev); runs on lavapipe without a
  * GPU (mesa-vulkan-drivers, VK_ICD_FILENAMES=.../lvp_icd.json).
  *   cc -std=c89 -O1 -g -o vk_host vk_host.c -ldl -lvulkan -lm
@@ -77,10 +81,23 @@ static const char *ppm_path;
 static const char *shots;
 static unsigned char *pixels;
 
+static long draw_path_pipelines = -1;
+
 static void log_cb(enum retro_log_level level, const char *fmt, ...)
 {
    va_list ap;
    (void)level;
+   /* the core's report at unload, "boom3: vulkan pipelines %u, made on
+    * the draw path %u": its format string names it, its arguments are
+    * read off the list the way vfprintf would */
+   if (strstr(fmt, "made on the draw path %u"))
+   {
+      va_list ap2;
+      va_start(ap2, fmt);
+      (void)va_arg(ap2, unsigned);
+      draw_path_pipelines = (long)va_arg(ap2, unsigned);
+      va_end(ap2);
+   }
    va_start(ap, fmt);
    vfprintf(stderr, fmt, ap);
    va_end(ap);
@@ -808,5 +825,16 @@ int main(int argc, char **argv)
    r_unload();
    r_deinit();
    vkDeviceWaitIdle(device);
+   if (draw_path_pipelines < 0)
+   {
+      fprintf(stderr, "vk_host: the core did not report its draw path pipelines\n");
+      return 3;
+   }
+   if (draw_path_pipelines > 0)
+   {
+      fprintf(stderr, "vk_host: %ld pipelines made on the draw path (the core must warm every one)\n",
+            draw_path_pipelines);
+      return 3;
+   }
    return 0;
 }

@@ -2419,6 +2419,275 @@ void RB_VK_ExecuteBackEndCommands( const emptyCommand_t *cmds ) {
 	RB_VK_RunCommands( (void *)cmds );
 }
 
+
+/*
+====================
+Pipeline warming
+
+Nothing compiles on the draw path: every pipeline a frame binds was built
+at init (the passes whose state is fixed) or as its material was parsed
+(the material's stages). Each warm fills a vkb_draw_t the way the pass
+does and hands it to vkb_warm, which derives the key with the code
+vkb_draw uses, so the two cannot drift apart; vkb_pipeline_misses counts
+a key neither warmed, and is a regression at anything but 0.
+
+A key's axes outside the pass's own state: the view's mirror flag, and the
+low resolution particle pass's stencil over everything drawn while it is
+active (VKB_STENCIL_MARKED, with transmit set).
+====================
+*/
+static unsigned char RB_VK_CullFor( cullType_t cullType, bool mirror ) {
+	if ( mirror ) {
+		return cullType == CT_FRONT_SIDED ? VKB_CULL_FRONT : cullType == CT_BACK_SIDED ? VKB_CULL_BACK : VKB_CULL_NONE;
+	}
+	return cullType == CT_FRONT_SIDED ? VKB_CULL_BACK : cullType == CT_BACK_SIDED ? VKB_CULL_FRONT : VKB_CULL_NONE;
+}
+
+/* draw->cull holds the material's cullType_t here; a mirror view flips
+ * it, as RB_VK_Cull does */
+static void RB_VK_WarmViews( vkb_draw_t *draw, enum vkb_format format, enum vkb_pass pass ) {
+	int mirror, lowres;
+	for ( mirror = 0; mirror < 2; mirror++ ) {
+		for ( lowres = 0; lowres < 2; lowres++ ) {
+			vkb_draw_t d = *draw;
+			d.mirror = (unsigned char)mirror;
+			d.cull = RB_VK_CullFor( (cullType_t)draw->cull, mirror != 0 );
+			if ( lowres ) {
+				if ( d.stencil != VKB_STENCIL_OFF ) {
+					continue;	// a pass with its own stencil draws before the low-res pass
+				}
+				d.stencil = VKB_STENCIL_MARKED;
+				d.transmit = 1;
+			}
+			vkb_warm( &d, format, pass );
+		}
+	}
+}
+
+static void RB_VK_WarmStage( vkb_draw_t *draw, enum vkb_format format, unsigned stateBits ) {
+	draw->stateBits = stateBits;
+	RB_VK_WarmViews( draw, format, VKB_PASS_SCENE );
+	// the same stage in a 2D view (RB_VK_T_RenderShaderPasses without viewEntitys)
+	draw->stateBits = ( stateBits & ~(unsigned)( GLS_DEPTHFUNC_ALWAYS | GLS_DEPTHFUNC_EQUAL ) )
+		| GLS_DEPTHFUNC_ALWAYS | GLS_DEPTHMASK;
+	RB_VK_WarmViews( draw, format, VKB_PASS_SCENE );
+}
+
+/*
+====================
+RB_VK_WarmMaterial
+
+The pipelines a material's stages bind, as R_VK_MaterialParsed calls it
+when the material is parsed: the generic stage with the program its
+texgen picks, a custom stage's program, the soft particle variant for a
+material that softens, each with the material's cull and polygon offset.
+====================
+*/
+void RB_VK_WarmMaterial( const idMaterial *shader ) {
+	static const unsigned char programs[GLSL_STAGE_COUNT] = {
+		VKB_PROGRAM_COUNT, VKB_PROGRAM_HEAT_HAZE, VKB_PROGRAM_HEAT_HAZE_MASK, VKB_PROGRAM_HEAT_HAZE_MASK_VERTEX,
+		VKB_PROGRAM_COLOR_PROCESS, VKB_PROGRAM_BUMPY_ENVIRONMENT
+	};
+	const enum vkb_format format = RB_VK_SceneFormat();
+	vkb_draw_t draw;
+	int i;
+
+	if ( !vkb_ready() ) {
+		return;
+	}
+	for ( i = 0; i < shader->GetNumStages(); i++ ) {
+		const shaderStage_t *pStage = shader->GetStage( i );
+		if ( pStage->lighting != SL_AMBIENT ) {
+			continue;	// interactions warm at init, their state is the light's
+		}
+		memset( &draw, 0, sizeof( draw ) );
+		draw.cull = (unsigned char)shader->GetCullType();
+		if ( pStage->privatePolygonOffset || shader->TestMaterialFlag( MF_POLYGONOFFSET ) ) {
+			draw.depthBias[0] = draw.depthBias[1] = 1.0f;	// the key records only that there is one
+		}
+		if ( pStage->newStage ) {
+			if ( pStage->newStage->glslProgram > GLSL_STAGE_NONE && pStage->newStage->glslProgram < GLSL_STAGE_COUNT ) {
+				draw.program = programs[pStage->newStage->glslProgram];
+				draw.stateBits = (unsigned)pStage->drawStateBits;
+				RB_VK_WarmViews( &draw, format, VKB_PASS_SCENE );
+			}
+			continue;
+		}
+		switch ( pStage->texture.texgen ) {
+		case TG_DIFFUSE_CUBE:
+			draw.program = VKB_PROGRAM_DIFFUSE_CUBE;
+			break;
+		case TG_SKYBOX_CUBE:
+		case TG_WOBBLESKY_CUBE:
+			draw.program = VKB_PROGRAM_SKYBOX;
+			break;
+		case TG_SCREEN:
+		case TG_SCREEN2:
+		case TG_GLASSWARP:
+			continue;
+		case TG_REFLECT_CUBE:
+			if ( shader->GetBumpStage() ) {
+				draw.program = VKB_PROGRAM_BUMPY_ENVIRONMENT;
+				draw.stateBits = (unsigned)pStage->drawStateBits;
+				RB_VK_WarmViews( &draw, format, VKB_PASS_SCENE );
+				continue;
+			}
+			draw.program = VKB_PROGRAM_REFLECT;
+			break;
+		default:
+			draw.program = VKB_PROGRAM_DIFFUSE;
+			RB_VK_WarmStage( &draw, format, (unsigned)pStage->drawStateBits );
+			// the same stage through a GUI's output transform: GUIs draw in
+			// the 2D view, with its depth state
+			draw.program = VKB_PROGRAM_DIFFUSE_GUI;
+			draw.stateBits = ( (unsigned)pStage->drawStateBits & ~(unsigned)( GLS_DEPTHFUNC_ALWAYS | GLS_DEPTHFUNC_EQUAL ) )
+				| GLS_DEPTHFUNC_ALWAYS | GLS_DEPTHMASK;
+			RB_VK_WarmViews( &draw, format, VKB_PASS_SCENE );
+			continue;
+		}
+		RB_VK_WarmStage( &draw, format, (unsigned)pStage->drawStateBits );
+		// as a soft particle: the program decides the depth test
+		if ( shader->GetSort() >= SS_DECAL && shader->Coverage() == MC_TRANSLUCENT ) {
+			draw.stencil = VKB_STENCIL_OFF;
+			draw.transmit = 0;
+			draw.program = VKB_PROGRAM_SOFT_PARTICLE;
+			draw.stateBits = (unsigned)pStage->drawStateBits | GLS_DEPTHFUNC_ALWAYS;
+			RB_VK_WarmViews( &draw, format, VKB_PASS_SCENE );
+			draw.program = VKB_PROGRAM_SOFT_PARTICLE_KEEP;
+			draw.stencil = VKB_STENCIL_MARKED;
+			draw.transmit = 1;
+			draw.mirror = 0;
+			draw.cull = RB_VK_CullFor( shader->GetCullType(), false );
+			vkb_warm( &draw, format, VKB_PASS_SCENE );
+			draw.mirror = 1;
+			draw.cull = RB_VK_CullFor( shader->GetCullType(), true );
+			vkb_warm( &draw, format, VKB_PASS_SCENE );
+		}
+	}
+}
+
+/*
+====================
+RB_VK_WarmPipelines
+
+The pipelines of the passes whose state does not come from content, for
+the scene format in use: depth fill, shadows, interactions, fog and blend
+lights, the low resolution particle pass and the composite. Run when the
+backend comes up and when the scene format changes; then every loaded
+material is warmed for the new format.
+====================
+*/
+void RB_VK_WarmPipelines( void ) {
+	const enum vkb_format format = RB_VK_SceneFormat();
+	vkb_draw_t draw;
+	int cull, clip, offset, i;
+
+	if ( !vkb_ready() ) {
+		return;
+	}
+
+	// depth fill: the material's cull and offset, the subview blend, a clip plane
+	for ( cull = CT_FRONT_SIDED; cull <= CT_TWO_SIDED; cull++ ) {
+		for ( offset = 0; offset < 2; offset++ ) {
+			for ( clip = 0; clip < 2; clip++ ) {
+				memset( &draw, 0, sizeof( draw ) );
+				draw.cull = (unsigned char)cull;
+				if ( offset ) {
+					draw.depthBias[0] = draw.depthBias[1] = 1.0f;	// the key records only that there is one
+				}
+				draw.program = clip ? VKB_PROGRAM_ZFILL_CLIP : VKB_PROGRAM_ZFILL_OPAQUE;
+				draw.stateBits = GLS_DEPTHFUNC_LESS;
+				RB_VK_WarmViews( &draw, format, VKB_PASS_SCENE );
+				draw.stateBits = GLS_SRCBLEND_DST_COLOR | GLS_DSTBLEND_ZERO | GLS_DEPTHFUNC_LESS;
+				RB_VK_WarmViews( &draw, format, VKB_PASS_SCENE );
+				draw.program = clip ? VKB_PROGRAM_ZFILL_CLIP : VKB_PROGRAM_ZFILL;
+				draw.stateBits = GLS_DEPTHFUNC_LESS;
+				RB_VK_WarmViews( &draw, format, VKB_PASS_SCENE );
+				draw.stateBits = GLS_SRCBLEND_DST_COLOR | GLS_DSTBLEND_ZERO | GLS_DEPTHFUNC_LESS;
+				RB_VK_WarmViews( &draw, format, VKB_PASS_SCENE );
+			}
+		}
+	}
+
+	// shadow volumes: depth pass and depth fail, with and without the offset
+	for ( offset = 0; offset < 2; offset++ ) {
+		for ( i = 0; i < 2; i++ ) {
+			memset( &draw, 0, sizeof( draw ) );
+			draw.layout = VKB_VERTEX_SHADOW;
+			draw.program = VKB_PROGRAM_SHADOW;
+			draw.cull = CT_TWO_SIDED;
+			draw.stateBits = GLS_DEPTHMASK | GLS_COLORMASK | GLS_ALPHAMASK | GLS_DEPTHFUNC_LESS;
+			draw.stencil = i ? VKB_STENCIL_SHADOW_PASS : VKB_STENCIL_SHADOW_FAIL;
+			if ( offset ) {
+				draw.depthBias[0] = -1.0f;
+				draw.depthBias[1] = 1.0f;
+			}
+			RB_VK_WarmViews( &draw, format, VKB_PASS_SCENE );
+		}
+	}
+
+	// interactions: additive at depth equal (less for translucent), shadowed or not
+	for ( cull = CT_FRONT_SIDED; cull <= CT_TWO_SIDED; cull++ ) {
+		for ( offset = 0; offset < 2; offset++ ) {
+			for ( i = 0; i < 4; i++ ) {
+				memset( &draw, 0, sizeof( draw ) );
+				draw.cull = (unsigned char)cull;
+				draw.program = ( i & 1 ) ? VKB_PROGRAM_INTERACTION_PHONG : VKB_PROGRAM_INTERACTION;
+				draw.stateBits = GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE | GLS_DEPTHMASK
+					| ( ( i & 2 ) ? GLS_DEPTHFUNC_LESS : GLS_DEPTHFUNC_EQUAL );
+				if ( offset ) {
+					draw.depthBias[0] = draw.depthBias[1] = 1.0f;
+				}
+				draw.stencil = VKB_STENCIL_OFF;
+				RB_VK_WarmViews( &draw, format, VKB_PASS_SCENE );
+				draw.stencil = VKB_STENCIL_TEST;
+				RB_VK_WarmViews( &draw, format, VKB_PASS_SCENE );
+			}
+		}
+	}
+
+	// fog: the light's surfaces and the fog plane
+	memset( &draw, 0, sizeof( draw ) );
+	draw.program = VKB_PROGRAM_FOG;
+	draw.cull = CT_FRONT_SIDED;
+	draw.stateBits = GLS_DEPTHMASK | GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA | GLS_DEPTHFUNC_EQUAL;
+	RB_VK_WarmViews( &draw, format, VKB_PASS_SCENE );
+	draw.stateBits = GLS_DEPTHMASK | GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA | GLS_DEPTHFUNC_LESS;
+	RB_VK_WarmViews( &draw, format, VKB_PASS_SCENE );
+	draw.layout = VKB_VERTEX_SHADOW;
+	draw.cull = CT_TWO_SIDED;
+	RB_VK_WarmViews( &draw, format, VKB_PASS_SCENE );
+	draw.stateBits = GLS_DEPTHMASK | GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA | GLS_DEPTHFUNC_EQUAL;
+	RB_VK_WarmViews( &draw, format, VKB_PASS_SCENE );
+
+	// the low resolution particle pass and the composite
+	memset( &draw, 0, sizeof( draw ) );
+	draw.cull = VKB_CULL_NONE;
+	draw.program = VKB_PROGRAM_LOWRES_DOWN;
+	draw.stateBits = GLS_DEPTHFUNC_ALWAYS;
+	vkb_warm( &draw, format, VKB_PASS_SCENE );
+	draw.program = VKB_PROGRAM_LOWRES_MARK;
+	draw.stateBits = GLS_DEPTHMASK | GLS_DEPTHFUNC_ALWAYS | GLS_COLORMASK | GLS_ALPHAMASK;
+	draw.stencil = VKB_STENCIL_MARK;
+	vkb_warm( &draw, format, VKB_PASS_SCENE );
+	draw.program = VKB_PROGRAM_LOWRES_COMPOSITE;
+	draw.stateBits = GLS_SRCBLEND_ONE | GLS_DSTBLEND_SRC_ALPHA | GLS_DEPTHMASK | GLS_DEPTHFUNC_ALWAYS | GLS_ALPHAMASK;
+	draw.stencil = VKB_STENCIL_UNMARKED;
+	vkb_warm( &draw, format, VKB_PASS_SCENE );
+
+	// every material already parsed, for this format; none before the
+	// decl manager is up (the first context reset comes before the
+	// engine), when each warms itself as it is parsed
+	if ( declManager->GetNumDeclTypes() > DECL_MATERIAL ) {
+		for ( i = 0; i < declManager->GetNumDecls( DECL_MATERIAL ); i++ ) {
+			const idMaterial *material = static_cast<const idMaterial *>( declManager->DeclByIndex( DECL_MATERIAL, i, false ) );
+			if ( material && material->GetState() == DS_PARSED ) {
+				RB_VK_WarmMaterial( material );
+			}
+		}
+	}
+}
+
 void RB_VK_Shutdown( void ) {
 	RB_VK_Sync();
 	vkt_stop();
