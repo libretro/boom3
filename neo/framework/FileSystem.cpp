@@ -1243,6 +1243,7 @@ int idFileSystemLocal::ReadFile( const char *relativePath, void **buffer, ID_TIM
 				}
 				FreePrefetch( *p );
 				prefetchHits++;
+				readCount += len;	// counted as taken, not as the reader finishes
 				loadCount++;
 				loadStack++;
 				buf[len] = 0;
@@ -3955,9 +3956,6 @@ void idFileSystemLocal::BackgroundReadDone( const backgroundRead_t &r ) {
 		if ( err != RZIP_ERR_NONE ) {
 			common->Warning( "%s in '%s'", ( err == RZIP_ERR_CRC ) ? "CRC mismatch" : "inflate error", r.bgl->f->GetFullPath() );
 		}
-	}
-	if ( r.bytes > 0 ) {
-		readCount += r.bytes;
 	}
 	if ( r.result ) {
 		*r.result = r.bytes;

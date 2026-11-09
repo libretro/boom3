@@ -1926,6 +1926,7 @@ void idImageManager::CompleteBackgroundImageLoads() {
 		next = image->bglNext;
 		if ( image->bgl.completed ) {
 			numActiveBackgroundImageLoads--;
+			fileSystem->AddToReadCount( image->bgl.file.length );
 			fileSystem->CloseFile( image->bgl.f );
 			// upload the image
 			image->UploadPrecompressedImage( (byte *)image->bgl.file.buffer, image->bgl.file.length );

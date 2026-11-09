@@ -687,8 +687,9 @@ void idRenderSystemLocal::BeginFrame( int windowWidth, int windowHeight ) {
 	// or mirror render
 //	primaryWorld = NULL;
 
-	// set the time for shader effects in 2D rendering
-	frameShaderTime = eventLoop->Milliseconds() * 0.001;
+	// set the time for shader effects in 2D rendering: the tic clock the
+	// GUIs animate on, so a menu draws the same frame on every run
+	frameShaderTime = com_frameTime * 0.001;
 
 	//
 	// draw buffer stuff

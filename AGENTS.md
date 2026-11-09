@@ -81,16 +81,46 @@ free demo (`demo00.pk4`, see README) on lavapipe:
 - the per-frame hashes it prints equal the parent commit's, run the
   same way (a picture change needs its own reason, stated);
 - the pipeline count it prints is reported, and does not grow without
-  a reason.
+  a reason;
+- two runs of the build hash alike, on both renderers:
+
+      tools/egl_host/determinism.sh tools/vk_host/vk_host neo/boom3_libretro.so <path>/demo00.pk4 600
+      tools/egl_host/determinism.sh tools/egl_host/egl_host neo/boom3_libretro.so <path>/demo00.pk4 600
+
+  (the Vulkan line wants `VK_ICD_FILENAMES` as above). The script wipes
+  the state between runs and exits 3 on a frame that differs.
 
 A run that compares two builds starts both from the same state: the
 engine writes its config, keys and the objective screenshots into a
 `base/` directory beside the content as well as into the save
 directory, and a leftover from the previous run shifts the frame a map
-load lands on. Delete both before each run.
+load lands on. Delete both before each run; `determinism.sh` does.
 
 `tools/egl_host/hdr_check.sh` runs the same host over every HDR
 configuration and inherits the gate.
+
+## Every frame is a function of the frame count
+
+The same build, from the same state, with the same input draws the same
+frame N on every run; that is what makes a frame hash a test. Nothing a
+frame draws may come from the wall clock or from a thread's timing.
+
+- **The tic clock is the only clock on a drawn path.** `com_frameTime`
+  and `com_ticNumber` advance per `retro_run`. `Sys_Milliseconds`,
+  `eventLoop->Milliseconds()` and `Core_Milliseconds` are for logs,
+  profiling and the load-time report, never for a GUI's time, a
+  material's `time` register (`frameShaderTime`), a pacifier's throttle
+  or an animation.
+- **A count a thread advances is read at the hand-over, not at the
+  pump.** The reader's bytes count when the main thread takes the file
+  (`ReadFile`'s prefetch hit, `CompleteBackgroundImageLoads`), not when
+  the reader finishes it: what has finished by the time a frame polls
+  depends on the reader's speed, and the load bar drawn from it would
+  differ from run to run.
+- **Nothing is drawn more than once a frame.** The phased map load draws
+  the loading GUI from `Frame()`; while it runs, a loader that wants the
+  bar moved sets its state (`PacifierUpdate`) and does not call
+  `UpdateScreen`, which would render frames nobody sees.
 
 ## Zero-copy
 

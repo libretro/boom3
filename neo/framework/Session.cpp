@@ -2001,17 +2001,9 @@ void idSessionLocal::MapLoad_Warmup() {
 	common->PrintWarnings();
 
 	if ( guiLoading && bytesNeededForMapLoad ) {
-		float pct = guiLoading->State().GetFloat( "map_loading" );
-		if ( pct < 0.0f ) {
-			pct = 0.0f;
-		}
-		while ( pct < 1.0f ) {
-			if ( guiLoading ) guiLoading->SetStateFloat( "map_loading", pct );
-			guiLoading->StateChanged( com_frameTime );
-			Sys_GenerateEvents();
-			UpdateScreen();
-			pct += 0.05f;
-		}
+		// end on a full bar; the frames in between are drawn by Frame()
+		guiLoading->SetStateFloat( "map_loading", 1.0f );
+		guiLoading->StateChanged( com_frameTime );
 	}
 }
 
@@ -2848,9 +2840,13 @@ void idSessionLocal::PacifierUpdate() {
 		return;
 	}
 
-	int	time = eventLoop->Milliseconds();
+	// the tic clock, with the read count tallied as files are taken, gives
+	// the same bar on every run; the phased load draws the gui from
+	// Frame(), so here it only moves the bar, once a frame
+	bool phased = MapLoadInProgress();
+	int	time = com_frameTime;
 
-	if ( time - lastPacifierTime < 100 ) {
+	if ( time - lastPacifierTime < ( phased ? 1 : 100 ) ) {
 		return;
 	}
 	lastPacifierTime = time;
@@ -2861,6 +2857,10 @@ void idSessionLocal::PacifierUpdate() {
 		// pct = idMath::ClampFloat( 0.0f, 100.0f, pct );
 		if ( guiLoading ) guiLoading->SetStateFloat( "map_loading", pct );
 		guiLoading->StateChanged( com_frameTime );
+	}
+
+	if ( phased ) {
+		return;
 	}
 
 	Sys_GenerateEvents();
