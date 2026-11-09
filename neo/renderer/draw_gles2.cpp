@@ -224,6 +224,7 @@ static bool R_LinkGLSLShader(shaderProgram_t* shaderProgram, const char* name) {
   qglBindAttribLocation(shaderProgram->program, ATTR_BITANGENT, "attr_Bitangent");
 
   qglLinkProgram(shaderProgram->program);
+  R_ProgramBuilt( false );
 
   qglGetProgramiv(shaderProgram->program, GL_LINK_STATUS, &linked);
 

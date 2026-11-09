@@ -556,6 +556,7 @@ static bool R_LinkGLSLShader(shaderProgram_t* shaderProgram, const char* name) {
 	qglBindAttribLocation(shaderProgram->program, ATTR_BITANGENT, "attr_Bitangent");
 
 	qglLinkProgram(shaderProgram->program);
+	R_ProgramBuilt( false );
 
 	qglGetProgramiv(shaderProgram->program, GL_LINK_STATUS, &linked);
 
@@ -904,6 +905,7 @@ static bool R_BuildRunProgram(shaderProgram_t* program, const char* vertexES, co
 	qglBindAttribLocation(program->program, ATTR_VERTEX, "attr_Vertex");
 	qglBindAttribLocation(program->program, ATTR_TEXCOORD, "attr_TexCoord");
 	qglLinkProgram(program->program);
+	R_ProgramBuilt( false );
 	qglGetProgramiv(program->program, GL_LINK_STATUS, &linked);
 	block = linked ? glGetUniformBlockIndex(program->program, "DrawList") : GL_INVALID_INDEX;
 	if ( block == GL_INVALID_INDEX ) {

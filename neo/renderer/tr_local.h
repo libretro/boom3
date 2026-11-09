@@ -1163,6 +1163,8 @@ void		GLimp_Shutdown( void );
 void		GLimp_SwapBuffers( void );
 // the framebuffer the core draws its views into (0 the default one)
 GLuint		GLimp_ViewFramebuffer( void );
+// builds the present and display transform programs the options call for
+void		GLimp_WarmPrograms( void );
 GLuint		GLimp_ViewDepthTexture( int *width, int *height );
 // Calls the system specific swapbuffers routine, and may also perform
 // other system specific cvar checks that happen every frame.
@@ -1363,6 +1365,17 @@ float RB_LowResScale( void );
 bool RB_LowResRedraw( void );
 /* drops the GL names after a context reset */
 void RB_LowResForget( void );
+/* builds the pass's programs; R_InitOpenGL calls it so no draw does */
+bool RB_LowResPrograms( void );
+
+/* GL programs are built at R_InitOpenGL, at a material's parse, or at the
+ * option change that needs them (GLimp_WarmPrograms); one built anywhere
+ * else is counted as made on the draw path.  deliberate marks a parse-time
+ * build; r_programWarm is raised around the other deliberate ones. */
+extern int	r_programCount;
+extern int	r_programMisses;
+extern int	r_programWarm;
+void		R_ProgramBuilt( bool deliberate );
 
 /* Whether a soft particle fragment the fade takes to zero may be dropped:
  * an alpha blend fades alpha, so a zero fade leaves the destination whole

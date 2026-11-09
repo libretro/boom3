@@ -3315,6 +3315,8 @@ void R_LoadARBProgram( int progIndex ) {
 
 	qglProgramStringARB( progs[progIndex].target, GL_PROGRAM_FORMAT_ASCII_ARB,
 		strlen( start ), start );
+	// a material's parse is where its programs are meant to be built
+	R_ProgramBuilt( true );
 
 	err = qglGetError();
 	qglGetIntegerv( GL_PROGRAM_ERROR_POSITION_ARB, (GLint *)&ofs );

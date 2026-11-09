@@ -109,10 +109,23 @@ static unsigned char srgb8(float lin)
 }
 static EGLDisplay dpy;
 
+static long draw_path_programs = -1;
+
 static void log_cb(enum retro_log_level level, const char *fmt, ...)
 {
    va_list ap;
    (void)level;
+   /* the core's report at unload, "boom3: gl programs %u, made on the
+    * draw path %u": its format string names it, its arguments are read
+    * off the list the way vfprintf would */
+   if (strstr(fmt, "made on the draw path %u"))
+   {
+      va_list ap2;
+      va_start(ap2, fmt);
+      (void)va_arg(ap2, unsigned);
+      draw_path_programs = (long)va_arg(ap2, unsigned);
+      va_end(ap2);
+   }
    va_start(ap, fmt);
    vfprintf(stderr, fmt, ap);
    va_end(ap);
@@ -576,5 +589,16 @@ int main(int argc, char **argv)
    fprintf(stderr, "egl_host: %d frames run, %d presented\n", frames, presented);
    r_unload();
    r_deinit();
+   if (draw_path_programs < 0)
+   {
+      fprintf(stderr, "egl_host: the core did not report its draw path programs\n");
+      return 3;
+   }
+   if (draw_path_programs > 0)
+   {
+      fprintf(stderr, "egl_host: %ld programs made on the draw path (the core must build every one at init or at the option change)\n",
+            draw_path_programs);
+      return 3;
+   }
    return 0;
 }

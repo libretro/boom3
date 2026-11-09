@@ -1226,6 +1226,7 @@ static void renderer_gl_version(unsigned *major, unsigned *minor)
 /* ============ VR ============ */
 #ifdef LR_GLSL_PASSES
 static GLuint hdr_compile( GLenum type, const char *src ); // forward declaration
+static bool ldr_program_ready( void );
 #endif
 
 /* tracking (+X right, +Y up, -Z fwd) -> Doom (+X fwd, +Y left, +Z up) */
@@ -1723,6 +1724,7 @@ static void vr_fade_done( void ) {
 }
 #endif
 
+
 /* keep >= 0: the eyes under a screen fade - the target already holds the
  * fade's premultiplied colour, and the picture adds in at keep (1 - alpha). */
 static void quad_draw( GLuint tex, bool blend, float keep = -1.0f )
@@ -1746,38 +1748,7 @@ static void quad_draw( GLuint tex, bool blend, float keep = -1.0f )
 
 #ifdef LR_GLSL_PASSES
 	if ( LR_GLSL() ) {
-	if ( !ldr_prog ) {
-		static const char vs[] =
-			"attribute vec2 aPos;\n"
-			"varying vec2 vUV;\n"
-			"void main() {\n"
-			"  vUV = aPos * 0.5 + 0.5;\n"
-			"  gl_Position = vec4(aPos, 0.0, 1.0);\n"
-			"}\n";
-
-		static const char fs[] =
-			"precision mediump float;\n"
-			"varying vec2 vUV;\n"
-			"uniform sampler2D uTex;\n"
-			"void main() { gl_FragColor = texture2D(uTex, vUV); }\n";
-
-		GLuint v = hdr_compile( GL_VERTEX_SHADER, vs );
-		GLuint f = hdr_compile( GL_FRAGMENT_SHADER, fs );
-
-		if ( v && f ) {
-			ldr_prog = glCreateProgram();
-			glAttachShader( ldr_prog, v );
-			glAttachShader( ldr_prog, f );
-			glBindAttribLocation( ldr_prog, 0, "aPos" );
-			glLinkProgram( ldr_prog );
-			ldr_loc_tex = glGetUniformLocation( ldr_prog, "uTex" );
-		}
-
-		if ( v )
-			glDeleteShader( v );
-		if ( f )
-			glDeleteShader( f );
-	}
+	ldr_program_ready();
 
 	if ( ldr_prog ) {
 
@@ -1845,6 +1816,53 @@ static void quad_draw( GLuint tex, bool blend, float keep = -1.0f )
 static GLuint vr_layer_prog = 0;
 static GLint  vr_layer_loc_tex = -1, vr_layer_loc_layer = -1;
 
+#if defined(BOOM3_VR) && defined(HAVE_OPENGLES3)
+/* the VR layer present's program; see hdr_programs_ready */
+static bool vr_layer_program_ready( void ) {
+	if ( vr_layer_prog ) {
+		return true;
+	}
+	static const char vs[] =
+		"#version 300 es\n"
+		"in vec2 aPos;\n"
+		"out vec2 vUV;\n"
+		"void main() {\n"
+		"  vUV = aPos * 0.5 + 0.5;\n"
+		"  gl_Position = vec4(aPos, 0.0, 1.0);\n"
+		"}\n";
+
+	static const char fs[] =
+		"#version 300 es\n"
+		"precision mediump float;\n"
+		"precision mediump sampler2DArray;\n"
+		"in vec2 vUV;\n"
+		"uniform sampler2DArray uTex;\n"
+		"uniform float uLayer;\n"
+		"out vec4 fragColor;\n"
+		"void main() { fragColor = texture(uTex, vec3(vUV, uLayer)); }\n";
+
+	GLuint v = hdr_compile( GL_VERTEX_SHADER, vs );
+	GLuint f = hdr_compile( GL_FRAGMENT_SHADER, fs );
+
+	if ( v && f ) {
+		vr_layer_prog = glCreateProgram();
+		glAttachShader( vr_layer_prog, v );
+		glAttachShader( vr_layer_prog, f );
+		glBindAttribLocation( vr_layer_prog, 0, "aPos" );
+		glLinkProgram( vr_layer_prog );
+		R_ProgramBuilt( false );
+		vr_layer_loc_tex   = glGetUniformLocation( vr_layer_prog, "uTex" );
+		vr_layer_loc_layer = glGetUniformLocation( vr_layer_prog, "uLayer" );
+	}
+
+	if ( v )
+		glDeleteShader( v );
+	if ( f )
+		glDeleteShader( f );
+	return vr_layer_prog != 0;
+}
+#endif
+
 /* quad_draw for one layer of a 2D array texture */
 static void quad_draw_layer( GLuint tex, int layer, bool blend, float keep = -1.0f )
 {
@@ -1863,44 +1881,7 @@ static void quad_draw_layer( GLuint tex, int layer, bool blend, float keep = -1.
 	}
 	glDisable( GL_CULL_FACE );
 
-	if ( !vr_layer_prog ) {
-		static const char vs[] =
-			"#version 300 es\n"
-			"in vec2 aPos;\n"
-			"out vec2 vUV;\n"
-			"void main() {\n"
-			"  vUV = aPos * 0.5 + 0.5;\n"
-			"  gl_Position = vec4(aPos, 0.0, 1.0);\n"
-			"}\n";
-
-		static const char fs[] =
-			"#version 300 es\n"
-			"precision mediump float;\n"
-			"precision mediump sampler2DArray;\n"
-			"in vec2 vUV;\n"
-			"uniform sampler2DArray uTex;\n"
-			"uniform float uLayer;\n"
-			"out vec4 fragColor;\n"
-			"void main() { fragColor = texture(uTex, vec3(vUV, uLayer)); }\n";
-
-		GLuint v = hdr_compile( GL_VERTEX_SHADER, vs );
-		GLuint f = hdr_compile( GL_FRAGMENT_SHADER, fs );
-
-		if ( v && f ) {
-			vr_layer_prog = glCreateProgram();
-			glAttachShader( vr_layer_prog, v );
-			glAttachShader( vr_layer_prog, f );
-			glBindAttribLocation( vr_layer_prog, 0, "aPos" );
-			glLinkProgram( vr_layer_prog );
-			vr_layer_loc_tex   = glGetUniformLocation( vr_layer_prog, "uTex" );
-			vr_layer_loc_layer = glGetUniformLocation( vr_layer_prog, "uLayer" );
-		}
-
-		if ( v )
-			glDeleteShader( v );
-		if ( f )
-			glDeleteShader( f );
-	}
+	vr_layer_program_ready();
 
 	if ( vr_layer_prog ) {
 
@@ -2997,6 +2978,14 @@ static void update_variables(bool startup)
 
 	/* the curve just parsed decides which of its options are shown */
 	(void)update_option_visibility();
+
+	/* an option change is where the programs it needs are built, not the
+	 * frame that first draws with them */
+	if (!startup && glConfig.isInitialized) {
+		r_programWarm++;
+		GLimp_WarmPrograms();
+		r_programWarm--;
+	}
 }
 
 gp_layout_t *gp_layoutp = NULL;
@@ -3057,6 +3046,7 @@ static void context_reset(void)
        * parsed, before the first frame; RB_VK_BeginFrame re-warms on a
        * scene format change */
       RB_VK_WarmPipelines();
+      GLimp_WarmPrograms();
       if (!first_boot)
       {
          R_ReinitOpenGL();
@@ -7089,6 +7079,47 @@ static GLuint hdr_compile( GLenum type, const char *src ) {
 	}
 	return sh;
 }
+
+#ifdef LR_GLSL_PASSES
+/* the 24-bit present's program; see hdr_programs_ready */
+static bool ldr_program_ready( void ) {
+	if ( ldr_prog ) {
+		return true;
+	}
+	static const char vs[] =
+		"attribute vec2 aPos;\n"
+		"varying vec2 vUV;\n"
+		"void main() {\n"
+		"  vUV = aPos * 0.5 + 0.5;\n"
+		"  gl_Position = vec4(aPos, 0.0, 1.0);\n"
+		"}\n";
+
+	static const char fs[] =
+		"precision mediump float;\n"
+		"varying vec2 vUV;\n"
+		"uniform sampler2D uTex;\n"
+		"void main() { gl_FragColor = texture2D(uTex, vUV); }\n";
+
+	GLuint v = hdr_compile( GL_VERTEX_SHADER, vs );
+	GLuint f = hdr_compile( GL_FRAGMENT_SHADER, fs );
+
+	if ( v && f ) {
+		ldr_prog = glCreateProgram();
+		glAttachShader( ldr_prog, v );
+		glAttachShader( ldr_prog, f );
+		glBindAttribLocation( ldr_prog, 0, "aPos" );
+		glLinkProgram( ldr_prog );
+		R_ProgramBuilt( false );
+		ldr_loc_tex = glGetUniformLocation( ldr_prog, "uTex" );
+	}
+
+	if ( v )
+		glDeleteShader( v );
+	if ( f )
+		glDeleteShader( f );
+	return ldr_prog != 0;
+}
+#endif
 #endif /* HAVE_OPENGLES */
 
 /*
@@ -7467,6 +7498,7 @@ static bool hdr_arb_load( GLenum target, const char *text, GLuint *out, const ch
 	qglGetError();
 	qglProgramStringARB( target, GL_PROGRAM_FORMAT_ASCII_ARB,
 			(GLsizei)strlen( text ), text );
+	R_ProgramBuilt( false );
 
 	if ( qglGetError() == GL_INVALID_OPERATION ) {
 		const GLubyte *err = qglGetString( GL_PROGRAM_ERROR_STRING_ARB );
@@ -7613,7 +7645,10 @@ static int hdr_conv_levels( int w, int h ) {
 
 /* (re)create GL objects for the current context and size; safe to call
    per frame, does work only on change. Context loss zeroes the ids. */
-static bool hdr_ensure_target( int w, int h ) {
+/* The display transform's programs, and the tables they read: built at
+ * R_InitOpenGL and at the option change that needs them (GLimp_WarmPrograms),
+ * so a frame finds them ready; one built here from a frame is counted. */
+static bool hdr_programs_ready( void ) {
 #ifdef LR_ARB_PASSES
 	if ( !LR_GLSL() ) {
 	if ( hdr_rolloff_mode == HDR_ROLLOFF_ACES2FULL ) {
@@ -7682,6 +7717,7 @@ static bool hdr_ensure_target( int w, int h ) {
 		glAttachShader( hdr_prog, fs );
 		glBindAttribLocation( hdr_prog, 0, "aPos" );
 		glLinkProgram( hdr_prog );
+		R_ProgramBuilt( false );
 		glDeleteShader( vs );
 		glDeleteShader( fs );
 		GLint ok = 0;
@@ -7742,11 +7778,13 @@ static bool hdr_ensure_target( int w, int h ) {
 			glAttachShader( hdr_prog_bright, fs );
 			glBindAttribLocation( hdr_prog_bright, 0, "aPos" );
 			glLinkProgram( hdr_prog_bright );
+			R_ProgramBuilt( false );
 			hdr_prog_blur = glCreateProgram();
 			glAttachShader( hdr_prog_blur, vs );
 			glAttachShader( hdr_prog_blur, fs2 );
 			glBindAttribLocation( hdr_prog_blur, 0, "aPos" );
 			glLinkProgram( hdr_prog_blur );
+			R_ProgramBuilt( false );
 			/*
 			   Unlike hdr_prog these two never checked GL_LINK_STATUS.
 			   On a link failure the ids are still non-zero, so
@@ -7798,11 +7836,13 @@ static bool hdr_ensure_target( int w, int h ) {
 			glAttachShader( hdr_prog_down, fsd );
 			glBindAttribLocation( hdr_prog_down, 0, "aPos" );
 			glLinkProgram( hdr_prog_down );
+			R_ProgramBuilt( false );
 			hdr_prog_up = glCreateProgram();
 			glAttachShader( hdr_prog_up, vs );
 			glAttachShader( hdr_prog_up, fsu );
 			glBindAttribLocation( hdr_prog_up, 0, "aPos" );
 			glLinkProgram( hdr_prog_up );
+			R_ProgramBuilt( false );
 			glGetProgramiv( hdr_prog_down, GL_LINK_STATUS, &okD );
 			glGetProgramiv( hdr_prog_up,   GL_LINK_STATUS, &okU );
 			if ( !okD || !okU ) {
@@ -7820,6 +7860,7 @@ static bool hdr_ensure_target( int w, int h ) {
 				glAttachShader( hdr_prog_down_karis, fsdk );
 				glBindAttribLocation( hdr_prog_down_karis, 0, "aPos" );
 				glLinkProgram( hdr_prog_down_karis );
+				R_ProgramBuilt( false );
 				hdr_down_k_loc_texel = glGetUniformLocation( hdr_prog_down_karis, "uTexel" );
 				glDeleteShader( fsdk );
 			}
@@ -7838,6 +7879,13 @@ static bool hdr_ensure_target( int w, int h ) {
 	}
 #endif
 
+	return true;
+}
+
+static bool hdr_ensure_target( int w, int h ) {
+	if ( !hdr_programs_ready() ) {
+		return false;
+	}
 	/* Everything from here down builds framebuffers and textures, which
 	   both backends need.  It ended up inside the GLES-only region when
 	   the GLSL program creation above it was gated: the desktop build
@@ -8201,6 +8249,32 @@ GLuint GLimp_ViewFramebuffer( void ) {
 	return core_view_fbo;
 }
 
+/* The programs the frame paths otherwise build at first use: the display
+ * transform's when HDR output is on, the 24-bit present's, the VR layer's.
+ * Each ready function is a no-op once its program exists, so this runs at
+ * R_InitOpenGL and at every option change. */
+#ifdef BOOM3_VULKAN_RENDERER
+static void hdr_vk_warm( void );
+#endif
+
+void GLimp_WarmPrograms( void ) {
+#ifdef BOOM3_VULKAN_RENDERER
+	if ( LR_VULKAN() ) {
+		hdr_vk_warm();
+		return;
+	}
+#endif
+	if ( hdr_output_active )
+		hdr_programs_ready();
+#ifdef LR_GLSL_PASSES
+	if ( LR_GLSL() )
+		ldr_program_ready();
+#endif
+#if defined(BOOM3_VR) && defined(HAVE_OPENGLES3)
+	vr_layer_program_ready();
+#endif
+}
+
 /* The view framebuffer's depth as a texture, and its size, when the core
  * owns that framebuffer and its depth is a texture; 0 otherwise. */
 GLuint GLimp_ViewDepthTexture( int *width, int *height ) {
@@ -8249,32 +8323,7 @@ static void ldr_present( GLuint dstFbo )
 	glDisable( GL_CULL_FACE );
 #ifdef LR_GLSL_PASSES
 	if ( LR_GLSL() ) {
-	if ( !ldr_prog ) {
-		static const char vs[] =
-			"attribute vec2 aPos;\n"
-			"varying vec2 vUV;\n"
-			"void main() {\n"
-			"  vUV = aPos * 0.5 + 0.5;\n"
-			"  gl_Position = vec4(aPos, 0.0, 1.0);\n"
-			"}\n";
-		static const char fs[] =
-			"precision mediump float;\n"
-			"varying vec2 vUV;\n"
-			"uniform sampler2D uTex;\n"
-			"void main() { gl_FragColor = texture2D(uTex, vUV); }\n";
-		GLuint v = hdr_compile( GL_VERTEX_SHADER, vs );
-		GLuint f = hdr_compile( GL_FRAGMENT_SHADER, fs );
-		if ( v && f ) {
-			ldr_prog = glCreateProgram();
-			glAttachShader( ldr_prog, v );
-			glAttachShader( ldr_prog, f );
-			glBindAttribLocation( ldr_prog, 0, "aPos" );
-			glLinkProgram( ldr_prog );
-			ldr_loc_tex = glGetUniformLocation( ldr_prog, "uTex" );
-		}
-		if ( v ) glDeleteShader( v );
-		if ( f ) glDeleteShader( f );
-	}
+	ldr_program_ready();
 
 	if ( ldr_prog ) {
 		glUseProgram( ldr_prog );
@@ -8857,6 +8906,80 @@ static bool hdr_vk_targets( int w, int h, int convN ) {
 	return true;
 }
 
+/* a post pass's draw: the fields its pipeline key reads, so the warm
+ * below and the pass fill them in one place */
+static void hdr_vk_pass_draw( vkb_draw_t *draw, int program, unsigned stateBits ) {
+	memset( draw, 0, sizeof( *draw ) );
+	draw->program = (unsigned char)program;
+	draw->layout = VKB_VERTEX_DRAWVERT;
+	draw->cull = VKB_CULL_NONE;
+	draw->stateBits = stateBits;
+}
+
+/* the composite's draw, the fields its pipeline key reads: in place on the
+ * frame image, or from the scene image.  The tables are bound before the
+ * pass begins, so this does not clear the draw. */
+static void hdr_vk_composite_draw( vkb_draw_t *draw, bool inplace ) {
+	draw->program = inplace ? VKB_PROGRAM_HDR_COMPOSITE_INPLACE : VKB_PROGRAM_HDR_COMPOSITE;
+	draw->layout = VKB_VERTEX_DRAWVERT;
+	draw->cull = VKB_CULL_NONE;
+	draw->stateBits = GLS_DEPTHFUNC_ALWAYS | GLS_DEPTHMASK;
+}
+
+/* the frame image's format: the frontend reads it as it is, so a PQ
+ * frame is 10-bit and an scRGB one half float */
+static enum vkb_format hdr_vk_frame_format( void ) {
+	return !hdr_output_active ? VKB_FORMAT_RGBA8
+		: hdr_scrgb_output ? VKB_FORMAT_RGBA16F
+		: hdr_pq_output ? VKB_FORMAT_RGB10A2 : VKB_FORMAT_RGBA8;
+}
+
+/* Whether the scene draws into the frame image itself and the display
+ * transform runs on it in place: the frontend samples the view it is
+ * handed, and PQ or sRGB codes in a half float are finer than 10 or 8
+ * bits.  Only the supersample and chromatic aberration, which read
+ * beyond the pixel, need a scene image to resolve from - and scRGB a
+ * float one, since its output is unbounded. */
+static bool hdr_vk_scene_in_frame( void ) {
+	return hdr_output_active && hdr_ssaa != 2 && hdr_chroma_ab == 0
+		&& ( !hdr_scrgb_output || hdr_fp16_scene || hdr_fp32_scene );
+}
+
+/* The display transform's pipelines, built ahead of the frame that
+ * first draws them: at the backend's start, at a scene format change
+ * and at every option change (GLimp_WarmPrograms).  The bloom passes
+ * run on targets of the scene's format, the composite in place on the
+ * frame image or from the scene image into it, and the backend's own
+ * resolve (VKB_PROGRAM_BLIT) into the frame image when nothing else
+ * composites. */
+static void hdr_vk_warm( void ) {
+	vkb_draw_t draw;
+	const enum vkb_format scene = RB_VK_SceneFormat();
+	const enum vkb_format frame = hdr_vk_frame_format();
+	const bool inplace = hdr_vk_scene_in_frame();
+	if ( !vkb_ready() ) {
+		return;
+	}
+	hdr_vk_pass_draw( &draw, VKB_PROGRAM_BLIT, GLS_DEPTHFUNC_ALWAYS | GLS_DEPTHMASK );
+	vkb_warm( &draw, frame, VKB_PASS_SCENE );
+	if ( !hdr_output_active ) {
+		return;
+	}
+	hdr_vk_pass_draw( &draw, VKB_PROGRAM_HDR_BRIGHT, 0 );
+	vkb_warm( &draw, scene, VKB_PASS_POST );
+	hdr_vk_pass_draw( &draw, VKB_PROGRAM_HDR_DOWN, 0 );
+	vkb_warm( &draw, scene, VKB_PASS_POST );
+	hdr_vk_pass_draw( &draw, VKB_PROGRAM_HDR_DOWN_KARIS, 0 );
+	vkb_warm( &draw, scene, VKB_PASS_POST );
+	hdr_vk_pass_draw( &draw, VKB_PROGRAM_HDR_UP, GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE );
+	vkb_warm( &draw, scene, VKB_PASS_POST );
+	hdr_vk_pass_draw( &draw, VKB_PROGRAM_HDR_BLUR, 0 );
+	vkb_warm( &draw, scene, VKB_PASS_POST );
+	memset( &draw, 0, sizeof( draw ) );
+	hdr_vk_composite_draw( &draw, inplace );
+	vkb_warm( &draw, inplace ? scene : frame, inplace ? VKB_PASS_INPLACE : VKB_PASS_SCENE );
+}
+
 static void hdr_vk_pass( unsigned target, int w, int h, int program, unsigned image, const float p0[4],
 		const float p1[4], unsigned stateBits ) {
 	vkb_draw_t draw;
@@ -8864,7 +8987,7 @@ static void hdr_vk_pass( unsigned target, int w, int h, int program, unsigned im
 	if ( !vkb_post_begin( target, w, h ) ) {
 		return;
 	}
-	memset( &draw, 0, sizeof( draw ) );
+	hdr_vk_pass_draw( &draw, program, stateBits );
 	memset( &block, 0, sizeof( block ) );
 	if ( p0 ) {
 		memcpy( block.vertexParms[0], p0, sizeof( block.vertexParms[0] ) );
@@ -8875,10 +8998,6 @@ static void hdr_vk_pass( unsigned target, int w, int h, int program, unsigned im
 	block.glColor[0] = block.glColor[1] = block.glColor[2] = block.glColor[3] = 1.0f;
 	draw.block = &block;
 	draw.image[0] = image;
-	draw.program = (unsigned char)program;
-	draw.layout = VKB_VERTEX_DRAWVERT;
-	draw.cull = VKB_CULL_NONE;
-	draw.stateBits = stateBits;
 	vkb_draw_fullscreen( &draw );
 }
 
@@ -9070,22 +9189,19 @@ static void hdr_present_vk( float paperWhite, float H, const float mat[9] ) {
 		if ( !vkb_post_begin_inplace() ) {
 			return;
 		}
+		hdr_vk_composite_draw( &draw, true );
 		draw.inputImage = vkb_image_scene_ref();
-		draw.program = VKB_PROGRAM_HDR_COMPOSITE_INPLACE;
 	} else {
 		if ( !vkb_post_begin( 0, scr_width, scr_height ) ) {
 			return;
 		}
+		hdr_vk_composite_draw( &draw, false );
 		draw.image[0] = vkb_image_scene_ref();
-		draw.program = VKB_PROGRAM_HDR_COMPOSITE;
 	}
 	draw.block = &block;
 	draw.blockBytes = sizeof( block );
 	draw.image[1] = bloomT;
 	draw.image[2] = bloomW;
-	draw.layout = VKB_VERTEX_DRAWVERT;
-	draw.cull = VKB_CULL_NONE;
-	draw.stateBits = GLS_DEPTHFUNC_ALWAYS | GLS_DEPTHMASK;
 	vkb_draw_fullscreen( &draw );
 	vkb_post_end();
 }
@@ -9937,25 +10053,18 @@ void RB_VK_BeginFrame( void ) {
 		if ( RB_VK_SceneFormat() != warmed ) {
 			warmed = RB_VK_SceneFormat();
 			RB_VK_WarmPipelines();
+			hdr_vk_warm();
 		}
 	}
-	/* The scene pipeline draws into the frame image itself and the
+	/* the scene pipeline draws into the frame image itself and the
 	 * display transform runs on it in place: the frame image takes the
-	 * scene's format - the frontend samples the view it is handed, and
-	 * PQ or sRGB codes in a half float are finer than 10 or 8 bits.
-	 * Only the supersample and chromatic aberration, which read beyond
-	 * the pixel, need a scene image to resolve from - and scRGB a float
-	 * one, since its output is unbounded. */
-	if ( hdr_output_active && hdr_ssaa != 2 && hdr_chroma_ab == 0
-			&& ( !hdr_scrgb_output || hdr_fp16_scene || hdr_fp32_scene ) ) {
+	 * scene's format */
+	if ( hdr_vk_scene_in_frame() ) {
 		vkb_frame_format( RB_VK_SceneFormat() );
 		vkb_begin_frame( VKB_TARGET_FRAME, scr_width, scr_height, RB_VK_SceneFormat() );
 		return;
 	}
-	/* a PQ frame is 10-bit; the frontend reads the image as it is */
-	vkb_frame_format( !hdr_output_active ? VKB_FORMAT_RGBA8
-			: hdr_scrgb_output ? VKB_FORMAT_RGBA16F
-			: hdr_pq_output ? VKB_FORMAT_RGB10A2 : VKB_FORMAT_RGBA8 );
+	vkb_frame_format( hdr_vk_frame_format() );
 	if ( hdr_output_active || hdr_ssaa == 2 ) {
 		int sw, sh;
 		RB_VK_SceneSize( &sw, &sh );
@@ -10101,6 +10210,12 @@ void retro_unload_game(void)
 	// common->Shutdown() takes down: release it now rather than from
 	// the static file's destructor at process exit
 	RetroReleaseState();
+
+	/* programs made on the draw path, for the host's gate: every one is
+	 * meant to have been built at init or at an option change, so 0 */
+	if (log_cb && !first_boot && !LR_VULKAN())
+		log_cb(RETRO_LOG_INFO, "boom3: gl programs %u, made on the draw path %u\n",
+		      (unsigned)r_programCount, (unsigned)r_programMisses);
 
 	if (common && !first_boot)
 		common->Shutdown();

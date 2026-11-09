@@ -45,8 +45,24 @@ the one the player watches.
   resolution particle pass, the composite) when the backend comes up and
   when the scene format changes (`RB_VK_WarmPipelines`), a material's
   stages when the material is parsed (`RB_VK_WarmMaterial`, from
-  `idMaterial::Parse`). The GL renderers link every program at
-  `R_InitOpenGL`.
+  `idMaterial::Parse`), and the display transform's post passes and
+  composite, whose targets follow the colour format options, at the
+  same times and at every option change (`hdr_vk_warm`, through
+  `GLimp_WarmPrograms`). The default gate run never draws them, which
+  is why `hdr_check.sh` runs every colour format through the host.
+- **Every GL program is built at `R_InitOpenGL`, at a material's parse,
+  or at the option change that needs it.** `R_InitOpenGL` links the
+  renderer's programs, the half resolution particle pass's
+  (`RB_LowResPrograms`) and the present's (`GLimp_WarmPrograms`: the
+  display transform, the 24-bit present, the VR layer, for the options
+  as they stand); `update_variables` calls `GLimp_WarmPrograms` again
+  after an option change, so a composite that bakes an option in is
+  rebuilt there and not at the next frame. A `*_ready()` function that
+  builds on first use is the miss path, kept so a draw still renders;
+  every build goes through `R_ProgramBuilt`, which counts one outside
+  those windows as made on the draw path, reported at unload as
+  "boom3: gl programs %u, made on the draw path %u". `tools/egl_host`
+  exits 3 unless it is 0.
 - **One place derives the key.** A warm fills a `vkb_draw_t` the way
   the pass fills it and hands it to `vkb_warm`; the draw hands the same
   struct to `vkb_draw`; both go through `vkb_draw_key`. A new field on
@@ -61,7 +77,9 @@ the one the player watches.
 - **A miss still renders, and is counted.** `vkb_pipeline` makes a
   pipeline it was not warmed for, so the draw is never skipped or
   approximated, and counts it: `vkb_pipeline_misses`. The core reports
-  the count at unload and `tools/vk_host` exits 3 unless it is 0.
+  the count at unload and `tools/vk_host` exits 3 unless it is 0; the
+  GL renderers' count is `r_programMisses`, gated by `tools/egl_host`
+  the same way.
 - **No shader cache as the fix.** A disk cache is for a low-end
   machine's load time. It never removes a stutter: the invariants above
   hold with no cache at all, and a first run with none plays the same as
@@ -69,15 +87,20 @@ the one the player watches.
 
 ### The gate
 
-Any change under `neo/renderer/vk/`, to `neo/renderer/draw_vulkan.cpp`,
-or to how materials are parsed runs, by hand before delivery, on the
-free demo (`demo00.pk4`, see README) on lavapipe:
+Any change under `neo/renderer/`, to the GL present or display
+transform in `neo/sys/libretro/libretro.cpp`, or to how materials are
+parsed runs, by hand before delivery, on the free demo (`demo00.pk4`,
+see README) on lavapipe and llvmpipe:
 
-    make -C tools/vk_host
+    make -C tools/vk_host && make -C tools/egl_host
     VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json \
       tools/vk_host/vk_host neo/boom3_libretro.so <path>/demo00.pk4 1500 from=0
+    tools/egl_host/egl_host neo/boom3_libretro.so <path>/demo00.pk4 1500 from=0 \
+      doom_renderer=arb2 doom_color_format=24bit-tonemapped
 
-- the host exits 0: zero pipelines made on the draw path;
+- each host exits 0: zero pipelines or programs made on the draw path
+  (`tools/egl_host/hdr_check.sh` runs every GL renderer through every
+  display transform and fails on a host that exits otherwise);
 - the per-frame hashes it prints equal the parent commit's, run the
   same way (a picture change needs its own reason, stated);
 - the pipeline count it prints is reported, and does not grow without

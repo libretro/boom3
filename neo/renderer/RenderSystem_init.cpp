@@ -1098,6 +1098,9 @@ void R_InitOpenGL( void ) {
 	glimpParms_t	parms;
 	int				i;
 
+	// every program built from here to the end is deliberate
+	r_programWarm++;
+
 	common->Printf( "----- Initializing OpenGL -----\n" );
 
 	if ( glConfig.isInitialized ) {
@@ -1184,6 +1187,7 @@ void R_InitOpenGL( void ) {
 		tr.SetBackEndRenderer();
 		R_InitFrameData();
 		r_gammaInShader.ClearModified();
+		r_programWarm--;
 		return;
 	}
 #endif
@@ -1249,6 +1253,12 @@ void R_InitOpenGL( void ) {
 		R_SetColorMappings();
 	}
 
+
+	// the programs no draw may build: the half resolution particle pass's
+	// and the present's, for the options as they stand
+	RB_LowResPrograms();
+	GLimp_WarmPrograms();
+	r_programWarm--;
 }
 
 void R_ReinitOpenGL( void ) {

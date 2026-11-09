@@ -61,8 +61,14 @@ for r in $renderers; do
 			"$h" "$core" "$content" 60 doom_resolution=320x240 $opt \
 				doom_color_format=$fmt doom_hdr_rolloff=$c \
 				ppm="$shots/${r}_${fmt}_$c" shots=59 > "$log" 2>&1
+			rc=$?
 			runs=$((runs + 1))
-			if grep -q "did not compile\|did not load\|disabling the HDR pass" "$log"; then
+			if [ $rc -ne 0 ]; then
+				# the host's own gates: a crash, or a program or pipeline made on the draw path
+				echo "FAIL $r $fmt $c: host exited $rc"
+				tail -3 "$log" | sed 's/^/    /'
+				fail=$((fail + 1))
+			elif grep -q "did not compile\|did not load\|disabling the HDR pass" "$log"; then
 				echo "FAIL $r $fmt $c:"
 				grep "HDR" "$log" | sed 's/^/    /'
 				fail=$((fail + 1))

@@ -681,6 +681,17 @@ bool RB_LowResEligible( const drawSurf_t *surf ) {
 	return true;
 }
 
+int r_programCount;
+int r_programMisses;
+int r_programWarm;
+
+void R_ProgramBuilt( bool deliberate ) {
+	r_programCount++;
+	if ( !deliberate && !r_programWarm ) {
+		r_programMisses++;
+	}
+}
+
 #ifndef HAVE_OPENGLES
 
 enum {
@@ -872,7 +883,7 @@ static GLuint RB_LowResShader( GLenum type, const char *text ) {
 }
 
 /* the passes' programs, on first use */
-static bool RB_LowResPrograms( void ) {
+bool RB_LowResPrograms( void ) {
 	int i;
 #ifdef BOOM3_ARB2_RENDERER
 	if ( !R_GLSLRenderer() ) {
@@ -885,6 +896,7 @@ static bool RB_LowResPrograms( void ) {
 			qglBindProgramARB( GL_FRAGMENT_PROGRAM_ARB, rbLowRes.arb[i] );
 			qglProgramStringARB( GL_FRAGMENT_PROGRAM_ARB, GL_PROGRAM_FORMAT_ASCII_ARB,
 				(GLsizei)strlen( rbLowResARB[i] ), rbLowResARB[i] );
+			R_ProgramBuilt( false );
 			qglGetIntegerv( GL_PROGRAM_ERROR_POSITION_ARB, &err );
 			if ( err != -1 ) {
 				common->Printf( "half resolution particles: %s\n",
@@ -914,6 +926,7 @@ static bool RB_LowResPrograms( void ) {
 			glAttachShader( rbLowRes.prog[i], fs );
 			glBindAttribLocation( rbLowRes.prog[i], 0, "attr_Vertex" );
 			glLinkProgram( rbLowRes.prog[i] );
+			R_ProgramBuilt( false );
 			glDeleteShader( fs );
 			glGetProgramiv( rbLowRes.prog[i], GL_LINK_STATUS, &ok );
 			if ( !ok ) {
@@ -1230,6 +1243,10 @@ bool RB_LowResRedraw( void ) {
 }
 
 void RB_LowResForget( void ) {
+}
+
+bool RB_LowResPrograms( void ) {
+	return false;
 }
 
 #endif
