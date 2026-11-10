@@ -18,15 +18,61 @@ typedef struct vkb_buffer_upload
    unsigned bytes;
 } vkb_buffer_upload_t;
 
-static vkb_buffer_upload_t *uploads;
-static unsigned numUploads, uploadCapacity;
+/* a side's queued copies into the static buffers */
+typedef struct vkb_buffer_upload_set
+{
+   vkb_buffer_upload_t *uploads;
+   unsigned count, capacity;
+} vkb_buffer_upload_set_t;
+
+static vkb_buffer_upload_set_t uploads[VKB_SIDE_COUNT];
+
+/* the render thread's frees of blocks, kept apart from the main thread's
+ * deferred list until the handoff */
+static vkb_deferred_free_t renderDeferred[256];
+static unsigned numRenderDeferred;
 
 int vkb_buffers_init(void)
 {
    memset(vkb.statics, 0, sizeof(vkb.statics));
    vkb.deferred = NULL;
    vkb.deferredCount = vkb.deferredCapacity = 0;
-   numUploads = 0;
+   memset(uploads, 0, sizeof(uploads));
+   numRenderDeferred = 0;
+   return 1;
+}
+
+static int vkb_buffer_upload_push(vkb_buffer_upload_set_t *set, const vkb_buffer_upload_t *u)
+{
+   if (set->count == set->capacity)
+   {
+      unsigned cap = set->capacity ? set->capacity * 2 : 256;
+      vkb_buffer_upload_t *n = (vkb_buffer_upload_t *)realloc(set->uploads, cap * sizeof(*n));
+      if (!n)
+         return 0;
+      set->uploads  = n;
+      set->capacity = cap;
+   }
+   set->uploads[set->count++] = *u;
+   return 1;
+}
+
+static int vkb_deferred_push(unsigned buffer, unsigned offset, size_t bytes)
+{
+   if (vkb.deferredCount == vkb.deferredCapacity)
+   {
+      unsigned cap = vkb.deferredCapacity ? vkb.deferredCapacity * 2 : 256;
+      vkb_deferred_free_t *n = (vkb_deferred_free_t *)realloc(vkb.deferred, cap * sizeof(*n));
+      if (!n)
+         return 0;
+      vkb.deferred         = n;
+      vkb.deferredCapacity = cap;
+   }
+   vkb.deferred[vkb.deferredCount].buffer = buffer;
+   vkb.deferred[vkb.deferredCount].offset = offset;
+   vkb.deferred[vkb.deferredCount].size   = (unsigned)bytes;
+   vkb.deferred[vkb.deferredCount].frame  = (unsigned)retro_atomic_load_relaxed_int(&vkb.frameCount);
+   vkb.deferredCount++;
    return 1;
 }
 
@@ -45,9 +91,10 @@ static void vkb_static_release(unsigned i)
 void vkb_buffers_shutdown(void)
 {
    unsigned i;
-   free(uploads);
-   uploads = NULL;
-   numUploads = uploadCapacity = 0;
+   for (i = 0; i < VKB_SIDE_COUNT; i++)
+      free(uploads[i].uploads);
+   memset(uploads, 0, sizeof(uploads));
+   numRenderDeferred = 0;
    for (i = 0; i < VKB_MAX_STATIC_BUFFERS; i++)
       vkb_static_release(i);
    free(vkb.deferred);
@@ -109,7 +156,12 @@ int vkb_static_alloc(size_t bytes, int indexes, unsigned *buffer, unsigned *offs
    unsigned at;
    if (!vkb.ready || !bytes)
       return 0;
-   vkt_lock();
+   if (vkb_side() == VKB_SIDE_RENDER)
+   {
+      /* the ranges are the main thread's */
+      vkb.ownerViolations++;
+      return 0;
+   }
    for (i = 0; i < VKB_MAX_STATIC_BUFFERS; i++)
    {
       vkb_static_buffer_t *b = &vkb.statics[i];
@@ -126,11 +178,9 @@ int vkb_static_alloc(size_t bytes, int indexes, unsigned *buffer, unsigned *offs
       {
          *buffer = i + 1;
          *offset = at;
-         vkt_unlock();
          return 1;
       }
    }
-   vkt_unlock();
    return 0;
 }
 
@@ -146,40 +196,27 @@ void vkb_static_upload(unsigned buffer, unsigned offset, const void *data, size_
       vkb_mem_flush(&b->mem, offset, bytes);
       return;
    }
-   /* through the staging arena, copied ahead of the next frame */
+   /* through the caller's side's staging arena, copied by the frame's
+    * flush: the render thread's at once in its frame, the main thread's
+    * at the next frame's start */
    {
-      vkb_buffer_upload_t *u;
+      const enum vkb_side side = vkb_side();
+      vkb_buffer_upload_t u;
       unsigned char *p;
-      int flush;
-      vkt_lock();
-      if (numUploads == uploadCapacity)
-      {
-         unsigned cap = uploadCapacity ? uploadCapacity * 2 : 256;
-         vkb_buffer_upload_t *n = (vkb_buffer_upload_t *)realloc(uploads, cap * sizeof(*n));
-         if (!n)
-         {
-            vkt_unlock();
-            return;
-         }
-         uploads        = n;
-         uploadCapacity = cap;
-      }
-      u = &uploads[numUploads];
-      memset(u, 0, sizeof(*u));
-      p = vkb_staging_alloc(bytes, &u->staging, &u->stagingOffset);
+      memset(&u, 0, sizeof(u));
+      p = vkb_staging_alloc(side, bytes, &u.staging, &u.stagingOffset);
       if (!p)
-      {
-         vkt_unlock();
          return;
-      }
       memcpy(p, data, bytes);
-      u->buffer = buffer;
-      u->offset = offset;
-      u->bytes  = (unsigned)bytes;
-      numUploads++;
-      flush = !vkb.frameOpen && vkb_staging_should_flush();
-      vkt_unlock();
-      if (flush)
+      u.buffer = buffer;
+      u.offset = offset;
+      u.bytes  = (unsigned)bytes;
+      if (!vkb_buffer_upload_push(&uploads[side], &u))
+         return;
+      /* a load between frames that has filled the arena goes to the
+       * device now rather than growing it */
+      if (side == VKB_SIDE_MAIN && !retro_atomic_load_acquire_int(&vkb.frameOpen)
+            && vkb_staging_should_flush(side))
          vkb_transfer_now();
    }
 }
@@ -188,39 +225,42 @@ void vkb_static_free(unsigned buffer, unsigned offset, size_t bytes)
 {
    if (!buffer || buffer > VKB_MAX_STATIC_BUFFERS || !vkb.statics[buffer - 1].used)
       return;
-   vkt_lock();
-   if (vkb.deferredCount == vkb.deferredCapacity)
+   if (vkb_side() == VKB_SIDE_RENDER)
    {
-      unsigned cap = vkb.deferredCapacity ? vkb.deferredCapacity * 2 : 256;
-      vkb_deferred_free_t *n = (vkb_deferred_free_t *)realloc(vkb.deferred, cap * sizeof(*n));
-      if (!n)
+      if (numRenderDeferred == sizeof(renderDeferred) / sizeof(renderDeferred[0]))
       {
-         vk.vkDeviceWaitIdle(vkb.device);
-         range_alloc_free(&vkb.statics[buffer - 1].ranges, offset, (unsigned)bytes);
-         vkt_unlock();
-         return;
+         vkb.ownerViolations++;
+         return;    /* the range is lost until the buffer goes */
       }
-      vkb.deferred         = n;
-      vkb.deferredCapacity = cap;
+      renderDeferred[numRenderDeferred].buffer = buffer;
+      renderDeferred[numRenderDeferred].offset = offset;
+      renderDeferred[numRenderDeferred].size   = (unsigned)bytes;
+      renderDeferred[numRenderDeferred].frame  = (unsigned)retro_atomic_load_relaxed_int(&vkb.frameCount);
+      numRenderDeferred++;
+      return;
    }
-   vkb.deferred[vkb.deferredCount].buffer = buffer;
-   vkb.deferred[vkb.deferredCount].offset = offset;
-   vkb.deferred[vkb.deferredCount].size   = (unsigned)bytes;
-   vkb.deferred[vkb.deferredCount].frame  = vkb.frameCount;
-   vkb.deferredCount++;
-   vkt_unlock();
+   if (!vkb_deferred_push(buffer, offset, bytes))
+   {
+      vk.vkDeviceWaitIdle(vkb.device);
+      range_alloc_free(&vkb.statics[buffer - 1].ranges, offset, (unsigned)bytes);
+   }
 }
 
-/* At a frame's start: the frees the frames in flight have let go, and
- * the staging chunks they are done with. */
-void vkb_buffers_frame_begin(unsigned frameIndex)
+/* The main thread between frames: the render thread's frees join the
+ * deferred list, the frees the frames in flight have let go are given
+ * back, the main side's queued copies and the chunks holding them go
+ * to the render side for the frame about to record. */
+void vkb_buffers_handoff(void)
 {
    unsigned i;
-   (void)frameIndex;
-   vkt_lock();
+   unsigned frameCount = (unsigned)retro_atomic_load_relaxed_int(&vkb.frameCount);
+   for (i = 0; i < numRenderDeferred; i++)
+      if (!vkb_deferred_push(renderDeferred[i].buffer, renderDeferred[i].offset, renderDeferred[i].size))
+         break;
+   numRenderDeferred = 0;
    for (i = 0; i < vkb.deferredCount; )
    {
-      if (vkb.frameCount >= vkb.deferred[i].frame + VKB_FRAMES)
+      if (frameCount >= vkb.deferred[i].frame + VKB_FRAMES)
       {
          vkb_deferred_free_t *d = &vkb.deferred[i];
          if (d->buffer && d->buffer <= VKB_MAX_STATIC_BUFFERS && vkb.statics[d->buffer - 1].used)
@@ -230,39 +270,57 @@ void vkb_buffers_frame_begin(unsigned frameIndex)
       else
          i++;
    }
-   vkb_staging_frame_done();
-   vkt_unlock();
-}
-
-int vkb_buffers_pending(void)
-{
-   return numUploads != 0;
-}
-
-void vkb_buffers_flush(VkCommandBuffer cmd)
-{
-   vkt_lock();
-   vkb_buffers_flush_locked(cmd);
-   vkt_unlock();
-}
-
-void vkb_buffers_flush_locked(VkCommandBuffer cmd)
-{
-   unsigned i;
-   if (!numUploads)
-      return;
-   vkb_staging_flush_memory();
-   for (i = 0; i < numUploads; i++)
+   if (uploads[VKB_SIDE_MAIN].count)
    {
-      vkb_buffer_upload_t *u = &uploads[i];
+      vkb_buffer_upload_set_t *from = &uploads[VKB_SIDE_MAIN];
+      vkb_buffer_upload_set_t *to   = &uploads[VKB_SIDE_RENDER];
+      if (!to->count)
+      {
+         vkb_buffer_upload_set_t t = *to;
+         *to   = *from;
+         *from = t;
+      }
+      else
+      {
+         for (i = 0; i < from->count; i++)
+            vkb_buffer_upload_push(to, &from->uploads[i]);
+         from->count = 0;
+      }
+      /* their chunks are copied from in the frame about to record */
+      vkb_staging_flush_memory(VKB_SIDE_MAIN);
+      vkb_staging_retire(VKB_SIDE_MAIN, 0);
+   }
+   vkb_staging_frame_done(VKB_SIDE_MAIN);
+}
+
+int vkb_buffers_pending(enum vkb_side side)
+{
+   return uploads[side].count != 0;
+}
+
+/* the side's queued copies into a command buffer; the render side's
+ * chunks retire with the frame, the main side's already did at the
+ * handoff or do at once after a waited submit */
+void vkb_buffers_flush(VkCommandBuffer cmd, enum vkb_side side)
+{
+   vkb_buffer_upload_set_t *set = &uploads[side];
+   unsigned i;
+   if (!set->count)
+      return;
+   if (side == VKB_SIDE_RENDER)
+      vkb_staging_flush_memory(side);
+   for (i = 0; i < set->count; i++)
+   {
+      vkb_buffer_upload_t *u = &set->uploads[i];
       VkBufferCopy region;
       region.srcOffset = u->stagingOffset;
       region.dstOffset = u->offset;
       region.size      = u->bytes;
       vk.vkCmdCopyBuffer(cmd, u->staging, vkb.statics[u->buffer - 1].buffer, 1, &region);
    }
-   numUploads = 0;
-   vkb_staging_retire(0);
+   set->count = 0;
+   if (side == VKB_SIDE_RENDER)
+      vkb_staging_retire(side, 0);
    {
       /* the copies land before the vertex fetch */
       VkMemoryBarrier mb;

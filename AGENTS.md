@@ -14,12 +14,30 @@ delivery summary, not in the commit message.
   with a timeout, or `glClientWaitSync` that waits. A GPU fence is polled
   with a zero timeout and the frame goes on without the result.
 - **No locks.** Threads talk through atomics, SPSC rings
-  (`retro_spsc`) and eventcount park/wake (`retro_eventcount`). The one
-  thread the engine owns, the file system's background reader, is the
-  model: the main thread hands it requests and takes results without
-  waiting, and a read it gives up on is cancelled, not waited for.
+  (`retro_spsc`) and eventcount park/wake (`retro_eventcount`). The
+  file system's background reader is one model: the main thread hands
+  it requests and takes results without waiting, and a read it gives
+  up on is cancelled, not waited for. The Vulkan render thread is the
+  other: it owns the backend from the submit to the join, and the two
+  threads never share a table while both run. Each side has its own
+  upload queue, staging arena, grave list and deferred frees
+  (`enum vkb_side`, vk_internal.h); the main side's move to the render
+  side at `vkb_frame_handoff`, the render side's frees drain at the
+  join, image slots and memory blocks are picked from opposite ends of
+  their tables, and what the render thread allocates in its frame is a
+  dedicated block. A side touching the other's is counted
+  (`vkb_owner_violations`), reported at unload and gated by `vk_host`.
+  The Linux workflow fails on any `slock_`/`scond_` in the core's own
+  threading.
 - **The main thread is joined only at teardown**, and the reader reads
-  in chunks so that join is bounded (`bgread_read`).
+  in chunks so that join is bounded (`bgread_read`). The render thread's
+  frame is waited for at the end of `retro_run` (`vkt_join`, an
+  eventcount park) because the frontend takes the finished image there;
+  that wait, and `vkb_acquire_slot`'s fence wait on a frame three
+  behind, are the two waits the Vulkan path still has, and the shape
+  that removes them is presenting the previous frame's image when the
+  current one is not done. That is a latency decision, made deliberately
+  or not at all.
 - **Everything threaded is behind `HAVE_THREADS`**, and the
   `HAVE_THREADS=0` build links with no thread symbol in it (the Linux
   workflow checks).

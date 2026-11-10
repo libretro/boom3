@@ -341,6 +341,11 @@ enum vkb_pass
  * read 0. */
 void vkb_warm(const vkb_draw_t *draw, enum vkb_format format, enum vkb_pass pass);
 unsigned vkb_pipeline_misses(void);
+/* the sides' discipline (vk_internal.h): a thread that touched what the
+ * other owned, and render side uploads the reserved staging could not
+ * take; both meant to stay 0 */
+unsigned vkb_owner_violations(void);
+unsigned vkb_upload_spills(void);
 unsigned vkb_pipeline_count(void);
 /* a post pass's fullscreen triangle: no geometry, the block and textures */
 void vkb_draw_fullscreen(const vkb_draw_t *draw);

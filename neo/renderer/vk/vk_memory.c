@@ -38,6 +38,20 @@ typedef struct vkb_mem_block
 
 static vkb_mem_block_t blocks[VKB_MEM_MAX_BLOCKS];
 
+/* The main thread owns the allocator: its blocks fill from the bottom
+ * of the table and share ranges.  The render thread, which may need
+ * memory during its frame (a cinematic's texture, a target remade for a
+ * new format), takes dedicated blocks from the top, so neither side
+ * walks the other's ranges, and what it frees waits in this list for the
+ * main thread's drain at the join. */
+static vkb_mem_t renderFrees[256];
+static unsigned numRenderFrees;
+
+enum vkb_side vkb_side(void)
+{
+   return vkt_on_render_thread() ? VKB_SIDE_RENDER : VKB_SIDE_MAIN;
+}
+
 /* --- blocks ------------------------------------------------------------------ */
 
 static int vkb_mem_block_make(unsigned i, unsigned type, VkDeviceSize size, int linear, int dedicated)
@@ -209,6 +223,17 @@ int vkb_mem_alloc(const VkMemoryRequirements *req, VkMemoryPropertyFlags want, i
          && !(vkb.memoryProperties.memoryTypes[type].propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT))
       want &= ~VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
    dedicated = req->size > VKB_MEM_BLOCK_BYTES / 4;
+   if (vkb_side() == VKB_SIDE_RENDER)
+   {
+      /* a block of its own, from the top of the table */
+      dedicated = 1;
+      for (i = VKB_MEM_MAX_BLOCKS; i > 0; i--)
+         if (!blocks[i - 1].used)
+         {
+            slot = i - 1;
+            break;
+         }
+   }
    if (!dedicated)
       for (i = 0; i < VKB_MEM_MAX_BLOCKS; i++)
       {
@@ -277,6 +302,17 @@ void vkb_mem_free(const vkb_mem_t *m)
    vkb_mem_block_t *b;
    if (!m->valid || m->block >= VKB_MEM_MAX_BLOCKS || !blocks[m->block].used)
       return;
+   if (vkb_side() == VKB_SIDE_RENDER)
+   {
+      /* the main thread's ranges are its own: kept for the drain */
+      if (numRenderFrees == sizeof(renderFrees) / sizeof(renderFrees[0]))
+      {
+         vkb.ownerViolations++;
+         return;    /* lost to the block until the device goes */
+      }
+      renderFrees[numRenderFrees++] = *m;
+      return;
+   }
    b = &blocks[m->block];
    vkb_mem_block_free(b, m->offset, m->size);
    if (b->free != b->size)
@@ -297,6 +333,14 @@ void vkb_mem_free(const vkb_mem_t *m)
             return;
          }
    }
+}
+
+void vkb_mem_drain(void)
+{
+   unsigned i, n = numRenderFrees;
+   numRenderFrees = 0;
+   for (i = 0; i < n; i++)
+      vkb_mem_free(&renderFrees[i]);
 }
 
 int vkb_mem_coherent(const vkb_mem_t *m)
@@ -328,7 +372,7 @@ void vkb_mem_flush(const vkb_mem_t *m, VkDeviceSize offset, VkDeviceSize bytes)
    vk.vkFlushMappedMemoryRanges(vkb.device, 1, &range);
 }
 
-/* --- the staging arena ----------------------------------------------------------- */
+/* --- the staging arenas ---------------------------------------------------------- */
 
 typedef struct vkb_staging_chunk
 {
@@ -343,35 +387,43 @@ typedef struct vkb_staging_chunk
    unsigned char immediate;      /* copied by a waited submit: free now */
 } vkb_staging_chunk_t;
 
-static vkb_staging_chunk_t *chunks;
-static unsigned numChunks, chunkCapacity;
-static VkDeviceSize stagingPending;
-
-static void vkb_staging_chunk_release(unsigned i)
+/* one arena a side; a side touches only its own.  The render side's
+ * chunk is made ahead of its frame (vkb_staging_reserve), since making
+ * one is an allocation the main thread owns. */
+typedef struct vkb_staging
 {
-   vkb_staging_chunk_t *c = &chunks[i];
+   vkb_staging_chunk_t *chunks;
+   unsigned numChunks, chunkCapacity;
+   VkDeviceSize pending;
+} vkb_staging_t;
+
+static vkb_staging_t staging[VKB_SIDE_COUNT];
+
+static void vkb_staging_chunk_release(vkb_staging_t *st, unsigned i)
+{
+   vkb_staging_chunk_t *c = &st->chunks[i];
    if (c->buffer)
       vk.vkDestroyBuffer(vkb.device, c->buffer, NULL);
    vkb_mem_free(&c->mem);
-   chunks[i] = chunks[--numChunks];
+   st->chunks[i] = st->chunks[--st->numChunks];
 }
 
-static int vkb_staging_chunk_make(VkDeviceSize size)
+static int vkb_staging_chunk_make(vkb_staging_t *st, VkDeviceSize size)
 {
    vkb_staging_chunk_t *c;
    VkBufferCreateInfo bci;
    VkMemoryRequirements req;
    void *mapped = NULL;
-   if (numChunks == chunkCapacity)
+   if (st->numChunks == st->chunkCapacity)
    {
-      unsigned cap = chunkCapacity ? chunkCapacity * 2 : 8;
-      vkb_staging_chunk_t *n = (vkb_staging_chunk_t *)realloc(chunks, cap * sizeof(*n));
+      unsigned cap = st->chunkCapacity ? st->chunkCapacity * 2 : 8;
+      vkb_staging_chunk_t *n = (vkb_staging_chunk_t *)realloc(st->chunks, cap * sizeof(*n));
       if (!n)
          return 0;
-      chunks        = n;
-      chunkCapacity = cap;
+      st->chunks        = n;
+      st->chunkCapacity = cap;
    }
-   c = &chunks[numChunks];
+   c = &st->chunks[st->numChunks];
    memset(c, 0, sizeof(*c));
    memset(&bci, 0, sizeof(bci));
    bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -390,17 +442,18 @@ static int vkb_staging_chunk_make(VkDeviceSize size)
    }
    c->mapped = (unsigned char *)mapped;
    c->size   = size;
-   numChunks++;
+   st->numChunks++;
    return 1;
 }
 
-unsigned char *vkb_staging_alloc(size_t bytes, VkBuffer *buffer, VkDeviceSize *offset)
+unsigned char *vkb_staging_alloc(enum vkb_side side, size_t bytes, VkBuffer *buffer, VkDeviceSize *offset)
 {
+   vkb_staging_t *st = &staging[side];
    unsigned i;
    VkDeviceSize need = (bytes + 15) / 16 * 16;
-   for (i = 0; i < numChunks; i++)
+   for (i = 0; i < st->numChunks; i++)
    {
-      vkb_staging_chunk_t *c = &chunks[i];
+      vkb_staging_chunk_t *c = &st->chunks[i];
       if (c->retired)
          continue;
       if (c->used + need > c->size)
@@ -409,54 +462,74 @@ unsigned char *vkb_staging_alloc(size_t bytes, VkBuffer *buffer, VkDeviceSize *o
       *offset = c->used;
       c->used += need;
       c->pending = 1;
-      stagingPending += need;
+      st->pending += need;
       return c->mapped + *offset;
    }
-   if (!vkb_staging_chunk_make(need > VKB_STAGING_BYTES ? need : VKB_STAGING_BYTES))
+   if (side == VKB_SIDE_RENDER)
+   {
+      /* a chunk is the main thread's to make: the reserve was too small */
+      vkb.uploadSpills++;
+      return NULL;
+   }
+   if (!vkb_staging_chunk_make(st, need > VKB_STAGING_BYTES ? need : VKB_STAGING_BYTES))
       return NULL;
    {
-      vkb_staging_chunk_t *c = &chunks[numChunks - 1];
+      vkb_staging_chunk_t *c = &st->chunks[st->numChunks - 1];
       *buffer = c->buffer;
       *offset = 0;
       c->used = need;
       c->pending = 1;
-      stagingPending += need;
+      st->pending += need;
       return c->mapped;
    }
 }
 
-void vkb_staging_flush_memory(void)
+void vkb_staging_reserve(void)
 {
+   vkb_staging_t *st = &staging[VKB_SIDE_RENDER];
    unsigned i;
-   for (i = 0; i < numChunks; i++)
-      if (chunks[i].pending && !chunks[i].retired)
-         vkb_mem_flush(&chunks[i].mem, 0, chunks[i].used);
+   for (i = 0; i < st->numChunks; i++)
+      if (!st->chunks[i].retired && !st->chunks[i].pending && st->chunks[i].size >= VKB_STAGING_BYTES)
+         return;
+   vkb_staging_chunk_make(st, VKB_STAGING_BYTES);
 }
 
-/* the chunks a flush copied from, out of use once its frame is done, or
- * at once after a waited submit */
-void vkb_staging_retire(int immediate)
+void vkb_staging_flush_memory(enum vkb_side side)
 {
+   vkb_staging_t *st = &staging[side];
    unsigned i;
-   for (i = 0; i < numChunks; i++)
+   for (i = 0; i < st->numChunks; i++)
+      if (st->chunks[i].pending && !st->chunks[i].retired)
+         vkb_mem_flush(&st->chunks[i].mem, 0, st->chunks[i].used);
+}
+
+/* the chunks a flush copies from, out of use once the frame is done, or
+ * at once after a waited submit */
+void vkb_staging_retire(enum vkb_side side, int immediate)
+{
+   vkb_staging_t *st = &staging[side];
+   unsigned i;
+   for (i = 0; i < st->numChunks; i++)
    {
-      vkb_staging_chunk_t *c = &chunks[i];
+      vkb_staging_chunk_t *c = &st->chunks[i];
       if (!c->pending || c->retired)
          continue;
       c->retired     = 1;
       c->immediate   = (unsigned char)(immediate ? 1 : 0);
-      c->retireFrame = vkb.frameCount;
+      c->retireFrame = (unsigned)retro_atomic_load_relaxed_int(&vkb.frameCount);
    }
-   stagingPending = 0;
+   st->pending = 0;
 }
 
-void vkb_staging_frame_done(void)
+void vkb_staging_frame_done(enum vkb_side side)
 {
+   vkb_staging_t *st = &staging[side];
    unsigned i, spare = 0;
-   for (i = 0; i < numChunks; )
+   unsigned frameCount = (unsigned)retro_atomic_load_relaxed_int(&vkb.frameCount);
+   for (i = 0; i < st->numChunks; )
    {
-      vkb_staging_chunk_t *c = &chunks[i];
-      if (c->retired && (c->immediate || vkb.frameCount >= c->retireFrame + VKB_FRAMES))
+      vkb_staging_chunk_t *c = &st->chunks[i];
+      if (c->retired && (c->immediate || frameCount >= c->retireFrame + VKB_FRAMES))
       {
          c->retired = c->pending = c->immediate = 0;
          c->used = 0;
@@ -465,7 +538,7 @@ void vkb_staging_frame_done(void)
       {
          if (spare == VKB_STAGING_SPARE_CHUNKS || c->size != VKB_STAGING_BYTES)
          {
-            vkb_staging_chunk_release(i);
+            vkb_staging_chunk_release(st, i);
             continue;
          }
          spare++;
@@ -474,14 +547,9 @@ void vkb_staging_frame_done(void)
    }
 }
 
-size_t vkb_staging_pending(void)
+int vkb_staging_should_flush(enum vkb_side side)
 {
-   return (size_t)stagingPending;
-}
-
-int vkb_staging_should_flush(void)
-{
-   return stagingPending >= VKB_STAGING_FLUSH_BYTES;
+   return staging[side].pending >= VKB_STAGING_FLUSH_BYTES;
 }
 
 /* --- the transfer submit between frames ----------------------------------------- */
@@ -495,19 +563,21 @@ void vkb_transfer_now(void)
    VkSubmitInfo si;
    if (!vkb.ready || !vkb.uploadPool)
       return;
-   vkt_lock();
-   if (!vkb.uploadCount && !vkb_buffers_pending())
+   if (vkt_busy())
    {
-      vkt_unlock();
+      /* the render thread has the queue and the pool: the arena grows
+       * instead, and the frame's flush copies */
       return;
    }
+   if (!vkb.uploads[VKB_SIDE_MAIN].count && !vkb_buffers_pending(VKB_SIDE_MAIN))
+      return;
    vk.vkResetCommandPool(vkb.device, vkb.uploadPool, 0);
    memset(&bi, 0, sizeof(bi));
    bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
    bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
    vk.vkBeginCommandBuffer(vkb.uploadCmd, &bi);
-   vkb_images_flush_uploads_locked(vkb.uploadCmd);
-   vkb_buffers_flush_locked(vkb.uploadCmd);
+   vkb_images_flush_uploads(vkb.uploadCmd, VKB_SIDE_MAIN);
+   vkb_buffers_flush(vkb.uploadCmd, VKB_SIDE_MAIN);
    vk.vkEndCommandBuffer(vkb.uploadCmd);
    memset(&si, 0, sizeof(si));
    si.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -518,9 +588,8 @@ void vkb_transfer_now(void)
    vk.vkQueueSubmit(vkb.queue, 1, &si, vkb.uploadFence);
    vkb.iface->unlock_queue(vkb.iface->handle);
    vk.vkWaitForFences(vkb.device, 1, &vkb.uploadFence, VK_TRUE, (uint64_t)-1);
-   vkb_staging_retire(1);
-   vkb_staging_frame_done();
-   vkt_unlock();
+   vkb_staging_retire(VKB_SIDE_MAIN, 1);
+   vkb_staging_frame_done(VKB_SIDE_MAIN);
 }
 
 int vkb_memory_init(void)
@@ -529,9 +598,8 @@ int vkb_memory_init(void)
    VkCommandBufferAllocateInfo cai;
    VkFenceCreateInfo fci;
    memset(blocks, 0, sizeof(blocks));
-   chunks = NULL;
-   numChunks = chunkCapacity = 0;
-   stagingPending = 0;
+   memset(staging, 0, sizeof(staging));
+   numRenderFrees = 0;
    memset(&pci, 0, sizeof(pci));
    pci.sType            = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
    pci.flags            = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
@@ -555,13 +623,16 @@ int vkb_memory_init(void)
 /* after everything that held memory is gone */
 void vkb_memory_shutdown(void)
 {
-   unsigned i;
-   while (numChunks)
-      vkb_staging_chunk_release(numChunks - 1);
-   free(chunks);
-   chunks = NULL;
-   chunkCapacity = 0;
-   stagingPending = 0;
+   unsigned i, side;
+   vkb_mem_drain();
+   for (side = 0; side < VKB_SIDE_COUNT; side++)
+   {
+      vkb_staging_t *st = &staging[side];
+      while (st->numChunks)
+         vkb_staging_chunk_release(st, st->numChunks - 1);
+      free(st->chunks);
+   }
+   memset(staging, 0, sizeof(staging));
    for (i = 0; i < VKB_MEM_MAX_BLOCKS; i++)
       vkb_mem_block_release(i);
    if (vkb.uploadFence)

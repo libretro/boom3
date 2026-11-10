@@ -107,7 +107,7 @@ int vkb_images_init(void)
    vkb.images[VKB_IMAGE_SCENE].used       = 1;
    vkb.images[VKB_IMAGE_TARGET_DEPTH].used = 1;
    vkb.images[VKB_IMAGE_SCENE_DEPTH].used = 1;
-   vkb.uploadCount = 0;
+   memset(vkb.uploads, 0, sizeof(vkb.uploads));
    depthFormat = 0;
    return 1;
 }
@@ -124,12 +124,15 @@ static void vkb_image_release(vkb_image_t *im)
    memset(im, 0, sizeof(*im));
 }
 
+static void vkb_images_release_graves(void);
+
 void vkb_images_shutdown(void)
 {
    unsigned i, f, w, a;
-   free(vkb.uploads);
-   vkb.uploads = NULL;
-   vkb.uploadCount = vkb.uploadCapacity = 0;
+   for (i = 0; i < VKB_SIDE_COUNT; i++)
+      free(vkb.uploads[i].uploads);
+   memset(vkb.uploads, 0, sizeof(vkb.uploads));
+   vkb_images_release_graves();
    for (i = VKB_IMAGE_FIRST; i < VKB_MAX_IMAGES; i++)
       if (vkb.images[i].used)
          vkb_image_release(&vkb.images[i]);
@@ -189,9 +192,19 @@ unsigned vkb_image_scene_ref(void) { return VKB_IMAGE_SCENE; }
 unsigned vkb_image_target_depth_ref(void) { return VKB_IMAGE_TARGET_DEPTH; }
 unsigned vkb_image_scene_depth_ref(void) { return VKB_IMAGE_SCENE_DEPTH; }
 
+/* a free slot: the main thread's from the bottom of the table, the
+ * render thread's (a cinematic's texture, made in its frame) from the
+ * top, so the two never pick the same one */
 static unsigned vkb_image_slot(void)
 {
    unsigned i;
+   if (vkb_side() == VKB_SIDE_RENDER)
+   {
+      for (i = VKB_MAX_IMAGES; i > VKB_IMAGE_FIRST; i--)
+         if (!vkb.images[i - 1].used)
+            return i - 1;
+      return 0;
+   }
    for (i = VKB_IMAGE_FIRST; i < VKB_MAX_IMAGES; i++)
       if (!vkb.images[i].used)
          return i;
@@ -277,11 +290,9 @@ unsigned vkb_image_create(unsigned width, unsigned height, int levels, int cube,
    vkb_image_t *im;
    if (!width || !height)
       return 0;
-   vkt_lock();
    id = vkb_image_slot();
    if (!id)
    {
-      vkt_unlock();
       return 0;
    }
    im = &vkb.images[id];
@@ -291,11 +302,9 @@ unsigned vkb_image_create(unsigned width, unsigned height, int levels, int cube,
             VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, 0))
    {
       vkb_image_release(im);
-      vkt_unlock();
       return 0;
    }
    im->sampler = vkb_sampler(filter, wrap, anisotropy, im->levels > 1);
-   vkt_unlock();
    return id;
 }
 
@@ -305,11 +314,9 @@ unsigned vkb_image_create_target(unsigned width, unsigned height, enum vkb_forma
    vkb_image_t *im;
    if (!width || !height)
       return 0;
-   vkt_lock();
    id = vkb_image_slot();
    if (!id)
    {
-      vkt_unlock();
       return 0;
    }
    im = &vkb.images[id];
@@ -322,12 +329,10 @@ unsigned vkb_image_create_target(unsigned width, unsigned height, enum vkb_forma
                : VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT), 0))
    {
       vkb_image_release(im);
-      vkt_unlock();
       return 0;
    }
    im->sampler = vkb_sampler(format == VKB_FORMAT_DEPTH ? VKB_FILTER_NEAREST : VKB_FILTER_LINEAR_NOMIP,
          VKB_WRAP_CLAMP, 0, 0);
-   vkt_unlock();
    return id;
 }
 
@@ -337,124 +342,192 @@ void vkb_image_filter(unsigned image, enum vkb_filter filter, enum vkb_wrap wrap
    if (image < VKB_IMAGE_FIRST || image >= VKB_MAX_IMAGES || !vkb.images[image].used)
       return;
    im = &vkb.images[image];
-   vkt_lock();
    im->sampler = vkb_sampler(filter, wrap, anisotropy, im->levels > 1);
-   vkt_unlock();
 }
 
 /* An image goes when the frames that may sample it are off the GPU: the
- * slot is held until then. */
+ * slot is held until then.  A grave list a side: the render thread's
+ * (a cinematic's texture outgrown) joins the main thread's at the
+ * handoff, where the frames that are done are released. */
 typedef struct vkb_image_grave
 {
    vkb_image_t image;
    unsigned frame;
 } vkb_image_grave_t;
 
-static vkb_image_grave_t *graves;
-static unsigned numGraves, graveCapacity;
+typedef struct vkb_graves
+{
+   vkb_image_grave_t *graves;
+   unsigned count, capacity;
+} vkb_graves_t;
+
+static vkb_graves_t graves[VKB_SIDE_COUNT];
+
+static int vkb_grave_push(vkb_graves_t *g, const vkb_image_t *im)
+{
+   if (g->count == g->capacity)
+   {
+      unsigned cap = g->capacity ? g->capacity * 2 : 64;
+      vkb_image_grave_t *n = (vkb_image_grave_t *)realloc(g->graves, cap * sizeof(*n));
+      if (!n)
+         return 0;
+      g->graves   = n;
+      g->capacity = cap;
+   }
+   g->graves[g->count].image = *im;
+   g->graves[g->count].frame = (unsigned)retro_atomic_load_relaxed_int(&vkb.frameCount);
+   g->count++;
+   return 1;
+}
 
 void vkb_image_destroy(unsigned image)
 {
+   const enum vkb_side side = vkb_side();
+   vkb_upload_set_t *set = &vkb.uploads[side];
    vkb_image_t *im;
    unsigned i;
    if (image < VKB_IMAGE_FIRST || image >= VKB_MAX_IMAGES || !vkb.images[image].used)
       return;
    im = &vkb.images[image];
-   vkt_lock();
-   /* an upload still queued for it is dropped */
-   for (i = 0; i < vkb.uploadCount; )
-      if (vkb.uploads[i].image == image)
-         vkb.uploads[i] = vkb.uploads[--vkb.uploadCount];
+   /* an upload this side still has queued for it is dropped; one the
+    * other side holds finds the slot empty and skips it */
+   for (i = 0; i < set->count; )
+      if (set->uploads[i].image == image)
+         set->uploads[i] = set->uploads[--set->count];
       else
          i++;
-   im->uploadPending = 0;
-   if (numGraves == graveCapacity)
+   retro_atomic_store_release_int(&im->uploadPending, 0);
+   if (!vkb_grave_push(&graves[side], im))
    {
-      unsigned cap = graveCapacity ? graveCapacity * 2 : 64;
-      vkb_image_grave_t *n = (vkb_image_grave_t *)realloc(graves, cap * sizeof(*n));
-      if (!n)
+      if (side == VKB_SIDE_RENDER)
       {
-         vk.vkDeviceWaitIdle(vkb.device);
-         vkb_image_release(im);
-         vkt_unlock();
-         return;
+         vkb.ownerViolations++;
+         return;     /* the slot stays until the device goes */
       }
-      graves        = n;
-      graveCapacity = cap;
+      vk.vkDeviceWaitIdle(vkb.device);
+      vkb_image_release(im);
+      return;
    }
-   graves[numGraves].image = *im;
-   graves[numGraves].frame = vkb.frameCount;
-   numGraves++;
+   /* the slot is empty from here; used last, so a reader of the other
+    * thread sees a whole record or an empty one */
+   im->image = VK_NULL_HANDLE;
+   im->view  = VK_NULL_HANDLE;
+   im->used  = 0;
    memset(im, 0, sizeof(*im));
-   vkt_unlock();
 }
 
-/* at the start of a frame: what the frames in flight have let go */
-void vkb_images_frame_done(void)
+/* at shutdown, the device idle */
+static void vkb_images_release_graves(void)
 {
-   unsigned i;
-   vkt_lock();
-   for (i = 0; i < numGraves; )
+   unsigned side, i;
+   for (side = 0; side < VKB_SIDE_COUNT; side++)
    {
-      if (vkb.frameCount >= graves[i].frame + VKB_FRAMES)
+      vkb_graves_t *g = &graves[side];
+      for (i = 0; i < g->count; i++)
+         vkb_image_release(&g->graves[i].image);
+      free(g->graves);
+      memset(g, 0, sizeof(*g));
+   }
+}
+
+/* the main thread between frames */
+void vkb_images_handoff(void)
+{
+   vkb_graves_t *main = &graves[VKB_SIDE_MAIN];
+   vkb_graves_t *render = &graves[VKB_SIDE_RENDER];
+   unsigned frameCount = (unsigned)retro_atomic_load_relaxed_int(&vkb.frameCount);
+   unsigned i;
+   /* the render thread's graves, with the frame they were dug in */
+   for (i = 0; i < render->count; i++)
+   {
+      if (!vkb_grave_push(main, &render->graves[i].image))
+         break;
+      main->graves[main->count - 1].frame = render->graves[i].frame;
+   }
+   render->count = 0;
+   for (i = 0; i < main->count; )
+   {
+      if (frameCount >= main->graves[i].frame + VKB_FRAMES)
       {
-         vkb_image_release(&graves[i].image);
-         graves[i] = graves[--numGraves];
+         vkb_image_release(&main->graves[i].image);
+         main->graves[i] = main->graves[--main->count];
       }
       else
          i++;
    }
-   if (!numGraves && graves)
+   if (!main->count && main->graves)
    {
-      free(graves);
-      graves = NULL;
-      graveCapacity = 0;
+      free(main->graves);
+      main->graves = NULL;
+      main->capacity = 0;
    }
-   vkt_unlock();
+   /* the main side's queued uploads to the render side, which flushes
+    * them at the frame's start; their chunks retire with that frame */
+   if (vkb.uploads[VKB_SIDE_MAIN].count)
+   {
+      vkb_upload_set_t *from = &vkb.uploads[VKB_SIDE_MAIN];
+      vkb_upload_set_t *to   = &vkb.uploads[VKB_SIDE_RENDER];
+      if (!to->count)
+      {
+         vkb_upload_set_t t = *to;
+         *to   = *from;
+         *from = t;
+      }
+      else
+      {
+         for (i = 0; i < from->count; i++)
+         {
+            if (to->count == to->capacity)
+            {
+               unsigned cap = to->capacity ? to->capacity * 2 : 1024;
+               vkb_upload_t *n = (vkb_upload_t *)realloc(to->uploads, cap * sizeof(*n));
+               if (!n)
+                  break;
+               to->uploads  = n;
+               to->capacity = cap;
+            }
+            to->uploads[to->count++] = from->uploads[i];
+         }
+         from->count = 0;
+      }
+   }
 }
 
 /* --- uploads ------------------------------------------------------------------- */
 
 int vkb_image_upload(unsigned image, int level, int face, const void *data, size_t bytes)
 {
+   const enum vkb_side side = vkb_side();
+   vkb_upload_set_t *set = &vkb.uploads[side];
    vkb_upload_t *u;
    unsigned char *p;
-   int flush;
    if (image < VKB_IMAGE_FIRST || image >= VKB_MAX_IMAGES || !vkb.images[image].used || !data || !bytes)
       return 0;
-   vkt_lock();
-   if (vkb.uploadCount == vkb.uploadCapacity)
+   if (set->count == set->capacity)
    {
-      unsigned cap = vkb.uploadCapacity ? vkb.uploadCapacity * 2 : 1024;
-      vkb_upload_t *n = (vkb_upload_t *)realloc(vkb.uploads, cap * sizeof(*n));
+      unsigned cap = set->capacity ? set->capacity * 2 : 1024;
+      vkb_upload_t *n = (vkb_upload_t *)realloc(set->uploads, cap * sizeof(*n));
       if (!n)
-      {
-         vkt_unlock();
          return 0;
-      }
-      vkb.uploads        = n;
-      vkb.uploadCapacity = cap;
+      set->uploads  = n;
+      set->capacity = cap;
    }
-   u = &vkb.uploads[vkb.uploadCount];
+   u = &set->uploads[set->count];
    memset(u, 0, sizeof(*u));
-   p = vkb_staging_alloc(bytes, &u->staging, &u->stagingOffset);
+   p = vkb_staging_alloc(side, bytes, &u->staging, &u->stagingOffset);
    if (!p)
-   {
-      vkt_unlock();
       return 0;
-   }
    memcpy(p, data, bytes);
    u->image = image;
    u->bytes = (unsigned)bytes;
    u->level = (unsigned char)level;
    u->face  = (unsigned char)face;
-   vkb.uploadCount++;
-   vkb.images[image].uploadPending = 1;
+   set->count++;
+   retro_atomic_store_release_int(&vkb.images[image].uploadPending, 1);
    /* a load between frames that has filled the arena goes to the device
     * now rather than growing it */
-   flush = !vkb.frameOpen && vkb_staging_should_flush();
-   vkt_unlock();
-   if (flush)
+   if (side == VKB_SIDE_MAIN && !retro_atomic_load_acquire_int(&vkb.frameOpen)
+         && vkb_staging_should_flush(side))
       vkb_transfer_now();
    return 1;
 }
@@ -480,27 +553,26 @@ static void vkb_whole_image_barrier(VkCommandBuffer cmd, vkb_image_t *im, VkImag
    vk.vkCmdPipelineBarrier(cmd, srcStage, dstStage, 0, 0, NULL, 0, NULL, 1, &b);
 }
 
-/* The queued uploads into a command buffer: every touched image goes to
- * transfer, takes its copies, and comes back readable.  The staging
- * chunks retire with the frame. */
-void vkb_images_flush_uploads(VkCommandBuffer cmd)
+/* The side's queued uploads into a command buffer: every touched image
+ * goes to transfer, takes its copies, and comes back readable.  The
+ * render side's chunks retire with the frame; the main side's did at the
+ * handoff, or do at once after a waited submit.  An upload for a slot
+ * emptied since is skipped. */
+void vkb_images_flush_uploads(VkCommandBuffer cmd, enum vkb_side side)
 {
-   vkt_lock();
-   vkb_images_flush_uploads_locked(cmd);
-   vkt_unlock();
-}
-
-void vkb_images_flush_uploads_locked(VkCommandBuffer cmd)
-{
+   vkb_upload_set_t *set = &vkb.uploads[side];
    unsigned i;
-   if (!vkb.uploadCount)
+   if (!set->count)
       return;
-   vkb_staging_flush_memory();
-   for (i = 0; i < vkb.uploadCount; i++)
+   if (side == VKB_SIDE_RENDER)
+      vkb_staging_flush_memory(side);
+   for (i = 0; i < set->count; i++)
    {
-      vkb_upload_t *u = &vkb.uploads[i];
+      vkb_upload_t *u = &set->uploads[i];
       vkb_image_t *im = &vkb.images[u->image];
       VkBufferImageCopy region;
+      if (!im->used || !im->image)
+         continue;
       if (!im->inTransfer)
       {
          vkb_whole_image_barrier(cmd, im,
@@ -523,9 +595,9 @@ void vkb_images_flush_uploads_locked(VkCommandBuffer cmd)
       vk.vkCmdCopyBufferToImage(cmd, u->staging, im->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
             1, &region);
    }
-   for (i = 0; i < vkb.uploadCount; i++)
+   for (i = 0; i < set->count; i++)
    {
-      vkb_image_t *im = &vkb.images[vkb.uploads[i].image];
+      vkb_image_t *im = &vkb.images[set->uploads[i].image];
       if (!im->inTransfer)
          continue;
       vkb_whole_image_barrier(cmd, im, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
@@ -534,10 +606,11 @@ void vkb_images_flush_uploads_locked(VkCommandBuffer cmd)
             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_VERTEX_SHADER_BIT);
       im->layoutReady   = 1;
       im->inTransfer    = 0;
-      im->uploadPending = 0;
+      retro_atomic_store_release_int(&im->uploadPending, 0);
    }
-   vkb.uploadCount = 0;
-   vkb_staging_retire(0);
+   set->count = 0;
+   if (side == VKB_SIDE_RENDER)
+      vkb_staging_retire(side, 0);
 }
 
 /* a target image's framebuffer for the post chain, made on first use */

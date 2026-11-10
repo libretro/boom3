@@ -135,8 +135,10 @@ void vkb_shadows_shutdown(void)
          vk.vkDestroyBuffer(vkb.device, f->shadowFacing, NULL);
       vkb_mem_free(&f->shadowFacingMem);
       free(f->shadowJobs);
+      free(f->shadowSets);
       free(f->shadowSlots);
       f->shadowJobs        = NULL;
+      f->shadowSets        = NULL;
       f->shadowSlots       = NULL;
       f->shadowSlotCount   = 0;
       f->shadowCount       = f->shadowCapacity = 0;
@@ -189,11 +191,16 @@ static int vkb_shadow_grow(vkb_frame_t *f)
 {
    unsigned cap = f->shadowCapacity ? f->shadowCapacity * 2 : 64;
    vkb_shadow_job_t *jobs = (vkb_shadow_job_t *)realloc(f->shadowJobs, cap * sizeof(*jobs));
+   VkDescriptorSet *sets;
    unsigned *slots;
    unsigned i;
    if (!jobs)
       return 0;
    f->shadowJobs = jobs;
+   sets = (VkDescriptorSet *)realloc(f->shadowSets, cap * sizeof(*sets));
+   if (!sets)
+      return 0;
+   f->shadowSets = sets;
    slots = (unsigned *)calloc(cap * 2, sizeof(*slots));
    if (!slots)
       return 0;
@@ -347,14 +354,13 @@ static void vkb_shadow_push(VkCommandBuffer cmd, const vkb_shadow_job_t *job)
    vk.vkCmdPushConstants(cmd, vkb.shadowLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
 }
 
-/* The frame's volumes, before its render pass opens. */
-void vkb_shadows_record(VkCommandBuffer cmd)
+/* The frame's buffers sized for its volumes: on the main thread, the
+ * render thread joined, since the memory is the main thread's to take
+ * and the slot's last frame is off the GPU. */
+void vkb_shadows_prepare(vkb_frame_t *f)
 {
-   vkb_frame_t *f = &vkb.frames[vkb.frameIndex];
-   VkDescriptorSet *sets;
    VkDeviceSize indexes = 0, faces = 0;
-   unsigned i, built = 0;
-
+   unsigned i;
    if (!f->shadowCount || !vkb_shadows_available())
       return;
    for (i = 0; i < f->shadowCount; i++)
@@ -363,17 +369,23 @@ void vkb_shadows_record(VkCommandBuffer cmd)
       indexes += (VkDeviceSize)( v->numIndexes / 3 + v->numSilEdges ) * 6;
       faces   += v->numIndexes / 3;
    }
-   sets = (VkDescriptorSet *)calloc(f->shadowCount, sizeof(*sets));
-   if (!sets
-         || !vkb_shadow_buffer(&f->shadowIndexes, &f->shadowIndexMem, &f->shadowIndexBytes,
+   if (!vkb_shadow_buffer(&f->shadowIndexes, &f->shadowIndexMem, &f->shadowIndexBytes,
                indexes * 4, VK_BUFFER_USAGE_INDEX_BUFFER_BIT)
          || !vkb_shadow_buffer(&f->shadowFacing, &f->shadowFacingMem, &f->shadowFacingBytes,
                faces * 4, 0))
-   {
-      free(sets);
       f->shadowCount = 0;
+}
+
+/* The frame's volumes, before its render pass opens. */
+void vkb_shadows_record(VkCommandBuffer cmd)
+{
+   vkb_frame_t *f = &vkb.frames[vkb.frameIndex];
+   VkDescriptorSet *sets = f->shadowSets;
+   VkDeviceSize indexes = 0, faces = 0;
+   unsigned i, built = 0;
+
+   if (!f->shadowCount || !vkb_shadows_available())
       return;
-   }
 
    /* each volume's parameters and two draws in the ring, its sets */
    indexes = 0;
@@ -424,10 +436,7 @@ void vkb_shadows_record(VkCommandBuffer cmd)
    built = i;
    f->shadowCount = built;
    if (!built)
-   {
-      free(sets);
       return;
-   }
 
    /* the frame's static uploads are in before the reads */
    vkb_shadow_barrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
@@ -451,7 +460,6 @@ void vkb_shadows_record(VkCommandBuffer cmd)
    vkb_shadow_barrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
          VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,
          VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_INDEX_READ_BIT);
-   free(sets);
 }
 
 /* The volume's sil planes, and its caps when asked for: the pipeline and

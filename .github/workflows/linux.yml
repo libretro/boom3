@@ -59,6 +59,14 @@ jobs:
           echo "thread symbols in a HAVE_THREADS=0 build"; exit 1
         fi
         make -C neo clean
+    - name: No locks in the core's threads
+      run: |
+        # the render thread and the reader hand work over through atomics,
+        # SPSC rings and eventcounts (AGENTS.md); a mutex or condition
+        # variable in the engine's own threading is a regression
+        if grep -rnE 'slock_|scond_' neo/renderer neo/framework neo/sys/libretro --include='*.c' --include='*.cpp' --include='*.h'; then
+          echo "a lock in the core's threading"; exit 1
+        fi
     - name: Upload testbuild package
       uses: actions/upload-artifact@v7
       with:

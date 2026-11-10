@@ -49,19 +49,17 @@ static void vkb_uploads_mid_frame(const vkb_draw_t *draw)
 {
    unsigned i;
    int pending = 0;
-   vkt_lock();
    for (i = 0; i < VKB_MAX_TEXTURE_UNITS; i++)
    {
       const vkb_image_t *im = draw->image[i] ? vkb_image_get(draw->image[i]) : NULL;
-      if (im && im->uploadPending)
+      if (im && retro_atomic_load_acquire_int(&im->uploadPending))
          pending = 1;
    }
-   vkt_unlock();
-   if (!pending || !vkb.frameOpen)
+   if (!pending || !retro_atomic_load_relaxed_int(&vkb.frameOpen))
       return;
    vkb_render_pass_end();
-   vkb_images_flush_uploads(vkb.cmd);
-   vkb_buffers_flush(vkb.cmd);
+   vkb_images_flush_uploads(vkb.cmd, VKB_SIDE_RENDER);
+   vkb_buffers_flush(vkb.cmd, VKB_SIDE_RENDER);
    vkb_enter_render_pass();
 }
 
@@ -74,8 +72,8 @@ static VkDescriptorSet vkb_descriptor_set(const vkb_draw_t *draw)
    VkDescriptorImageInfo images[VKB_MAX_TEXTURE_UNITS + 1];
    unsigned i, same = 1, count = 2 + VKB_MAX_TEXTURE_UNITS;
 
-   /* the image table is the main thread's to change while this records */
-   vkt_lock();
+   /* the image table's slots this frame draws are the render thread's
+    * until the join; the main thread fills others */
    for (i = 0; i < VKB_MAX_TEXTURE_UNITS; i++)
    {
       const vkb_image_t *im = draw->image[i] ? vkb_image_get(draw->image[i]) : NULL;
@@ -87,7 +85,6 @@ static VkDescriptorSet vkb_descriptor_set(const vkb_draw_t *draw)
       same = 0;
    if (same && vkb.boundSet)
    {
-      vkt_unlock();
       return vkb.boundSet;
    }
 
@@ -98,7 +95,6 @@ static VkDescriptorSet vkb_descriptor_set(const vkb_draw_t *draw)
    ai.pSetLayouts        = &vkb.setLayout;
    if (vk.vkAllocateDescriptorSets(vkb.device, &ai, &set) != VK_SUCCESS)
    {
-      vkt_unlock();
       return VK_NULL_HANDLE;
    }
 
@@ -133,8 +129,7 @@ static VkDescriptorSet vkb_descriptor_set(const vkb_draw_t *draw)
          im = vkb_image_get(vkb.whiteImage);
       if (!im || !im->view)
       {
-         vkt_unlock();
-         return VK_NULL_HANDLE;
+            return VK_NULL_HANDLE;
       }
       images[i].sampler     = im->sampler;
       images[i].imageView   = im->view;
@@ -169,7 +164,6 @@ static VkDescriptorSet vkb_descriptor_set(const vkb_draw_t *draw)
       }
    }
    vkb.boundInput = draw->inputImage;
-   vkt_unlock();
    vk.vkUpdateDescriptorSets(vkb.device, count, writes, 0, NULL);
    vkb.boundSet = set;
    return set;
@@ -338,7 +332,7 @@ void vkb_leave_render_pass(void)
 void vkb_enter_render_pass(void)
 {
    int viewport[4], scissor[4];
-   if (vkb.inRenderPass || !vkb.frameOpen)
+   if (vkb.inRenderPass || !retro_atomic_load_relaxed_int(&vkb.frameOpen))
       return;
    memcpy(viewport, vkb.viewport, sizeof(viewport));
    scissor[0] = vkb.scissor[0];

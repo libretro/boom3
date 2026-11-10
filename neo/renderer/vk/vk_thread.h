@@ -12,19 +12,21 @@ extern "C" {
 /* starts the thread that runs jobs through run(); 0 when there is no
  * thread, in which case vkt_submit runs the job in place */
 int  vkt_start(void (*run)(void *job));
-/* hands over a job, after the last one is done */
+/* hands over a job, after the last one is done; the handoff is
+ * lock-free, the wait for the last one a park on an eventcount */
 void vkt_submit(void *job);
 /* waits for the current job */
 void vkt_join(void);
 void vkt_stop(void);
 int  vkt_running(void);
 
-/* the backend's lock: the image, buffer and upload tables the engine's
- * thread and the render thread both reach */
-int  vkt_lock_init(void);
-void vkt_lock_free(void);
-void vkt_lock(void);
-void vkt_unlock(void);
+/* whether a job is on the thread: from the submit to the join the render
+ * thread owns the backend's frame state, and the uploads the main thread
+ * queues meanwhile are the next frame's */
+int  vkt_busy(void);
+/* whether the caller is the render thread: what it queues or frees is
+ * its own frame's, kept apart from the main thread's */
+int  vkt_on_render_thread(void);
 
 #ifdef __cplusplus
 }

@@ -12,6 +12,7 @@
 #include "../../sys/libretro-common/include/libretro.h"
 #include "../../sys/libretro-common/include/libretro_vulkan.h"
 #include "vk_thread.h"
+#include "../../sys/libretro-common/include/retro_atomic.h"
 #include "../range_alloc.h"
 #include "vk_backend.h"
 
@@ -139,6 +140,24 @@ extern vkb_procs_t vk;
 #define VKB_MAX_TEXTURE_UNITS 6
 #define VKB_PIPELINE_SLOTS 1024
 
+/* The two threads that touch the backend, and what each owns.  The
+ * main thread builds the frame and hands it to the render thread
+ * (vk_thread.c); from then to the join the render thread owns the
+ * frame's state and the tables it reads, and what the main thread does
+ * meanwhile - a load's uploads, a destroy, a free - goes into the main
+ * side's queues, handed over at the next frame (vkb_frame_handoff).
+ * What the render thread queues or frees during its frame (a
+ * cinematic's upload, an old target's memory) goes into the render
+ * side's, drained by the main thread when the frame is joined.  Nothing
+ * is shared while both run, so nothing is locked. */
+enum vkb_side
+{
+   VKB_SIDE_MAIN = 0,
+   VKB_SIDE_RENDER,
+   VKB_SIDE_COUNT
+};
+enum vkb_side vkb_side(void);   /* the caller's */
+
 /* a resource's piece of a memory block (vk_memory.c) */
 typedef struct vkb_mem
 {
@@ -166,7 +185,7 @@ typedef struct vkb_image
    VkFramebuffer framebuffer;  /* a target's, for the post passes or as a side target */
    unsigned sideDepth;         /* the depth image framebuffer has as a side target */
    unsigned char inTransfer;   /* during a flush: already moved to transfer */
-   unsigned char uploadPending; /* an upload queued for the next flush */
+   retro_atomic_int_t uploadPending; /* an upload queued for the next flush; both threads set and clear it */
 } vkb_image_t;
 
 /* an upload waiting for a command buffer: its bytes sit in the staging
@@ -180,6 +199,14 @@ typedef struct vkb_upload
    unsigned char level;
    unsigned char face;
 } vkb_upload_t;
+
+/* a side's queued image uploads */
+typedef struct vkb_upload_set
+{
+   vkb_upload_t *uploads;
+   unsigned count;
+   unsigned capacity;
+} vkb_upload_set_t;
 
 typedef struct vkb_static_buffer
 {
@@ -227,6 +254,7 @@ typedef struct vkb_frame
    unsigned char submitted;
    /* the shadow volumes the frame builds, and where */
    vkb_shadow_job_t *shadowJobs;
+   VkDescriptorSet *shadowSets; /* shadowCapacity of them, for the record */
    unsigned shadowCount;
    unsigned shadowCapacity;
    unsigned *shadowSlots;      /* open addressing on the key: a job number + 1, 0 empty */
@@ -318,7 +346,7 @@ typedef struct vkb_state
    vkb_frame_t frames[VKB_FRAMES];
    unsigned frameIndex;         /* the slot the frame records into */
    unsigned allocIndex;         /* the slot the engine's front end writes into: the next frame's */
-   unsigned frameCount;
+   retro_atomic_int_t frameCount; /* advanced by the render thread at the frame's end, read by the main thread's deferrals */
    unsigned syncIndex;          /* the frontend's, this frame */
    VkSemaphore unpresented;     /* handed to set_image, not yet shown: the next submit waits it */
 
@@ -336,9 +364,9 @@ typedef struct vkb_state
    vkb_image_t images[VKB_MAX_IMAGES];
    unsigned whiteImage;         /* what an unbound unit samples */
 
-   vkb_upload_t *uploads;
-   unsigned uploadCount;
-   unsigned uploadCapacity;
+   vkb_upload_set_t uploads[VKB_SIDE_COUNT];   /* by side; the main side's move to the render side at the handoff */
+   unsigned ownerViolations;    /* a side touched what the other owned; meant to stay 0 */
+   unsigned uploadSpills;       /* render side uploads the reserved staging could not take */
 
    /* the transfer submit between frames */
    VkCommandPool uploadPool;
@@ -357,7 +385,7 @@ typedef struct vkb_state
    vkb_target_t *sceneTarget;   /* where the frame's scene was drawn: the scene image, or the frame image itself */
    unsigned char frameComposited; /* the post chain drew the frame image */
    unsigned char inRenderPass;
-   unsigned char frameOpen;
+   retro_atomic_int_t frameOpen; /* set and cleared by the render thread, read by the main thread's upload paths */
    unsigned char drawn;
    VkPipeline boundPipeline;
    VkDescriptorSet boundSet;
@@ -407,12 +435,18 @@ int  vkb_mem_alloc(const VkMemoryRequirements *req, VkMemoryPropertyFlags want, 
 void vkb_mem_free(const vkb_mem_t *m);
 int  vkb_mem_coherent(const vkb_mem_t *m);
 void vkb_mem_flush(const vkb_mem_t *m, VkDeviceSize offset, VkDeviceSize bytes);
-unsigned char *vkb_staging_alloc(size_t bytes, VkBuffer *buffer, VkDeviceSize *offset);
-void vkb_staging_flush_memory(void);
-void vkb_staging_retire(int immediate);
-void vkb_staging_frame_done(void);
-size_t vkb_staging_pending(void);
-int  vkb_staging_should_flush(void);
+/* the render thread's frees of blocks the main thread's allocator owns,
+ * kept until the join; and a frame's end, both on the main thread */
+void vkb_mem_drain(void);
+/* the staging arenas, one a side; the main side's chunks handed over at
+ * the handoff retire with that frame */
+unsigned char *vkb_staging_alloc(enum vkb_side side, size_t bytes, VkBuffer *buffer, VkDeviceSize *offset);
+void vkb_staging_flush_memory(enum vkb_side side);
+void vkb_staging_retire(enum vkb_side side, int immediate);
+void vkb_staging_frame_done(enum vkb_side side);
+int  vkb_staging_should_flush(enum vkb_side side);
+/* a chunk free for the render side's frame, made on the main thread */
+void vkb_staging_reserve(void);
 void vkb_transfer_now(void);
 
 /* vk_image.c */
@@ -426,9 +460,11 @@ int  vkb_image_side_framebuffer(unsigned color, unsigned depth, VkFramebuffer *f
 VkFormat vkb_depth_stencil_format(void);
 int  vkb_images_init(void);
 void vkb_images_shutdown(void);
-void vkb_images_flush_uploads(VkCommandBuffer cmd);
-void vkb_images_flush_uploads_locked(VkCommandBuffer cmd);
-void vkb_images_frame_done(void);
+void vkb_images_flush_uploads(VkCommandBuffer cmd, enum vkb_side side);
+/* the main thread, between frames: the main side's uploads and graves to
+ * the render side for the frame about to record, the graves of the frames
+ * that are done released */
+void vkb_images_handoff(void);
 VkSampler vkb_sampler(enum vkb_filter filter, enum vkb_wrap wrap, int anisotropy, int mips);
 int  vkb_target_create(vkb_target_t *t, unsigned width, unsigned height, enum vkb_format format,
       int frontend);
@@ -440,10 +476,9 @@ const vkb_image_t *vkb_image_get(unsigned image);
 /* vk_buffer.c */
 int  vkb_buffers_init(void);
 void vkb_buffers_shutdown(void);
-void vkb_buffers_frame_begin(unsigned frameIndex);
-void vkb_buffers_flush(VkCommandBuffer cmd);
-void vkb_buffers_flush_locked(VkCommandBuffer cmd);
-int  vkb_buffers_pending(void);
+void vkb_buffers_handoff(void);
+void vkb_buffers_flush(VkCommandBuffer cmd, enum vkb_side side);
+int  vkb_buffers_pending(enum vkb_side side);
 VkBuffer vkb_static_vk_buffer(unsigned buffer);
 
 /* vk_device.c: the render pass on the current target */
@@ -461,6 +496,8 @@ void vkb_enter_render_pass(void);
 int  vkb_shadows_init(void);
 void vkb_shadows_shutdown(void);
 void vkb_shadows_frame_reset(vkb_frame_t *f);
+/* the frame's buffers sized for its volumes, on the main thread before the handoff */
+void vkb_shadows_prepare(vkb_frame_t *f);
 void vkb_shadows_record(VkCommandBuffer cmd);
 void vkb_shadows_draw(const vkb_draw_t *draw);
 

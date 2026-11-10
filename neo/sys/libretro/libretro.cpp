@@ -3203,6 +3203,10 @@ static void context_destroy(void)
         if (log_cb)
             log_cb(RETRO_LOG_INFO, "boom3: vulkan pipelines %u, made on the draw path %u\n",
                   vkb_pipeline_count(), vkb_pipeline_misses());
+        /* the two threads' discipline, for the host's gate too */
+        if (log_cb)
+            log_cb(RETRO_LOG_INFO, "boom3: vulkan ownership violations %u, staging spills %u\n",
+                  vkb_owner_violations(), vkb_upload_spills());
         RB_VK_ShadowsDown();
         vkb_shutdown();
     }

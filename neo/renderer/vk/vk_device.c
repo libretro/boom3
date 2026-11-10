@@ -476,16 +476,24 @@ static void vkb_acquire_slot(unsigned slot)
    vk.vkResetDescriptorPool(vkb.device, f->descriptors, 0);
    f->ringUsed = 0;
    vkb_shadows_frame_reset(f);
-   vkb_buffers_frame_begin(slot);
-   vkb_images_frame_done();
 }
 
+/* The main thread, the render thread joined, before it hands over the
+ * frame: what the render thread freed in its frame goes back to the
+ * allocator, the main side's uploads and graves go to the render side,
+ * the frame's shadow buffers are sized and its staging chunk made, and
+ * the slot the next front end writes into is acquired. */
 void vkb_frame_handoff(void)
 {
-   if (!vkb.ready || vkb.frameOpen)
+   if (!vkb.ready || retro_atomic_load_relaxed_int(&vkb.frameOpen))
       return;
+   vkb_mem_drain();
+   vkb_buffers_handoff();
+   vkb_images_handoff();
    vkb.frameIndex = vkb.allocIndex;
    vkb.allocIndex = (vkb.allocIndex + 1) % VKB_FRAMES;
+   vkb_shadows_prepare(&vkb.frames[vkb.frameIndex]);
+   vkb_staging_reserve();
    vkb_acquire_slot(vkb.allocIndex);
 }
 
@@ -529,7 +537,7 @@ int vkb_init(const struct retro_hw_render_interface_vulkan *iface, unsigned widt
       vk.vkCreatePipelineCache(vkb.device, &pci, NULL, &vkb.pipelineCache);
    }
 
-   if (!vkt_lock_init() || !vkb_frames_init() || !vkb_memory_init() || !vkb_ring_init() || !vkb_images_init()
+   if (!vkb_frames_init() || !vkb_memory_init() || !vkb_ring_init() || !vkb_images_init()
          || !vkb_buffers_init() || !vkb_pipelines_init() || !vkb_shadows_init())
    {
       vkb_shutdown();
@@ -572,12 +580,11 @@ void vkb_shutdown(void)
    vkb_frames_shutdown();
    if (vkb.pipelineCache)
       vk.vkDestroyPipelineCache(vkb.device, vkb.pipelineCache, NULL);
-   vkt_lock_free();
    memset(&vkb, 0, sizeof(vkb));
 }
 
 int vkb_ready(void) { return vkb.ready; }
-int vkb_scene_in_frame(void) { return vkb.frameOpen && vkb.sceneTarget == &vkb.frameImage[vkb.syncIndex]; }
+int vkb_scene_in_frame(void) { return retro_atomic_load_relaxed_int(&vkb.frameOpen) && vkb.sceneTarget == &vkb.frameImage[vkb.syncIndex]; }
 unsigned vkb_max_texture_size(void) { return vkb.properties.limits.maxImageDimension2D; }
 int vkb_has_bc(void) { return vkb.hasBC; }
 int vkb_has_anisotropy(void) { return vkb.features.samplerAnisotropy; }
@@ -694,7 +701,7 @@ void vkb_render_pass_end(void)
 int vkb_depth_read_ready(void)
 {
    const vkb_target_t *t = vkb.target;
-   if (!vkb.storeOpNone || !vkb.frameOpen || !t || !t->depth
+   if (!vkb.storeOpNone || !retro_atomic_load_relaxed_int(&vkb.frameOpen) || !t || !t->depth
          || (vkb.targetKind != VKB_TARGET_FRAME && vkb.targetKind != VKB_TARGET_SCENE))
       return 0;
    return vkb_read_depth_render_pass((enum vkb_format)t->format) != VK_NULL_HANDLE;
@@ -761,20 +768,14 @@ int vkb_side_begin(unsigned color, unsigned depth)
    VkFramebuffer fb;
    vkb_image_t *ci, *di;
    const int first = vkb.targetKind != VKB_TARGET_SIDE;
-   if (!vkb.frameOpen || !vkb.target || !vkb.inRenderPass)
+   if (!retro_atomic_load_relaxed_int(&vkb.frameOpen) || !vkb.target || !vkb.inRenderPass)
       return 0;
    if (first && vkb.targetKind != VKB_TARGET_FRAME && vkb.targetKind != VKB_TARGET_SCENE)
       return 0;
-   vkt_lock();
    if (!vkb_image_side_framebuffer(color, depth, &fb, &ci, &di))
-   {
-      vkt_unlock();
       return 0;
-   }
-   vkt_unlock();
    /* the open pass ends on what it drew, the previous side pair included */
    vkb_render_pass_end();
-   vkt_lock();
    memset(&vkb.sideTarget, 0, sizeof(vkb.sideTarget));
    vkb.sideTarget.color       = ci->image;
    vkb.sideTarget.colorView   = ci->view;
@@ -787,7 +788,6 @@ int vkb_side_begin(unsigned color, unsigned depth)
    vkb.sideTarget.format      = ci->format;
    vkb.sideTarget.layoutReady = ci->layoutReady;
    vkb.sideTarget.depthReady  = di->layoutReady;
-   vkt_unlock();
    if (first)
    {
       /* sampled while the side passes draw */
@@ -818,7 +818,7 @@ void vkb_side_end(void)
 
 int vkb_post_begin(unsigned target, unsigned width, unsigned height)
 {
-   if (!vkb.frameOpen)
+   if (!retro_atomic_load_relaxed_int(&vkb.frameOpen))
       return 0;
    vkb_render_pass_end();
    if (target == 0)
@@ -867,7 +867,7 @@ void vkb_post_end(void)
 int vkb_post_begin_inplace(void)
 {
    vkb_target_t *frame = &vkb.frameImage[vkb.syncIndex];
-   if (!vkb.frameOpen || !frame->color || !frame->inplaceFramebuffer)
+   if (!retro_atomic_load_relaxed_int(&vkb.frameOpen) || !frame->color || !frame->inplaceFramebuffer)
       return 0;
    vkb_render_pass_end();
    vkb.target     = frame;
@@ -894,7 +894,7 @@ static int vkb_frame_images_make(enum vkb_format format)
 int vkb_frame_format(enum vkb_format format)
 {
    unsigned i;
-   if (!vkb.ready || vkb.frameOpen)
+   if (!vkb.ready || retro_atomic_load_relaxed_int(&vkb.frameOpen))
       return 0;
    if (vkb.frameFormat == (unsigned char)format)
       return 1;
@@ -909,7 +909,7 @@ int vkb_begin_frame(enum vkb_target target, unsigned width, unsigned height,
 {
    vkb_frame_t *f;
    VkCommandBufferBeginInfo bi;
-   if (!vkb.ready || vkb.frameOpen)
+   if (!vkb.ready || retro_atomic_load_relaxed_int(&vkb.frameOpen))
       return 0;
    f = &vkb.frames[vkb.frameIndex];
    vkb.syncIndex = vkb.iface->get_sync_index(vkb.iface->handle) & 7;
@@ -943,19 +943,18 @@ int vkb_begin_frame(enum vkb_target target, unsigned width, unsigned height,
    bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
    if (vk.vkBeginCommandBuffer(vkb.cmd, &bi) != VK_SUCCESS)
       return 0;
-   /* under the lock the main thread reads it under, deciding whether an
-    * upload between frames may go to the device now */
-   vkt_lock();
-   vkb.frameOpen = 1;
-   vkt_unlock();
+   /* the main thread reads it, deciding whether an upload between
+    * frames may go to the device now */
+   retro_atomic_store_release_int(&vkb.frameOpen, 1);
    vkb.drawn     = 0;
    vkb.frameComposited = 0;
    vkb.compositeProgram = VKB_PROGRAM_BLIT;
    vkb.compositeLut     = 0;
 
    /* textures and static data queued since the last frame */
-   vkb_images_flush_uploads(vkb.cmd);
-   vkb_buffers_flush(vkb.cmd);
+   vkb_staging_frame_done(VKB_SIDE_RENDER);
+   vkb_images_flush_uploads(vkb.cmd, VKB_SIDE_RENDER);
+   vkb_buffers_flush(vkb.cmd, VKB_SIDE_RENDER);
    vkb_shadows_record(vkb.cmd);
 
    vkb_render_pass_begin();
@@ -1005,7 +1004,7 @@ void vkb_flush(void)
    VkSubmitInfo si;
    VkCommandBufferBeginInfo bi;
    int viewport[4], scissor[4];
-   if (!vkb.frameOpen || !vkb.drawn)
+   if (!retro_atomic_load_relaxed_int(&vkb.frameOpen) || !vkb.drawn)
       return;
    if (f->cmdUsed == f->numCmds)
    {
@@ -1058,7 +1057,7 @@ int vkb_end_frame(void)
    VkSubmitInfo si;
    vkb_target_t *frame;
    VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
-   if (!vkb.frameOpen)
+   if (!retro_atomic_load_relaxed_int(&vkb.frameOpen))
       return 0;
    vkb_render_pass_end();
    if (vkb.targetKind == VKB_TARGET_SCENE && !vkb.frameComposited)
@@ -1094,10 +1093,8 @@ int vkb_end_frame(void)
    vkb.unpresented = f->done;
 
    vkb.cmd       = VK_NULL_HANDLE;
-   vkt_lock();
-   vkb.frameOpen = 0;
-   vkb.frameCount++;
-   vkt_unlock();
+   retro_atomic_store_release_int(&vkb.frameOpen, 0);
+   retro_atomic_fetch_add_int(&vkb.frameCount, 1);
    return 1;
 }
 

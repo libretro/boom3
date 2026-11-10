@@ -86,6 +86,7 @@ static unsigned char *pixels;
 
 static long draw_path_pipelines = -1;
 static long game_allocs = -1;
+static long owner_violations = -1;
 static long allocs_budget = -1;
 
 static void log_cb(enum retro_log_level level, const char *fmt, ...)
@@ -101,6 +102,15 @@ static void log_cb(enum retro_log_level level, const char *fmt, ...)
       va_start(ap2, fmt);
       (void)va_arg(ap2, unsigned);
       draw_path_pipelines = (long)va_arg(ap2, unsigned);
+      va_end(ap2);
+   }
+   /* "boom3: vulkan ownership violations %u, staging spills %u" */
+   if (strstr(fmt, "ownership violations %u"))
+   {
+      va_list ap2;
+      va_start(ap2, fmt);
+      owner_violations = (long)va_arg(ap2, unsigned);
+      owner_violations += (long)va_arg(ap2, unsigned);
       va_end(ap2);
    }
    /* "boom3: game frames %u, heap allocations %u, renderer allocations %u" */
@@ -863,6 +873,12 @@ int main(int argc, char **argv)
    if (draw_path_pipelines < 0)
    {
       fprintf(stderr, "vk_host: the core did not report its draw path pipelines\n");
+      return 3;
+   }
+   if (owner_violations != 0)
+   {
+      fprintf(stderr, "vk_host: %ld ownership violations or staging spills between the two threads (the core reports %s)\n",
+            owner_violations, owner_violations < 0 ? "nothing" : "them");
       return 3;
    }
    if (draw_path_pipelines > 0)

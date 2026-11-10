@@ -778,3 +778,13 @@ unsigned vkb_pipeline_count(void)
 {
    return vkb.pipelineCount;
 }
+
+unsigned vkb_owner_violations(void)
+{
+   return vkb.ownerViolations;
+}
+
+unsigned vkb_upload_spills(void)
+{
+   return vkb.uploadSpills;
+}
