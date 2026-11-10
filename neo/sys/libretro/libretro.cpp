@@ -4538,13 +4538,14 @@ void retro_set_controller_port_device(unsigned port, unsigned device)
 
 
 
-/* The in-game allocation census, for the hosts' gate: once a map is up
- * and not loading, a frame is meant to allocate nothing.  The heap's
- * count (Mem_GetFrameStats) covers the engine; the renderer's
- * (R_StaticAlloc) is the part gated at 0 today. */
+/* The in-game census, for the hosts' gate: once a map is up and not
+ * loading, a frame is meant to allocate nothing and read no file on the
+ * main thread.  The heap's count (Mem_GetFrameStats) covers the engine;
+ * the renderer's (R_StaticAlloc) and the bytes the main thread read
+ * from files (the reader's do not count) are the parts gated at 0. */
 extern retro_atomic_int_t r_staticAllocCalls;
-static unsigned census_frames, census_heap, census_renderer;
-static int census_renderer_last;
+static unsigned census_frames, census_heap, census_renderer, census_read;
+static int census_renderer_last, census_read_last;
 
 static bool game_frame_in_game(void)
 {
@@ -4559,12 +4560,16 @@ static void game_frame_census(bool inGameBefore)
 	int calls = retro_atomic_load_relaxed_int(&r_staticAllocCalls);
 	Mem_GetFrameStats(allocs, frees);
 	Mem_ClearFrameStats();
+	const int readCount = fileSystem->GetReadCount();
 	if (inGameBefore && game_frame_in_game()) {
 		census_frames++;
 		census_heap += (unsigned)allocs.num;
 		census_renderer += (unsigned)(calls - census_renderer_last);
+		if (readCount > census_read_last) /* a map change resets the count */
+			census_read += (unsigned)(readCount - census_read_last);
 	}
 	census_renderer_last = calls;
+	census_read_last = readCount;
 }
 
 void retro_run(void)
@@ -10257,8 +10262,8 @@ void retro_unload_game(void)
 		log_cb(RETRO_LOG_INFO, "boom3: gl programs %u, made on the draw path %u\n",
 		      (unsigned)r_programCount, (unsigned)r_programMisses);
 	if (log_cb && !first_boot)
-		log_cb(RETRO_LOG_INFO, "boom3: game frames %u, heap allocations %u, renderer allocations %u\n",
-		      census_frames, census_heap, census_renderer);
+		log_cb(RETRO_LOG_INFO, "boom3: game frames %u, heap allocations %u, renderer allocations %u, file bytes read %u\n",
+		      census_frames, census_heap, census_renderer, census_read);
 
 	if (common && !first_boot)
 		common->Shutdown();

@@ -97,8 +97,21 @@ private:
 	bool					smootheddouble;
 	bool					inMemory;
 
+	// the whole file, read by the background reader from the open on;
+	// frames decode from it once it has landed, from iFile until then.
+	// The record is the reader's until the read is back, so it lives on
+	// its own (new), with a file handle of its own and a Mem_Alloc'd
+	// buffer, and goes to the file system if given up before then.
+	backgroundDownload_t *	prefetch;
+	bool					prefetchReady;
+	int						readPos;		// where the next frame starts, in the file
+
+	const byte *			ReadBytes( int bytes );
+	void					StartPrefetch( void );
+	void					EndPrefetch( void );
+
 	void					RoQ_init( void );
-	void					blitVQQuad32fs( byte **status, unsigned char *data );
+	void					blitVQQuad32fs( byte **status, const unsigned char *data );
 	void					RoQShutdown( void );
 	void					RoQInterrupt(void);
 
@@ -111,10 +124,10 @@ private:
 	unsigned short			yuv_to_rgb( int y, int u, int v );
 	unsigned int			yuv_to_rgb24( int y, int u, int v );
 
-	void					decodeCodeBook( byte *input, unsigned short roq_flags );
+	void					decodeCodeBook( const byte *input, unsigned short roq_flags );
 	void					recurseQuad( int startX, int startY, int quadSize, int xOff, int yOff );
 	void					setupQuad( int xOff, int yOff );
-	void					readQuadInfo( byte *qData );
+	void					readQuadInfo( const byte *qData );
 	void					RoQPrepMcomp( int xoff, int yoff );
 	void					RoQReset();
 };
@@ -271,6 +284,9 @@ idCinematicLocal::idCinematicLocal() {
 	status = FMV_EOF;
 	buf = NULL;
 	iFile = NULL;
+	prefetch = NULL;
+	prefetchReady = false;
+	readPos = 0;
 
 	qStatus[0] = (byte **)Mem_Alloc( 32768 * sizeof( byte *) );
 	qStatus[1] = (byte **)Mem_Alloc( 32768 * sizeof( byte *) );
@@ -324,8 +340,10 @@ bool idCinematicLocal::InitFromFile( const char *qpath, bool amilooping ) {
 	samplesPerPixel = 4;
 	startTime = 0;	//Core_Milliseconds();
 	buf = NULL;
+	readPos = 0;
 
-	iFile->Read( file, 16 );
+	StartPrefetch();
+	memcpy( file, ReadBytes( 16 ), 16 );
 
 	RoQID = (unsigned short)(file[0]) + (unsigned short)(file[1])*256;
 
@@ -719,7 +737,7 @@ void idCinematicLocal::blit2_32( byte *src, byte *dst, int spl  ) {
 idCinematicLocal::blitVQQuad32fs
 ==============
 */
-void idCinematicLocal::blitVQQuad32fs( byte **status, unsigned char *data ) {
+void idCinematicLocal::blitVQQuad32fs( byte **status, const unsigned char *data ) {
 	unsigned short	newd, celdata, code;
 	unsigned int	index, i;
 
@@ -881,7 +899,7 @@ unsigned int idCinematicLocal::yuv_to_rgb24( int y, int u, int v ) {
 idCinematicLocal::decodeCodeBook
 ==============
 */
-void idCinematicLocal::decodeCodeBook( byte *input, unsigned short roq_flags ) {
+void idCinematicLocal::decodeCodeBook( const byte *input, unsigned short roq_flags ) {
 	int	i, j, two, four;
 	unsigned short	*aptr, *bptr, *cptr, *dptr;
 	int	y0,y1,y2,y3,cr,cb;
@@ -1138,7 +1156,7 @@ void idCinematicLocal::setupQuad( int xOff, int yOff ) {
 idCinematicLocal::readQuadInfo
 ==============
 */
-void idCinematicLocal::readQuadInfo( byte *qData ) {
+void idCinematicLocal::readQuadInfo( const byte *qData ) {
 	xsize    = qData[0]+qData[1]*256;
 	ysize    = qData[2]+qData[3]*256;
 	maxsize  = qData[4]+qData[5]*256;
@@ -1191,17 +1209,120 @@ idCinematicLocal::RoQReset
 */
 void idCinematicLocal::RoQReset() {
 
-	iFile->Seek( 0, FS_SEEK_SET );
-	iFile->Read( file, 16 );
+	if ( iFile ) {
+		iFile->Seek( 0, FS_SEEK_SET );
+	}
+	readPos = 0;
+	memcpy( file, ReadBytes( 16 ), 16 );
 	RoQ_init();
 	status = FMV_LOOPED;
+}
+
+/*
+==============
+idCinematicLocal::ReadBytes
+
+The next bytes of the file: a pointer into the prefetched copy once the
+reader has it, so a frame decodes in place, else into the frame buffer
+filled from iFile.
+==============
+*/
+const byte *idCinematicLocal::ReadBytes( int bytes ) {
+	const byte *p;
+	if ( bytes > 65536 ) {
+		bytes = 65536;
+	}
+	if ( prefetch && !prefetchReady ) {
+		fileSystem->CompleteBackgroundDownloads();
+		if ( prefetch->completed ) {
+			prefetchReady = true;
+			// the files have nothing more to give
+			fileSystem->CloseFile( prefetch->f );
+			prefetch->f = NULL;
+			if ( iFile ) {
+				fileSystem->CloseFile( iFile );
+				iFile = NULL;
+			}
+		}
+	}
+	if ( prefetchReady ) {
+		if ( readPos + bytes > ROQSize ) {
+			// past the end: as a short read would, zeros
+			memset( file, 0, bytes );
+			if ( readPos < ROQSize ) {
+				memcpy( file, (byte *)prefetch->file.buffer + readPos, ROQSize - readPos );
+			}
+			readPos += bytes;
+			return file;
+		}
+		p = (byte *)prefetch->file.buffer + readPos;
+		readPos += bytes;
+		return p;
+	}
+	if ( iFile ) {
+		int got = iFile->Read( file, bytes );
+		if ( got < bytes ) {
+			memset( file + ( got < 0 ? 0 : got ), 0, bytes - ( got < 0 ? 0 : got ) );
+		}
+	} else {
+		memset( file, 0, bytes );
+	}
+	readPos += bytes;
+	return file;
+}
+
+/*
+==============
+idCinematicLocal::StartPrefetch
+
+The whole file to the background reader, through a handle of its own so
+the frames keep coming from iFile meanwhile. Nothing when the reader
+cannot take it: the frames come from iFile as they always did.
+==============
+*/
+void idCinematicLocal::StartPrefetch( void ) {
+	if ( ROQSize <= 0 || !fileSystem->BackgroundDownloadAvailable() ) {
+		return;
+	}
+	idFile *f = fileSystem->OpenFileRead( fileName );
+	if ( !f ) {
+		return;
+	}
+	prefetch = new backgroundDownload_t;
+	prefetch->opcode = DLTYPE_FILE;
+	prefetch->f = f;
+	prefetch->file.position = 0;
+	prefetch->file.length = ROQSize;
+	prefetch->file.buffer = Mem_Alloc( ROQSize );
+	prefetch->completed = false;
+	prefetchReady = false;
+	fileSystem->BackgroundDownload( prefetch );
+}
+
+/*
+==============
+idCinematicLocal::EndPrefetch
+
+The record, file and buffer go back to the file system, which frees
+them once the reader is done with them (the reader marks the record done
+on this thread when the read is back, so a record in flight cannot be
+taken from it). Nothing is allocated here.
+==============
+*/
+void idCinematicLocal::EndPrefetch( void ) {
+	if ( !prefetch ) {
+		return;
+	}
+	fileSystem->OrphanBackgroundDownload( prefetch );
+	prefetch = NULL;
+	prefetchReady = false;
 }
 
 #ifdef ID_USE_LIBJPEG
 /* jpeg error handling */
 struct jpeg_error_mgr jerr;
 #endif
-int JPEGBlit( byte *wStatus, byte *data, int datasize )
+int JPEGBlit( byte *wStatus, const byte *data, int datasize )
 {
 #ifndef ID_USE_LIBJPEG
 	// I don't think this code is actually used, because
@@ -1334,9 +1455,9 @@ idCinematicLocal::RoQInterrupt
 ==============
 */
 void idCinematicLocal::RoQInterrupt(void) {
-	byte				*framedata;
+	const byte			*framedata;
 
-	iFile->Read( file, RoQFrameSize+8 );
+	framedata = ReadBytes( RoQFrameSize+8 );
 	if ( RoQPlayed >= ROQSize ) {
 		if (looping) {
 			RoQReset();
@@ -1346,7 +1467,6 @@ void idCinematicLocal::RoQInterrupt(void) {
 		return;
 	}
 
-	framedata = file;
 //
 // new frame is ready
 //
@@ -1474,6 +1594,7 @@ void idCinematicLocal::RoQShutdown( void ) {
 	}
 	status = FMV_IDLE;
 
+	EndPrefetch();
 	if ( iFile ) {
 		fileSystem->CloseFile( iFile );
 		iFile = NULL;

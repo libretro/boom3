@@ -378,7 +378,9 @@ public:
 	virtual idFile *		OpenExplicitFileWrite( const char *OSPath );
 	virtual void			CloseFile( idFile *f );
 	virtual void			BackgroundDownload( backgroundDownload_t *bgl );
+	virtual bool			BackgroundDownloadAvailable( void );
 	virtual void			CompleteBackgroundDownloads( void );
+	virtual void			OrphanBackgroundDownload( backgroundDownload_t *bgl );
 	virtual bool			WriteFileInBackground( const char *relativePath, void *buffer, int size, const char *basePath = "fs_savepath" );
 	virtual bool			PrefetchFile( const char *relativePath );
 	virtual void			ClearPrefetches( void );
@@ -509,6 +511,9 @@ private:
 #endif
 	retro_atomic_int_t		backgroundThread_exit;	// main sets, reader reads
 	int						backgroundInFlight;		// main thread only
+	backgroundDownload_t *	orphans[MAX_BACKGROUND_READS];	// given up while in flight
+	int						orphanCount;
+	void					ReapOrphans( bool all );
 	bool					backgroundReady;		// rings and eventcount exist
 	xthreadInfo				backgroundThread;
 
@@ -598,6 +603,7 @@ idFileSystemLocal::idFileSystemLocal( void ) {
 	memset( &backgroundThread, 0, sizeof( backgroundThread ) );
 	retro_atomic_int_init( &backgroundThread_exit, 0 );
 	backgroundInFlight = 0;
+	orphanCount = 0;
 	for ( int w = 0; w < MAX_BACKGROUND_WRITES; w++ ) {
 		backgroundWrites[w].buffer = NULL;
 		backgroundWrites[w].bgl.f = NULL;
@@ -3041,6 +3047,7 @@ void idFileSystemLocal::Shutdown( bool reloading ) {
 	StopBackgroundDownloadThread();
 	// the reader is joined: the slots still out are back now
 	ReclaimPrefetches();
+	ReapOrphans( true );
 	if ( !reloading ) {
 		rzip_drain_pool();
 	}
@@ -3945,6 +3952,14 @@ Never blocks. A read the thread cannot take - no thread, or
 MAX_BACKGROUND_READS already in flight - is done here instead.
 =================
 */
+bool idFileSystemLocal::BackgroundDownloadAvailable( void ) {
+#ifdef HAVE_THREADS
+	return backgroundThread.threadHandle != 0 && backgroundInFlight < MAX_BACKGROUND_READS;
+#else
+	return false;
+#endif
+}
+
 void idFileSystemLocal::BackgroundDownload( backgroundDownload_t *bgl ) {
 	if ( bgl->opcode != DLTYPE_FILE ) {
 		// DLTYPE_URL: HTTP downloads are not supported by this core
@@ -4076,7 +4091,55 @@ void idFileSystemLocal::CompleteBackgroundDownloads( void ) {
 			}
 		}
 	}
+	if ( orphanCount ) {
+		ReapOrphans( false );
+	}
 #endif
+}
+
+/*
+=================
+idFileSystemLocal::OrphanBackgroundDownload
+
+A read in flight holds its record, its file and its buffer until the
+reader is done with them; the owner that gives up on it leaves all three
+here. A read already back is freed on the spot. The table has a slot
+for every read that can be in flight, so it never overflows.
+=================
+*/
+void idFileSystemLocal::OrphanBackgroundDownload( backgroundDownload_t *bgl ) {
+	CompleteBackgroundDownloads();
+	if ( !bgl->completed && orphanCount < MAX_BACKGROUND_READS ) {
+		orphans[ orphanCount++ ] = bgl;
+		return;
+	}
+	if ( !bgl->completed ) {
+		// cannot happen: a table of in-flight reads; read it here then
+		bgl->f->Seek( bgl->file.position, FS_SEEK_SET );
+		bgl->f->Read( bgl->file.buffer, bgl->file.length );
+	}
+	if ( bgl->f ) {
+		CloseFile( bgl->f );
+	}
+	Mem_Free( bgl->file.buffer );
+	delete bgl;
+}
+
+void idFileSystemLocal::ReapOrphans( bool all ) {
+	int i = 0;
+	while ( i < orphanCount ) {
+		backgroundDownload_t *bgl = orphans[ i ];
+		if ( bgl->completed || all ) {
+			if ( bgl->f ) {
+				CloseFile( bgl->f );
+			}
+			Mem_Free( bgl->file.buffer );
+			delete bgl;
+			orphans[ i ] = orphans[ --orphanCount ];
+		} else {
+			i++;
+		}
+	}
 }
 
 

@@ -254,8 +254,18 @@ public:
 	virtual void			CloseFile( idFile *f ) = 0;
 							// Returns immediately, performing the read from a background thread.
 	virtual void			BackgroundDownload( backgroundDownload_t *bgl ) = 0;
+							// Whether BackgroundDownload would read on the thread right now
+							// rather than here: no thread, or every slot in flight, and it reads
+							// in place.
+	virtual bool			BackgroundDownloadAvailable( void ) = 0;
 							// marks finished background reads as completed; main thread
 	virtual void			CompleteBackgroundDownloads( void ) = 0;
+							// Gives up a BackgroundDownload the caller no longer wants: the
+							// record was made with new, bgl->f is the caller's open file and
+							// bgl->file.buffer its Mem_Alloc'd buffer; all three are the file
+							// system's now, freed when the read is back (or at once when it
+							// is). Never blocks.
+	virtual void			OrphanBackgroundDownload( backgroundDownload_t *bgl ) = 0;
 							// Writes a complete file from the background thread; returns
 							// at once. buffer is Mem_Alloc'd and becomes the file system's,
 							// freed when the write is done (or at once, when there is no

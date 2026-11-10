@@ -16,7 +16,8 @@
  * ppm=<file> writes the last frame; from=<n> starts printing hashes at
  * frame n; shots=<n>,<n>,... with ppm=<prefix> writes those frames as
  * <prefix>_<n>.ppm; allocs=<n> fails the run when the core reports more
- * than n renderer allocations over its in-game frames.
+ * than n renderer allocations over its in-game frames, reads=<n> when the
+ * main thread read more than n bytes from files over them.
  *
  * A core that asks to shut down (RETRO_ENVIRONMENT_SHUTDOWN) runs no more
  * frames: the host unloads it as a frontend would, and says so.
@@ -112,6 +113,8 @@ static EGLDisplay dpy;
 
 static long draw_path_programs = -1;
 static long game_allocs = -1;
+static long game_reads = -1;
+static long reads_budget = -1;
 static long allocs_budget = -1;
 
 static void log_cb(enum retro_log_level level, const char *fmt, ...)
@@ -129,7 +132,7 @@ static void log_cb(enum retro_log_level level, const char *fmt, ...)
       draw_path_programs = (long)va_arg(ap2, unsigned);
       va_end(ap2);
    }
-   /* "boom3: game frames %u, heap allocations %u, renderer allocations %u" */
+   /* "boom3: game frames %u, heap allocations %u, renderer allocations %u, file bytes read %u" */
    if (strstr(fmt, "renderer allocations %u"))
    {
       va_list ap2;
@@ -137,6 +140,7 @@ static void log_cb(enum retro_log_level level, const char *fmt, ...)
       (void)va_arg(ap2, unsigned);
       (void)va_arg(ap2, unsigned);
       game_allocs = (long)va_arg(ap2, unsigned);
+      game_reads  = (long)va_arg(ap2, unsigned);
       va_end(ap2);
    }
    va_start(ap, fmt);
@@ -524,6 +528,8 @@ int main(int argc, char **argv)
          shots = eq + 1;
       else if (!strcmp(argv[i], "allocs"))
          allocs_budget = atol(eq + 1);
+      else if (!strcmp(argv[i], "reads"))
+         reads_budget = atol(eq + 1);
       else if (!strcmp(argv[i], "from"))
          print_from = atoi(eq + 1);
       else
@@ -613,6 +619,12 @@ int main(int argc, char **argv)
    {
       fprintf(stderr, "egl_host: %ld programs made on the draw path (the core must build every one at init or at the option change)\n",
             draw_path_programs);
+      return 3;
+   }
+   if (reads_budget >= 0 && (game_reads < 0 || game_reads > reads_budget))
+   {
+      fprintf(stderr, "egl_host: %ld bytes read from files on the main thread over the in-game frames, %ld allowed\n",
+            game_reads, reads_budget);
       return 3;
    }
    if (allocs_budget >= 0 && (game_allocs < 0 || game_allocs > allocs_budget))

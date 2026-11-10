@@ -122,12 +122,13 @@ see README) on lavapipe and llvmpipe:
 
     make -C tools/vk_host && make -C tools/egl_host
     VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json \
-      tools/vk_host/vk_host neo/boom3_libretro.so <path>/demo00.pk4 1500 from=0 allocs=0
-    tools/egl_host/egl_host neo/boom3_libretro.so <path>/demo00.pk4 1500 from=0 allocs=0 \
+      tools/vk_host/vk_host neo/boom3_libretro.so <path>/demo00.pk4 1500 from=0 allocs=0 reads=0
+    tools/egl_host/egl_host neo/boom3_libretro.so <path>/demo00.pk4 1500 from=0 allocs=0 reads=0 \
       doom_renderer=arb2 doom_color_format=24bit-tonemapped
 
 - each host exits 0: zero pipelines or programs made on the draw path,
-  zero renderer allocations over the in-game frames
+  zero renderer allocations and zero file bytes read on the main thread
+  over the in-game frames
   (`tools/egl_host/hdr_check.sh` runs every GL renderer through every
   display transform and fails on a host that exits otherwise;
   `tools/egl_host/capture_check.sh` runs the objective screenshots on
@@ -189,6 +190,19 @@ reader can see.
 - **No slurps.** Files are mapped (`rzip`) or streamed through
   libretro-common's `filestream`; a file read whole into a fresh buffer
   to be parsed or copied on is a bug when it could be mapped.
+- **No file is read on the main thread in play.** A read in a game
+  frame is a disk seek, and from a deflated pak entry an inflate, on
+  the frame path. What a frame needs from a file was fetched for it by
+  the reader (`BackgroundDownload`, `WriteFileInBackground` for the
+  other direction) and is taken where it lies: the RoQ player
+  (`idCinematicLocal`) hands the whole file to the reader when the
+  video is opened and decodes each frame from that buffer in place
+  (`ReadBytes`), falling back to the file only while the fetch is
+  pending or the reader is absent. The census counts the bytes the
+  main thread reads over the in-game frames ("file bytes read" in the
+  census line) and the hosts gate it with `reads=0`; the parent of the
+  change read 1.36 MB in the demo's first thousand in-game frames,
+  the in-game video screens re-read from the pak every other frame.
 - **Nothing per frame that could be per load.** No allocation, no
   `memcpy` of a buffer the GPU could read where it is, no re-upload of
   data that did not change. Frame memory comes from `R_FrameAlloc`,
@@ -237,11 +251,13 @@ init or at the map load, or from an object made then and reused.
 - **The census and its gate.** Each frame that begins and ends in
   game adds the heap's allocations (`Mem_GetFrameStats`, `Mem_Alloc`
   and `Mem_Alloc16` both) and the renderer's (`R_StaticAlloc` calls) to
-  a census the core reports at unload: "boom3: game frames %u, heap
-  allocations %u, renderer allocations %u". The hosts take `allocs=<n>`
-  and exit 3 when the renderer's count is above n; the gate runs with
-  `allocs=0`, which is what the demo's first thousand in-game frames
-  read on both renderers. The heap count is reported, not gated: on
+  a census the core reports at unload, with the bytes the main thread
+  read from files (`GetReadCount`): "boom3: game frames %u, heap
+  allocations %u, renderer allocations %u, file bytes read %u". The
+  hosts take `allocs=<n>` and `reads=<n>` and exit 3 when the
+  renderer's count or the bytes are above n; the gate runs with
+  `allocs=0 reads=0`, which is what the demo's first thousand in-game
+  frames read on both renderers. The heap count is reported, not gated: on
   the demo it reads about 460 on GL and 530 on Vulkan, all growth to a
   high-water mark, none of it per frame: the articulated figure physics keeps its contact
   constraints and makes a new one, with its `idVecX` and `idMatX`
