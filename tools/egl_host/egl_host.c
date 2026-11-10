@@ -15,7 +15,8 @@
  * key=value pairs answer the core's options (doom_renderer=es31, ...);
  * ppm=<file> writes the last frame; from=<n> starts printing hashes at
  * frame n; shots=<n>,<n>,... with ppm=<prefix> writes those frames as
- * <prefix>_<n>.ppm.
+ * <prefix>_<n>.ppm; allocs=<n> fails the run when the core reports more
+ * than n renderer allocations over its in-game frames.
  *
  * A core that asks to shut down (RETRO_ENVIRONMENT_SHUTDOWN) runs no more
  * frames: the host unloads it as a frontend would, and says so.
@@ -110,6 +111,8 @@ static unsigned char srgb8(float lin)
 static EGLDisplay dpy;
 
 static long draw_path_programs = -1;
+static long game_allocs = -1;
+static long allocs_budget = -1;
 
 static void log_cb(enum retro_log_level level, const char *fmt, ...)
 {
@@ -124,6 +127,16 @@ static void log_cb(enum retro_log_level level, const char *fmt, ...)
       va_start(ap2, fmt);
       (void)va_arg(ap2, unsigned);
       draw_path_programs = (long)va_arg(ap2, unsigned);
+      va_end(ap2);
+   }
+   /* "boom3: game frames %u, heap allocations %u, renderer allocations %u" */
+   if (strstr(fmt, "renderer allocations %u"))
+   {
+      va_list ap2;
+      va_start(ap2, fmt);
+      (void)va_arg(ap2, unsigned);
+      (void)va_arg(ap2, unsigned);
+      game_allocs = (long)va_arg(ap2, unsigned);
       va_end(ap2);
    }
    va_start(ap, fmt);
@@ -509,6 +522,8 @@ int main(int argc, char **argv)
          ppm_path = eq + 1;
       else if (!strcmp(argv[i], "shots"))
          shots = eq + 1;
+      else if (!strcmp(argv[i], "allocs"))
+         allocs_budget = atol(eq + 1);
       else if (!strcmp(argv[i], "from"))
          print_from = atoi(eq + 1);
       else
@@ -598,6 +613,12 @@ int main(int argc, char **argv)
    {
       fprintf(stderr, "egl_host: %ld programs made on the draw path (the core must build every one at init or at the option change)\n",
             draw_path_programs);
+      return 3;
+   }
+   if (allocs_budget >= 0 && (game_allocs < 0 || game_allocs > allocs_budget))
+   {
+      fprintf(stderr, "egl_host: %ld renderer allocations over the in-game frames, %ld allowed\n",
+            game_allocs, allocs_budget);
       return 3;
    }
    return 0;

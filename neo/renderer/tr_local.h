@@ -1927,6 +1927,9 @@ void *R_ClearedFrameAlloc( int bytes );
 void R_FrameFree( void *data );
 
 void *R_StaticAlloc( int bytes );		// just malloc with error checking
+// the interaction tables' pool (tr_trisurf.cpp): a frame's allocations stay out of the heap
+void *	R_AllocInteractionBytes( int bytes );
+void	R_FreeInteractionBytes( void *ptr );
 void *R_ClearedStaticAlloc( int bytes );	// with memset
 void R_StaticFree( void *data );
 

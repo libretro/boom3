@@ -1290,15 +1290,22 @@ bool idVertexCache::VulkanAlloc( vertCache_t *block, const void *data, int size,
 		return false;
 	}
 	if ( shortIndexes ) {
+		// narrowed a run at a time through the stack: a dynamic model's
+		// indexes come through here every frame it deforms, and the heap
+		// is not for a frame
 		const glIndex_t *src = (const glIndex_t *)data;
 		const int count = size / (int)sizeof( glIndex_t );
-		unsigned short *dst = (unsigned short *)Mem_Alloc( bytes );
-		int i;
-		for ( i = 0; i < count; i++ ) {
-			dst[i] = (unsigned short)src[i];
+		unsigned short run[1024];
+		int done = 0;
+		while ( done < count ) {
+			const int n = Min( count - done, (int)( sizeof( run ) / sizeof( run[0] ) ) );
+			int i;
+			for ( i = 0; i < n; i++ ) {
+				run[i] = (unsigned short)src[done + i];
+			}
+			vkb_static_upload( buffer, offset + (unsigned)( done * (int)sizeof( unsigned short ) ), run, (size_t)( n * (int)sizeof( unsigned short ) ) );
+			done += n;
 		}
-		vkb_static_upload( buffer, offset, dst, (size_t)( count * (int)sizeof( unsigned short ) ) );
-		Mem_Free( dst );
 		block->indexType = GL_UNSIGNED_SHORT;
 	} else {
 		vkb_static_upload( buffer, offset, data, (size_t)size );

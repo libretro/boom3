@@ -1074,6 +1074,9 @@ void *Mem_Alloc16( const int size ) {
 	void *mem = mem_heap->Allocate16( size );
 	// make sure the memory is 16 byte aligned
 	assert( ( ((intptr_t)mem) & 15) == 0 );
+	// the frame census counts these too; the running total cannot, as
+	// Free16 does not know the size
+	Mem_UpdateStats( mem_frame_allocs, size );
 	return mem;
 }
 

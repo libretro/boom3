@@ -32,6 +32,9 @@ If you have questions concerning this license or the applicable additional terms
 #if defined(__GNUC__) && defined(__SSE2__)
 #include <xmmintrin.h>
 #endif
+// before the idlib headers: retro_atomic.h reaches <atomic>, and Str.h's
+// strcmp macros break libc++'s <cstring>
+#include <retro_atomic.h>
 
 #include "sys/platform.h"
 #include "framework/Session.h"
@@ -330,10 +333,14 @@ int R_CountFrameData( void ) {
 R_StaticAlloc
 =================
 */
+// every R_StaticAlloc, on any thread, for the in-game census (libretro.cpp)
+retro_atomic_int_t r_staticAllocCalls;
+
 void *R_StaticAlloc( int bytes ) {
 	void	*buf;
 
 	tr.pc.c_alloc++;
+	retro_atomic_fetch_add_int( &r_staticAllocCalls, 1 );
 
 	tr.staticAllocCount += bytes;
 

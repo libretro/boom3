@@ -214,7 +214,7 @@ srfTriangles_t *R_CreateGpuShadowVolume( const idRenderEntityLocal *ent,
 	srfTriangles_t	*newTri;
 	gpuShadow_t		*gs;
 
-	gs = (gpuShadow_t *)R_StaticAlloc( sizeof( *gs ) );
+	gs = (gpuShadow_t *)R_AllocInteractionBytes( sizeof( *gs ) );
 	memset( gs, 0, sizeof( *gs ) );
 	gs->source = tri;
 	R_GlobalPointToLocal( ent->modelMatrix, R_ShadowGenLightOrigin_ext( light ), gs->lightOrigin );

@@ -15,8 +15,10 @@
  *
  * key=value pairs answer the core's options; ppm=<file> writes the last
  * frame; from=<n> starts printing hashes at frame n; shots=<n>,<n>,...
- * with ppm=<prefix> writes those frames as <prefix>_<n>.ppm.  Alpha is
- * the frontend's to ignore and is left out of the hash.
+ * with ppm=<prefix> writes those frames as <prefix>_<n>.ppm; allocs=<n>
+ * fails the run when the core reports more than n renderer allocations
+ * over its in-game frames.  Alpha is the frontend's to ignore and is left
+ * out of the hash.
  *
  * Nothing compiles on the draw path: the core reports at unload how many
  * pipelines it made at a draw rather than ahead of it, and the host exits
@@ -83,6 +85,8 @@ static const struct retro_core_option_v2_definition *core_options;
 static unsigned char *pixels;
 
 static long draw_path_pipelines = -1;
+static long game_allocs = -1;
+static long allocs_budget = -1;
 
 static void log_cb(enum retro_log_level level, const char *fmt, ...)
 {
@@ -97,6 +101,16 @@ static void log_cb(enum retro_log_level level, const char *fmt, ...)
       va_start(ap2, fmt);
       (void)va_arg(ap2, unsigned);
       draw_path_pipelines = (long)va_arg(ap2, unsigned);
+      va_end(ap2);
+   }
+   /* "boom3: game frames %u, heap allocations %u, renderer allocations %u" */
+   if (strstr(fmt, "renderer allocations %u"))
+   {
+      va_list ap2;
+      va_start(ap2, fmt);
+      (void)va_arg(ap2, unsigned);
+      (void)va_arg(ap2, unsigned);
+      game_allocs = (long)va_arg(ap2, unsigned);
       va_end(ap2);
    }
    va_start(ap, fmt);
@@ -766,6 +780,8 @@ int main(int argc, char **argv)
          ppm_path = eq + 1;
       else if (!strcmp(argv[i], "shots"))
          shots = eq + 1;
+      else if (!strcmp(argv[i], "allocs"))
+         allocs_budget = atol(eq + 1);
       else if (!strcmp(argv[i], "from"))
          print_from = atoi(eq + 1);
       else if (!strcmp(argv[i], "look"))
@@ -853,6 +869,12 @@ int main(int argc, char **argv)
    {
       fprintf(stderr, "vk_host: %ld pipelines made on the draw path (the core must warm every one)\n",
             draw_path_pipelines);
+      return 3;
+   }
+   if (allocs_budget >= 0 && (game_allocs < 0 || game_allocs > allocs_budget))
+   {
+      fprintf(stderr, "vk_host: %ld renderer allocations over the in-game frames, %ld allowed\n",
+            game_allocs, allocs_budget);
       return 3;
    }
    return 0;

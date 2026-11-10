@@ -130,6 +130,11 @@ static idDynamicBlockAlloc<idPlane, 1<<17, 1<<10>		triPlaneAllocator;
 static idDynamicBlockAlloc<glIndex_t, 1<<17, 1<<10>		triSilIndexAllocator;
 static idDynamicBlockAlloc<silEdge_t, 1<<17, 1<<10>		triSilEdgeAllocator;
 static idDynamicBlockAlloc<dominantTri_t, 1<<16, 1<<10>	triDominantTrisAllocator;
+// the interaction's small tables: a dynamic model's surface slots, the
+// facing and cull bits a shadow volume is built from, a GPU shadow's
+// record.  Made and freed every frame a model deforms, so pooled: the
+// heap sees a base block at the load, not an allocation a frame.
+static idDynamicBlockAlloc<byte, 1<<18, 64>				interactionAllocator;
 static idDynamicBlockAlloc<int, 1<<16, 1<<10>			triMirroredVertAllocator;
 static idDynamicBlockAlloc<int, 1<<16, 1<<10>			triDupVertAllocator;
 
@@ -149,6 +154,7 @@ void R_InitTriSurfData( void ) {
 	triSilIndexAllocator.Init();
 	triSilEdgeAllocator.Init();
 	triDominantTrisAllocator.Init();
+	interactionAllocator.Init();
 	triMirroredVertAllocator.Init();
 	triDupVertAllocator.Init();
 
@@ -180,6 +186,7 @@ void R_ShutdownTriSurfData( void ) {
 	triSilIndexAllocator.Shutdown();
 	triSilEdgeAllocator.Shutdown();
 	triDominantTrisAllocator.Shutdown();
+	interactionAllocator.Shutdown();
 	triMirroredVertAllocator.Shutdown();
 	triDupVertAllocator.Shutdown();
 }
@@ -201,8 +208,24 @@ void R_PurgeTriSurfData( frameData_t *frame ) {
 	triSilIndexAllocator.FreeEmptyBaseBlocks();
 	triSilEdgeAllocator.FreeEmptyBaseBlocks();
 	triDominantTrisAllocator.FreeEmptyBaseBlocks();
+	interactionAllocator.FreeEmptyBaseBlocks();
 	triMirroredVertAllocator.FreeEmptyBaseBlocks();
 	triDupVertAllocator.FreeEmptyBaseBlocks();
+}
+
+/*
+==============
+R_AllocInteractionBytes
+
+16-byte aligned, from the interaction pool
+==============
+*/
+void *R_AllocInteractionBytes( int bytes ) {
+	return interactionAllocator.Alloc( bytes );
+}
+
+void R_FreeInteractionBytes( void *ptr ) {
+	interactionAllocator.Free( (byte *)ptr );
 }
 
 /*
@@ -406,7 +429,7 @@ void R_ReallyFreeStaticTriSurf( srfTriangles_t *tri ) {
 
 	if ( tri->gpuShadow != NULL ) {
 		R_ForgetGpuShadow( tri->gpuShadow );
-		R_StaticFree( tri->gpuShadow );
+		R_FreeInteractionBytes( tri->gpuShadow );
 	}
 
 #ifdef _DEBUG

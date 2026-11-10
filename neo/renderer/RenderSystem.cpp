@@ -994,9 +994,13 @@ void idRenderSystemLocal::CaptureRenderToFile( const char *fileName, bool fixAlp
 	int	c = ( rc->width + 3 ) * rc->height;
 	// GLES reads only RGBA (GL_RGB fails, leaving the objective
 	// screenshots the camShot objectives make blank). Rows of RGBA bytes
-	// are always word aligned.
-	byte *data = (byte *)R_StaticAlloc( c * 4 );
-	byte *data2 = (byte *)R_StaticAlloc( c * 4 );
+	// are always word aligned.  Frame memory: the pixels are read, turned
+	// to the file's order in place and written before the frame ends, so
+	// an objective's camShot in play costs the heap nothing.
+	byte *data = (byte *)R_FrameAlloc( c * 4 );
+	byte header[18];
+	idFile *f;
+	int i;
 #ifdef BOOM3_VR_MULTIVIEW
 	// the camera's view went to the eye target; the 2D since may have
 	// left the UI target bound
@@ -1011,17 +1015,28 @@ void idRenderSystemLocal::CaptureRenderToFile( const char *fileName, bool fixAlp
 		VR_EndLayerRead();
 	}
 #endif
-	for ( int i = 0 ; i < c ; i++ ) {
-		data2[ i * 4 ] = data[ i * 4 ];
-		data2[ i * 4 + 1 ] = data[ i * 4 + 1 ];
-		data2[ i * 4 + 2 ] = data[ i * 4 + 2 ];
-		data2[ i * 4 + 3 ] = 0xff;
+	// the TGA's BGRA, opaque
+	for ( i = 0 ; i < c ; i++ ) {
+		const byte r = data[ i * 4 ];
+		data[ i * 4 ] = data[ i * 4 + 2 ];
+		data[ i * 4 + 2 ] = r;
+		data[ i * 4 + 3 ] = 0xff;
 	}
 
-	R_WriteTGA( fileName, data2, rc->width, rc->height, true );
-
-	R_StaticFree( data );
-	R_StaticFree( data2 );
+	// what R_WriteTGA writes, bottom-up, without its copy
+	memset( header, 0, sizeof( header ) );
+	header[2] = 2;		// uncompressed type
+	header[12] = rc->width & 255;
+	header[13] = rc->width >> 8;
+	header[14] = rc->height & 255;
+	header[15] = rc->height >> 8;
+	header[16] = 32;	// pixel size
+	f = fileSystem->OpenFileWrite( fileName );
+	if ( f ) {
+		f->Write( header, sizeof( header ) );
+		f->Write( data, rc->width * rc->height * 4 );
+		fileSystem->CloseFile( f );
+	}
 }
 
 

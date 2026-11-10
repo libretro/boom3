@@ -69,7 +69,7 @@ void R_CalcInteractionFacing( const idRenderEntityLocal *ent, const srfTriangles
 		R_DeriveFacePlanes( const_cast<srfTriangles_t *>(tri) );
 	}
 
-	cullInfo.facing = (byte *) R_StaticAlloc( ( numFaces + 1 ) * sizeof( cullInfo.facing[0] ) );
+	cullInfo.facing = (byte *) R_AllocInteractionBytes( ( numFaces + 1 ) * sizeof( cullInfo.facing[0] ) );
 
 	// calculate back face culling
 	float *planeSide = (float *) _alloca16( numFaces * sizeof( float ) );
@@ -131,7 +131,7 @@ void R_CalcInteractionCullBits( const idRenderEntityLocal *ent, const srfTriangl
 		return;
 	}
 
-	cullInfo.cullBits = (byte *) R_StaticAlloc( tri->numVerts * sizeof( cullInfo.cullBits[0] ) );
+	cullInfo.cullBits = (byte *) R_AllocInteractionBytes( tri->numVerts * sizeof( cullInfo.cullBits[0] ) );
 	SIMDProcessor->Memset( cullInfo.cullBits, 0, tri->numVerts * sizeof( cullInfo.cullBits[0] ) );
 
 	float *planeSide = (float *) _alloca16( tri->numVerts * sizeof( float ) );
@@ -153,12 +153,12 @@ R_FreeInteractionCullInfo
 */
 void R_FreeInteractionCullInfo( srfCullInfo_t &cullInfo ) {
 	if ( cullInfo.facing != NULL ) {
-		R_StaticFree( cullInfo.facing );
+		R_FreeInteractionBytes( cullInfo.facing );
 		cullInfo.facing = NULL;
 	}
 	if ( cullInfo.cullBits != NULL ) {
 		if ( cullInfo.cullBits != LIGHT_CULL_ALL_FRONT ) {
-			R_StaticFree( cullInfo.cullBits );
+			R_FreeInteractionBytes( cullInfo.cullBits );
 		}
 		cullInfo.cullBits = NULL;
 	}
@@ -555,7 +555,7 @@ void idInteraction::FreeSurfaces( void ) {
 			R_FreeInteractionCullInfo( sint->cullInfo );
 		}
 
-		R_StaticFree( this->surfaces );
+		R_FreeInteractionBytes( this->surfaces );
 		this->surfaces = NULL;
 	}
 	this->numSurfaces = -1;
@@ -874,7 +874,8 @@ void idInteraction::CreateInteraction( const idRenderModel *model ) {
 	// create slots for each of the model's surfaces
 	//
 	numSurfaces = model->NumSurfaces();
-	surfaces = (surfaceInteraction_t *)R_ClearedStaticAlloc( sizeof( *surfaces ) * numSurfaces );
+	surfaces = (surfaceInteraction_t *)R_AllocInteractionBytes( sizeof( *surfaces ) * numSurfaces );
+	memset( surfaces, 0, sizeof( *surfaces ) * numSurfaces );
 
 	interactionGenerated = false;
 

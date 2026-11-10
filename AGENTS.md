@@ -94,11 +94,12 @@ see README) on lavapipe and llvmpipe:
 
     make -C tools/vk_host && make -C tools/egl_host
     VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json \
-      tools/vk_host/vk_host neo/boom3_libretro.so <path>/demo00.pk4 1500 from=0
-    tools/egl_host/egl_host neo/boom3_libretro.so <path>/demo00.pk4 1500 from=0 \
+      tools/vk_host/vk_host neo/boom3_libretro.so <path>/demo00.pk4 1500 from=0 allocs=0
+    tools/egl_host/egl_host neo/boom3_libretro.so <path>/demo00.pk4 1500 from=0 allocs=0 \
       doom_renderer=arb2 doom_color_format=24bit-tonemapped
 
-- each host exits 0: zero pipelines or programs made on the draw path
+- each host exits 0: zero pipelines or programs made on the draw path,
+  zero renderer allocations over the in-game frames
   (`tools/egl_host/hdr_check.sh` runs every GL renderer through every
   display transform and fails on a host that exits otherwise);
 - the per-frame hashes it prints equal the parent commit's, run the
@@ -167,6 +168,60 @@ reader can see.
 - **Measure, then say.** Bytes copied and allocations made are work
   results and go in the delivery summary. They are not frame-time
   results until a timing shows it.
+
+## No mid-game allocations
+
+Once a map is up, a frame allocates nothing: no `Mem_Alloc`, `new`,
+`malloc`, `idList` growth, `idStr` growth, or driver object creation on
+any path `retro_run` takes while the player is in the game. Memory a
+frame needs comes from `R_FrameAlloc`, from a pool or ring filled at
+init or at the map load, or from an object made then and reused.
+
+- **Size at the load, not at the first use.** A buffer whose size
+  depends on the level (surfaces, lights, shadow volumes, sound
+  channels, decals) is sized when the level loads and kept; one that
+  can grow grows at a load screen and never from a frame. A first frame
+  that grows a list is the first-use compile of the memory world and is
+  a bug for the same reason.
+- **Per-frame records come from a pool.** The interaction's surface
+  table, the facing and cull bits a shadow volume is built from and a
+  GPU shadow's record are made and freed every frame a model deforms;
+  they come from `R_AllocInteractionBytes`, an `idDynamicBlockAlloc`
+  beside the triangle allocators in `tr_trisurf.cpp`, which takes a base
+  block from the heap at the load and hands pieces of it out after.
+  Anything else shaped like that (made and freed within a frame or two,
+  of a size the level decides) goes the same way, not through
+  `R_StaticAlloc`; a conversion a frame needs (the Vulkan path narrowing
+  a dynamic model's indexes to 16 bits, `idVertexCache::VulkanAlloc`)
+  runs through a stack buffer a run at a time, not a heap buffer.
+- **A varying count is a high-water mark.** A per-frame structure
+  with a varying count (draw surfaces, particles, visible lights) has a
+  capacity it was given at load, with a counted spill, not a
+  reallocation; the block allocators' base blocks are the one growth a
+  frame may cause, and it stops at the level's high-water mark.
+- **Driver objects are made at init or at a load.** No GL buffer,
+  texture, framebuffer or Vulkan image, buffer or descriptor set is
+  created from a frame; a target that follows the window or an option is
+  remade when that changes (`hdr_ensure_target`, `vkb_frame_format`),
+  which is an event, not a frame.
+- **The census and its gate.** Each frame that begins and ends in
+  game adds the heap's allocations (`Mem_GetFrameStats`, `Mem_Alloc`
+  and `Mem_Alloc16` both) and the renderer's (`R_StaticAlloc` calls) to
+  a census the core reports at unload: "boom3: game frames %u, heap
+  allocations %u, renderer allocations %u". The hosts take `allocs=<n>`
+  and exit 3 when the renderer's count is above n; the gate runs with
+  `allocs=0`, which is what the demo's first thousand in-game frames
+  read on both renderers. The heap count is reported, not gated: on
+  the demo it reads about 460 on GL and 530 on Vulkan, all growth to a
+  high-water mark, none of it per frame: the articulated figure physics keeps its contact
+  constraints and makes a new one, with its `idVecX` and `idMatX`
+  storage, each time a frame has more contacts than any before
+  (`idPhysics_AF::SetupContactConstraints`, `idAFConstraint_Contact::
+  ApplyFriction`), and the block allocators take base blocks as the
+  level's geometry first needs them. A change that touches a frame path
+  runs the gate and says what the census read; a heap count that keeps
+  rising frame after frame, rather than settling, is a leak or a
+  per-frame allocation and is fixed before delivery.
 
 ## Savestates round-trip
 

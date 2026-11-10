@@ -37,6 +37,9 @@ extern "C" {
 
 #include "../libretro-common/include/glsym/glsym.h"
 #include "../libretro-common/include/glsm/glsm.h"
+/* before the idlib headers: retro_atomic.h reaches <atomic>, and Str.h's
+ * strcmp macros break libc++'s <cstring> */
+#include "../libretro-common/include/retro_atomic.h"
 
 #include <errno.h>
 #include <unistd.h>
@@ -4531,6 +4534,35 @@ void retro_set_controller_port_device(unsigned port, unsigned device)
 
 
 
+/* The in-game allocation census, for the hosts' gate: once a map is up
+ * and not loading, a frame is meant to allocate nothing.  The heap's
+ * count (Mem_GetFrameStats) covers the engine; the renderer's
+ * (R_StaticAlloc) is the part gated at 0 today. */
+extern retro_atomic_int_t r_staticAllocCalls;
+static unsigned census_frames, census_heap, census_renderer;
+static int census_renderer_last;
+
+static bool game_frame_in_game(void)
+{
+	return sessLocal.mapSpawned && !sessLocal.MapLoadInProgress() && !sessLocal.insideExecuteMapChange;
+}
+
+/* inGameBefore: the state as the frame began, so the frame a map comes
+ * up on, which spawns, is not counted */
+static void game_frame_census(bool inGameBefore)
+{
+	memoryStats_t allocs, frees;
+	int calls = retro_atomic_load_relaxed_int(&r_staticAllocCalls);
+	Mem_GetFrameStats(allocs, frees);
+	Mem_ClearFrameStats();
+	if (inGameBefore && game_frame_in_game()) {
+		census_frames++;
+		census_heap += (unsigned)allocs.num;
+		census_renderer += (unsigned)(calls - census_renderer_last);
+	}
+	census_renderer_last = calls;
+}
+
 void retro_run(void)
 {
 #ifdef BOOM3_VR
@@ -4610,7 +4642,11 @@ void retro_run(void)
 		hdr_fe_query( &hdr_fe );
 #endif
 
-	common->Frame();
+	{
+		const bool inGame = game_frame_in_game();
+		common->Frame();
+		game_frame_census(inGame);
+	}
 
    if (!libretro_shared_context && !LR_VULKAN())
       glsm_ctl(GLSM_CTL_STATE_UNBIND, NULL);
@@ -10216,6 +10252,9 @@ void retro_unload_game(void)
 	if (log_cb && !first_boot && !LR_VULKAN())
 		log_cb(RETRO_LOG_INFO, "boom3: gl programs %u, made on the draw path %u\n",
 		      (unsigned)r_programCount, (unsigned)r_programMisses);
+	if (log_cb && !first_boot)
+		log_cb(RETRO_LOG_INFO, "boom3: game frames %u, heap allocations %u, renderer allocations %u\n",
+		      census_frames, census_heap, census_renderer);
 
 	if (common && !first_boot)
 		common->Shutdown();
