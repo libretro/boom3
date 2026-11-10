@@ -85,6 +85,7 @@
    X(vkDestroySemaphore) \
    X(vkCmdPipelineBarrier) \
    X(vkCmdCopyBufferToImage) \
+   X(vkCmdCopyImageToBuffer) \
    X(vkCmdCopyImage) \
    X(vkCmdCopyBuffer) \
    X(vkCmdBlitImage) \
@@ -241,6 +242,19 @@ typedef struct vkb_shadow_job
    unsigned facingFirst;
 } vkb_shadow_job_t;
 
+/* a rectangle of the target copied into the frame's readback buffer,
+ * read by the main thread when the frame is off the GPU */
+#define VKB_MAX_CAPTURES 4
+typedef struct vkb_capture
+{
+   VkBuffer buffer;             /* its own, host visible; freed once delivered */
+   vkb_mem_t mem;
+   unsigned char *mapped;
+   unsigned width, height;
+   unsigned char format;        /* enum vkb_format of the target */
+   char name[256];
+} vkb_capture_t;
+
 typedef struct vkb_frame
 {
    VkCommandPool pool;
@@ -253,6 +267,9 @@ typedef struct vkb_frame
    unsigned ringUsed;
    unsigned char submitted;
    /* the shadow volumes the frame builds, and where */
+   /* what this frame copied out for the main thread */
+   vkb_capture_t captures[VKB_MAX_CAPTURES];
+   unsigned captureCount;
    vkb_shadow_job_t *shadowJobs;
    VkDescriptorSet *shadowSets; /* shadowCapacity of them, for the record */
    unsigned shadowCount;
@@ -455,6 +472,10 @@ VkRenderPass vkb_post_render_pass(enum vkb_format colorFormat);
 VkRenderPass vkb_inplace_render_pass(enum vkb_format colorFormat);
 VkRenderPass vkb_read_depth_render_pass(enum vkb_format colorFormat);
 int  vkb_image_post_framebuffer(unsigned image, VkFramebuffer *framebuffer, vkb_image_t **im);
+/* the frame's captures handed to the sink; on the main thread, the
+ * frame off the GPU */
+void vkb_captures_deliver(vkb_frame_t *f);
+void vkb_captures_release(vkb_frame_t *f);
 int  vkb_image_side_framebuffer(unsigned color, unsigned depth, VkFramebuffer *framebuffer,
       vkb_image_t **colorOut, vkb_image_t **depthOut);
 VkFormat vkb_depth_stencil_format(void);

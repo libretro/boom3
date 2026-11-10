@@ -361,6 +361,7 @@ static void vkb_frames_shutdown(void)
    for (i = 0; i < VKB_FRAMES; i++)
    {
       vkb_frame_t *f = &vkb.frames[i];
+      vkb_captures_release(f);
       if (f->descriptors)
          vk.vkDestroyDescriptorPool(vkb.device, f->descriptors, NULL);
       if (f->done)
@@ -476,6 +477,8 @@ static void vkb_acquire_slot(unsigned slot)
    vk.vkResetDescriptorPool(vkb.device, f->descriptors, 0);
    f->ringUsed = 0;
    vkb_shadows_frame_reset(f);
+   /* what its last frame read back is in host memory now */
+   vkb_captures_deliver(f);
 }
 
 /* The main thread, the render thread joined, before it hands over the

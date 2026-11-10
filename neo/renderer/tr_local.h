@@ -519,6 +519,7 @@ typedef enum {
 	RC_DRAW_VIEW,
 	RC_SET_BUFFER,
 	RC_COPY_RENDER,
+	RC_CAPTURE_RENDER,	// part of the current framebuffer to a file, read back off the frame path
 	RC_SWAP_BUFFERS		// can't just assume swap at end of list because
 						// of forced list submission before syncs
 } renderCommand_t;
@@ -544,6 +545,12 @@ typedef struct {
 	idImage	*image;
 	int		cubeFace;					// when copying to a cubeMap
 } copyRenderCommand_t;
+
+typedef struct {
+	renderCommand_t		commandId, *next;
+	int		x, y, width, height;
+	char	fileName[MAX_OSPATH];
+} captureRenderCommand_t;
 
 
 //=======================================================================
@@ -1973,6 +1980,17 @@ void RB_SetGL2D( void );
 void RB_ShowImages( void );
 
 void RB_ExecuteBackEndCommands( const emptyCommand_t *cmds );
+
+/*
+The capture of a framebuffer rectangle to a TGA: the back end reads it
+back off the frame path (a pixel pack buffer and a fence on GL, the
+frame's readback buffer on Vulkan), the main thread picks the pixels up
+a frame or more later and the file goes out on the background writer.
+rgba rows from the bottom, or from the top with topDown.
+*/
+void R_CaptureDeliver( const byte *rgba, int width, int height, bool topDown, const char *fileName );
+void RB_CaptureRender( const void *data );
+void RB_CapturesPoll( void );
 
 
 /*

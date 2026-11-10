@@ -2186,8 +2186,95 @@ void RB_VK_ForgetShadowData( const void *key ) {
 	vkSil[i].key = NULL;
 }
 
+/*
+====================
+RB_VK_CaptureSink
+
+A capture back from the GPU, in the target's format and rows from the
+top: to 8-bit RGBA for the TGA. A float or 10-bit scene is the HDR
+pipeline's linear scene; the file gets it clamped, as the GL path's
+read of its float target does.
+====================
+*/
+static float RB_VK_HalfToFloat( unsigned short h ) {
+	const unsigned sign = ( h >> 15 ) & 1, exp = ( h >> 10 ) & 31, mant = h & 1023;
+	float v;
+	if ( exp == 0 ) {
+		v = ( mant / 1024.0f ) * ( 1.0f / 16384.0f );
+	} else if ( exp == 31 ) {
+		v = mant ? 0.0f : 1e30f;
+	} else {
+		v = ( 1.0f + mant / 1024.0f ) * idMath::Pow( 2.0f, (float)( (int)exp - 15 ) );
+	}
+	return sign ? -v : v;
+}
+
+static byte RB_VK_UnitToByte( float v ) {
+	if ( !( v > 0.0f ) ) {
+		return 0;
+	}
+	if ( v >= 1.0f ) {
+		return 255;
+	}
+	return (byte)( v * 255.0f + 0.5f );
+}
+
+static void RB_VK_CaptureSink( const unsigned char *pixels, unsigned width, unsigned height,
+		enum vkb_format format, const char *name ) {
+	const unsigned count = width * height;
+	byte *rgba;
+	unsigned i;
+	if ( format == VKB_FORMAT_RGBA8 ) {
+		R_CaptureDeliver( pixels, (int)width, (int)height, true, name );
+		return;
+	}
+	rgba = (byte *)R_FrameAlloc( count * 4 );
+	switch ( format ) {
+		case VKB_FORMAT_BGRA8:
+			for ( i = 0; i < count; i++ ) {
+				rgba[i * 4] = pixels[i * 4 + 2];
+				rgba[i * 4 + 1] = pixels[i * 4 + 1];
+				rgba[i * 4 + 2] = pixels[i * 4];
+				rgba[i * 4 + 3] = pixels[i * 4 + 3];
+			}
+			break;
+		case VKB_FORMAT_RGB10A2:
+			for ( i = 0; i < count; i++ ) {
+				const unsigned p = ((const unsigned *)pixels)[i];
+				rgba[i * 4] = (byte)( ( p & 1023 ) >> 2 );
+				rgba[i * 4 + 1] = (byte)( ( ( p >> 10 ) & 1023 ) >> 2 );
+				rgba[i * 4 + 2] = (byte)( ( ( p >> 20 ) & 1023 ) >> 2 );
+				rgba[i * 4 + 3] = 255;
+			}
+			break;
+		case VKB_FORMAT_RGBA16F:
+			for ( i = 0; i < count; i++ ) {
+				const unsigned short *p = (const unsigned short *)pixels + i * 4;
+				rgba[i * 4] = RB_VK_UnitToByte( RB_VK_HalfToFloat( p[0] ) );
+				rgba[i * 4 + 1] = RB_VK_UnitToByte( RB_VK_HalfToFloat( p[1] ) );
+				rgba[i * 4 + 2] = RB_VK_UnitToByte( RB_VK_HalfToFloat( p[2] ) );
+				rgba[i * 4 + 3] = 255;
+			}
+			break;
+		case VKB_FORMAT_RGBA32F:
+			for ( i = 0; i < count; i++ ) {
+				const float *p = (const float *)pixels + i * 4;
+				rgba[i * 4] = RB_VK_UnitToByte( p[0] );
+				rgba[i * 4 + 1] = RB_VK_UnitToByte( p[1] );
+				rgba[i * 4 + 2] = RB_VK_UnitToByte( p[2] );
+				rgba[i * 4 + 3] = 255;
+			}
+			break;
+		default:
+			memset( rgba, 0, count * 4 );
+			break;
+	}
+	R_CaptureDeliver( rgba, (int)width, (int)height, true, name );
+}
+
 void RB_VK_ShadowsUp( void ) {
 	r_gpuShadowVolumes = vkb_shadows_available() != 0;
+	vkb_set_capture_sink( RB_VK_CaptureSink );
 }
 
 // the device's static blocks went with it
@@ -2347,6 +2434,12 @@ static void RB_VK_RunCommands( void *job ) {
 				RB_VK_BeginFrame();
 				R_VK_CopyFramebuffer( cmd->image, cmd->x, cmd->y, cmd->imageWidth, cmd->imageHeight, NULL );
 			}
+			break;
+		}
+		case RC_CAPTURE_RENDER: {
+			const captureRenderCommand_t *cmd = (const captureRenderCommand_t *)cmds;
+			RB_VK_BeginFrame();
+			vkb_capture( cmd->x, cmd->y, cmd->width, cmd->height, cmd->fileName );
 			break;
 		}
 		default:

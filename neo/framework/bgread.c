@@ -60,3 +60,25 @@ void bgread_read( RFILE *osFile, rzip_file_t *zipFile, void *buf, int len,
 		}
 	}
 }
+
+void bgread_write( RFILE *osFile, const void *buf, int len, int *bytes, retro_atomic_int_t *stop )
+{
+	const char *p = (const char *)buf;
+
+	while ( *bytes >= 0 && *bytes < len ) {
+		int want = len - *bytes;
+		int put;
+		if ( stop && retro_atomic_load_acquire_int( stop ) ) {
+			return;
+		}
+		if ( want > BGREAD_CHUNK ) {
+			want = BGREAD_CHUNK;
+		}
+		put = (int)filestream_write( osFile, p + *bytes, want );
+		if ( put <= 0 ) {
+			*bytes = -1;
+			return;
+		}
+		*bytes += put;
+	}
+}

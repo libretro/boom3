@@ -922,6 +922,177 @@ static void vkb_copy_target(unsigned image, int depth, int x, int y, int w, int 
    vkb_enter_render_pass();
 }
 
+/* --- captures ------------------------------------------------------------------ */
+
+static vkb_capture_sink_t captureSink;
+
+void vkb_set_capture_sink(vkb_capture_sink_t sink)
+{
+   captureSink = sink;
+}
+
+static unsigned vkb_format_bytes(enum vkb_format format)
+{
+   switch (format)
+   {
+      case VKB_FORMAT_RGBA16F:
+      case VKB_FORMAT_RGBA16:  return 8;
+      case VKB_FORMAT_RGBA32F: return 16;
+      default:                 return 4;
+   }
+}
+
+/* a capture's buffer: on the render thread, so a block of its own */
+static int vkb_capture_buffer(vkb_capture_t *c, VkDeviceSize bytes)
+{
+   VkBufferCreateInfo bci;
+   VkMemoryRequirements req;
+   void *mapped = NULL;
+   memset(&bci, 0, sizeof(bci));
+   bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+   bci.size  = bytes;
+   bci.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+   if (vk.vkCreateBuffer(vkb.device, &bci, NULL, &c->buffer) != VK_SUCCESS)
+   {
+      c->buffer = VK_NULL_HANDLE;
+      return 0;
+   }
+   vk.vkGetBufferMemoryRequirements(vkb.device, c->buffer, &req);
+   if (!vkb_mem_alloc(&req, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
+            | VK_MEMORY_PROPERTY_HOST_CACHED_BIT, 1, &c->mem, &mapped) || !mapped
+         || vk.vkBindBufferMemory(vkb.device, c->buffer, c->mem.memory, c->mem.offset) != VK_SUCCESS)
+   {
+      vk.vkDestroyBuffer(vkb.device, c->buffer, NULL);
+      vkb_mem_free(&c->mem);
+      c->buffer = VK_NULL_HANDLE;
+      memset(&c->mem, 0, sizeof(c->mem));
+      return 0;
+   }
+   c->mapped = (unsigned char *)mapped;
+   return 1;
+}
+
+static void vkb_capture_release(vkb_capture_t *c)
+{
+   if (c->buffer)
+      vk.vkDestroyBuffer(vkb.device, c->buffer, NULL);
+   vkb_mem_free(&c->mem);
+   memset(c, 0, sizeof(*c));
+}
+
+/* at shutdown, the device idle */
+void vkb_captures_release(vkb_frame_t *f)
+{
+   unsigned i;
+   for (i = 0; i < f->captureCount; i++)
+      vkb_capture_release(&f->captures[i]);
+   f->captureCount = 0;
+}
+
+int vkb_capture(int x, int y, int w, int h, const char *name)
+{
+   vkb_frame_t *f = &vkb.frames[vkb.frameIndex];
+   vkb_capture_t *c;
+   VkBufferImageCopy region;
+   VkImage src;
+   int th;
+   VkDeviceSize bytes;
+   if (!retro_atomic_load_relaxed_int(&vkb.frameOpen) || !vkb.target || !vkb.target->color || w <= 0 || h <= 0)
+      return 0;
+   if (f->captureCount == VKB_MAX_CAPTURES)
+      return 0;
+   th = (int)vkb.target->height;
+   if (x < 0 || y < 0 || x + w > (int)vkb.target->width || y + h > th)
+      return 0;
+   bytes = (VkDeviceSize)w * h * vkb_format_bytes((enum vkb_format)vkb.target->format);
+   c = &f->captures[f->captureCount];
+   memset(c, 0, sizeof(*c));
+   if (!vkb_capture_buffer(c, bytes))
+      return 0;
+   c->width  = (unsigned)w;
+   c->height = (unsigned)h;
+   c->format = vkb.target->format;
+   strncpy(c->name, name, sizeof(c->name) - 1);
+   c->name[sizeof(c->name) - 1] = 0;
+   f->captureCount++;
+
+   vkb_leave_render_pass();
+   src = vkb.target->color;
+   {
+      VkImageMemoryBarrier b;
+      memset(&b, 0, sizeof(b));
+      b.sType                       = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+      b.srcAccessMask               = VK_ACCESS_SHADER_READ_BIT;
+      b.dstAccessMask               = VK_ACCESS_TRANSFER_READ_BIT;
+      b.oldLayout                   = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+      b.newLayout                   = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+      b.srcQueueFamilyIndex         = VK_QUEUE_FAMILY_IGNORED;
+      b.dstQueueFamilyIndex         = VK_QUEUE_FAMILY_IGNORED;
+      b.image                       = src;
+      b.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+      b.subresourceRange.levelCount = 1;
+      b.subresourceRange.layerCount = 1;
+      vk.vkCmdPipelineBarrier(vkb.cmd, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+            VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0, NULL, 1, &b);
+   }
+   memset(&region, 0, sizeof(region));
+   region.bufferOffset                = 0;
+   region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+   region.imageSubresource.layerCount = 1;
+   /* the engine's rectangle is from the bottom; the image's rows from the top */
+   region.imageOffset.x    = x;
+   region.imageOffset.y    = th - y - h;
+   region.imageExtent.width  = (uint32_t)w;
+   region.imageExtent.height = (uint32_t)h;
+   region.imageExtent.depth  = 1;
+   vk.vkCmdCopyImageToBuffer(vkb.cmd, src, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, c->buffer, 1, &region);
+   {
+      VkImageMemoryBarrier b;
+      VkBufferMemoryBarrier bb;
+      memset(&b, 0, sizeof(b));
+      b.sType                       = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+      b.srcAccessMask               = VK_ACCESS_TRANSFER_READ_BIT;
+      b.dstAccessMask               = VK_ACCESS_SHADER_READ_BIT;
+      b.oldLayout                   = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+      b.newLayout                   = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+      b.srcQueueFamilyIndex         = VK_QUEUE_FAMILY_IGNORED;
+      b.dstQueueFamilyIndex         = VK_QUEUE_FAMILY_IGNORED;
+      b.image                       = src;
+      b.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+      b.subresourceRange.levelCount = 1;
+      b.subresourceRange.layerCount = 1;
+      /* and the copy lands before the host reads it */
+      memset(&bb, 0, sizeof(bb));
+      bb.sType               = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+      bb.srcAccessMask       = VK_ACCESS_TRANSFER_WRITE_BIT;
+      bb.dstAccessMask       = VK_ACCESS_HOST_READ_BIT;
+      bb.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+      bb.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+      bb.buffer              = c->buffer;
+      bb.offset              = 0;
+      bb.size                = bytes;
+      vk.vkCmdPipelineBarrier(vkb.cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_HOST_BIT, 0, 0, NULL, 1, &bb, 1, &b);
+   }
+   vkb_enter_render_pass();
+   return 1;
+}
+
+/* on the main thread, the frame off the GPU: each capture to the sink,
+ * then its buffer goes */
+void vkb_captures_deliver(vkb_frame_t *f)
+{
+   unsigned i;
+   for (i = 0; i < f->captureCount; i++)
+   {
+      vkb_capture_t *c = &f->captures[i];
+      if (captureSink && c->mapped)
+         captureSink(c->mapped, c->width, c->height, (enum vkb_format)c->format, c->name);
+      vkb_capture_release(c);
+   }
+   f->captureCount = 0;
+}
+
 void vkb_copy_color(unsigned image, int x, int y, int w, int h) { vkb_copy_target(image, 0, x, y, w, h, NULL); }
 void vkb_copy_depth(unsigned image, int x, int y, int w, int h) { vkb_copy_target(image, 1, x, y, w, h, NULL); }
 

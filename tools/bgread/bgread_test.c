@@ -1,8 +1,9 @@
-/* Regression test for the background reader's read, bgread_read: the
- * reader must leave a read within one chunk of a cancel or of its exit
- * flag, never after the whole entry, and a read it left on exit must
- * resume to the exact bytes. Reads a stored and a deflated pk4 entry and
- * a plain file of several chunks each.
+/* Regression test for the background reader's read and write,
+ * bgread_read and bgread_write: the thread must leave a read within one
+ * chunk of a cancel or of its exit flag, never after the whole entry,
+ * and a read or write it left on exit must resume to the exact bytes.
+ * Reads a stored and a deflated pk4 entry and a plain file of several
+ * chunks each; writes a plain file in chunks, stopped and resumed.
  *
  * build: make -C tools/bgread
  * run:   make -C tools/bgread check */
@@ -139,6 +140,52 @@ int main(int argc, char **argv)
 			run_source("plain", os, NULL, ENTRY_SIZE, refF);
 			filestream_close(os);
 		}
+	}
+
+	/* the writer: a whole write, then one stopped after a chunk and
+	 * resumed, each read back exact */
+	{
+		retro_atomic_int_t stop;
+		RFILE *os;
+		unsigned char *back = (unsigned char *)malloc(ENTRY_SIZE);
+		int bytes;
+		retro_atomic_int_init(&stop, 0);
+		sprintf(path, "%s/bgwrite_plain.bin", dir);
+		os = filestream_open(path, RETRO_VFS_FILE_ACCESS_WRITE, RETRO_VFS_FILE_ACCESS_HINT_NONE);
+		check(os != NULL, "write file opens");
+		if (os)
+		{
+			bytes = 0;
+			bgread_write(os, refF, ENTRY_SIZE, &bytes, &stop);
+			check(bytes == ENTRY_SIZE, "whole write");
+			filestream_close(os);
+			o = fopen(path, "rb");
+			memset(back, 0, ENTRY_SIZE);
+			check(o && fread(back, 1, ENTRY_SIZE, o) == ENTRY_SIZE && !memcmp(back, refF, ENTRY_SIZE),
+					"whole write read back exact");
+			if (o) fclose(o);
+		}
+		os = filestream_open(path, RETRO_VFS_FILE_ACCESS_WRITE, RETRO_VFS_FILE_ACCESS_HINT_NONE);
+		if (os)
+		{
+			/* one chunk by bounding len, then a stop between chunks, then the rest */
+			bytes = 0;
+			bgread_write(os, refD, BGREAD_CHUNK, &bytes, &stop);
+			check(bytes == BGREAD_CHUNK, "first written chunk exact");
+			retro_atomic_store_release_int(&stop, 1);
+			bgread_write(os, refD, ENTRY_SIZE, &bytes, &stop);
+			check(bytes == BGREAD_CHUNK, "stop between chunks leaves the write where it was");
+			retro_atomic_store_release_int(&stop, 0);
+			bgread_write(os, refD, ENTRY_SIZE, &bytes, NULL);
+			check(bytes == ENTRY_SIZE, "resumed write complete");
+			filestream_close(os);
+			o = fopen(path, "rb");
+			memset(back, 0, ENTRY_SIZE);
+			check(o && fread(back, 1, ENTRY_SIZE, o) == ENTRY_SIZE && !memcmp(back, refD, ENTRY_SIZE),
+					"resumed write read back exact");
+			if (o) fclose(o);
+		}
+		free(back);
 	}
 
 	/* the pk4: one stored and one deflated entry, made by zip(1) */

@@ -256,6 +256,12 @@ public:
 	virtual void			BackgroundDownload( backgroundDownload_t *bgl ) = 0;
 							// marks finished background reads as completed; main thread
 	virtual void			CompleteBackgroundDownloads( void ) = 0;
+							// Writes a complete file from the background thread; returns
+							// at once. buffer is Mem_Alloc'd and becomes the file system's,
+							// freed when the write is done (or at once, when there is no
+							// thread and the write happens here). False if the file could
+							// not be opened, the buffer then still the caller's.
+	virtual bool			WriteFileInBackground( const char *relativePath, void *buffer, int size, const char *basePath = "fs_savepath" ) = 0;
 							// Starts reading a whole file in the background, so that the
 							// ReadFile of it that is known to be coming finds it already
 							// read. A hint: returns at once and may do nothing. False if the

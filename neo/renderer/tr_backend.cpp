@@ -29,6 +29,10 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "renderer/VertexCache.h"
 #include "renderer/tr_local.h"
+#include "renderer/gl_caps.h"
+#ifdef BOOM3_VR_MULTIVIEW
+#include "renderer/vr.h"
+#endif
 
 static idCVar r_fillWindowAlphaChan( "r_fillWindowAlphaChan", "-1", CVAR_SYSTEM | CVAR_NOCHEAT | CVAR_ARCHIVE, "Make sure alpha channel of windows default framebuffer is completely opaque at the end of each frame. Needed at least when using Wayland with older drivers.\n 1: do this, 0: don't do it, -1: let dhewm3 decide (default)" );
 
@@ -646,6 +650,130 @@ const void	RB_SwapBuffers( const void *data ) {
 
 /*
 =============
+RB_CaptureRender
+
+Part of the current framebuffer into a pixel pack buffer, with a fence
+behind it; RB_CapturesPoll takes it when the fence says so, without
+waiting. A context without pack buffers or fences reads here, as the
+old code did, and the file still goes out in the background.
+=============
+*/
+#define RB_MAX_CAPTURES 4
+#define RB_GL_PIXEL_PACK_BUFFER 0x88EB
+#define RB_GL_STREAM_READ 0x88E1
+#define RB_GL_SYNC_GPU_COMMANDS_COMPLETE 0x9117
+#define RB_GL_ALREADY_SIGNALED 0x911A
+#define RB_GL_CONDITION_SATISFIED 0x911C
+#define RB_GL_MAP_READ_BIT 0x0001
+
+typedef struct {
+	GLuint			pbo;
+	gl_caps_sync_t	fence;
+	int				width, height;
+	char			fileName[MAX_OSPATH];
+} rbCapture_t;
+
+static rbCapture_t rbCaptures[RB_MAX_CAPTURES];
+
+void RB_CaptureRender( const void *data ) {
+	const captureRenderCommand_t *cmd = (const captureRenderCommand_t *)data;
+	const int bytes = cmd->width * cmd->height * 4;
+	rbCapture_t *c = NULL;
+	int i;
+
+	if ( cmd->width <= 0 || cmd->height <= 0 ) {
+		return;
+	}
+	if ( glCaps.FenceSync && glCaps.ClientWaitSync && glCaps.DeleteSync && glCaps.MapBufferRange && glCaps.UnmapBuffer ) {
+		for ( i = 0; i < RB_MAX_CAPTURES; i++ ) {
+			if ( !rbCaptures[i].fence ) {
+				c = &rbCaptures[i];
+				break;
+			}
+		}
+	}
+#ifdef BOOM3_VR_MULTIVIEW
+	// the camera's view went to the eye target; the 2D since may have
+	// left the UI target bound
+	if ( VR_Active() ) {
+		VR_BeginSceneRead();
+	}
+#endif
+	if ( c ) {
+		if ( !c->pbo ) {
+			qglGenBuffersARB( 1, &c->pbo );
+		}
+		qglBindBufferARB( RB_GL_PIXEL_PACK_BUFFER, c->pbo );
+		qglBufferDataARB( RB_GL_PIXEL_PACK_BUFFER, bytes, NULL, RB_GL_STREAM_READ );
+		qglReadPixels( cmd->x, cmd->y, cmd->width, cmd->height, GL_RGBA, GL_UNSIGNED_BYTE, NULL );
+		qglBindBufferARB( RB_GL_PIXEL_PACK_BUFFER, 0 );
+		c->fence = glCaps.FenceSync( RB_GL_SYNC_GPU_COMMANDS_COMPLETE, 0 );
+		c->width = cmd->width;
+		c->height = cmd->height;
+		idStr::Copynz( c->fileName, cmd->fileName, sizeof( c->fileName ) );
+		if ( !c->fence ) {
+			// no fence to wait on: read it now
+			qglBindBufferARB( RB_GL_PIXEL_PACK_BUFFER, c->pbo );
+			{
+				const byte *p = (const byte *)glCaps.MapBufferRange( RB_GL_PIXEL_PACK_BUFFER, 0, bytes, RB_GL_MAP_READ_BIT );
+				if ( p ) {
+					R_CaptureDeliver( p, c->width, c->height, false, c->fileName );
+					glCaps.UnmapBuffer( RB_GL_PIXEL_PACK_BUFFER );
+				}
+			}
+			qglBindBufferARB( RB_GL_PIXEL_PACK_BUFFER, 0 );
+		}
+	} else {
+		// frame memory: the read is waited for here and delivered at once
+		byte *p = (byte *)R_FrameAlloc( bytes );
+		qglReadPixels( cmd->x, cmd->y, cmd->width, cmd->height, GL_RGBA, GL_UNSIGNED_BYTE, p );
+		R_CaptureDeliver( p, cmd->width, cmd->height, false, cmd->fileName );
+	}
+#ifdef BOOM3_VR_MULTIVIEW
+	if ( VR_Active() ) {
+		VR_EndLayerRead();
+	}
+#endif
+}
+
+/*
+=============
+RB_CapturesPoll
+
+Each frame: the captures whose fence has signalled are read and
+delivered; a zero timeout, so one that has not is left for the next
+frame.
+=============
+*/
+void RB_CapturesPoll( void ) {
+	int i;
+	for ( i = 0; i < RB_MAX_CAPTURES; i++ ) {
+		rbCapture_t *c = &rbCaptures[i];
+		GLenum state;
+		if ( !c->fence ) {
+			continue;
+		}
+		state = glCaps.ClientWaitSync( c->fence, 0, 0 );
+		if ( state != RB_GL_ALREADY_SIGNALED && state != RB_GL_CONDITION_SATISFIED ) {
+			continue;
+		}
+		glCaps.DeleteSync( c->fence );
+		c->fence = NULL;
+		qglBindBufferARB( RB_GL_PIXEL_PACK_BUFFER, c->pbo );
+		{
+			const int bytes = c->width * c->height * 4;
+			const byte *p = (const byte *)glCaps.MapBufferRange( RB_GL_PIXEL_PACK_BUFFER, 0, bytes, RB_GL_MAP_READ_BIT );
+			if ( p ) {
+				R_CaptureDeliver( p, c->width, c->height, false, c->fileName );
+				glCaps.UnmapBuffer( RB_GL_PIXEL_PACK_BUFFER );
+			}
+		}
+		qglBindBufferARB( RB_GL_PIXEL_PACK_BUFFER, 0 );
+	}
+}
+
+/*
+=============
 RB_CopyRender
 
 Copy part of the current framebuffer to an image
@@ -703,6 +831,9 @@ void RB_ExecuteBackEndCommands( const emptyCommand_t *cmds ) {
 	// upload any image loads that have completed
 	globalImages->CompleteBackgroundImageLoads();
 
+	// and take the captures whose read back is done
+	RB_CapturesPoll();
+
 	for ( ; cmds ; cmds = (const emptyCommand_t *)cmds->next ) {
 		switch ( cmds->commandId ) {
 		case RC_NOP:
@@ -727,6 +858,9 @@ void RB_ExecuteBackEndCommands( const emptyCommand_t *cmds ) {
 		case RC_COPY_RENDER:
 			RB_CopyRender( cmds );
 			c_copyRenders++;
+			break;
+		case RC_CAPTURE_RENDER:
+			RB_CaptureRender( cmds );
 			break;
 		default:
 			common->Error( "RB_ExecuteBackEndCommands: bad commandId" );

@@ -386,6 +386,14 @@ unsigned vkb_shadow_queue(const void *key, const vkb_shadow_volume_t *volume);
 unsigned vkb_shadow_find(const void *key);
 
 /* the frame's scene copies for the stages that read them */
+/* The engine's rectangle (from the bottom) of the current target, into
+ * the frame's readback buffer; the sink gets it, with the target's
+ * format and its rows from the top, once the frame is off the GPU: a
+ * frame or three later, on the main thread, never waited for. */
+typedef void (*vkb_capture_sink_t)(const unsigned char *pixels, unsigned width, unsigned height,
+      enum vkb_format format, const char *name);
+void vkb_set_capture_sink(vkb_capture_sink_t sink);
+int  vkb_capture(int x, int y, int w, int h, const char *name);
 void vkb_copy_color(unsigned image, int x, int y, int w, int h);
 void vkb_copy_depth(unsigned image, int x, int y, int w, int h);
 /* vkb_copy_color of the part px, py, pw, ph of that rectangle (from its

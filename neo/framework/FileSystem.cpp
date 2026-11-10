@@ -379,6 +379,7 @@ public:
 	virtual void			CloseFile( idFile *f );
 	virtual void			BackgroundDownload( backgroundDownload_t *bgl );
 	virtual void			CompleteBackgroundDownloads( void );
+	virtual bool			WriteFileInBackground( const char *relativePath, void *buffer, int size, const char *basePath = "fs_savepath" );
 	virtual bool			PrefetchFile( const char *relativePath );
 	virtual void			ClearPrefetches( void );
 	virtual int				GetPrefetchHits( void ) { return prefetchHits; }
@@ -463,10 +464,19 @@ private:
 		retro_atomic_int_t *	cancel;		// optional: nonzero means skip the read
 		int *					result;		// optional: where the main thread wants bytes
 		int						bytes;		// read so far; set by whoever did the read
+		int						write;		// the other direction: bgl's buffer into osFile
 	};
+	// a write in flight: its record, its buffer, the main thread's to
+	// close and free when the thread hands it back
+	enum { MAX_BACKGROUND_WRITES = 8 };
+	struct backgroundWrite_t {
+		backgroundDownload_t	bgl;
+		void *					buffer;
+	};
+	backgroundWrite_t		backgroundWrites[MAX_BACKGROUND_WRITES];
 	static void				BackgroundRead( backgroundRead_t &r, retro_atomic_int_t *stop );
 	void					BackgroundReadDone( const backgroundRead_t &r );
-	bool					QueueBackgroundRead( backgroundDownload_t *bgl, retro_atomic_int_t *cancel, int *result );
+	bool					QueueBackgroundRead( backgroundDownload_t *bgl, retro_atomic_int_t *cancel, int *result, bool write = false );
 	void					StopBackgroundDownloadThread( void );
 
 	// Prefetch: whole files being read in the background ahead of the
@@ -588,6 +598,10 @@ idFileSystemLocal::idFileSystemLocal( void ) {
 	memset( &backgroundThread, 0, sizeof( backgroundThread ) );
 	retro_atomic_int_init( &backgroundThread_exit, 0 );
 	backgroundInFlight = 0;
+	for ( int w = 0; w < MAX_BACKGROUND_WRITES; w++ ) {
+		backgroundWrites[w].buffer = NULL;
+		backgroundWrites[w].bgl.f = NULL;
+	}
 	backgroundReady = false;
 	prefetchCount = 0;
 	prefetchAbandoned = 0;
@@ -3748,6 +3762,10 @@ take effect mid-file.
 ===================
 */
 void idFileSystemLocal::BackgroundRead( backgroundRead_t &r, retro_atomic_int_t *stop ) {
+	if ( r.write ) {
+		bgread_write( r.osFile, r.bgl->file.buffer, r.bgl->file.length, &r.bytes, stop );
+		return;
+	}
 	bgread_read( r.osFile, r.zipFile, r.bgl->file.buffer, r.bgl->file.length, &r.bytes, r.cancel, stop );
 }
 
@@ -3876,7 +3894,7 @@ Hands a read to the reader thread. False, with nothing changed but the
 file's position, if it cannot take it.
 =================
 */
-bool idFileSystemLocal::QueueBackgroundRead( backgroundDownload_t *bgl, retro_atomic_int_t *cancel, int *result ) {
+bool idFileSystemLocal::QueueBackgroundRead( backgroundDownload_t *bgl, retro_atomic_int_t *cancel, int *result, bool write ) {
 	backgroundRead_t r;
 
 	// a seek of an OS file does no I/O; a pak entry is opened at its
@@ -3901,7 +3919,11 @@ bool idFileSystemLocal::QueueBackgroundRead( backgroundDownload_t *bgl, retro_at
 	r.cancel = cancel;
 	r.result = result;
 	r.bytes = 0;
+	r.write = write ? 1 : 0;
 	if ( !r.osFile && !r.zipFile ) {
+		return false;
+	}
+	if ( write && !r.osFile ) {
 		return false;
 	}
 	if ( r.zipFile ) {
@@ -3962,6 +3984,67 @@ void idFileSystemLocal::BackgroundReadDone( const backgroundRead_t &r ) {
 	}
 	r.bgl->completed = true;
 	backgroundInFlight--;
+	if ( r.write ) {
+		int i;
+		for ( i = 0; i < MAX_BACKGROUND_WRITES; i++ ) {
+			if ( &backgroundWrites[i].bgl == r.bgl ) {
+				if ( r.bytes != r.bgl->file.length ) {
+					common->Warning( "background write of '%s' fell short", r.bgl->f->GetFullPath() );
+				}
+				CloseFile( r.bgl->f );
+				Mem_Free( backgroundWrites[i].buffer );
+				backgroundWrites[i].buffer = NULL;
+				r.bgl->f = NULL;
+				break;
+			}
+		}
+	}
+}
+
+/*
+=================
+idFileSystemLocal::WriteFileInBackground
+
+The file is opened here and the bytes go out on the reader's thread; the
+main thread closes it and frees the buffer when they are back
+(BackgroundReadDone). Without a thread, or with every write slot in
+flight, the write happens here.
+=================
+*/
+bool idFileSystemLocal::WriteFileInBackground( const char *relativePath, void *buffer, int size, const char *basePath ) {
+	idFile *f;
+	int i;
+
+	if ( !relativePath || !buffer || size <= 0 ) {
+		return false;
+	}
+	f = OpenFileWrite( relativePath, basePath );
+	if ( !f ) {
+		return false;
+	}
+	for ( i = 0; i < MAX_BACKGROUND_WRITES; i++ ) {
+		if ( !backgroundWrites[i].buffer ) {
+			break;
+		}
+	}
+	if ( i < MAX_BACKGROUND_WRITES ) {
+		backgroundWrite_t &w = backgroundWrites[i];
+		w.bgl.opcode = DLTYPE_FILE;
+		w.bgl.completed = false;
+		w.bgl.f = f;
+		w.bgl.file.position = 0;
+		w.bgl.file.length = size;
+		w.bgl.file.buffer = buffer;
+		w.buffer = buffer;
+		if ( QueueBackgroundRead( &w.bgl, NULL, NULL, true ) ) {
+			return true;
+		}
+		w.buffer = NULL;
+	}
+	f->Write( buffer, size );
+	CloseFile( f );
+	Mem_Free( buffer );
+	return true;
 }
 
 /*

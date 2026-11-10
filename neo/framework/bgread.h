@@ -45,6 +45,11 @@ extern "C" {
 void bgread_read( RFILE *osFile, rzip_file_t *zipFile, void *buf, int len,
 		int *bytes, retro_atomic_int_t *cancel, retro_atomic_int_t *stop );
 
+/* The writer's write, the same shape: buf's len bytes to osFile from
+ * position bytes on, in BGREAD_CHUNK steps, so stop returns early with
+ * the write resumable from bytes; bytes is -1 once the file refused. */
+void bgread_write( RFILE *osFile, const void *buf, int len, int *bytes, retro_atomic_int_t *stop );
+
 #ifdef __cplusplus
 }
 #endif

@@ -2,6 +2,8 @@
  * ppmdiff: the mean and the largest absolute difference between two binary
  * PPM (P6) images of the same size, and the first image's mean level so a
  * caller can tell two black frames from two equal pictures:
+ * An uncompressed 32-bit TGA, the engine's capture, reads too, by its
+ * .tga extension.
  *
  *   mean <m> max <x> over <n> pixels, first <l>
  *
@@ -45,6 +47,65 @@ static unsigned char *read_ppm(const char *path, int *w, int *h)
    return data;
 }
 
+/* an uncompressed true-colour TGA of 32 bits, as the engine writes it,
+ * to RGB rows from the top */
+static unsigned char *read_tga(const char *path, int *w, int *h)
+{
+   FILE *f = fopen(path, "rb");
+   unsigned char header[18];
+   unsigned char *data, *rgb;
+   int x, y, flip;
+   size_t n;
+
+   if (!f)
+      return NULL;
+   if (fread(header, 1, 18, f) != 18 || header[2] != 2 || header[16] != 32)
+   {
+      fclose(f);
+      return NULL;
+   }
+   *w = header[12] | (header[13] << 8);
+   *h = header[14] | (header[15] << 8);
+   flip = (header[17] & 0x20) != 0;   /* set: rows from the top */
+   if (*w <= 0 || *h <= 0)
+   {
+      fclose(f);
+      return NULL;
+   }
+   n = (size_t)*w * (size_t)*h * 4;
+   data = (unsigned char *)malloc(n);
+   rgb  = (unsigned char *)malloc((size_t)*w * (size_t)*h * 3);
+   if (!data || !rgb || fread(data, 1, n, f) != n)
+   {
+      free(data);
+      free(rgb);
+      fclose(f);
+      return NULL;
+   }
+   fclose(f);
+   for (y = 0; y < *h; y++)
+   {
+      const unsigned char *src = data + (size_t)(flip ? y : *h - 1 - y) * *w * 4;
+      unsigned char *dst = rgb + (size_t)y * *w * 3;
+      for (x = 0; x < *w; x++)
+      {
+         dst[x * 3]     = src[x * 4 + 2];
+         dst[x * 3 + 1] = src[x * 4 + 1];
+         dst[x * 3 + 2] = src[x * 4];
+      }
+   }
+   free(data);
+   return rgb;
+}
+
+static unsigned char *read_image(const char *path, int *w, int *h)
+{
+   size_t len = strlen(path);
+   if (len > 4 && strcmp(path + len - 4, ".tga") == 0)
+      return read_tga(path, w, h);
+   return read_ppm(path, w, h);
+}
+
 int main(int argc, char **argv)
 {
    unsigned char *a, *b;
@@ -53,13 +114,13 @@ int main(int argc, char **argv)
 
    if (argc < 3)
    {
-      fprintf(stderr, "usage: ppmdiff a.ppm b.ppm [threshold]\n");
+      fprintf(stderr, "usage: ppmdiff a.ppm|a.tga b.ppm|b.tga [threshold]\n");
       return 2;
    }
    if (argc > 3)
       threshold = atof(argv[3]);
-   a = read_ppm(argv[1], &aw, &ah);
-   b = read_ppm(argv[2], &bw, &bh);
+   a = read_image(argv[1], &aw, &ah);
+   b = read_image(argv[2], &bw, &bh);
    if (!a || !b || aw != bw || ah != bh)
    {
       fprintf(stderr, "ppmdiff: cannot compare %s and %s\n", argv[1], argv[2]);

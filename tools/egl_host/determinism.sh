@@ -21,7 +21,8 @@ content=$3
 frames=$4
 shift 4
 statedir=/tmp/$(basename "$host")_sys
-basedir=$(dirname "$content")/base
+# the engine's base/ is beside the game directory the content is in
+basedir=$(dirname "$(dirname "$content")")/base
 out=$(mktemp -d)
 status=0
 

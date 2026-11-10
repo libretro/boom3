@@ -45,7 +45,17 @@ delivery summary, not in the commit message.
   `glGet*`, `glReadPixels`, `vkGetQueryPoolResults` with a wait: at init,
   at a load, or in a developer command, never per frame. Whether a
   driver takes a blit or a format is a property of the objects, probed
-  once when they are made.
+  once when they are made. A read back the game asks for in play (the
+  objective screenshots, `CaptureRenderToFile`) is a render command,
+  `RC_CAPTURE_RENDER`: the back end copies the rectangle into a buffer
+  the GPU fills (a pixel pack buffer behind a fence on GL, the frame's
+  capture buffer on Vulkan) and the main thread takes the pixels when
+  the frame is done - `RB_CapturesPoll` with a zero timeout,
+  `vkb_captures_deliver` when the slot comes back - never waits for
+  them, and the file goes out through `WriteFileInBackground` on the
+  reader's thread, which also closes the bytes' ownership: the buffer is
+  the file system's once handed over. `tools/egl_host/capture_check.sh`
+  checks the shots come out of every renderer, lit and alike.
 
 ## Nothing compiles on the draw path
 
@@ -119,7 +129,9 @@ see README) on lavapipe and llvmpipe:
 - each host exits 0: zero pipelines or programs made on the draw path,
   zero renderer allocations over the in-game frames
   (`tools/egl_host/hdr_check.sh` runs every GL renderer through every
-  display transform and fails on a host that exits otherwise);
+  display transform and fails on a host that exits otherwise;
+  `tools/egl_host/capture_check.sh` runs the objective screenshots on
+  every renderer and fails on a black or a different one);
 - the per-frame hashes it prints equal the parent commit's, run the
   same way (a picture change needs its own reason, stated);
 - the pipeline count it prints is reported, and does not grow without

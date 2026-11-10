@@ -980,62 +980,63 @@ CaptureRenderToFile
 ==============
 */
 void idRenderSystemLocal::CaptureRenderToFile( const char *fileName, bool fixAlpha ) {
+	captureRenderCommand_t *cmd;
+	renderCrop_t *rc = &renderCrops[currentRenderCrop];
+	(void)fixAlpha;		// the file is always opaque
+
 	if ( !glConfig.isInitialized ) {
 		return;
 	}
 
-	renderCrop_t *rc = &renderCrops[currentRenderCrop];
-
 	guiModel->EmitFullScreen();
 	guiModel->Clear();
-	R_IssueRenderCommands();
 
-	// include extra space for OpenGL padding to word boundaries
-	int	c = ( rc->width + 3 ) * rc->height;
-	// GLES reads only RGBA (GL_RGB fails, leaving the objective
-	// screenshots the camShot objectives make blank). Rows of RGBA bytes
-	// are always word aligned.  Frame memory: the pixels are read, turned
-	// to the file's order in place and written before the frame ends, so
-	// an objective's camShot in play costs the heap nothing.
-	byte *data = (byte *)R_FrameAlloc( c * 4 );
-	byte header[18];
-	idFile *f;
-	int i;
-#ifdef BOOM3_VR_MULTIVIEW
-	// the camera's view went to the eye target; the 2D since may have
-	// left the UI target bound
-	if ( VR_Active() ) {
-		VR_BeginSceneRead();
-	}
-#endif
-	memset( data, 0, c * 4 );
-	qglReadPixels( rc->x, rc->y, rc->width, rc->height, GL_RGBA, GL_UNSIGNED_BYTE, data );
-#ifdef BOOM3_VR_MULTIVIEW
-	if ( VR_Active() ) {
-		VR_EndLayerRead();
-	}
-#endif
-	// the TGA's BGRA, opaque
-	for ( i = 0 ; i < c ; i++ ) {
-		const byte r = data[ i * 4 ];
-		data[ i * 4 ] = data[ i * 4 + 2 ];
-		data[ i * 4 + 2 ] = r;
-		data[ i * 4 + 3 ] = 0xff;
-	}
+	// read back by the back end after the view it follows, off the
+	// frame path: the pixels come to R_CaptureDeliver a frame or more
+	// later, and the file goes out on the background writer
+	cmd = (captureRenderCommand_t *)R_GetCommandBuffer( sizeof( *cmd ) );
+	cmd->commandId = RC_CAPTURE_RENDER;
+	cmd->x = rc->x;
+	cmd->y = rc->y;
+	cmd->width = rc->width;
+	cmd->height = rc->height;
+	idStr::Copynz( cmd->fileName, fileName, sizeof( cmd->fileName ) );
+}
 
-	// what R_WriteTGA writes, bottom-up, without its copy
-	memset( header, 0, sizeof( header ) );
-	header[2] = 2;		// uncompressed type
-	header[12] = rc->width & 255;
-	header[13] = rc->width >> 8;
-	header[14] = rc->height & 255;
-	header[15] = rc->height >> 8;
-	header[16] = 32;	// pixel size
-	f = fileSystem->OpenFileWrite( fileName );
-	if ( f ) {
-		f->Write( header, sizeof( header ) );
-		f->Write( data, rc->width * rc->height * 4 );
-		fileSystem->CloseFile( f );
+/*
+==============
+R_CaptureDeliver
+
+The TGA R_WriteTGA writes, built once in its file order and handed to
+the background writer, which frees it.
+==============
+*/
+void R_CaptureDeliver( const byte *rgba, int width, int height, bool topDown, const char *fileName ) {
+	const int bytes = width * height * 4;
+	byte *tga = (byte *)Mem_Alloc( 18 + bytes );
+	int row;
+
+	memset( tga, 0, 18 );
+	tga[2] = 2;		// uncompressed type
+	tga[12] = width & 255;
+	tga[13] = width >> 8;
+	tga[14] = height & 255;
+	tga[15] = height >> 8;
+	tga[16] = 32;	// pixel size
+	// rows from the bottom, BGRA, opaque
+	for ( row = 0; row < height; row++ ) {
+		const byte *src = rgba + ( topDown ? height - 1 - row : row ) * width * 4;
+		byte *dst = tga + 18 + row * width * 4;
+		int i;
+		for ( i = 0; i < width; i++ ) {
+			dst[i * 4] = src[i * 4 + 2];
+			dst[i * 4 + 1] = src[i * 4 + 1];
+			dst[i * 4 + 2] = src[i * 4];
+			dst[i * 4 + 3] = 0xff;
+		}
+	}
+	if ( !fileSystem->WriteFileInBackground( fileName, tga, 18 + bytes ) ) {
+		Mem_Free( tga );
 	}
 }
 
