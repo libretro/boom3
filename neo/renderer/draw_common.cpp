@@ -705,9 +705,11 @@ typedef struct {
 	drawSurf_t	*surfs;				// the run with its scissors halved
 	GLuint		fboDown, fboDraw;	// distance range + depth; colour + depth
 	GLuint		accum, range, depth;
+#ifdef BOOM3_GLSL_RENDERERS
 	GLuint		vbo;				// the GLSL programs' triangle
 	GLuint		prog[RB_LOWRES_PROGRAMS];
 	GLint		parm[RB_LOWRES_PROGRAMS];
+#endif
 	GLuint		arb[RB_LOWRES_PROGRAMS];
 	int			numSurfs;			// surfs' room
 	int			w, h;				// the targets'
@@ -799,6 +801,7 @@ static const char * const rbLowResARB[RB_LOWRES_PROGRAMS] = {
 };
 #endif
 
+#ifdef BOOM3_GLSL_RENDERERS
 static const char rbLowResVS[] =
 	"#version 100\n"
 	"attribute vec2 attr_Vertex;\n"
@@ -848,6 +851,7 @@ static const char * const rbLowResFS[RB_LOWRES_PROGRAMS] = {
 	"  gl_FragColor = texture2D( u_map, gl_FragCoord.xy * u_parm.xy );\n"
 	"}\n"
 };
+#endif
 
 float RB_LowResScale( void ) {
 	return rbLowRes.active ? 2.0f : 1.0f;
@@ -862,6 +866,7 @@ void RB_LowResForget( void ) {
 	memset( &rbLowRes, 0, sizeof( rbLowRes ) );
 }
 
+#ifdef BOOM3_GLSL_RENDERERS
 static GLuint RB_LowResShader( GLenum type, const char *text ) {
 	idStr source( text );
 	GLuint shader;
@@ -881,6 +886,7 @@ static GLuint RB_LowResShader( GLenum type, const char *text ) {
 	}
 	return shader;
 }
+#endif
 
 /* the passes' programs, on first use */
 bool RB_LowResPrograms( void ) {
@@ -908,6 +914,7 @@ bool RB_LowResPrograms( void ) {
 		return !rbLowRes.failed;
 	}
 #endif
+#ifdef BOOM3_GLSL_RENDERERS
 	if ( rbLowRes.prog[0] ) {
 		return true;
 	}
@@ -947,6 +954,7 @@ bool RB_LowResPrograms( void ) {
 		glBufferData( GL_ARRAY_BUFFER, sizeof( tri ), tri, GL_STATIC_DRAW );
 		vertexCache.InvalidateBindings();
 	}
+#endif
 	return !rbLowRes.failed;
 }
 
@@ -1028,8 +1036,12 @@ static void RB_LowResPass( int prog, GLuint tex, const float parm[4] ) {
 		qglPopMatrix();
 		qglMatrixMode( GL_MODELVIEW );
 		qglDisable( GL_FRAGMENT_PROGRAM_ARB );
-	} else
+	}
+#ifdef BOOM3_GLSL_RENDERERS
+	else
 #endif
+#endif
+#ifdef BOOM3_GLSL_RENDERERS
 	{
 		GLint enabled[6];
 		int a;
@@ -1057,6 +1069,7 @@ static void RB_LowResPass( int prog, GLuint tex, const float parm[4] ) {
 		glUseProgram( 0 );
 		backEnd.glState.currentProgram = NULL;
 	}
+#endif
 	glBindTexture( GL_TEXTURE_2D, 0 );
 	tmu->current2DMap = -1;
 }
