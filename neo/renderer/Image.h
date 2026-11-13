@@ -563,6 +563,8 @@ IMAGEFILES
 */
 
 void R_LoadImage( const char *name, byte **pic, int *width, int *height, ID_TIME_T *timestamp, bool makePowerOf2 );
+// frees what the image decoders keep between images
+void R_ShutdownImageDecoders( void );
 // pic is in top to bottom raster format
 bool R_LoadCubeImages( const char *cname, cubeFiles_t extensions, byte *pic[6], int *size, ID_TIME_T *timestamp );
 

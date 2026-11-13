@@ -2087,6 +2087,7 @@ Shutdown
 */
 void idImageManager::Shutdown() {
 	images.DeleteContents( true );
+	R_ShutdownImageDecoders();
 }
 
 /*

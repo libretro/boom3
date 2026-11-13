@@ -26,15 +26,14 @@ If you have questions concerning this license or the applicable additional terms
 ===========================================================================
 */
 
-// DG replaced libjpeg with stb_image.h here; JPEG decoding now goes through
-// libretro-common's rjpeg via image_transfer (see LoadJPG()), the same backend
-// used for TGA, so stb_image.h is no longer needed for reading.
+// JPEG and TGA decode through libretro-common's rjpeg and rtga.
 #include "sys/platform.h"
 
-// libretro-common image_transfer: include right after platform.h and before
-// the idlib/framework headers, so <formats/image.h>'s C declarations are seen
-// before idlib installs its string-function macros (see File.cpp).
-#include <formats/image.h>
+// libretro-common: include right after platform.h and before the
+// idlib/framework headers, so the C declarations are seen before idlib
+// installs its string-function macros (see File.cpp).
+#include <formats/rjpeg.h>
+#include <formats/rtga.h>
 
 #include "renderer/tr_local.h"
 
@@ -72,29 +71,6 @@ static void R_FreeImageFile( byte *buf, bool borrowed ) {
 	} else {
 		fileSystem->FreeFile( buf );
 	}
-}
-
-/*
-================
-R_PackedRGBAToBytes
-
-image_transfer packs RGBA as (a<<24)|(b<<16)|(g<<8)|r. On little-endian
-those words already lie as r,g,b,a bytes, so the move is one memcpy;
-big-endian extracts by shift.
-================
-*/
-static void R_PackedRGBAToBytes( byte *dst, const uint32_t *src, unsigned count ) {
-#ifdef MSB_FIRST
-	for ( unsigned i = 0; i < count; i++ ) {
-		uint32_t p = src[i];
-		dst[i*4+0] = (byte)( p         & 0xff );
-		dst[i*4+1] = (byte)( ( p >> 8 )  & 0xff );
-		dst[i*4+2] = (byte)( ( p >> 16 ) & 0xff );
-		dst[i*4+3] = (byte)( ( p >> 24 ) & 0xff );
-	}
-#else
-	memcpy( dst, src, (size_t)count * 4 );
-#endif
 }
 
 /*
@@ -660,10 +636,57 @@ TARGA LOADING
 
 /*
 =============
+Image decoders
+
+rjpeg and rtga write the rows as RGBA straight into the R_StaticAlloc
+buffer the engine takes, and keep their working memory for the next
+image: one decoder of each, on the thread images load on, freed at
+R_ShutdownImageDecoders.
+=============
+*/
+static rjpeg_t *r_jpegDecoder;
+static rtga_t *r_tgaDecoder;
+
+typedef struct {
+	byte		*pic;
+	unsigned	rowBytes;
+} imageRows_t;
+
+static bool R_ImageRowsSize( void *user, unsigned width, unsigned height ) {
+	imageRows_t *r = (imageRows_t *)user;
+	if ( width == 0 || height == 0 || width > 16384 || height > 16384 ) {
+		return false;
+	}
+	r->rowBytes = width * 4;
+	r->pic = (byte *)R_StaticAlloc( (int)( r->rowBytes * height ) );
+	return r->pic != NULL;
+}
+
+static uint8_t *R_ImageRow( void *user, unsigned y ) {
+	imageRows_t *r = (imageRows_t *)user;
+	return r->pic + (size_t)y * r->rowBytes;
+}
+
+void R_ShutdownImageDecoders( void ) {
+	if ( r_jpegDecoder ) {
+		rjpeg_free( r_jpegDecoder );
+		r_jpegDecoder = NULL;
+	}
+	if ( r_tgaDecoder ) {
+		rtga_free( r_tgaDecoder );
+		r_tgaDecoder = NULL;
+	}
+}
+
+/*
+=============
 LoadJPG
 =============
 */
 static void LoadJPG( const char *filename, unsigned char **pic, int *width, int *height, ID_TIME_T *timestamp ) {
+	struct rjpeg_rows rows;
+	imageRows_t dst;
+	unsigned w = 0, h = 0;
 
 	if ( pic ) {
 		*pic = NULL;		// until proven otherwise
@@ -682,60 +705,34 @@ static void LoadJPG( const char *filename, unsigned char **pic, int *width, int 
 		return;
 	}
 
-	// decode through libretro-common's image_transfer (rjpeg), the same path
-	// LoadTGA() uses for TGA, so the core has one image backend
-	void *img = image_transfer_new( IMAGE_TYPE_JPEG );
-	if ( img == NULL ) {
+	if ( !r_jpegDecoder ) {
+		r_jpegDecoder = rjpeg_alloc();
+	}
+	if ( !r_jpegDecoder ) {
 		R_FreeImageFile( fbuffer, fbufferBorrowed );
 		common->Warning( "Couldn't create JPEG decoder for %s\n", filename );
 		return;
 	}
 
-	image_transfer_set_buffer_ptr( img, IMAGE_TYPE_JPEG, fbuffer, len );
-
-	if ( !image_transfer_start( img, IMAGE_TYPE_JPEG ) ) {
-		image_transfer_free( img, IMAGE_TYPE_JPEG );
+	dst.pic = NULL;
+	dst.rowBytes = 0;
+	rows.size = R_ImageRowsSize;
+	rows.row  = R_ImageRow;
+	rows.done = NULL;
+	rows.user = &dst;
+	if ( !rjpeg_decode_rows( r_jpegDecoder, fbuffer, (size_t)len, true, &rows, &w, &h ) ) {
 		R_FreeImageFile( fbuffer, fbufferBorrowed );
-		common->Warning( "rjpeg was unable to start decoding JPG %s\n", filename );
-		return;
-	}
-
-	while ( image_transfer_iterate( img, IMAGE_TYPE_JPEG ) ) {
-	}
-
-	if ( !image_transfer_is_valid( img, IMAGE_TYPE_JPEG ) ) {
-		image_transfer_free( img, IMAGE_TYPE_JPEG );
-		R_FreeImageFile( fbuffer, fbufferBorrowed );
+		if ( dst.pic ) {
+			R_StaticFree( dst.pic );
+		}
 		common->Warning( "rjpeg was unable to load JPG %s\n", filename );
 		return;
 	}
-
-	uint32_t *decoded = NULL;
-	unsigned w = 0, h = 0;
-	int process = IMAGE_PROCESS_NEXT;
-	do {
-		process = image_transfer_process( img, IMAGE_TYPE_JPEG,
-				&decoded, len, &w, &h, 1 );
-	} while ( process == IMAGE_PROCESS_NEXT );
-
 	R_FreeImageFile( fbuffer, fbufferBorrowed );
 
-	if ( process == IMAGE_PROCESS_ERROR || process == IMAGE_PROCESS_ERROR_END
-			|| decoded == NULL || w == 0 || h == 0 ) {
-		image_transfer_free( img, IMAGE_TYPE_JPEG );
-		common->Warning( "rjpeg was unable to load JPG %s\n", filename );
-		return;
-	}
-
-	// image_transfer hands back 32bpp pixels as 0xAARRGGBB in native order;
-	// the engine wants RGBA byte order, so swap R and B while copying into
-	// the R_StaticAlloc() buffer it requires.
-	*pic = (byte *)R_StaticAlloc( w * h * 4 );
-	R_PackedRGBAToBytes( *pic, decoded, w * h );
-	*width  = w;
-	*height = h;
-
-	image_transfer_free( img, IMAGE_TYPE_JPEG );
+	*pic = dst.pic;
+	*width  = (int)w;
+	*height = (int)h;
 }
 
 //===================================================================
@@ -768,12 +765,16 @@ timestamp.
 ==================
 LoadTGA
 
-Decode a TGA using libretro-common's image_transfer: *pic is an R_StaticAlloc'd RGBA8 buffer in R,G,B,A byte order (little-endian), width/height set, timestamp filled. On any failure *pic is left NULL so the caller falls back / MakeDefaults.
+*pic is an R_StaticAlloc'd RGBA8 buffer in R,G,B,A byte order, rtga's rows written into it in place; width/height set, timestamp filled. On any failure *pic is left NULL so the caller falls back / MakeDefaults.
 ==================
 */
 static void LoadTGA( const char *name, byte **pic, int *width, int *height, ID_TIME_T *timestamp ) {
+	struct rtga_rows rows;
+	imageRows_t dst;
+	unsigned w = 0, h = 0;
 	byte	*fileBuf;
 	int		fileLen;
+	bool	fileBufBorrowed = false;
 
 	if ( pic ) {
 		*pic = NULL;
@@ -785,72 +786,35 @@ static void LoadTGA( const char *name, byte **pic, int *width, int *height, ID_T
 		return;
 	}
 
-	bool fileBufBorrowed = false;
 	fileLen = R_ReadImageFile( name, &fileBuf, timestamp, &fileBufBorrowed );
 	if ( !fileBuf ) {
 		return;
 	}
 
-	void *img = image_transfer_new( IMAGE_TYPE_TGA );
-	if ( !img ) {
+	if ( !r_tgaDecoder ) {
+		r_tgaDecoder = rtga_alloc();
+	}
+	if ( !r_tgaDecoder ) {
 		R_FreeImageFile( fileBuf, fileBufBorrowed );
 		return;
 	}
 
-	image_transfer_set_buffer_ptr( img, IMAGE_TYPE_TGA, fileBuf, (size_t)fileLen );
-
-	if ( !image_transfer_start( img, IMAGE_TYPE_TGA ) ) {
-		image_transfer_free( img, IMAGE_TYPE_TGA );
+	dst.pic = NULL;
+	dst.rowBytes = 0;
+	rows.size = R_ImageRowsSize;
+	rows.row  = R_ImageRow;
+	rows.done = NULL;
+	rows.user = &dst;
+	if ( !rtga_decode_rows( r_tgaDecoder, fileBuf, (size_t)fileLen, true, &rows, &w, &h ) ) {
 		R_FreeImageFile( fileBuf, fileBufBorrowed );
-		return;
-	}
-
-	// run the decoder to completion (this is the synchronous variant; the
-	// per-frame pump will call image_transfer_iterate one step at a time)
-	while ( image_transfer_iterate( img, IMAGE_TYPE_TGA ) ) {
-	}
-
-	if ( !image_transfer_is_valid( img, IMAGE_TYPE_TGA ) ) {
-		image_transfer_free( img, IMAGE_TYPE_TGA );
-		R_FreeImageFile( fileBuf, fileBufBorrowed );
-		return;
-	}
-
-	// pull out the decoded RGBA. supports_rgba=true makes rtga pack each
-	// pixel as (a<<24)|(b<<16)|(g<<8)|r, i.e. bytes [r,g,b,a] on little-endian
-	uint32_t	*transferPixels = NULL;
-	unsigned	w = 0, h = 0;
-	int			ret;
-	do {
-		ret = image_transfer_process( img, IMAGE_TYPE_TGA,
-				&transferPixels, (size_t)fileLen, &w, &h, true );
-	} while ( ret == IMAGE_PROCESS_NEXT );
-
-	image_transfer_free( img, IMAGE_TYPE_TGA );
-	R_FreeImageFile( fileBuf, fileBufBorrowed );
-
-	if ( ret == IMAGE_PROCESS_ERROR || ret == IMAGE_PROCESS_ERROR_END || !transferPixels ) {
-		if ( transferPixels ) {
-			free( transferPixels );
+		if ( dst.pic ) {
+			R_StaticFree( dst.pic );
 		}
 		return;
 	}
+	R_FreeImageFile( fileBuf, fileBufBorrowed );
 
-	// image_transfer allocates with malloc; copy into an R_StaticAlloc buffer
-	// so the rest of the engine (which R_StaticFree's *pic) stays consistent.
-	//
-	// The engine consumes *pic as an RGBA8 BYTE stream (uploaded with
-	// GL_RGBA, GL_UNSIGNED_BYTE), i.e. bytes [r,g,b,a] on every platform.
-        // rtga packs each pixel NUMERICALLY as 
-        // (a<<24)|(b<<16)|(g<<8)|r, so we must extract
-	// the channels by shift rather than memcpy'ing the raw uint32 buffer,
-	// otherwise the byte order would flip on big-endian. 
-        // Extracting by shift is correct on both endians.
-	byte	*out = (byte *)R_StaticAlloc( w * h * 4 );
-	R_PackedRGBAToBytes( out, transferPixels, w * h );
-	free( transferPixels );
-
-	*pic = out;
+	*pic = dst.pic;
 	if ( width ) {
 		*width = (int)w;
 	}
