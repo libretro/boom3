@@ -23,6 +23,11 @@ audio capture, savestate round-trip, and a framebuffer luminance probe.
   shows there; exit code 3 if not. The whole state is compared and
   reported too, but not gated (the script heap is not yet rebuilt
   bit-exactly). HOST_DUMP_STATES=<prefix> writes both states out.
+- HOST_MENU_STATE=<frame> (with state_test_frame): the menu has a state
+  too. One is taken at <frame>, before autoexec's map; it is restored
+  over the game at state_test_frame + 60, which must leave the core at
+  the menu with that same state; the game state is then restored from
+  the menu and must rebuild its object list. Exit code 3 if not.
 - framerate: served to the core's doom_framerate option (e.g. 120).
 - probe window: after each video_cb, reads the viewmodel region of the
   default framebuffer and reports mean luminance plus an alternation

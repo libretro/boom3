@@ -279,6 +279,14 @@ head of the rebuilt state (every entity and thread, by class, in order)
 equals the restored one. Anything written to the state uninitialised, or
 a clock the restore does not carry, shows there or under UBSan.
 
+The core has a state from its first frame on. With no map up
+`retro_serialize_size` is not 0: the state is the menu's, and restoring
+it ends the running game and returns to the menu. A 0 there is read by
+frontends as "this core has no savestates", and blocks loading a game
+state from the menu. `HOST_MENU_STATE=100` on the same host run checks
+the menu's state, its restore over the game, and the game state's
+restore from the menu.
+
 ## Sanitizers
 
 Before a commit: ASan, UBSan and LeakSan over a level load, a thousand

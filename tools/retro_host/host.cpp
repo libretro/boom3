@@ -185,9 +185,37 @@ int main(int argc, char **argv){
 	probe_to   = argc > 8 ? atoi(argv[8]) : 0;
 	if (probe_to - probe_from > 4096) probe_to = probe_from + 4096;
 
+	/* HOST_MENU_STATE=<frame>: the menu has a state too.  One is taken at
+	   <frame> (before autoexec's map), restored over the game at
+	   state_test_frame + 60, which must leave the core at the menu with
+	   that same state; then the game state taken at state_test_frame is
+	   restored from the menu and must rebuild its object list. */
+	int menu_at = getenv("HOST_MENU_STATE") ? atoi(getenv("HOST_MENU_STATE")) : 0;
+	void *menu_buf = NULL; size_t menu_size = 0;
+
 	for (int i=0;i<nframes;i++){
 		cur_frame = i;
 		r_run(); frames_run++;
+		if (menu_at && i == menu_at) {
+			menu_size = r_ssize();
+			menu_buf = malloc(menu_size ? menu_size : 1);
+			bool ok = menu_size > 0 && r_ser(menu_buf, menu_size);
+			fprintf(stderr, "[host] menu state at frame %d: %zu bytes, %s\n", i, menu_size, ok?"OK":"FAIL");
+			if (!ok) state_mismatch = true;
+		}
+		if (menu_at && state_buf && i == state_at + 60) {
+			bool ok = menu_size > 0 && r_unser(menu_buf, menu_size);
+			fprintf(stderr, "[host] menu state over the game: %s\n", ok?"OK":"FAIL");
+			if (!ok) state_mismatch = true;
+		}
+		if (menu_at && state_buf && i == state_at + 120) {
+			size_t n = r_ssize();
+			void *now = malloc(n ? n : 1);
+			bool same = n == menu_size && r_ser(now, n) && !memcmp(now, menu_buf, n);
+			fprintf(stderr, "[host] at the menu after it: %s\n", same?"yes":"NO");
+			if (!same) state_mismatch = true;
+			free(now);
+		}
 		if (state_at && i == state_at) {
 			state_size = r_ssize();
 			fprintf(stderr, "[host] serialize_size at frame %d: %zu\n", i, state_size);
@@ -245,6 +273,7 @@ int main(int argc, char **argv){
 		}
 	}
 
+	free(menu_buf);
 	if (fcap) fclose(fcap);
 	if (probe_to > probe_from) {
 		// report per-frame luminance and an alternation metric: mean |L[i]-L[i-1]|

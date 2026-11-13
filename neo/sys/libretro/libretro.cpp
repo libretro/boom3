@@ -10358,6 +10358,13 @@ static idFile_Memory retro_state_file( RETRO_STATE_NAME ".save" );
 static int retro_state_len;
 static int retro_state_cache_tic = -1;
 
+/* The state of a session with no map up - the main menu, or a map on
+ * its way in: it has no game in it, and restoring it ends the game that
+ * is running and returns to the menu.  With it the core has a state
+ * from its first frame on, so a frontend never reads "no state yet" as
+ * "no states", and a game state loads from the menu. */
+static const char retro_menu_state[16] = "BOOM3 MENU v1\0\0";
+
 static void RetroReleaseState(void)
 {
 	retro_state_file.Clear( true );
@@ -10369,13 +10376,19 @@ static bool RetroBuildState(void)
 {
 	extern volatile int com_ticNumber;
 
+	if (first_boot)
+		return false;	// the engine is not up: nothing to describe yet
+
 	/* mapSpawned gates the cache, not the other way round. A cache entry
 	 * describes a spawned map; if there is no longer one, the entry is
 	 * stale no matter what tic it carries, and serving it would hand the
 	 * frontend a state for a session that has ended. */
 	if (!sessLocal.mapSpawned) {
-		if (log_cb) log_cb(RETRO_LOG_INFO, "[boom3] state: refused, mapSpawned=false\n");
-		return false;
+		retro_state_file.Clear(false);
+		retro_state_file.Write(retro_menu_state, sizeof(retro_menu_state));
+		retro_state_len = sizeof(retro_menu_state);
+		retro_state_cache_tic = -1;
+		return true;
 	}
 
 	if (retro_state_cache_tic == com_ticNumber && retro_state_len > 0)
@@ -10470,8 +10483,25 @@ bool retro_serialize(void *data_, size_t size)
 
 bool retro_unserialize(const void *data_, size_t size)
 {
-	if (!data_ || size == 0 || !fileSystem || !fileSystem->IsInitialized())
+	if (!data_ || size == 0 || first_boot || !fileSystem || !fileSystem->IsInitialized())
 		return false;
+
+	if (size == sizeof(retro_menu_state) && !memcmp(data_, retro_menu_state, size)) {
+		/* a map on its way in cannot be called off from here */
+		if (sessLocal.MapLoadInProgress())
+			return false;
+		retro_state_cache_tic = -1;
+		if (sessLocal.mapSpawned) {
+			try {
+				RetroSaveStateScope guard;
+				cmdSystem->BufferCommandText(CMD_EXEC_NOW, "disconnect\n");
+			} catch ( ... ) {
+				if (log_cb) log_cb(RETRO_LOG_ERROR, "[boom3] state restore: leaving the game threw\n");
+				return false;
+			}
+		}
+		return true;
+	}
 
 	// wrap the frontend's buffer in a read-mode memory file: no disk I/O.
 	// Heap-allocated because LoadGame's savegameFile lifecycle deletes it
