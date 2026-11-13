@@ -4,7 +4,9 @@
 
 // a particle faded where it nears the scene's depth (#3878):
 // vertexParms[0] the radius, 1/fade range and 1/radius; vertexParms[1]
-// the channels the fade applies to; screenParms.xy 1/depth image size
+// the channels the fade applies to; vertexParms[2] the channels the
+// stage's blend changes, and vertexParms[3].x 1 where a fragment changing
+// none of them may go; screenParms.xy 1/depth image size
 
 // DROP 0: every fragment kept, for a draw a stencil test already prunes
 #ifndef DROP
@@ -34,5 +36,10 @@ void main()
 #endif
     vec4 channels = clamp(vec4(fade * near_fade) + u_draw.vertexParms[1], 0.0, 1.0);
     vec4 c = texture(u_map0, var_TexCoord) * channels * u_draw.glColor * var_Color;
+#if DROP
+    // a fragment that changes nothing is dropped before its blend
+    if (u_draw.vertexParms[3].x != 0.0 && dot(abs(c), u_draw.vertexParms[2]) == 0.0)
+        discard;
+#endif
     fragColor = vec4(c.rgb * u_draw.hdrParms.x, c.a);
 }

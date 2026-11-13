@@ -37,6 +37,8 @@ precision mediump float;
 //   u_screenParms.xy  window to _currentDepth texcoord
 //   u_vertexParms[0]  radius, 1/fadeRange, 1/radius
 //   u_vertexParms[1]  the channels the fade leaves alone, as 1
+//   u_vertexParms[2]  the channels the stage's blend changes, as 1
+//   u_vertexParms[3].x 1 where a fragment changing none of them may go
 //   u_hdrParms.x      the HDR scene encoding fold; no gamma or clamp here
 // depth_consts recover eye depth in game units from the depth buffer, for
 // the engine's near-infinite projection.
@@ -73,6 +75,11 @@ void main()
   vec4 channels = clamp(vec4(fade * near_fade) + u_vertexParms[1], 0.0, 1.0);
 
   vec4 c = texture2D(u_fragmentMap0, var_TexCoord) * channels * u_glColor * var_Color;
+  // a fragment that changes nothing is dropped before its blend:
+  // u_vertexParms[2] weighs the channels the blend changes, and
+  // u_vertexParms[3].x is 1 where a zero there leaves the destination
+  if (u_vertexParms[3].x != 0.0 && dot(abs(c), u_vertexParms[2]) == 0.0)
+    discard;
   gl_FragColor = vec4(c.rgb * u_hdrParms.x, c.a);
 }
 )";

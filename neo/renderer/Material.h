@@ -603,6 +603,9 @@ public:
 
 	bool				SuppressInSubview() const				{ return suppressInSubview; };
 	bool				IsPortalSky() const						{ return portalSky; };
+						// a stage blends with the destination's alpha or reads _currentRender,
+						// which carries it
+	bool				ReadsDestinationAlpha() const			{ return readsDestinationAlpha; };
 	void				AddReference();
 
 private:
@@ -700,9 +703,10 @@ private:
 	mutable idImage *	editorImage;		// image used for non-shaded preview
 	float				editorAlpha;
 
+	int					refCount;
 	bool				suppressInSubview;
 	bool				portalSky;
-	int					refCount;
+	bool				readsDestinationAlpha;
 };
 
 typedef idList<const idMaterial *> idMatList;

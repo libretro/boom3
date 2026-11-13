@@ -111,6 +111,7 @@ SURFACES
 static const int	DSF_VIEW_INSIDE_SHADOW	= 1;
 static const int	DSF_SOFT_PARTICLE		= 2; // #3878 - soft particles
 static const int	DSF_PARTICLE			= 4; // a particle system's quads, which may draw at half resolution
+static const int	DSF_ALPHA_UNREAD		= 8; // nothing drawn after it reads the destination's alpha (RB_MarkAlphaUnread)
 
 typedef struct drawSurf_s {
 	const srfTriangles_t	*geo;
@@ -1393,6 +1394,17 @@ void		R_ProgramBuilt( bool deliberate );
 	( ( (bits) & GLS_DSTBLEND_BITS ) == GLS_DSTBLEND_ONE \
 	|| ( (bits) & ( GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS ) ) \
 		== ( GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA ) )
+/* Whether the frame starts with its colour and alpha cleared (RB_SetBuffer). */
+bool RB_FrameClearsColor( void );
+/* DSF_ALPHA_UNREAD on the surfaces whose alpha writes nothing in the frame
+ * reads: past a view's last reader of the destination's alpha, in the last
+ * view that has one, with no copy or capture after it. */
+void RB_MarkAlphaUnread( const emptyCommand_t *cmds );
+/* The channels a stage's blend changes the destination by, as weights:
+ * a fragment whose colour is zero in every weighted channel leaves the
+ * destination exactly as it was and may be dropped.  False, and no
+ * weights, for a blend that changes it whatever the colour. */
+bool RB_StageDropWeights( const drawSurf_t *surf, int drawStateBits, float weights[4] );
 void RB_LoadShaderTextureMatrix( const float *shaderRegisters, const textureStage_t *texture );
 void RB_GetShaderTextureMatrix( const float *shaderRegisters, const textureStage_t *texture, float matrix[16] );
 void RB_CreateSingleDrawInteractions( const drawSurf_t *surf, void (*DrawInteraction)(const drawInteraction_t *) );

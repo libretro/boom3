@@ -2148,6 +2148,16 @@ const char* softpartFShader = "!!ARBfp1.0  \n"
 	"MUL   oColor, oColor, fade; \n"
 	"MUL   oColor, oColor, fragment.color; \n"
 	"\n"
+	"# A fragment that changes nothing is dropped before its blend: \n"
+	"# program.local[0] weighs the channels the stage's blend changes, \n"
+	"# program.local[1].x is 1 where a zero there leaves the destination as it was. \n"
+	"TEMP  drop; \n"
+	"ABS   drop, oColor; \n"
+	"DP4   drop.x, drop, program.local[0]; \n"
+	"SGE   drop.x, depth_consts.z, drop.x; \n"
+	"MUL   drop.x, drop.x, program.local[1].x; \n"
+	"KIL   -drop.x; \n"
+	"\n"
 	"# Apply the HDR scene encoding fold, program.env[25].xyz (1.0 outside 30-bit HDR). \n"
 	"# This program opts out of the injected gamma epilogue above, and the epilogue is \n"
 	"# where every other stage picks the fold up - so without this the particle writes \n"
@@ -2892,8 +2902,12 @@ void R_LoadARBProgram( int progIndex ) {
 	}
 
 	if ( progs[progIndex].ident == FPROG_SOFT_PARTICLE_KEEP ) {
-		// the soft particle program without its drop: the KIL becomes a comment
+		// the soft particle program without its drops: the KILs become comments
 		char *kil = strstr( buffer, "KIL      -tmp.x;" );
+		if ( kil ) {
+			kil[0] = '#';
+		}
+		kil = strstr( buffer, "KIL   -drop.x;" );
 		if ( kil ) {
 			kil[0] = '#';
 		}

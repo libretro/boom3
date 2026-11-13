@@ -681,6 +681,94 @@ bool RB_LowResEligible( const drawSurf_t *surf ) {
 	return true;
 }
 
+/*
+=====================
+RB_MarkAlphaUnread
+
+Which surfaces' writes to the destination's alpha are never read.  A
+reader is a stage that blends with the destination's alpha or samples
+_currentRender, a blend light whose stages do, or a copy or capture of
+the framebuffer.  The frame starts with alpha cleared (RB_FrameClearsColor)
+and the display transform writes its own, so with HDR output on, what a
+surface writes past the frame's last reader is gone unread.  VR keeps
+none: its layer present is not that transform.
+=====================
+*/
+static int RB_ViewLastAlphaReader( const viewDef_t *view ) {
+	const viewLight_t *vLight;
+	int i, last = -1;
+	for ( i = 0; i < view->numDrawSurfs; i++ ) {
+		if ( view->drawSurfs[i]->material->ReadsDestinationAlpha() ) {
+			last = i;
+		}
+	}
+	// blend lights draw after the shader passes
+	for ( vLight = view->viewLights; vLight; vLight = vLight->next ) {
+		if ( vLight->lightShader->IsBlendLight() && vLight->lightShader->ReadsDestinationAlpha() ) {
+			return view->numDrawSurfs;
+		}
+	}
+	return last;
+}
+
+void RB_MarkAlphaUnread( const emptyCommand_t *cmds ) {
+	extern bool hdr_output_active;
+	const emptyCommand_t *cmd;
+	int pos, lastRead = -1;
+
+	if ( !hdr_output_active || !RB_FrameClearsColor() || VR_Active() ) {
+		return;
+	}
+	for ( cmd = cmds, pos = 0; cmd; cmd = (const emptyCommand_t *)cmd->next, pos++ ) {
+		if ( cmd->commandId == RC_COPY_RENDER || cmd->commandId == RC_CAPTURE_RENDER
+			|| ( cmd->commandId == RC_DRAW_VIEW
+				&& RB_ViewLastAlphaReader( ( (const drawSurfsCommand_t *)cmd )->viewDef ) >= 0 ) ) {
+			lastRead = pos;
+		}
+	}
+	for ( cmd = cmds, pos = 0; cmd; cmd = (const emptyCommand_t *)cmd->next, pos++ ) {
+		const viewDef_t *view;
+		int i;
+		if ( cmd->commandId != RC_DRAW_VIEW || pos < lastRead ) {
+			continue;
+		}
+		view = ( (const drawSurfsCommand_t *)cmd )->viewDef;
+		for ( i = RB_ViewLastAlphaReader( view ) + 1; i < view->numDrawSurfs; i++ ) {
+			view->drawSurfs[i]->dsFlags |= DSF_ALPHA_UNREAD;
+		}
+	}
+}
+
+/*
+=====================
+RB_StageDropWeights
+
+An additive stage changes colour by its colour and alpha by its alpha, so
+its zero colour changes nothing but alpha, which DSF_ALPHA_UNREAD says
+nothing reads.  Elsewhere a fragment is dropped only when it changes
+nothing at all.
+=====================
+*/
+bool RB_StageDropWeights( const drawSurf_t *surf, int drawStateBits, float weights[4] ) {
+	const int src = drawStateBits & GLS_SRCBLEND_BITS;
+	const int dst = drawStateBits & GLS_DSTBLEND_BITS;
+	weights[0] = weights[1] = weights[2] = weights[3] = 0.0f;
+	if ( dst != GLS_DSTBLEND_ONE && dst != GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA ) {
+		return false;
+	}
+	if ( src == GLS_SRCBLEND_SRC_ALPHA ) {
+		// a zero alpha weighs every channel it adds to nothing
+		weights[3] = 1.0f;
+		return true;
+	}
+	if ( src != GLS_SRCBLEND_ONE ) {
+		return false;
+	}
+	weights[0] = weights[1] = weights[2] = 1.0f;
+	weights[3] = dst == GLS_DSTBLEND_ONE && ( surf->dsFlags & DSF_ALPHA_UNREAD ) ? 0.0f : 1.0f;
+	return true;
+}
+
 int r_programCount;
 int r_programMisses;
 int r_programWarm;
@@ -2265,6 +2353,15 @@ void RB_STD_T_RenderShaderPasses( const drawSurf_t *surf ) {
 				parm[3] = 1.0f;						// leave the alpha channel at full strength
 			}
 			qglProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, PP_PARTICLE_COLCHAN_MASK, parm );
+
+			// the fragments that change nothing, dropped before their blend
+			{
+				float weights[4];
+				float drop[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+				drop[0] = RB_StageDropWeights( surf, pStage->drawStateBits, weights ) ? 1.0f : 0.0f;
+				qglProgramLocalParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 0, weights );
+				qglProgramLocalParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 1, drop );
+			}
 
 			/*
 			   program.env[25] is the HDR scene encoding fold. This

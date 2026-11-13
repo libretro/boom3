@@ -1150,6 +1150,8 @@ static void RB_VK_DrawSoftParticle( const drawSurf_t *surf, const shaderStage_t 
 	/* an alpha blend fades its alpha, an additive one its colour */
 	block.vertexParms[1][0] = block.vertexParms[1][1] = block.vertexParms[1][2] = srcBlend == GLS_SRCBLEND_SRC_ALPHA ? 1.0f : 0.0f;
 	block.vertexParms[1][3] = srcBlend == GLS_SRCBLEND_SRC_ALPHA ? 0.0f : 1.0f;
+	/* the fragments that change nothing, dropped before their blend */
+	block.vertexParms[3][0] = RB_StageDropWeights( surf, pStage->drawStateBits, block.vertexParms[2] ) ? 1.0f : 0.0f;
 	if ( rbVkLowRes.active ) {
 		// the scene's depth, read-only under the side target
 		block.screenParms[0] = 2.0f / rbVkLowRes.sceneW;
@@ -1997,8 +1999,7 @@ static void RB_VK_SetBuffer( const void *data ) {
 	const setBufferCommand_t *cmd = (const setBufferCommand_t *)data;
 	float c[4];
 	backEnd.frameCount = cmd->frameCount;
-	if ( !( r_clear.GetFloat() || idStr::Length( r_clear.GetString() ) != 1 || r_lockSurfaces.GetBool()
-			|| r_singleArea.GetBool() || r_showOverDraw.GetBool() ) ) {
+	if ( !RB_FrameClearsColor() ) {
 		return;
 	}
 	c[3] = 1.0f;

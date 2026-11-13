@@ -1208,6 +1208,7 @@ static bool RB_GLSL_InitShaders(void) {
 	{
 		idStr keep(softParticleShaderFP);
 		keep.Replace("  if (fade * near_fade == 0.0 && u_vertexParms[0].w != 0.0)\n    discard;\n", "");
+		keep.Replace("  if (u_vertexParms[3].x != 0.0 && dot(abs(c), u_vertexParms[2]) == 0.0)\n    discard;\n", "");
 		R_LoadGLSLShader(diffuseMapShaderVP, &softParticleKeepShader, GL_VERTEX_SHADER);
 		R_LoadGLSLShader(keep.c_str(), &softParticleKeepShader, GL_FRAGMENT_SHADER);
 	}
@@ -3167,7 +3168,7 @@ static void RB_GLSL_DrawSoftParticle(const drawSurf_t* surf, const shaderStage_t
 	const int srcBlend = pStage->drawStateBits & GLS_SRCBLEND_BITS;
 	const float radius = surf->particle_radius;
 	const float fadeRange = srcBlend == GLS_SRCBLEND_SRC_ALPHA ? radius * 2.0f : radius;
-	float parms[2][4];
+	float parms[4][4];
 	float sp[4];
 	float hp[4];
 
@@ -3214,7 +3215,10 @@ static void RB_GLSL_DrawSoftParticle(const drawSurf_t* surf, const shaderStage_t
 	// an alpha blend fades its alpha, an additive one its colour
 	parms[1][0] = parms[1][1] = parms[1][2] = srcBlend == GLS_SRCBLEND_SRC_ALPHA ? 1.0f : 0.0f;
 	parms[1][3] = srcBlend == GLS_SRCBLEND_SRC_ALPHA ? 0.0f : 1.0f;
-	qglUniform4fv(backEnd.glState.currentProgram->vertexParms, 2, &parms[0][0]);
+	// the fragments that change nothing, dropped before their blend
+	parms[3][0] = RB_StageDropWeights(surf, pStage->drawStateBits, parms[2]) ? 1.0f : 0.0f;
+	parms[3][1] = parms[3][2] = parms[3][3] = 0.0f;
+	qglUniform4fv(backEnd.glState.currentProgram->vertexParms, 4, &parms[0][0]);
 
 	if ( !RB_DepthInPlace( sp ) ) {
 		sp[0] = 1.0f / globalImages->currentDepthImage->uploadWidth;

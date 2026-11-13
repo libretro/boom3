@@ -479,6 +479,11 @@ void RB_SetGL2D( void ) {
 
 
 
+bool RB_FrameClearsColor( void ) {
+	return r_clear.GetFloat() || idStr::Length( r_clear.GetString() ) != 1 || r_lockSurfaces.GetBool()
+		|| r_singleArea.GetBool() || r_showOverDraw.GetBool();
+}
+
 /*
 =============
 RB_SetBuffer
@@ -496,7 +501,7 @@ static void	RB_SetBuffer( const void *data ) {
 	// clear screen for debugging
 	// automatically enable this with several other debug tools
 	// that might leave unrendered portions of the screen
-	if ( r_clear.GetFloat() || idStr::Length( r_clear.GetString() ) != 1 || r_lockSurfaces.GetBool() || r_singleArea.GetBool() || r_showOverDraw.GetBool() ) {
+	if ( RB_FrameClearsColor() ) {
 		float c[3];
 		if ( sscanf( r_clear.GetString(), "%f %f %f", &c[0], &c[1], &c[2] ) == 3 ) {
 			qglClearColor( c[0], c[1], c[2], 1 );
@@ -816,6 +821,8 @@ void RB_ExecuteBackEndCommands( const emptyCommand_t *cmds ) {
 	if ( cmds->commandId == RC_NOP && !cmds->next ) {
 		return;
 	}
+
+	RB_MarkAlphaUnread( cmds );
 
 #ifdef BOOM3_VULKAN_RENDERER
 	if ( R_VulkanRenderer() ) {

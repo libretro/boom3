@@ -121,6 +121,7 @@ void idMaterial::CommonInit() {
 	suppressInSubview = false;
 	refCount = 0;
 	portalSky = false;
+	readsDestinationAlpha = false;
 
 	decalInfo.stayTime = 10000;
 	decalInfo.fadeTime = 4000;
@@ -2251,6 +2252,25 @@ bool idMaterial::Parse( const char *text, const int textLength ) {
 					}
 					i = numStages;
 					break;
+				}
+			}
+		}
+	}
+
+	readsDestinationAlpha = false;
+	for ( i = 0 ; i < numStages ; i++ ) {
+		const shaderStage_t *pStage = &pd->parseStages[i];
+		const int src = pStage->drawStateBits & GLS_SRCBLEND_BITS;
+		const int dst = pStage->drawStateBits & GLS_DSTBLEND_BITS;
+		if ( src == GLS_SRCBLEND_DST_ALPHA || src == GLS_SRCBLEND_ONE_MINUS_DST_ALPHA
+			|| dst == GLS_DSTBLEND_DST_ALPHA || dst == GLS_DSTBLEND_ONE_MINUS_DST_ALPHA
+			|| pStage->texture.image == globalImages->currentRenderImage ) {
+			readsDestinationAlpha = true;
+		}
+		if ( pStage->newStage ) {
+			for ( int j = 0 ; j < pStage->newStage->numFragmentProgramImages ; j++ ) {
+				if ( pStage->newStage->fragmentProgramImages[j] == globalImages->currentRenderImage ) {
+					readsDestinationAlpha = true;
 				}
 			}
 		}
