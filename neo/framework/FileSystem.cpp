@@ -535,7 +535,6 @@ private:
 	RFILE *					OpenOSFile( const char *name, const char *mode, idStr *caseSensitiveName = NULL );
 	RFILE *					OpenOSFileCorrectName( idStr &path, const char *mode );
 	int						DirectFileLength( RFILE *o );
-	void					CopyFile( idFile *src, const char *toOSPath );
 	int						AddUnique( const char *name, idStrList &list, idHashIndex &hashIndex ) const;
 	void					GetExtensionList( const char *extension, idStrList &extensionList ) const;
 	int						GetFileList( const char *relativePath, const idStrList &extensions, idStrList &list, idHashIndex &hashIndex, bool fullRelativePath, const char* gamedir = NULL );
@@ -841,69 +840,25 @@ Copy a fully specified file from one place to another
 =================
 */
 void idFileSystemLocal::CopyFile( const char *fromOSPath, const char *toOSPath ) {
-	RFILE	*f;
-	int		len;
-	byte	*buf;
+	idStr	source = fromOSPath;
 
 	common->Printf( "copy %s to %s\n", fromOSPath, toOSPath );
-	f = OpenOSFile( fromOSPath, "rb" );
-	if ( !f ) {
-		return;
+	if ( !filestream_exists( fromOSPath ) ) {
+		// the name as it is on a case sensitive file system
+		idStr	caseName;
+		RFILE	*f = OpenOSFile( fromOSPath, "rb", &caseName );
+		if ( !f ) {
+			return;
+		}
+		filestream_close( f );
+		source.StripFilename();
+		source += PATHSEPERATOR_STR;
+		source += caseName;
 	}
-	len = (int)filestream_get_size( f );
-
-	buf = (byte *)Mem_Alloc( len );
-	if ( filestream_read( f, buf, len ) != len ) {
-		common->FatalError( "short read in idFileSystemLocal::CopyFile()\n" );
-	}
-	filestream_close( f );
-
 	CreateOSPath( toOSPath );
-	f = OpenOSFile( toOSPath, "wb" );
-	if ( !f ) {
-		common->Printf( "could not create destination file\n" );
-		Mem_Free( buf );
-		return;
+	if ( filestream_copy( source.c_str(), toOSPath ) != 0 ) {
+		common->Printf( "could not copy %s to %s\n", source.c_str(), toOSPath );
 	}
-	if ( filestream_write( f, buf, len ) != len ) {
-		common->FatalError( "short write in idFileSystemLocal::CopyFile()\n" );
-	}
-	filestream_close( f );
-	Mem_Free( buf );
-}
-
-/*
-=================
-idFileSystemLocal::CopyFile
-=================
-*/
-void idFileSystemLocal::CopyFile( idFile *src, const char *toOSPath ) {
-	RFILE	*f;
-	int		len;
-	byte	*buf;
-
-	common->Printf( "copy %s to %s\n", src->GetName(), toOSPath );
-	src->Seek( 0, FS_SEEK_END );
-	len = src->Tell();
-	src->Seek( 0, FS_SEEK_SET );
-
-	buf = (byte *)Mem_Alloc( len );
-	if ( src->Read( buf, len ) != len ) {
-		common->FatalError( "Short read in idFileSystemLocal::CopyFile()\n" );
-	}
-
-	CreateOSPath( toOSPath );
-	f = OpenOSFile( toOSPath, "wb" );
-	if ( !f ) {
-		common->Printf( "could not create destination file\n" );
-		Mem_Free( buf );
-		return;
-	}
-	if ( filestream_write( f, buf, len ) != len ) {
-		common->FatalError( "Short write in idFileSystemLocal::CopyFile()\n" );
-	}
-	filestream_close( f );
-	Mem_Free( buf );
 }
 
 /*
