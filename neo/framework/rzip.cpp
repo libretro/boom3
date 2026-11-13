@@ -70,6 +70,7 @@ struct rzip_s {
 	const uint8_t *base;      /* non-NULL when the VFS mapped the pak */
 	int64_t        len;
 	int            numEntries;
+	int            positional; /* unmapped: rf reads at offsets, shared */
 	rzip_entry_t  *entries;
 	char          *nameBlob;
 };
@@ -88,13 +89,27 @@ struct rzip_file_s {
 	uint64_t            compPos;   /* compressed bytes fed (unmapped mode) */
 	size_t              inAvail;   /* unconsumed bytes of the current span */
 	/* unmapped mode */
-	RFILE              *rf;        /* private handle; NULL when pak is mapped */
+	RFILE              *rf;        /* private handle; NULL when the pak is
+	                                  mapped or reads at offsets */
 	uint8_t            *inBuf;     /* refill buffer, unmapped deflate only */
 };
 
 static uint16_t rd16( const uint8_t *p ) { return (uint16_t)( p[0] | ( p[1] << 8 ) ); }
 static uint32_t rd32( const uint8_t *p ) {
 	return (uint32_t)p[0] | ( (uint32_t)p[1] << 8 ) | ( (uint32_t)p[2] << 16 ) | ( (uint32_t)p[3] << 24 );
+}
+
+/* up to n bytes at ofs of the pak's own handle, any thread, no seek */
+static int64_t rzip_read_at( rzip_t *z, uint64_t ofs, void *dst, uint64_t n ) {
+	uint8_t *p = (uint8_t *)dst;
+	uint64_t done = 0;
+	while ( done < n ) {
+		int64_t got = filestream_read_at( z->rf, p + done, (int64_t)( n - done ), (int64_t)( ofs + done ) );
+		if ( got <= 0 )
+			return done ? (int64_t)done : got;
+		done += (uint64_t)got;
+	}
+	return (int64_t)done;
 }
 
 /* read [ofs, ofs+n) of the pak into dst, map or RFILE */
@@ -105,6 +120,8 @@ static int rzip_pread( rzip_t *z, uint64_t ofs, void *dst, size_t n ) {
 		memcpy( dst, z->base + ofs, n );
 		return 0;
 	}
+	if ( z->positional )
+		return ( rzip_read_at( z, ofs, dst, n ) == (int64_t)n ) ? 0 : -1;
 	if ( filestream_seek( z->rf, (int64_t)ofs, RETRO_VFS_SEEK_POSITION_START ) < 0 )
 		return -1;
 	return ( filestream_read( z->rf, dst, (int64_t)n ) == (int64_t)n ) ? 0 : -1;
@@ -123,6 +140,11 @@ rzip_t *rzip_open( const char *path ) {
 	}
 	z->len  = filestream_get_size( z->rf );
 	z->base = filestream_get_mapped_ptr( z->rf, NULL );
+	if ( !z->base && z->len > 0 ) {
+		/* entries then share this handle rather than open their own */
+		uint8_t probe;
+		z->positional = filestream_read_at( z->rf, &probe, 1, 0 ) == 1;
+	}
 	z->path = strdup( path );
 
 	/*
@@ -378,7 +400,7 @@ rzip_file_t *rzip_file_open( rzip_t *z, int index ) {
 		return NULL;
 	}
 
-	if ( !z->base ) {
+	if ( !z->base && !z->positional ) {
 		/* private handle: sequential reads with no shared cursor */
 		f->rf = filestream_open( z->path, RETRO_VFS_FILE_ACCESS_READ,
 				RETRO_VFS_FILE_ACCESS_HINT_NONE );
@@ -405,7 +427,8 @@ rzip_file_t *rzip_file_open( rzip_t *z, int index ) {
 			f->inBuf = (uint8_t *)malloc( RZIP_IN_CHUNK );
 			if ( !f->inBuf ) {
 				rzip_inf_release( f->inf );
-				filestream_close( f->rf );
+				if ( f->rf )
+					filestream_close( f->rf );
 				free( f );
 				return NULL;
 			}
@@ -447,7 +470,8 @@ int rzip_file_read( rzip_file_t *f, void *buf, int len ) {
 			memcpy( buf, f->pak->base + f->dataOfs + f->outPos, (size_t)len );
 			done = len;
 		} else {
-			int64_t n = filestream_read( f->rf, buf, len );
+			int64_t n = f->rf ? filestream_read( f->rf, buf, len )
+				: rzip_read_at( f->pak, f->dataOfs + f->outPos, buf, (uint64_t)len );
 			done = ( n > 0 ) ? (int)n : 0;
 		}
 	} else {
@@ -463,7 +487,8 @@ int rzip_file_read( rzip_file_t *f, void *buf, int len ) {
 				   discard unconsumed compressed bytes */
 				uint64_t left = f->e->compressedSize - f->compPos;
 				size_t n = ( left < RZIP_IN_CHUNK ) ? (size_t)left : RZIP_IN_CHUNK;
-				int64_t got = filestream_read( f->rf, f->inBuf, (int64_t)n );
+				int64_t got = f->rf ? filestream_read( f->rf, f->inBuf, (int64_t)n )
+					: rzip_read_at( f->pak, f->dataOfs + f->compPos, f->inBuf, n );
 				if ( got <= 0 )
 					break;
 				rinflate_set_in( f->inf, f->inBuf, (size_t)got );
