@@ -717,17 +717,22 @@ void RB_CaptureRender( const void *data ) {
 			{
 				const byte *p = (const byte *)glCaps.MapBufferRange( RB_GL_PIXEL_PACK_BUFFER, 0, bytes, RB_GL_MAP_READ_BIT );
 				if ( p ) {
-					R_CaptureDeliver( p, c->width, c->height, false, c->fileName );
+					R_CaptureDeliver( p, c->width, c->height, c->width * 4, false, R_CaptureRowRGBA8, c->fileName );
 					glCaps.UnmapBuffer( RB_GL_PIXEL_PACK_BUFFER );
 				}
 			}
 			qglBindBufferARB( RB_GL_PIXEL_PACK_BUFFER, 0 );
 		}
 	} else {
-		// frame memory: the read is waited for here and delivered at once
-		byte *p = (byte *)R_FrameAlloc( bytes );
-		qglReadPixels( cmd->x, cmd->y, cmd->width, cmd->height, GL_RGBA, GL_UNSIGNED_BYTE, p );
-		R_CaptureDeliver( p, cmd->width, cmd->height, false, cmd->fileName );
+		// no fence: the read is waited for here, into the file's own rows,
+		// which come from the bottom as the read's do
+		byte *tga = R_CaptureFile( cmd->width, cmd->height );
+		byte *rows = tga + 18;
+		qglReadPixels( cmd->x, cmd->y, cmd->width, cmd->height, GL_RGBA, GL_UNSIGNED_BYTE, rows );
+		for ( i = 0; i < cmd->height; i++ ) {
+			R_CaptureRowRGBA8( rows + (size_t)i * cmd->width * 4, rows + (size_t)i * cmd->width * 4, cmd->width );
+		}
+		R_CaptureSend( tga, cmd->width, cmd->height, cmd->fileName );
 	}
 #ifdef BOOM3_VR_MULTIVIEW
 	if ( VR_Active() ) {
@@ -764,7 +769,7 @@ void RB_CapturesPoll( void ) {
 			const int bytes = c->width * c->height * 4;
 			const byte *p = (const byte *)glCaps.MapBufferRange( RB_GL_PIXEL_PACK_BUFFER, 0, bytes, RB_GL_MAP_READ_BIT );
 			if ( p ) {
-				R_CaptureDeliver( p, c->width, c->height, false, c->fileName );
+				R_CaptureDeliver( p, c->width, c->height, c->width * 4, false, R_CaptureRowRGBA8, c->fileName );
 				glCaps.UnmapBuffer( RB_GL_PIXEL_PACK_BUFFER );
 			}
 		}

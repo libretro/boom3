@@ -1005,17 +1005,17 @@ void idRenderSystemLocal::CaptureRenderToFile( const char *fileName, bool fixAlp
 
 /*
 ==============
-R_CaptureDeliver
+R_CaptureFile / R_CaptureSend / R_CaptureDeliver
 
-The TGA R_WriteTGA writes, built once in its file order and handed to
-the background writer, which frees it.
+The TGA R_WriteTGA writes: the header, then BGRA rows from the bottom,
+opaque.  A backend fills the rows where they lie - from the pixels it
+read, a row at a time through the converter for their format, or by
+reading into the file itself - and the background writer takes the file
+and frees it.
 ==============
 */
-void R_CaptureDeliver( const byte *rgba, int width, int height, bool topDown, const char *fileName ) {
-	const int bytes = width * height * 4;
-	byte *tga = (byte *)Mem_Alloc( 18 + bytes );
-	int row;
-
+byte *R_CaptureFile( int width, int height ) {
+	byte *tga = (byte *)Mem_Alloc( 18 + width * height * 4 );
 	memset( tga, 0, 18 );
 	tga[2] = 2;		// uncompressed type
 	tga[12] = width & 255;
@@ -1023,23 +1023,39 @@ void R_CaptureDeliver( const byte *rgba, int width, int height, bool topDown, co
 	tga[14] = height & 255;
 	tga[15] = height >> 8;
 	tga[16] = 32;	// pixel size
-	// rows from the bottom, BGRA, opaque
-	for ( row = 0; row < height; row++ ) {
-		const byte *src = rgba + ( topDown ? height - 1 - row : row ) * width * 4;
-		byte *dst = tga + 18 + row * width * 4;
-		int i;
-		for ( i = 0; i < width; i++ ) {
-			dst[i * 4] = src[i * 4 + 2];
-			dst[i * 4 + 1] = src[i * 4 + 1];
-			dst[i * 4 + 2] = src[i * 4];
-			dst[i * 4 + 3] = 0xff;
-		}
-	}
-	if ( !fileSystem->WriteFileInBackground( fileName, tga, 18 + bytes ) ) {
+	return tga;
+}
+
+void R_CaptureSend( byte *tga, int width, int height, const char *fileName ) {
+	if ( !fileSystem->WriteFileInBackground( fileName, tga, 18 + width * height * 4 ) ) {
 		Mem_Free( tga );
 	}
 }
 
+void R_CaptureRowRGBA8( const byte *src, byte *bgra, int width ) {
+	int i;
+	for ( i = 0; i < width; i++ ) {
+		// read whole before writing: src may be bgra
+		const byte r = src[i * 4];
+		const byte g = src[i * 4 + 1];
+		const byte b = src[i * 4 + 2];
+		bgra[i * 4] = b;
+		bgra[i * 4 + 1] = g;
+		bgra[i * 4 + 2] = r;
+		bgra[i * 4 + 3] = 0xff;
+	}
+}
+
+void R_CaptureDeliver( const byte *pixels, int width, int height, int rowBytes, bool topDown,
+		captureRow_t convert, const char *fileName ) {
+	byte *tga = R_CaptureFile( width, height );
+	int row;
+	for ( row = 0; row < height; row++ ) {
+		convert( pixels + (size_t)( topDown ? height - 1 - row : row ) * rowBytes,
+			tga + 18 + (size_t)row * width * 4, width );
+	}
+	R_CaptureSend( tga, width, height, fileName );
+}
 
 /*
 ==============

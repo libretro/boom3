@@ -2191,9 +2191,9 @@ void RB_VK_ForgetShadowData( const void *key ) {
 RB_VK_CaptureSink
 
 A capture back from the GPU, in the target's format and rows from the
-top: to 8-bit RGBA for the TGA. A float or 10-bit scene is the HDR
-pipeline's linear scene; the file gets it clamped, as the GL path's
-read of its float target does.
+top, converted a row at a time straight into the TGA. A float or 10-bit
+scene is the HDR pipeline's linear scene; the file gets it clamped, as
+the GL path's read of its float target does.
 ====================
 */
 static float RB_VK_HalfToFloat( unsigned short h ) {
@@ -2219,57 +2219,84 @@ static byte RB_VK_UnitToByte( float v ) {
 	return (byte)( v * 255.0f + 0.5f );
 }
 
+static void RB_VK_CaptureRowBGRA8( const byte *src, byte *bgra, int width ) {
+	int i;
+	for ( i = 0; i < width; i++ ) {
+		bgra[i * 4] = src[i * 4];
+		bgra[i * 4 + 1] = src[i * 4 + 1];
+		bgra[i * 4 + 2] = src[i * 4 + 2];
+		bgra[i * 4 + 3] = 255;
+	}
+}
+
+static void RB_VK_CaptureRowRGB10A2( const byte *src, byte *bgra, int width ) {
+	int i;
+	for ( i = 0; i < width; i++ ) {
+		const unsigned p = ((const unsigned *)src)[i];
+		bgra[i * 4] = (byte)( ( ( p >> 20 ) & 1023 ) >> 2 );
+		bgra[i * 4 + 1] = (byte)( ( ( p >> 10 ) & 1023 ) >> 2 );
+		bgra[i * 4 + 2] = (byte)( ( p & 1023 ) >> 2 );
+		bgra[i * 4 + 3] = 255;
+	}
+}
+
+static void RB_VK_CaptureRowRGBA16F( const byte *src, byte *bgra, int width ) {
+	int i;
+	for ( i = 0; i < width; i++ ) {
+		const unsigned short *p = (const unsigned short *)src + i * 4;
+		bgra[i * 4] = RB_VK_UnitToByte( RB_VK_HalfToFloat( p[2] ) );
+		bgra[i * 4 + 1] = RB_VK_UnitToByte( RB_VK_HalfToFloat( p[1] ) );
+		bgra[i * 4 + 2] = RB_VK_UnitToByte( RB_VK_HalfToFloat( p[0] ) );
+		bgra[i * 4 + 3] = 255;
+	}
+}
+
+static void RB_VK_CaptureRowRGBA32F( const byte *src, byte *bgra, int width ) {
+	int i;
+	for ( i = 0; i < width; i++ ) {
+		const float *p = (const float *)src + i * 4;
+		bgra[i * 4] = RB_VK_UnitToByte( p[2] );
+		bgra[i * 4 + 1] = RB_VK_UnitToByte( p[1] );
+		bgra[i * 4 + 2] = RB_VK_UnitToByte( p[0] );
+		bgra[i * 4 + 3] = 255;
+	}
+}
+
+static void RB_VK_CaptureRowBlack( const byte *src, byte *bgra, int width ) {
+	int i;
+	(void)src;
+	for ( i = 0; i < width; i++ ) {
+		bgra[i * 4] = bgra[i * 4 + 1] = bgra[i * 4 + 2] = 0;
+		bgra[i * 4 + 3] = 255;
+	}
+}
+
 static void RB_VK_CaptureSink( const unsigned char *pixels, unsigned width, unsigned height,
 		enum vkb_format format, const char *name ) {
-	const unsigned count = width * height;
-	byte *rgba;
-	unsigned i;
-	if ( format == VKB_FORMAT_RGBA8 ) {
-		R_CaptureDeliver( pixels, (int)width, (int)height, true, name );
-		return;
-	}
-	rgba = (byte *)R_FrameAlloc( count * 4 );
+	captureRow_t convert = RB_VK_CaptureRowBlack;
+	int bytes = 4;
 	switch ( format ) {
+		case VKB_FORMAT_RGBA8:
+			convert = R_CaptureRowRGBA8;
+			break;
 		case VKB_FORMAT_BGRA8:
-			for ( i = 0; i < count; i++ ) {
-				rgba[i * 4] = pixels[i * 4 + 2];
-				rgba[i * 4 + 1] = pixels[i * 4 + 1];
-				rgba[i * 4 + 2] = pixels[i * 4];
-				rgba[i * 4 + 3] = pixels[i * 4 + 3];
-			}
+			convert = RB_VK_CaptureRowBGRA8;
 			break;
 		case VKB_FORMAT_RGB10A2:
-			for ( i = 0; i < count; i++ ) {
-				const unsigned p = ((const unsigned *)pixels)[i];
-				rgba[i * 4] = (byte)( ( p & 1023 ) >> 2 );
-				rgba[i * 4 + 1] = (byte)( ( ( p >> 10 ) & 1023 ) >> 2 );
-				rgba[i * 4 + 2] = (byte)( ( ( p >> 20 ) & 1023 ) >> 2 );
-				rgba[i * 4 + 3] = 255;
-			}
+			convert = RB_VK_CaptureRowRGB10A2;
 			break;
 		case VKB_FORMAT_RGBA16F:
-			for ( i = 0; i < count; i++ ) {
-				const unsigned short *p = (const unsigned short *)pixels + i * 4;
-				rgba[i * 4] = RB_VK_UnitToByte( RB_VK_HalfToFloat( p[0] ) );
-				rgba[i * 4 + 1] = RB_VK_UnitToByte( RB_VK_HalfToFloat( p[1] ) );
-				rgba[i * 4 + 2] = RB_VK_UnitToByte( RB_VK_HalfToFloat( p[2] ) );
-				rgba[i * 4 + 3] = 255;
-			}
+			convert = RB_VK_CaptureRowRGBA16F;
+			bytes = 8;
 			break;
 		case VKB_FORMAT_RGBA32F:
-			for ( i = 0; i < count; i++ ) {
-				const float *p = (const float *)pixels + i * 4;
-				rgba[i * 4] = RB_VK_UnitToByte( p[0] );
-				rgba[i * 4 + 1] = RB_VK_UnitToByte( p[1] );
-				rgba[i * 4 + 2] = RB_VK_UnitToByte( p[2] );
-				rgba[i * 4 + 3] = 255;
-			}
+			convert = RB_VK_CaptureRowRGBA32F;
+			bytes = 16;
 			break;
 		default:
-			memset( rgba, 0, count * 4 );
 			break;
 	}
-	R_CaptureDeliver( rgba, (int)width, (int)height, true, name );
+	R_CaptureDeliver( pixels, (int)width, (int)height, (int)width * bytes, true, convert, name );
 }
 
 void RB_VK_ShadowsUp( void ) {

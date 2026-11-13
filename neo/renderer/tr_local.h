@@ -1986,9 +1986,16 @@ The capture of a framebuffer rectangle to a TGA: the back end reads it
 back off the frame path (a pixel pack buffer and a fence on GL, the
 frame's readback buffer on Vulkan), the main thread picks the pixels up
 a frame or more later and the file goes out on the background writer.
-rgba rows from the bottom, or from the top with topDown.
+Rows from the bottom, or from the top with topDown, rowBytes apart,
+each turned into the file's opaque BGRA by convert.  R_CaptureFile and
+R_CaptureSend are the file alone, for a backend that reads into it.
 */
-void R_CaptureDeliver( const byte *rgba, int width, int height, bool topDown, const char *fileName );
+typedef void (*captureRow_t)( const byte *src, byte *bgra, int width );
+void R_CaptureRowRGBA8( const byte *src, byte *bgra, int width );
+void R_CaptureDeliver( const byte *pixels, int width, int height, int rowBytes, bool topDown,
+		captureRow_t convert, const char *fileName );
+byte *R_CaptureFile( int width, int height );
+void R_CaptureSend( byte *tga, int width, int height, const char *fileName );
 void RB_CaptureRender( const void *data );
 void RB_CapturesPoll( void );
 
