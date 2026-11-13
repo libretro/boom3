@@ -181,9 +181,11 @@ static uint8_t *spsc_mirror_alloc(size_t size)
    for (tries = 0; tries < 8 && !base; tries++)
    {
       char name[48];
-      int  fd;
-      sprintf(name, "/retro_spsc.%lu.%u", (unsigned long)getpid(),
-            serial++);
+      int  fd, length;
+      length = snprintf(name, sizeof(name), "/retro_spsc.%lu.%u",
+            (unsigned long)getpid(), serial++);
+      if (length < 0 || (size_t)length >= sizeof(name))
+         continue;
       if ((fd = shm_open(name, O_RDWR | O_CREAT | O_EXCL, 0600)) < 0)
          continue;
       shm_unlink(name);
@@ -311,6 +313,69 @@ void retro_spsc_clear(retro_spsc_t *q)
    q->cached_head = 0;
    retro_atomic_size_init(&q->head, 0);
    retro_atomic_size_init(&q->tail, 0);
+}
+
+bool retro_spsc_grow(retro_spsc_t *q, size_t min_capacity)
+{
+   retro_spsc_t n;
+
+   if (!q || !q->buffer)
+      return false;
+   if (min_capacity <= q->capacity)
+      return true;
+   if (!(q->mirror
+         ? retro_spsc_init_mirrored(&n, min_capacity)
+         : retro_spsc_init(&n, min_capacity)))
+      return false;
+   retro_spsc_grow_into(q, &n);
+   retro_spsc_free(&n);
+   return true;
+}
+
+bool retro_spsc_grow_into(retro_spsc_t *q, retro_spsc_t *n)
+{
+   uint8_t *old_buffer;
+   size_t   old_capacity, old_mask, old_mirror;
+   size_t   head, tail, pos;
+
+   if (!q || !n || !q->buffer || !n->buffer || n->capacity < q->capacity)
+      return false;
+
+   head = retro_atomic_load_acquire_size(&q->head);
+   tail = retro_atomic_load_acquire_size(&q->tail);
+   for (pos = tail; pos != head; )
+   {
+      size_t from = pos & q->mask;
+      size_t to   = pos & n->mask;
+      size_t run  = head - pos;
+      if (!q->mirror && run > q->mask + 1 - from)
+         run      = q->mask + 1 - from;
+      if (!n->mirror && run > n->mask + 1 - to)
+         run      = n->mask + 1 - to;
+      memcpy(n->buffer + to, q->buffer + from, run);
+      pos        += run;
+   }
+
+   old_buffer     = q->buffer;
+   old_capacity   = q->capacity;
+   old_mask       = q->mask;
+   old_mirror     = q->mirror;
+   q->buffer      = n->buffer;
+   q->capacity    = n->capacity;
+   q->mask        = n->mask;
+   q->mirror      = n->mirror;
+   q->cached_tail = tail;
+   q->cached_head = head;
+   retro_atomic_size_init(&q->head, head);
+   retro_atomic_size_init(&q->tail, tail);
+   n->buffer      = old_buffer;
+   n->capacity    = old_capacity;
+   n->mask        = old_mask;
+   n->mirror      = old_mirror;
+   n->cached_tail = n->cached_head = 0;
+   retro_atomic_size_init(&n->head, 0);
+   retro_atomic_size_init(&n->tail, 0);
+   return true;
 }
 
 size_t retro_spsc_write_avail(const retro_spsc_t *q)

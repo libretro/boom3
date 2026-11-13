@@ -245,6 +245,43 @@ void retro_spsc_free(retro_spsc_t *q);
 void retro_spsc_clear(retro_spsc_t *q);
 
 /**
+ * retro_spsc_grow:
+ * @q             : The queue.
+ * @min_capacity  : Requested capacity in bytes, rounded up as for
+ *                  retro_spsc_init.
+ *
+ * Moves the queue to a larger buffer of the same kind, mirrored or
+ * not.  The unread data and both cursors carry over unchanged, so a
+ * position the caller recorded in the ring still names the same byte.
+ * A queue already holding @min_capacity is left as it is.
+ *
+ * SAFETY: as retro_spsc_clear, both the producer and the consumer must
+ * be quiesced, and any span either holds is invalid afterwards.
+ *
+ * Returns: true on success; false on allocation failure, with the
+ * queue untouched.
+ */
+bool retro_spsc_grow(retro_spsc_t *q, size_t min_capacity);
+
+/**
+ * retro_spsc_grow_into:
+ * @q : The queue.
+ * @n : A queue from retro_spsc_init or retro_spsc_init_mirrored, empty,
+ *      at least as large as @q.
+ *
+ * retro_spsc_grow with the buffer allocated by the caller, so the move
+ * itself allocates and frees nothing: @q takes @n's buffer with its
+ * unread data and cursors, and @n is left holding @q's old buffer for
+ * the caller to retro_spsc_free.  The allocation and the free can then
+ * be on a thread other than the one that moves.
+ *
+ * SAFETY: as retro_spsc_grow.
+ *
+ * Returns: false, with neither queue touched, if @n is the smaller.
+ */
+bool retro_spsc_grow_into(retro_spsc_t *q, retro_spsc_t *n);
+
+/**
  * retro_spsc_write_avail:
  * @q : The queue.
  *

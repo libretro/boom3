@@ -25,6 +25,13 @@
 
 RETRO_BEGIN_DECLS
 
+enum rwebm_language_kind
+{
+   RWEBM_LANGUAGE_NONE = 0,
+   RWEBM_LANGUAGE_LEGACY,
+   RWEBM_LANGUAGE_BCP47
+};
+
 enum rwebm_track_type
 {
    RWEBM_TRACK_NONE = 0,
@@ -45,7 +52,8 @@ enum rwebm_codec
    RWEBM_CODEC_FLAC,  /* A_FLAC: CodecPrivate is a whole fLaC header -
                        * magic and metadata blocks - and each block is
                        * one raw FLAC frame                            */
-   RWEBM_CODEC_AV1    /* V_AV1: CodecPrivate is the av1C record         */
+   RWEBM_CODEC_AV1,   /* V_AV1: CodecPrivate is the av1C record         */
+   RWEBM_CODEC_H265   /* V_MPEGH/ISO/HEVC: CodecPrivate is hvcC         */
 };
 
 typedef struct
@@ -78,6 +86,8 @@ typedef struct
    unsigned               transfer_characteristics;
    unsigned               primaries;
    unsigned               colour_range;
+   /* Matroska siting: 0 unspecified, 1 colocated, 2 half. */
+   unsigned               chroma_siting_horz, chroma_siting_vert;
    /* HDR static metadata (0 = absent) */
    video_mastering_display_t mastering;
    unsigned               max_cll;     /* MaxCLL, nits                     */
@@ -90,14 +100,27 @@ typedef struct
 {
    const uint8_t *data;     /* aliases into the input buffer            */
    size_t         size;
+   /* Encoded BlockAdditions payload for an unlaced Block; borrowed. */
+   const uint8_t *block_additions;
+   size_t block_additions_size;
    int            track;     /* index into the track array (0-based)     */
    int64_t        timestamp; /* in nanoseconds (scaled by TimestampScale) */
    int            keyframe;
+   /* Audio laces continue at the preceding decoded endpoint. Video
+    * laces use BlockDuration or DefaultDuration for each timestamp. */
+   int            timestamp_continuation;
    /* Matroska DiscardPadding in nanoseconds: when positive, this many
     * nanoseconds of decoded output at the END of this block are not
     * meant to be played (Opus end trimming).  0 when absent. */
    int64_t        discard_padding;
+   /* Per-frame BlockDuration: -1 absent, -2 invalid/unrepresentable. */
+   int64_t        duration_ns;
 } rwebm_packet;
+
+/* Returns 1 found, 0 absent, -1 invalid or over 256 metadata elements.
+ * The default BlockAddID is 1. Returned data remains borrowed. */
+int rwebm_packet_addition(const rwebm_packet *packet, uint64_t wanted,
+      const uint8_t **data, size_t *size);
 
 typedef struct rwebm rwebm_t;
 
@@ -118,9 +141,14 @@ int                rwebm_num_tracks(const rwebm_t *webm);
 size_t             rwebm_media_floor(const rwebm_t *m);
 size_t             rwebm_tell(const rwebm_t *m);
 /* Earliest byte still needed by the next read, including pending laces.
- * Callers retaining a returned packet must also pin its borrowed data. */
+ * Callers retaining a returned packet must pin its data and additions. */
 size_t             rwebm_consumed(const rwebm_t *m);
 const rwebm_track *rwebm_get_track(const rwebm_t *webm, int index);
+/* Raw string span, including EBML padding; borrowed with the input.
+ * BCP47 overrides legacy Language, which defaults to eng when absent. */
+const char *rwebm_get_track_language(const rwebm_t *webm, int index,
+      size_t *length, enum rwebm_language_kind *kind);
+
 
 /* Total duration in nanoseconds (Duration * TimestampScale), or 0 if the
  * file does not declare one. */
@@ -135,6 +163,25 @@ int64_t rwebm_duration_ns(const rwebm_t *webm);
 #define RWEBM_READ_AGAIN 2
 
 int rwebm_read_packet(rwebm_t *webm, rwebm_packet *pkt);
+/* Track-specific bounded walk (zero-based track index). Unselected
+ * SimpleBlock payloads need not be resident. YIELD means metadata progress
+ * with no missing bytes; retry without refilling. Other results match above. */
+#define RWEBM_READ_YIELD 3
+int rwebm_read_packet_track(rwebm_t *webm, int track, rwebm_packet *pkt);
+
+/* Optional exclusive-owner notification for validated Void payloads.
+ * All cursors over the borrowed buffer must skip these inert bytes.
+ * Return zero to refuse the packet walk. Callback/user are borrowed
+ * until close or replacement; cursor clones preserve the notification. */
+typedef int (*rwebm_inert_range_cb_t)(void *user, size_t lo, size_t hi);
+void rwebm_set_inert_callback(rwebm_t *webm,
+      rwebm_inert_range_cb_t callback, void *user);
+
+/* After READ_AGAIN on an element body, name the complete required encoded
+ * span, including the cursor needed to retry. Zero/zero for an incomplete
+ * header or no blocked element. Metadata only; the owner admits this span
+ * with its ordinary I/O budget. Success, rewind and seek clear the request. */
+void rwebm_read_span(const rwebm_t *webm, size_t *lo, size_t *hi);
 
 /* Open against a partially-read buffer: only the first 'avail' bytes
  * are valid (the rest may be uninitialised); the parse never touches
@@ -155,7 +202,22 @@ void rwebm_set_avail(rwebm_t *webm, size_t avail);
  * are usually written after the clusters, so a partial read whose
  * wall stopped the header walk short has none).  Seeking needs them:
  * without an index a target can only be reached by walking. */
+/* Independent packet cursor over the same borrowed encoded buffer and
+ * metadata. It owns no cue index. Allocate once, refresh without allocation,
+ * and close normally. Copy retains the destination's own cue index when
+ * the encoded buffer is unchanged; it never borrows the source index. */
+rwebm_t *rwebm_cursor_clone(const rwebm_t *source);
+void rwebm_cursor_copy(rwebm_t *destination, const rwebm_t *source);
+
 int rwebm_num_cues(const rwebm_t *webm);
+/* Optional bounded SeekHead index. Offset is absolute, zero when absent or
+ * already attempted. Supply only resident bytes at that offset. The loader
+ * requests at most 4 MiB, copies index metadata, and filters by TrackNumber.
+ * Returns 1 loaded, 0 needs more, -1 invalid; invalid Cues remain optional. */
+size_t rwebm_cues_offset(const rwebm_t *webm);
+int rwebm_load_cues(rwebm_t *webm, const uint8_t *data, size_t available,
+      int track, size_t *needed);
+
 
 /* Reposition the packet walk to the indexed cluster at or before
  * 'ns'.  Returns the timestamp actually landed on, in nanoseconds,
@@ -164,6 +226,14 @@ int rwebm_num_cues(const rwebm_t *webm);
  * the file has no Cues, or when the target cluster lies past a
  * partial read's wall.  The next rwebm_read_packet resumes there. */
 int64_t rwebm_seek_time_ns(rwebm_t *webm, int64_t ns);
+
+/* Metadata-only cue selection, including a cluster beyond the readable
+ * wall. No media bytes are touched. consumed() identifies the frontier
+ * the owner must feed before read_packet() can resume. */
+int64_t rwebm_select_time_ns(rwebm_t *webm, int64_t ns);
+
+/* Query the selected cue timestamp without changing either cursor or residency. */
+int64_t rwebm_cue_time_ns(const rwebm_t *webm, int64_t ns);
 
 /* Restart packet reading from the first cluster. */
 void rwebm_rewind(rwebm_t *webm);
