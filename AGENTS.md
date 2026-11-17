@@ -314,8 +314,34 @@ is C89 (`-std=c89 -ansi -pedantic -Werror=pedantic
 declarations at the top of the block, and builds with both toolchains.
 `neo/sys/libretro-common` is a plain copy of RetroArch's
 `libretro-common/`, never the standalone repository: it takes only the
-files this core builds and the headers they reach, and a resync is a
-copy, nothing merged. Core adaptations go in the core's files, never in
-a libretro-common file; what a core needs of a libretro-common module
-and cannot reach goes into RetroArch's interface first (the resampler's
-`state()` came that way) and arrives here by resync.
+files this core builds and the headers they reach. See
+"libretro-common: RetroArch first".
+
+## libretro-common: RetroArch first
+
+`neo/sys/libretro-common/` is a copy of RetroArch's `libretro-common/`
+(https://github.com/libretro/RetroArch), file for file. No file there is
+ever edited in this core.
+
+- **Upstream first.** Anything the core needs changed in libretro-common
+  (a fix, a new function, a new mode of an existing one) is made in
+  RetroArch's `libretro-common/` first, as a patch against RetroArch,
+  with its test under `libretro-common/samples/`. Once RetroArch has it,
+  the core takes it by a resync. A core adaptation that is not a
+  libretro-common change goes in the core's own files.
+- **A resync is a copy, never a merge.** Every file here that RetroArch
+  has is replaced by RetroArch's, so a change made only here is deleted
+  by the next resync. Before one, compare the two: anything this copy has
+  that RetroArch's lacks goes upstream first.
+- **Bring in what the new files need.** A synced file that now needs
+  another (a new source, a new header) brings it along, and the new
+  source is added to every build that lists its neighbour: the
+  Makefiles, the Android and CMake builds, the test scripts.
+- **Follow moved declarations.** Where a function moved to another
+  header, every call site includes the new one. A clean build of the
+  core has no implicit-declaration warning: GCC 14 makes it an error, and
+  older compilers cut the returned pointer to an int.
+
+The resampler's `state()` came that way: what the core needed of the
+module went into RetroArch's interface first and arrived here by
+resync.
