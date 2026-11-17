@@ -336,6 +336,15 @@ libretro_vfs_implementation_file* retro_vfs_file_open_impl(
     if (!stream)
         return NULL;
 
+    /* A stable open promises what this backend can't keep (a handle no
+     * one else can write through, a regular file vouched for by its
+     * handle), so it is refused rather than quietly opened */
+    if (hints & RETRO_VFS_FILE_ACCESS_HINT_IMPL_STABLE)
+    {
+        free(stream);
+        return NULL;
+    }
+
     stream->fd        = 0;
     stream->hints     = hints;
     stream->size      = 0;
@@ -805,6 +814,84 @@ const uint8_t *retro_vfs_file_get_mapped_ptr_impl(
     * is installed, and this file replaces vfs_implementation.c
     * wholesale on UWP, so leaving it out is a link error rather than
     * a fallback. */
+   (void)stream;
+   if (len)
+      *len = 0;
+   return NULL;
+}
+
+bool retro_vfs_file_identity_impl(libretro_vfs_implementation_file *stream,
+      struct retro_vfs_file_identity *id)
+{
+   /* Only a stable or descriptor-path stream has one, and this backend
+    * opens neither. Defined because it replaces vfs_implementation.c. */
+   (void)stream;
+   if (id)
+      memset(id, 0, sizeof(*id));
+   return false;
+}
+
+libretro_vfs_implementation_file *retro_vfs_file_open_stable_impl(
+      const char *path, struct retro_vfs_file_identity *id)
+{
+   /* No stable open on this backend: see retro_vfs_file_open_impl() */
+   (void)path;
+   if (id)
+      memset(id, 0, sizeof(*id));
+   return NULL;
+}
+
+int retro_vfs_stat_identity_impl(const char *path,
+      struct retro_vfs_file_identity *id)
+{
+   /* Not on this backend: it can't be told */
+   (void)path;
+   if (id)
+      memset(id, 0, sizeof(*id));
+   return -1;
+}
+
+bool retro_vfs_file_volume_impl(libretro_vfs_implementation_file *stream,
+      unsigned want, struct retro_vfs_volume *vol)
+{
+   /* Not on this backend */
+   (void)stream;
+   (void)want;
+   if (vol)
+      memset(vol, 0, sizeof(*vol));
+   return false;
+}
+
+int retro_vfs_stat_volume_impl(const char *path, unsigned want,
+      struct retro_vfs_volume *vol)
+{
+   (void)path;
+   (void)want;
+   if (vol)
+      memset(vol, 0, sizeof(*vol));
+   return -1;
+}
+
+size_t retro_vfs_file_verity_measure_impl(
+      libretro_vfs_implementation_file *stream, uint8_t *digest, size_t cap)
+{
+   /* No fs-verity here */
+   (void)stream;
+   (void)digest;
+   (void)cap;
+   return 0;
+}
+
+int retro_vfs_file_verity_enable_impl(
+      libretro_vfs_implementation_file *stream)
+{
+   return stream ? 0 : -1;
+}
+
+const uint8_t *retro_vfs_file_map_impl(libretro_vfs_implementation_file *stream,
+      int64_t *len)
+{
+   /* No mapping on this backend, as retro_vfs_file_get_mapped_ptr_impl */
    (void)stream;
    if (len)
       *len = 0;

@@ -45,6 +45,7 @@
 
 #    include <fcntl.h>
 #    include <direct.h>
+#    include <share.h>
 #    include <windows.h>
 #  endif
 #    include <io.h>
@@ -281,6 +282,25 @@ static void vfs_win32_warm_free(void *data);
 #endif
 #endif
 
+/* Volume facts: statfs() where it tells the filesystem and its mount
+ * flags in one call, statvfs() for the flags elsewhere */
+#if defined(__linux__) && !defined(VITA) && !defined(PSP) && !defined(PS2) \
+   && !defined(ORBIS)
+#include <sys/vfs.h>
+#include <sys/statvfs.h>
+#include <sys/syscall.h>
+#include <sys/ioctl.h>
+#define VFS_VOLUME_MAGIC 1
+#elif (defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) \
+   || defined(__DragonFly__)) && !defined(ORBIS)
+#include <sys/param.h>
+#include <sys/mount.h>
+#define VFS_VOLUME_NAME 1
+#elif defined(__NetBSD__) || defined(__HAIKU__)
+#include <sys/statvfs.h>
+#define VFS_VOLUME_STATVFS 1
+#endif
+
 /* Windows FILETIME is 100 ns ticks since 1601-01-01; Unix time is
  * seconds since 1970-01-01.  Both conversions run in uint64_t so the
  * epoch offset can never be a signed-overflow UB site. */
@@ -340,6 +360,13 @@ static void vfs_unix_to_filetime(int64_t unix_s, FILETIME *ft)
 #define RFILE_HINT_UNBUFFERED (1 << 8)
 /* opened both to read and to write ("w+b", "r+b") */
 #define RFILE_HINT_UPDATE     (1 << 12)
+/* mapped on demand by retro_vfs_file_map_impl(): the stream owns the
+ * mapping, and reads and seeks never look at it */
+#define RFILE_HINT_LENT_MAP   (1 << 13)
+/* written on the descriptor path since stream->size was last right: the
+ * size is asked of the file when wanted (vfs_descriptor_size) rather than
+ * the position before every write */
+#define RFILE_HINT_SIZE_STALE (1 << 14)
 
 /* A stream on Windows NT opens a handle of its own rather than a C
  * runtime FILE, keeps its own position and a 64 KiB buffer, and reads
@@ -847,6 +874,34 @@ static int64_t vfs_win32_io(HANDLE h, HANDLE ev, void *s, uint64_t len,
 }
 #endif
 
+#if defined(_WIN32) && !defined(_XBOX) && (defined(VFS_NATIVE) \
+   || defined(VFS_POSITIONAL_WIN32) || !defined(LEGACY_WIN32) \
+   || defined(LEGACY_WIN32_RUNTIME))
+/* Room for a path in UTF-16 on the stack: MAX_PATH, so that a call
+ * takes little of a thread's stack, and every path but a long one fits */
+#define VFS_WIDE_STACK MAX_PATH
+
+/* @path in UTF-16 for the wide Win32 calls: in @buf (@n characters)
+ * where it fits, else in an allocation, so that opening, deleting or
+ * renaming a file allocates nothing for its name. As
+ * utf8_to_utf16_string_alloc: NULL for an empty path. Freed with
+ * vfs_wide_free. */
+static wchar_t *vfs_wide(const char *path, wchar_t *buf, int n)
+{
+   if (!path || !*path)
+      return NULL;
+   if (MultiByteToWideChar(CP_UTF8, 0, path, -1, buf, n))
+      return buf;
+   return utf8_to_utf16_string_alloc(path);
+}
+
+static void vfs_wide_free(wchar_t *wide, const wchar_t *buf)
+{
+   if (wide && wide != buf)
+      free(wide);
+}
+#endif
+
 #ifdef VFS_NATIVE
 /* Write streams as the C runtime opens them - "wb" and "w+b" create or
  * truncate, "r+b" opens what is there - shared for reading and writing
@@ -856,6 +911,7 @@ static int64_t vfs_win32_io(HANDLE h, HANDLE ev, void *s, uint64_t len,
 static bool vfs_native_open(libretro_vfs_implementation_file *stream,
       const char *path, unsigned mode)
 {
+   wchar_t  wide_buf[VFS_WIDE_STACK];
    wchar_t *wide;
    HANDLE   h;
    DWORD    hi = 0, lo;
@@ -867,11 +923,12 @@ static bool vfs_native_open(libretro_vfs_implementation_file *stream,
    DWORD    create  = ((mode & RETRO_VFS_FILE_ACCESS_UPDATE_EXISTING)
          || !write) ? OPEN_EXISTING : CREATE_ALWAYS;
    /* NT only: 9x's ReadFile takes no offset on a file */
-   if ((GetVersion() & 0x80000000u) || !(wide = utf8_to_utf16_string_alloc(path)))
+   if (     (GetVersion() & 0x80000000u)
+         || !(wide = vfs_wide(path, wide_buf, VFS_WIDE_STACK)))
       return false;
    h = CreateFileW(wide, access, share, NULL, create, FILE_ATTRIBUTE_NORMAL,
          NULL);
-   free(wide);
+   vfs_wide_free(wide, wide_buf);
    if (h == INVALID_HANDLE_VALUE)
       return false;
    lo = GetFileSize(h, &hi);
@@ -1150,9 +1207,221 @@ static int64_t vfs_open_size(libretro_vfs_implementation_file *stream)
    return -1;
 }
 
-libretro_vfs_implementation_file *retro_vfs_file_open_impl(
-      const char *path, unsigned mode, unsigned hints)
+/* Where a descriptor's size can be asked of the file in one call, a
+ * descriptor write needn't track it by asking the position first */
+#if defined(VFS_OPEN_FSTAT) || (defined(_WIN32) && !defined(_XBOX))
+#define VFS_SIZE_LAZY 1
+
+/* A descriptor-path stream's size as the file has it now: one fstat()
+ * (_fstati64() on Windows), or a seek to the end and back if that
+ * fails. -1 when nothing answers. */
+static int64_t vfs_descriptor_size(libretro_vfs_implementation_file *stream)
 {
+   int64_t cur, end;
+#if defined(_WIN32)
+   struct _stati64 st;
+   if (_fstati64(stream->fd, &st) == 0)
+      return (int64_t)st.st_size;
+#else
+   struct stat st;
+   if (fstat(stream->fd, &st) == 0 && S_ISREG(st.st_mode))
+      return (int64_t)st.st_size;
+#endif
+   if ((cur = retro_vfs_file_tell_impl(stream)) < 0)
+      return -1;
+   end = retro_vfs_file_seek_internal(stream, 0, SEEK_END) == 0
+      ? retro_vfs_file_tell_impl(stream) : -1;
+   retro_vfs_file_seek_internal(stream, cur, SEEK_SET);
+   return end;
+}
+
+/* Any stream's size now. A descriptor writes straight to the file, so
+ * the file's size is it; stdio and the native Windows stream may still
+ * hold bytes of their own, so theirs is the larger of the file's and
+ * what their own writes reached. -1 when nothing answers. */
+static int64_t vfs_current_size(libretro_vfs_implementation_file *stream)
+{
+   int64_t file = -1;
+   int     fd;
+#ifdef VFS_NATIVE
+   if (stream->hints & RFILE_HINT_WIN32_NATIVE)
+   {
+      LARGE_INTEGER sz;
+      if (!GetFileSizeEx(stream->fh, &sz))
+         return -1;
+      return (int64_t)sz.QuadPart > stream->size
+         ? (int64_t)sz.QuadPart : stream->size;
+   }
+#endif
+   if (stream->hints & RFILE_HINT_UNBUFFERED)
+      return stream->fd >= 0 ? vfs_descriptor_size(stream) : -1;
+   if (!stream->fp || (fd = fileno(stream->fp)) < 0)
+      return -1;
+   {
+#if defined(_WIN32)
+      struct _stati64 st;
+      if (_fstati64(fd, &st) == 0)
+         file = (int64_t)st.st_size;
+#else
+      struct stat st;
+      if (fstat(fd, &st) == 0 && S_ISREG(st.st_mode))
+         file = (int64_t)st.st_size;
+#endif
+   }
+   if (file < 0)
+      return -1;
+   return file > stream->size ? file : stream->size;
+}
+#endif
+
+#if defined(_WIN32) && !defined(_XBOX)
+/* FILE_BASIC_INFO and FILE_ID_INFO, which older SDKs lack */
+struct vfs_file_basic_info
+{
+   LARGE_INTEGER creation;
+   LARGE_INTEGER access;
+   LARGE_INTEGER write;
+   LARGE_INTEGER change;
+   DWORD attributes;
+};
+
+struct vfs_file_id_info
+{
+   ULONGLONG volume;
+   BYTE id[16];
+};
+
+/* GetFileInformationByHandleEx, Vista and later */
+typedef BOOL (WINAPI *vfs_file_info_ex_t)(HANDLE, int, LPVOID, DWORD);
+#define VFS_FILE_BASIC_INFO 0
+#define VFS_FILE_ID_INFO    18
+
+/* FILETIME ticks (100 ns from 1601) to seconds from 1970 */
+static void vfs_file_time(uint64_t ticks, int64_t *sec, uint32_t *nsec)
+{
+   *sec  = (int64_t)(ticks / 10000000) - (int64_t)11644473600LL;
+   *nsec = (uint32_t)(ticks % 10000000) * 100;
+}
+
+/* retro_vfs_file_identity_impl()'s answer for an open handle */
+static bool vfs_identity_handle(HANDLE h, struct retro_vfs_file_identity *id)
+{
+   BY_HANDLE_FILE_INFORMATION info;
+   struct vfs_file_basic_info basic;
+   struct vfs_file_id_info fid;
+   vfs_file_info_ex_t info_ex;
+   unsigned i;
+   if (!GetFileInformationByHandle(h, &info))
+      return false;
+   /* Only a file on a volume answers: a directory or a plain file */
+   id->type = (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+      ? RETRO_VFS_IDENTITY_DIRECTORY : RETRO_VFS_IDENTITY_REGULAR;
+   id->dev  = info.dwVolumeSerialNumber;
+   id->size = ((uint64_t)info.nFileSizeHigh << 32) | info.nFileSizeLow;
+   for (i = 0; i < 4; i++)
+   {
+      id->id[8 + i]  = (uint8_t)(info.nFileIndexHigh >> (24 - 8 * i));
+      id->id[12 + i] = (uint8_t)(info.nFileIndexLow  >> (24 - 8 * i));
+   }
+   vfs_file_time(((uint64_t)info.ftLastWriteTime.dwHighDateTime << 32)
+         | info.ftLastWriteTime.dwLowDateTime, &id->mtime, &id->mtime_nsec);
+   if ((info_ex = (vfs_file_info_ex_t)GetProcAddress(
+               GetModuleHandleA("kernel32.dll"),
+               "GetFileInformationByHandleEx")))
+   {
+      /* 128-bit ids: ReFS can reuse a 64-bit index */
+      if (info_ex(h, VFS_FILE_ID_INFO, &fid, sizeof(fid)))
+      {
+         id->dev = fid.volume;
+         memcpy(id->id, fid.id, sizeof(id->id));
+      }
+      if (info_ex(h, VFS_FILE_BASIC_INFO, &basic, sizeof(basic)))
+         vfs_file_time((uint64_t)basic.change.QuadPart,
+               &id->ctime, &id->ctime_nsec);
+   }
+   return true;
+}
+#elif defined(VFS_OPEN_FSTAT)
+/* retro_vfs_file_identity_impl()'s answer from an fstat() */
+static void vfs_identity_stat(const struct stat *st,
+      struct retro_vfs_file_identity *id)
+{
+   uint64_t ino = (uint64_t)st->st_ino;
+   unsigned i;
+   id->dev   = (uint64_t)st->st_dev;
+   id->size  = (uint64_t)st->st_size;
+   id->mtime = (int64_t)st->st_mtime;
+   id->ctime = (int64_t)st->st_ctime;
+#if defined(__APPLE__)
+   id->mtime_nsec = (uint32_t)st->st_mtimespec.tv_nsec;
+   id->ctime_nsec = (uint32_t)st->st_ctimespec.tv_nsec;
+#elif defined(__linux__) || defined(__FreeBSD__) || defined(__NetBSD__) \
+   || defined(__OpenBSD__) || defined(__DragonFly__)
+   id->mtime_nsec = (uint32_t)st->st_mtim.tv_nsec;
+   id->ctime_nsec = (uint32_t)st->st_ctim.tv_nsec;
+#endif
+   for (i = 0; i < 8; i++)
+      id->id[8 + i] = (uint8_t)(ino >> (56 - 8 * i));
+   id->uid   = (uint32_t)st->st_uid;
+   id->gid   = (uint32_t)st->st_gid;
+   id->perm  = (uint16_t)(st->st_mode & 07777);
+   id->flags = RETRO_VFS_IDENTITY_HAS_OWNER;
+   id->type  = S_ISREG(st->st_mode) ? RETRO_VFS_IDENTITY_REGULAR
+      : S_ISDIR(st->st_mode) ? RETRO_VFS_IDENTITY_DIRECTORY
+      : RETRO_VFS_IDENTITY_OTHER;
+}
+#endif
+
+/* A stable open's file size, or -1 unless it is a regular file: one
+ * fstat() on POSIX, GetFileType and a size query on Windows. The open
+ * takes its size from here rather than probing again. With id, the
+ * file's identity as well, from the same answer on POSIX and with the
+ * identity's own queries standing in for the size query on Windows. */
+static int64_t vfs_stable_size(libretro_vfs_implementation_file *stream,
+      struct retro_vfs_file_identity *id)
+{
+#if defined(_WIN32) && !defined(_XBOX)
+   HANDLE h = (HANDLE)_get_osfhandle(stream->fd);
+   if (h == INVALID_HANDLE_VALUE || GetFileType(h) != FILE_TYPE_DISK)
+      return -1;
+   if (id)
+      return vfs_identity_handle(h, id) ? (int64_t)id->size : -1;
+#if defined(LEGACY_WIN32)
+   {
+      DWORD hi = 0;
+      DWORD lo = GetFileSize(h, &hi);
+      if (lo == (DWORD)0xFFFFFFFF && GetLastError() != NO_ERROR)
+         return -1;
+      return (int64_t)(((uint64_t)hi << 32) | lo);
+   }
+#else
+   {
+      LARGE_INTEGER sz;
+      if (!GetFileSizeEx(h, &sz))
+         return -1;
+      return (int64_t)sz.QuadPart;
+   }
+#endif
+#elif defined(VFS_OPEN_FSTAT)
+   struct stat st;
+   if (fstat(stream->fd, &st) != 0 || !S_ISREG(st.st_mode))
+      return -1;
+   if (id)
+      vfs_identity_stat(&st, id);
+   return (int64_t)st.st_size;
+#else
+   /* No stable open where there is no fstat to vouch for the file */
+   (void)stream;
+   (void)id;
+   return -1;
+#endif
+}
+
+static libretro_vfs_implementation_file *vfs_file_open(
+      const char *path, unsigned mode, unsigned hints,
+      struct retro_vfs_file_identity *id)
+{
+   int64_t                      stable_size = -1;
    int                                flags = 0;
    const char                     *mode_str = NULL;
    libretro_vfs_implementation_file *stream =
@@ -1310,6 +1579,17 @@ libretro_vfs_implementation_file *retro_vfs_file_open_impl(
    if (     mode != RETRO_VFS_FILE_ACCESS_READ
          && mode != RETRO_VFS_FILE_ACCESS_WRITE)
       stream->hints |= RFILE_HINT_UPDATE;
+
+   /* A stable open is a plain file read on the descriptor path; any
+    * other mode or scheme opens as it always has */
+   if (stream->hints & RETRO_VFS_FILE_ACCESS_HINT_IMPL_STABLE)
+   {
+      if (     mode == RETRO_VFS_FILE_ACCESS_READ
+            && stream->scheme == VFS_SCHEME_NONE)
+         stream->hints |= RFILE_HINT_UNBUFFERED;
+      else
+         stream->hints &= ~RETRO_VFS_FILE_ACCESS_HINT_IMPL_STABLE;
+   }
 
    if ((stream->hints & RFILE_HINT_UNBUFFERED) == 0)
    {
@@ -1506,38 +1786,60 @@ libretro_vfs_implementation_file *retro_vfs_file_open_impl(
          default:
             {
 #if defined(_WIN32) && !defined(_XBOX)
+               /* A stable open shares the file for reading only: while
+                * it is open nothing writes, truncates or deletes it */
+               bool stable = (stream->hints
+                     & RETRO_VFS_FILE_ACCESS_HINT_IMPL_STABLE) != 0;
+               int  sflags = flags | _O_NOINHERIT | _O_SEQUENTIAL;
 #if defined(LEGACY_WIN32_RUNTIME)
                if (win32_needs_local_encoding())
                {
                   char *path_local    = utf8_to_local_string_alloc(path);
-                  stream->fd          = open(path_local, flags,
+                  if (stable)
+                     stream->fd       = path_local
+                        ? _sopen(path_local, sflags, _SH_DENYWR) : -1;
+                  else
+                     stream->fd       = open(path_local, flags,
                         _S_IREAD | _S_IWRITE);
                   if (path_local)
                      free(path_local);
                }
                else
                {
-                  wchar_t * path_wide = utf8_to_utf16_string_alloc(path);
-                  stream->fd          = _wopen(path_wide, flags,
+                  wchar_t   path_buf[VFS_WIDE_STACK];
+                  wchar_t * path_wide = vfs_wide(path, path_buf,
+                        VFS_WIDE_STACK);
+                  if (stable)
+                     stream->fd       = path_wide
+                        ? _wsopen(path_wide, sflags, _SH_DENYWR) : -1;
+                  else
+                     stream->fd       = _wopen(path_wide, flags,
                         _S_IREAD | _S_IWRITE);
-                  if (path_wide)
-                     free(path_wide);
+                  vfs_wide_free(path_wide, path_buf);
                }
 #elif defined(LEGACY_WIN32)
                char *path_local    = utf8_to_local_string_alloc(path);
-               stream->fd          = open(path_local, flags,
+               if (stable)
+                  stream->fd       = path_local
+                     ? _sopen(path_local, sflags, _SH_DENYWR) : -1;
+               else
+                  stream->fd       = open(path_local, flags,
                      _S_IREAD | _S_IWRITE);
                if (path_local)
                   free(path_local);
 #else
-               wchar_t * path_wide = utf8_to_utf16_string_alloc(path);
+               wchar_t   path_buf[VFS_WIDE_STACK];
+               wchar_t * path_wide = vfs_wide(path, path_buf, VFS_WIDE_STACK);
                /* A file this creates is writable afterwards, as one
                 * fopen() makes is: without _S_IWRITE it would be made
                 * read-only */
-               stream->fd          = _wopen(path_wide, flags,
+               if (stable)
+                  stream->fd       = path_wide
+                     ? _wsopen(path_wide, sflags, _SH_DENYWR) : -1;
+               else
+                  stream->fd       = _wopen(path_wide, flags,
                      _S_IREAD | _S_IWRITE);
-               if (path_wide)
-                  free(path_wide);
+               vfs_wide_free(path_wide, path_buf);
 #endif
 #elif defined(VITA)
                {
@@ -1569,6 +1871,20 @@ libretro_vfs_implementation_file *retro_vfs_file_open_impl(
                   stream->fd = (uid < 0) ? -1 : (int)uid;
                }
 #else
+               /* A stable open never waits for a FIFO's writer, never
+                * takes a controlling terminal and stays out of a child */
+               if (stream->hints & RETRO_VFS_FILE_ACCESS_HINT_IMPL_STABLE)
+               {
+#ifdef O_NONBLOCK
+                  flags |= O_NONBLOCK;
+#endif
+#ifdef O_NOCTTY
+                  flags |= O_NOCTTY;
+#endif
+#ifdef O_CLOEXEC
+                  flags |= O_CLOEXEC;
+#endif
+               }
                /* What fopen() creates a file with, less the umask */
                stream->fd          = open(path, flags,
                      S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP
@@ -1579,6 +1895,12 @@ libretro_vfs_implementation_file *retro_vfs_file_open_impl(
       }
 
       if (stream->fd == -1)
+         goto error;
+
+      /* A stable open is of a regular file only, its size taken from
+       * the same call that says so */
+      if (     (stream->hints & RETRO_VFS_FILE_ACCESS_HINT_IMPL_STABLE)
+            && (stable_size = vfs_stable_size(stream, id)) < 0)
          goto error;
 
 #ifdef VFS_HAVE_FILE_MAPPING
@@ -1662,7 +1984,8 @@ libretro_vfs_implementation_file *retro_vfs_file_open_impl(
    if (     mode != RETRO_VFS_FILE_ACCESS_WRITE
          && mode != RETRO_VFS_FILE_ACCESS_READ_WRITE)
    {
-      int64_t known = vfs_open_size(stream);
+      int64_t known = stable_size >= 0 ? stable_size
+         : vfs_open_size(stream);
       if (known >= 0)
          stream->size = known;
       else
@@ -1677,6 +2000,7 @@ libretro_vfs_implementation_file *retro_vfs_file_open_impl(
    /* Appends (retro_vfs_file_write_at_impl) start at the end as opened */
    retro_atomic_size_init(&stream->append_end,
          stream->size > 0 ? (size_t)stream->size : 0);
+   retro_atomic_int_init(&stream->size_grown, 0);
 #ifdef VFS_HAVE_AT_HANDLE
    retro_atomic_ptr_init(&stream->at_handle, NULL);
    retro_atomic_ptr_init(&stream->at_ovl, NULL);
@@ -1688,6 +2012,31 @@ libretro_vfs_implementation_file *retro_vfs_file_open_impl(
 error:
    retro_vfs_file_close_impl(stream);
    return NULL;
+}
+
+libretro_vfs_implementation_file *retro_vfs_file_open_impl(
+      const char *path, unsigned mode, unsigned hints)
+{
+   return vfs_file_open(path, mode, hints, NULL);
+}
+
+libretro_vfs_implementation_file *retro_vfs_file_open_stable_impl(
+      const char *path, struct retro_vfs_file_identity *id)
+{
+   libretro_vfs_implementation_file *stream;
+   if (!id)
+      return NULL;
+   memset(id, 0, sizeof(*id));
+   stream = vfs_file_open(path, RETRO_VFS_FILE_ACCESS_READ,
+         RETRO_VFS_FILE_ACCESS_HINT_IMPL_STABLE, id);
+   /* A scheme opened another way drops the hint, and fills no id */
+   if (stream && !(stream->hints & RETRO_VFS_FILE_ACCESS_HINT_IMPL_STABLE))
+   {
+      retro_vfs_file_close_impl(stream);
+      memset(id, 0, sizeof(*id));
+      return NULL;
+   }
+   return stream;
 }
 
 int retro_vfs_file_close_impl(libretro_vfs_implementation_file *stream)
@@ -1755,7 +2104,9 @@ int retro_vfs_file_close_impl(libretro_vfs_implementation_file *stream)
    else
    {
 #ifdef VFS_HAVE_FILE_MAPPING
-      if (stream->mapped && (stream->hints & RETRO_VFS_FILE_ACCESS_HINT_FREQUENT_ACCESS))
+      if (     stream->mapped
+            && (stream->hints & (RETRO_VFS_FILE_ACCESS_HINT_FREQUENT_ACCESS
+                  | RFILE_HINT_LENT_MAP)))
       {
 #if defined(HAVE_MMAP)
          munmap(stream->mapped, stream->mapsize);
@@ -1843,9 +2194,27 @@ int retro_vfs_file_error_impl(libretro_vfs_implementation_file *stream)
 
 int64_t retro_vfs_file_size_impl(libretro_vfs_implementation_file *stream)
 {
-   if (stream)
-      return stream->size;
-   return 0;
+   if (!stream)
+      return 0;
+#ifdef VFS_SIZE_LAZY
+   if (     (stream->hints & RFILE_HINT_SIZE_STALE)
+         || retro_atomic_load_acquire_int(&stream->size_grown))
+   {
+      int64_t size;
+      /* Cleared before the file is asked: a positional write landing
+       * after this marks it again, so none is missed */
+      int grown = retro_atomic_fetch_and_int(&stream->size_grown, 0);
+      if ((size = (stream->hints & RFILE_HINT_SIZE_STALE)
+               ? vfs_descriptor_size(stream) : vfs_current_size(stream)) >= 0)
+      {
+         stream->size   = size;
+         stream->hints &= ~RFILE_HINT_SIZE_STALE;
+      }
+      else if (grown)
+         retro_atomic_fetch_or_int(&stream->size_grown, 1);
+   }
+#endif
+   return stream->size;
 }
 
 /* Deallocate a range without changing the file's length. See
@@ -2224,7 +2593,8 @@ int64_t retro_vfs_file_truncate_impl(libretro_vfs_implementation_file *stream, i
       retro_vfs_fp_seek64(stream->fp, fp_pos, SEEK_SET);
    if (!done)
       return -1;
-   stream->size = len;
+   stream->size   = len;
+   stream->hints &= ~RFILE_HINT_SIZE_STALE;
    return 0;
 }
 
@@ -2501,7 +2871,9 @@ int64_t retro_vfs_file_write_impl(libretro_vfs_implementation_file *stream, cons
       return -1;
 #endif
 
+#ifndef VFS_SIZE_LAZY
    pos = retro_vfs_file_tell_impl(stream);
+#endif
    /* write() shares read()'s MAX_RW_COUNT clamp; loop for the full
     * count. */
    {
@@ -2531,8 +2903,15 @@ int64_t retro_vfs_file_write_impl(libretro_vfs_implementation_file *stream, cons
       ret = (ssize_t)total;
    }
 
+#ifdef VFS_SIZE_LAZY
+   /* No position asked before every write: the size is asked of the
+    * file when someone wants it */
+   if (ret > 0)
+      stream->hints |= RFILE_HINT_SIZE_STALE;
+#else
    if (ret != -1 && pos + ret > stream->size)
       stream->size = pos + ret;
+#endif
 
    return ret;
 }
@@ -2554,7 +2933,9 @@ int64_t retro_vfs_file_writev_impl(libretro_vfs_implementation_file *stream,
    if (     (stream->hints & RFILE_HINT_UNBUFFERED)
          && stream->scheme == VFS_SCHEME_NONE)
    {
+#ifndef VFS_SIZE_LAZY
       int64_t pos = retro_vfs_file_tell_impl(stream);
+#endif
       while (i < count)
       {
          struct iovec iov[VFS_WRITEV_MAX];
@@ -2592,8 +2973,13 @@ int64_t retro_vfs_file_writev_impl(libretro_vfs_implementation_file *stream,
          if (put < 0)
             return total ? total : -1;
          total += put;
+#ifdef VFS_SIZE_LAZY
+         if (put > 0)
+            stream->hints |= RFILE_HINT_SIZE_STALE;
+#else
          if (pos >= 0 && pos + total > stream->size)
             stream->size = pos + total;
+#endif
          if ((size_t)put < want)
             return total;
          i += n;
@@ -2718,8 +3104,9 @@ static HANDLE vfs_positional_reopen_path(HANDLE base, const char *path,
    DWORD    flags = FILE_ATTRIBUTE_NORMAL
       | (overlapped ? FILE_FLAG_OVERLAPPED : 0);
    HANDLE   made;
+   wchar_t  wide_buf[VFS_WIDE_STACK];
    wchar_t *wide;
-   if (!path || !(wide = utf8_to_utf16_string_alloc(path)))
+   if (!(wide = vfs_wide(path, wide_buf, VFS_WIDE_STACK)))
       return INVALID_HANDLE_VALUE;
    made = CreateFileW(wide, GENERIC_READ | GENERIC_WRITE,
          FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING,
@@ -2728,7 +3115,7 @@ static HANDLE vfs_positional_reopen_path(HANDLE base, const char *path,
       made = CreateFileW(wide, GENERIC_READ,
             FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING,
             flags, NULL);
-   free(wide);
+   vfs_wide_free(wide, wide_buf);
    if (made != INVALID_HANDLE_VALUE && !vfs_positional_same_file(base, made))
    {
       CloseHandle(made);
@@ -2918,6 +3305,20 @@ int64_t retro_vfs_file_read_at_impl(libretro_vfs_implementation_file *stream,
 #endif
 }
 
+#if defined(VFS_POSITIONAL_POSIX) || defined(VFS_POSITIONAL_WIN32)
+/* A positional write wrote: the size is asked of the file next time.
+ * Looked at first, so writers on many threads don't all store to it. */
+static void vfs_size_grown(libretro_vfs_implementation_file *stream)
+{
+#ifdef VFS_SIZE_LAZY
+   if (!retro_atomic_load_relaxed_int(&stream->size_grown))
+      retro_atomic_fetch_or_int(&stream->size_grown, 1);
+#else
+   (void)stream;
+#endif
+}
+#endif
+
 int64_t retro_vfs_file_write_at_impl(libretro_vfs_implementation_file *stream,
       const void *s, uint64_t len, int64_t offset)
 {
@@ -2958,17 +3359,23 @@ int64_t retro_vfs_file_write_at_impl(libretro_vfs_implementation_file *stream,
                ? (size_t)VFS_STDIO_IO_CHUNK_MAX : (size_t)len;
          ssize_t _put   = VFS_PWRITE(fd, p, _chunk, offset + (int64_t)total);
          if (_put <= 0)
-            return (total != 0) ? (int64_t)total : -1;
+            break;
          total += (uint64_t)_put;
          p     += _put;
          len   -= (uint64_t)_put;
       }
+      if (total == 0)
+         return -1;
+      vfs_size_grown(stream);
       return (int64_t)total;
    }
 #elif defined(VFS_POSITIONAL_WIN32)
    {
-      return vfs_positional_io(stream, (void*)s, len, (uint64_t)offset,
-            true);
+      int64_t put = vfs_positional_io(stream, (void*)s, len,
+            (uint64_t)offset, true);
+      if (put > 0)
+         vfs_size_grown(stream);
+      return put;
    }
 #else
    (void)offset;
@@ -3053,15 +3460,16 @@ int retro_vfs_file_remove_impl(const char *path)
       }
       else
       {
+         wchar_t  path_buf[VFS_WIDE_STACK];
          wchar_t *path_wide = NULL;
-         if ((path_wide = utf8_to_utf16_string_alloc(path)))
+         if ((path_wide = vfs_wide(path, path_buf, VFS_WIDE_STACK)))
          {
             /* We need to check if path is a directory */
             if ((retro_vfs_stat_impl(path, NULL) & RETRO_VFS_STAT_IS_DIRECTORY) != 0)
                ret = _wrmdir(path_wide);
             else
                ret = _wremove(path_wide);
-            free(path_wide);
+            vfs_wide_free(path_wide, path_buf);
          }
       }
 #elif defined(LEGACY_WIN32)
@@ -3076,15 +3484,16 @@ int retro_vfs_file_remove_impl(const char *path)
          free(path_local);
       }
 #else
+      wchar_t  path_buf[VFS_WIDE_STACK];
       wchar_t *path_wide = NULL;
-      if ((path_wide = utf8_to_utf16_string_alloc(path)))
+      if ((path_wide = vfs_wide(path, path_buf, VFS_WIDE_STACK)))
       {
          /* We need to check if path is a directory */
          if ((retro_vfs_stat_impl(path, NULL) & RETRO_VFS_STAT_IS_DIRECTORY) != 0)
             ret = _wrmdir(path_wide);
          else
             ret = _wremove(path_wide);
-         free(path_wide);
+         vfs_wide_free(path_wide, path_buf);
       }
 #endif
 #else
@@ -3222,21 +3631,24 @@ int retro_vfs_file_rename_impl(const char *old_path, const char *new_path)
    }
    else
    {
-      wchar_t *old_path_wide = utf8_to_utf16_string_alloc(old_path);
+      wchar_t  old_buf[VFS_WIDE_STACK];
+      wchar_t  new_buf[VFS_WIDE_STACK];
+      wchar_t *old_path_wide = vfs_wide(old_path, old_buf, VFS_WIDE_STACK);
 
       if (old_path_wide)
       {
-         wchar_t *new_path_wide = utf8_to_utf16_string_alloc(new_path);
+         wchar_t *new_path_wide = vfs_wide(new_path, new_buf,
+               VFS_WIDE_STACK);
 
          if (new_path_wide)
          {
             if (MoveFileExW(old_path_wide, new_path_wide,
                   MOVEFILE_REPLACE_EXISTING))
                ret = 0;
-            free(new_path_wide);
+            vfs_wide_free(new_path_wide, new_buf);
          }
 
-         free(old_path_wide);
+         vfs_wide_free(old_path_wide, old_buf);
       }
    }
 #elif defined(LEGACY_WIN32)
@@ -3258,21 +3670,24 @@ int retro_vfs_file_rename_impl(const char *old_path, const char *new_path)
    }
 #else
    {
-      wchar_t *old_path_wide = utf8_to_utf16_string_alloc(old_path);
+      wchar_t  old_buf[VFS_WIDE_STACK];
+      wchar_t  new_buf[VFS_WIDE_STACK];
+      wchar_t *old_path_wide = vfs_wide(old_path, old_buf, VFS_WIDE_STACK);
 
       if (old_path_wide)
       {
-         wchar_t *new_path_wide = utf8_to_utf16_string_alloc(new_path);
+         wchar_t *new_path_wide = vfs_wide(new_path, new_buf,
+               VFS_WIDE_STACK);
 
          if (new_path_wide)
          {
             if (MoveFileExW(old_path_wide, new_path_wide,
                   MOVEFILE_REPLACE_EXISTING))
                ret = 0;
-            free(new_path_wide);
+            vfs_wide_free(new_path_wide, new_buf);
          }
 
-         free(old_path_wide);
+         vfs_wide_free(old_path_wide, old_buf);
       }
    }
 #endif
@@ -3760,6 +4175,660 @@ const uint8_t *retro_vfs_file_get_mapped_ptr_impl(
    return NULL;
 }
 
+bool retro_vfs_file_identity_impl(libretro_vfs_implementation_file *stream,
+      struct retro_vfs_file_identity *id)
+{
+#if defined(_WIN32) && !defined(_XBOX)
+   HANDLE h;
+#elif defined(VFS_OPEN_FSTAT)
+   struct stat st;
+#endif
+   if (!id)
+      return false;
+   memset(id, 0, sizeof(*id));
+   if (     !stream
+         || stream->scheme != VFS_SCHEME_NONE
+         || !(stream->hints & RFILE_HINT_UNBUFFERED)
+         || stream->fd < 0)
+      return false;
+#if defined(_WIN32) && !defined(_XBOX)
+   return (h = (HANDLE)_get_osfhandle(stream->fd)) != INVALID_HANDLE_VALUE
+      && vfs_identity_handle(h, id);
+#elif defined(VFS_OPEN_FSTAT)
+   if (fstat(stream->fd, &st) != 0)
+      return false;
+   vfs_identity_stat(&st, id);
+   return true;
+#else
+   return false;
+#endif
+}
+
+int retro_vfs_stat_identity_impl(const char *path,
+      struct retro_vfs_file_identity *id)
+{
+#if defined(_WIN32) && !defined(_XBOX)
+   HANDLE h;
+   DWORD err;
+#if !defined(LEGACY_WIN32)
+   wchar_t *wpath;
+#endif
+#elif defined(VFS_OPEN_FSTAT)
+   struct stat st;
+#endif
+   if (!id)
+      return -1;
+   memset(id, 0, sizeof(*id));
+   if (!path || !*path)
+      return -1;
+#if defined(_WIN32) && !defined(_XBOX)
+   /* Opened only to be asked: no data access, shared with everyone, and
+    * a folder opens too */
+#if defined(LEGACY_WIN32)
+   h = CreateFileA(path, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+         OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
+#else
+   if (!(wpath = utf8_to_utf16_string_alloc(path)))
+      return -1;
+   h = CreateFileW(wpath, FILE_READ_ATTRIBUTES,
+         FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
+         OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
+   free(wpath);
+#endif
+   if (h == INVALID_HANDLE_VALUE)
+   {
+      err = GetLastError();
+      return (err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND)
+         ? 0 : -1;
+   }
+   if (GetFileType(h) != FILE_TYPE_DISK || !vfs_identity_handle(h, id))
+   {
+      CloseHandle(h);
+      memset(id, 0, sizeof(*id));
+      /* there, but not a file on a volume: a device or a pipe */
+      id->type = RETRO_VFS_IDENTITY_OTHER;
+      return 1;
+   }
+   CloseHandle(h);
+   return 1;
+#elif defined(VFS_OPEN_FSTAT)
+   if (stat(path, &st) != 0)
+      return errno == ENOENT ? 0 : -1;
+   vfs_identity_stat(&st, id);
+   return 1;
+#else
+   return -1;
+#endif
+}
+
+#if defined(VFS_VOLUME_MAGIC)
+/* ext2/3/4, xfs, btrfs, f2fs, tmpfs, zfs, bcachefs */
+static bool vfs_volume_ctime_kept(unsigned long f_type)
+{
+   static const unsigned long kept[] = { 0xEF53UL, 0x58465342UL,
+      0x9123683EUL, 0xF2F52010UL, 0x01021994UL, 0x2FC12FC1UL,
+      0xCA451A4EUL };
+   size_t i;
+   for (i = 0; i < sizeof(kept) / sizeof(kept[0]); i++)
+      if (f_type == kept[i])
+         return true;
+   return false;
+}
+
+/* statfs's f_flags holds the mount flags where ST_VALID says so
+ * (Linux 2.6.36 on): read-only from the same call as the filesystem */
+#ifndef ST_VALID
+#define ST_VALID 0x0020
+#endif
+/* The word is f_flags in glibc 2.13 on, musl and bionic; glibc 2.12
+ * has it as f_spare[0], where the kernel puts it. uClibc (which says
+ * it is glibc 2.2) is left to statvfs: not every release names it. */
+#if defined(__UCLIBC__)
+#define VFS_STATFS_FLAGS(fs) 0UL
+#elif defined(__GLIBC__) && defined(__GLIBC_PREREQ)
+#if __GLIBC_PREREQ(2, 13)
+#define VFS_STATFS_FLAGS(fs) ((unsigned long)(fs).f_flags)
+#else
+#define VFS_STATFS_FLAGS(fs) ((unsigned long)(fs).f_spare[0])
+#endif
+#else
+#define VFS_STATFS_FLAGS(fs) ((unsigned long)(fs).f_flags)
+#endif
+static void vfs_volume_statfs(const struct statfs *fs, unsigned long flags,
+      struct retro_vfs_volume *vol)
+{
+   if (vfs_volume_ctime_kept((unsigned long)fs->f_type))
+      vol->flags |= RETRO_VFS_VOLUME_CTIME_KEPT;
+   if (flags & ST_RDONLY)
+      vol->flags |= RETRO_VFS_VOLUME_READ_ONLY;
+}
+
+/* The mount an open descriptor is on: statx's STATX_MNT_ID (Linux 5.8,
+ * through syscall(), whose wrapper needs _GNU_SOURCE), else /proc's
+ * fdinfo. The layout is the kernel's, fixed. */
+struct vfs_statx_time { int64_t sec; uint32_t nsec; int32_t pad; };
+struct vfs_statx
+{
+   uint32_t mask, blksize;
+   uint64_t attributes;
+   uint32_t nlink, uid, gid;
+   uint16_t mode, pad0;
+   uint64_t ino, size, blocks, attributes_mask;
+   struct vfs_statx_time atime, btime, ctime, mtime;
+   uint32_t rdev_major, rdev_minor, dev_major, dev_minor;
+   uint64_t mnt_id;
+   uint64_t spare[13];
+};
+#define VFS_STATX_MNT_ID     0x1000U
+#define VFS_AT_EMPTY_PATH    0x1000
+
+static bool vfs_fdinfo_mount(int fd, uint64_t *mnt)
+{
+   static const char key[] = "mnt_id:";
+   char name[64];
+   char text[512];
+   const char *s = text;
+   ssize_t got;
+   int pfd;
+   snprintf(name, sizeof(name), "/proc/self/fdinfo/%d", fd);
+   if ((pfd = open(name, O_RDONLY | O_CLOEXEC)) < 0)
+      return false;
+   got = read(pfd, text, sizeof(text) - 1);
+   close(pfd);
+   if (got <= 0)
+      return false;
+   text[got] = '\0';
+   while (s && *s)
+   {
+      if (!strncmp(s, key, sizeof(key) - 1))
+      {
+         char *end;
+         unsigned long v;
+         s += sizeof(key) - 1;
+         while (*s == ' ' || *s == '\t')
+            s++;
+         if (*s < '0' || *s > '9')
+            return false;
+         v = strtoul(s, &end, 10);
+         if (*end != '\n' && *end != '\0')
+            return false;
+         *mnt = (uint64_t)v;
+         return true;
+      }
+      if ((s = strchr(s, '\n')))
+         s++;
+   }
+   return false;
+}
+
+static bool vfs_volume_mount(int dirfd, const char *path, int fd,
+      uint64_t *mnt)
+{
+#if defined(SYS_statx)
+   struct vfs_statx stx;
+   if (     syscall(SYS_statx, dirfd, path,
+               path[0] ? 0 : VFS_AT_EMPTY_PATH, VFS_STATX_MNT_ID, &stx) == 0
+         && (stx.mask & VFS_STATX_MNT_ID))
+   {
+      *mnt = stx.mnt_id;
+      return true;
+   }
+#else
+   (void)dirfd;
+   (void)path;
+#endif
+   return fd >= 0 && vfs_fdinfo_mount(fd, mnt);
+}
+#elif defined(VFS_VOLUME_NAME)
+static bool vfs_volume_ctime_kept(const char *name)
+{
+   static const char *const kept[] = { "apfs", "hfs", "ufs", "ffs", "zfs",
+      "tmpfs" };
+   size_t i;
+   for (i = 0; i < sizeof(kept) / sizeof(kept[0]); i++)
+      if (!strcmp(name, kept[i]))
+         return true;
+   return false;
+}
+
+static void vfs_volume_statfs(const struct statfs *fs,
+      struct retro_vfs_volume *vol)
+{
+   if (vfs_volume_ctime_kept(fs->f_fstypename))
+      vol->flags |= RETRO_VFS_VOLUME_CTIME_KEPT;
+   if (fs->f_flags & MNT_RDONLY)
+      vol->flags |= RETRO_VFS_VOLUME_READ_ONLY;
+}
+#endif
+
+#if defined(_WIN32) && !defined(_XBOX)
+/* The drive type of a path's drive letter (X:\ or \\?\X:\) */
+static uint8_t vfs_volume_kind(const char *path)
+{
+   char root[4];
+   if (!path)
+      return 0;
+   if (     (path[0] == '\\' || path[0] == '/')
+         && (path[1] == '\\' || path[1] == '/')
+         && path[2] == '?' && (path[3] == '\\' || path[3] == '/'))
+      path += 4;
+   if (     !(     (path[0] >= 'A' && path[0] <= 'Z')
+               ||  (path[0] >= 'a' && path[0] <= 'z'))
+         || path[1] != ':' || (path[2] != '\\' && path[2] != '/'))
+      return 0;
+   root[0] = path[0];
+   root[1] = ':';
+   root[2] = '\\';
+   root[3] = '\0';
+   switch (GetDriveTypeA(root))
+   {
+      case DRIVE_FIXED:     return RETRO_VFS_VOLUME_FIXED;
+      case DRIVE_REMOVABLE:
+      case DRIVE_CDROM:     return RETRO_VFS_VOLUME_REMOVABLE;
+      case DRIVE_REMOTE:    return RETRO_VFS_VOLUME_REMOTE;
+      case DRIVE_RAMDISK:   return RETRO_VFS_VOLUME_RAM;
+      default:              break;
+   }
+   return 0;
+}
+
+/* GetVolumeInformationByHandleW, Vista and later, by name; looked up
+ * once, lock-free: a caller that finds nothing published looks it up
+ * itself, and the first to claim the slot publishes */
+typedef BOOL (WINAPI *vfs_vol_info_t)(HANDLE, LPWSTR, DWORD, LPDWORD,
+      LPDWORD, LPDWORD, LPWSTR, DWORD);
+#define VFS_PROC_CLAIMED (1 << 0)
+#define VFS_PROC_READY   (1 << 1)
+static retro_atomic_int_t vfs_vol_info_state;
+static vfs_vol_info_t vfs_vol_info_cached;
+
+static vfs_vol_info_t vfs_vol_info(void)
+{
+   vfs_vol_info_t p;
+   if (retro_atomic_load_acquire_int(&vfs_vol_info_state) & VFS_PROC_READY)
+      return vfs_vol_info_cached;
+   p = (vfs_vol_info_t)GetProcAddress(GetModuleHandleA("kernel32.dll"),
+         "GetVolumeInformationByHandleW");
+   if (!(retro_atomic_fetch_or_int(&vfs_vol_info_state, VFS_PROC_CLAIMED)
+            & VFS_PROC_CLAIMED))
+   {
+      vfs_vol_info_cached = p;
+      retro_atomic_store_release_int(&vfs_vol_info_state,
+            VFS_PROC_CLAIMED | VFS_PROC_READY);
+   }
+   return p;
+}
+
+static bool vfs_volume_handle(HANDLE h, struct retro_vfs_volume *vol)
+{
+   DWORD fs_flags = 0;
+   vfs_vol_info_t info = vfs_vol_info();
+   if (!info || !info(h, NULL, 0, NULL, NULL, &fs_flags, NULL, 0))
+      return false;
+   /* ChangeTime is any writer's to set: never CTIME_KEPT */
+   if (fs_flags & FILE_READ_ONLY_VOLUME)
+      vol->flags |= RETRO_VFS_VOLUME_READ_ONLY;
+   return true;
+}
+#endif
+
+bool retro_vfs_file_volume_impl(libretro_vfs_implementation_file *stream,
+      unsigned want, struct retro_vfs_volume *vol)
+{
+#if defined(VFS_VOLUME_MAGIC) || defined(VFS_VOLUME_NAME)
+   struct statfs fs;
+#elif defined(VFS_VOLUME_STATVFS)
+   struct statvfs fs;
+#endif
+   if (!vol)
+      return false;
+   memset(vol, 0, sizeof(*vol));
+   if (     !stream
+         || stream->scheme != VFS_SCHEME_NONE
+         || !(stream->hints & RFILE_HINT_UNBUFFERED)
+         || stream->fd < 0)
+      return false;
+#if defined(_WIN32) && !defined(_XBOX)
+   if (want & RETRO_VFS_VOLUME_WANT_KIND)
+      vol->kind = vfs_volume_kind(stream->orig_path);
+   if (want & RETRO_VFS_VOLUME_WANT_MOUNT)
+      goto fail;
+   if (     (want & RETRO_VFS_VOLUME_WANT_FLAGS)
+         && !vfs_volume_handle((HANDLE)_get_osfhandle(stream->fd), vol))
+      goto fail;
+   return true;
+#else
+   if (want & RETRO_VFS_VOLUME_WANT_FLAGS)
+   {
+#if defined(VFS_VOLUME_MAGIC) || defined(VFS_VOLUME_NAME)
+      if (fstatfs(stream->fd, &fs) != 0)
+         goto fail;
+#if defined(VFS_VOLUME_MAGIC)
+      {
+         unsigned long flags = VFS_STATFS_FLAGS(fs);
+         if (!(flags & ST_VALID))
+         {
+            /* A kernel before 2.6.36, or a libc that does not name
+             * the word: the flags from statvfs */
+            struct statvfs svfs;
+            if (fstatvfs(stream->fd, &svfs) != 0)
+               goto fail;
+            flags = (svfs.f_flag & ST_RDONLY) ? ST_RDONLY : 0;
+         }
+         vfs_volume_statfs(&fs, flags, vol);
+      }
+#else
+      vfs_volume_statfs(&fs, vol);
+#endif
+#elif defined(VFS_VOLUME_STATVFS)
+      if (fstatvfs(stream->fd, &fs) != 0)
+         goto fail;
+      if (fs.f_flag & ST_RDONLY)
+         vol->flags |= RETRO_VFS_VOLUME_READ_ONLY;
+#else
+      goto fail;
+#endif
+   }
+   if (want & RETRO_VFS_VOLUME_WANT_MOUNT)
+   {
+#if defined(VFS_VOLUME_MAGIC)
+      if (!vfs_volume_mount(stream->fd, "", stream->fd, &vol->mount))
+         goto fail;
+      vol->flags |= RETRO_VFS_VOLUME_MOUNT;
+#else
+      goto fail;
+#endif
+   }
+   return true;
+#endif
+fail:
+   memset(vol, 0, sizeof(*vol));
+   return false;
+}
+
+int retro_vfs_stat_volume_impl(const char *path, unsigned want,
+      struct retro_vfs_volume *vol)
+{
+#if defined(_WIN32) && !defined(_XBOX)
+   HANDLE h;
+   DWORD err;
+#if !defined(LEGACY_WIN32)
+   wchar_t *wpath;
+#endif
+#elif defined(VFS_VOLUME_MAGIC) || defined(VFS_VOLUME_NAME)
+   struct statfs fs;
+#elif defined(VFS_VOLUME_STATVFS)
+   struct statvfs fs;
+#endif
+   if (!vol)
+      return -1;
+   memset(vol, 0, sizeof(*vol));
+   if (!path || !*path)
+      return -1;
+#if defined(_WIN32) && !defined(_XBOX)
+   if (want & RETRO_VFS_VOLUME_WANT_MOUNT)
+      return -1;
+#if defined(LEGACY_WIN32)
+   h = CreateFileA(path, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+         OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
+#else
+   if (!(wpath = utf8_to_utf16_string_alloc(path)))
+      return -1;
+   h = CreateFileW(wpath, FILE_READ_ATTRIBUTES,
+         FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
+         OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
+   free(wpath);
+#endif
+   if (h == INVALID_HANDLE_VALUE)
+   {
+      err = GetLastError();
+      return (err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND)
+         ? 0 : -1;
+   }
+   if ((want & RETRO_VFS_VOLUME_WANT_FLAGS) && !vfs_volume_handle(h, vol))
+   {
+      CloseHandle(h);
+      memset(vol, 0, sizeof(*vol));
+      return -1;
+   }
+   CloseHandle(h);
+   if (want & RETRO_VFS_VOLUME_WANT_KIND)
+      vol->kind = vfs_volume_kind(path);
+   return 1;
+#elif defined(VFS_VOLUME_MAGIC) || defined(VFS_VOLUME_NAME) \
+   || defined(VFS_VOLUME_STATVFS)
+   if (want & RETRO_VFS_VOLUME_WANT_FLAGS)
+   {
+#if defined(VFS_VOLUME_STATVFS)
+      if (statvfs(path, &fs) != 0)
+         return errno == ENOENT ? 0 : -1;
+      if (fs.f_flag & ST_RDONLY)
+         vol->flags |= RETRO_VFS_VOLUME_READ_ONLY;
+#else
+      if (statfs(path, &fs) != 0)
+         return errno == ENOENT ? 0 : -1;
+#if defined(VFS_VOLUME_MAGIC)
+      {
+         unsigned long flags = VFS_STATFS_FLAGS(fs);
+         if (!(flags & ST_VALID))
+         {
+            struct statvfs svfs;
+            if (statvfs(path, &svfs) != 0)
+               return errno == ENOENT ? 0 : -1;
+            flags = (svfs.f_flag & ST_RDONLY) ? ST_RDONLY : 0;
+         }
+         vfs_volume_statfs(&fs, flags, vol);
+      }
+#else
+      vfs_volume_statfs(&fs, vol);
+#endif
+#endif
+   }
+   if (want & RETRO_VFS_VOLUME_WANT_MOUNT)
+   {
+#if defined(VFS_VOLUME_MAGIC)
+      int fd = -1;
+      bool ok;
+#if defined(SYS_statx)
+      struct vfs_statx stx;
+      if (     syscall(SYS_statx, AT_FDCWD, path, 0, VFS_STATX_MNT_ID,
+                  &stx) == 0
+            && (stx.mask & VFS_STATX_MNT_ID))
+      {
+         vol->mount  = stx.mnt_id;
+         vol->flags |= RETRO_VFS_VOLUME_MOUNT;
+         return 1;
+      }
+#endif
+      /* Opened only to name it: O_PATH reaches a file we may only run */
+#ifdef O_PATH
+      fd = open(path, O_PATH | O_CLOEXEC);
+#else
+      fd = open(path, O_RDONLY | O_CLOEXEC | O_NONBLOCK);
+#endif
+      if (fd < 0)
+      {
+         int e = errno;
+         memset(vol, 0, sizeof(*vol));
+         return e == ENOENT ? 0 : -1;
+      }
+      ok = vfs_fdinfo_mount(fd, &vol->mount);
+      close(fd);
+      if (!ok)
+      {
+         memset(vol, 0, sizeof(*vol));
+         return -1;
+      }
+      vol->flags |= RETRO_VFS_VOLUME_MOUNT;
+#else
+      memset(vol, 0, sizeof(*vol));
+      return -1;
+#endif
+   }
+   return 1;
+#else
+   (void)want;
+   return -1;
+#endif
+}
+
+#if defined(VFS_VOLUME_MAGIC)
+/* <linux/fsverity.h>'s, which older NDKs lack; the ioctl numbers carry
+ * their sizes */
+struct vfs_verity_enable
+{
+   uint32_t version;
+   uint32_t hash_algorithm;
+   uint32_t block_size;
+   uint32_t salt_size;
+   uint64_t salt_ptr;
+   uint32_t sig_size;
+   uint32_t reserved1;
+   uint64_t sig_ptr;
+   uint64_t reserved2[11];
+};
+struct vfs_verity_head   { uint16_t algorithm; uint16_t size; };
+struct vfs_verity_digest
+{
+   struct vfs_verity_head head;
+   uint8_t digest[RETRO_VFS_VERITY_MAX];
+};
+typedef char vfs_verity_enable_size[
+      sizeof(struct vfs_verity_enable) == 128 ? 1 : -1];
+typedef char vfs_verity_head_size[
+      sizeof(struct vfs_verity_head) == 4 ? 1 : -1];
+#define VFS_VERITY_SHA256         1
+#define VFS_FS_IOC_ENABLE_VERITY  _IOW('f', 133, struct vfs_verity_enable)
+#define VFS_FS_IOC_MEASURE_VERITY _IOWR('f', 134, struct vfs_verity_head)
+#endif
+
+size_t retro_vfs_file_verity_measure_impl(
+      libretro_vfs_implementation_file *stream, uint8_t *digest, size_t cap)
+{
+#if defined(VFS_VOLUME_MAGIC)
+   struct vfs_verity_digest d;
+   if (     !stream || !digest
+         || stream->scheme != VFS_SCHEME_NONE
+         || !(stream->hints & RFILE_HINT_UNBUFFERED)
+         || stream->fd < 0)
+      return 0;
+   memset(&d, 0, sizeof(d));
+   d.head.size = RETRO_VFS_VERITY_MAX;
+   if (     ioctl(stream->fd, VFS_FS_IOC_MEASURE_VERITY, &d) != 0
+         || !d.head.size
+         || d.head.size > RETRO_VFS_VERITY_MAX
+         || d.head.size > cap)
+      return 0;
+   memcpy(digest, d.digest, d.head.size);
+   return d.head.size;
+#else
+   (void)stream;
+   (void)digest;
+   (void)cap;
+   return 0;
+#endif
+}
+
+int retro_vfs_file_verity_enable_impl(
+      libretro_vfs_implementation_file *stream)
+{
+#if defined(VFS_VOLUME_MAGIC)
+   struct vfs_verity_enable arg;
+   if (     !stream
+         || stream->scheme != VFS_SCHEME_NONE
+         || !(stream->hints & RFILE_HINT_UNBUFFERED)
+         || stream->fd < 0)
+      return -1;
+   memset(&arg, 0, sizeof(arg));
+   arg.version        = 1;
+   arg.hash_algorithm = VFS_VERITY_SHA256;
+   arg.block_size     = 4096;
+   if (ioctl(stream->fd, VFS_FS_IOC_ENABLE_VERITY, &arg) == 0
+         || errno == EEXIST)
+      return 1;
+   switch (errno)
+   {
+      /* Not this filesystem, mount or kernel, not ours (Play's
+       * nativeLibraryDir), or open for writing somewhere */
+      case EOPNOTSUPP:
+      case ENOTTY:
+      case EROFS:
+      case EACCES:
+      case EPERM:
+      case ETXTBSY:
+         return 0;
+      default:
+         break;
+   }
+   return -1;
+#else
+   return stream ? 0 : -1;
+#endif
+}
+
+const uint8_t *retro_vfs_file_map_impl(libretro_vfs_implementation_file *stream,
+      int64_t *len)
+{
+#ifdef VFS_HAVE_FILE_MAPPING
+   uint64_t size;
+#endif
+   if (len)
+      *len = 0;
+#ifdef VFS_HAVE_FILE_MAPPING
+   if (     !stream
+         || stream->scheme != VFS_SCHEME_NONE
+         || !(stream->hints & RFILE_HINT_UNBUFFERED)
+         || stream->fd < 0)
+      return NULL;
+   /* Mapped already, by the hint or by an earlier call */
+   if (stream->mapped && (stream->hints
+            & (RETRO_VFS_FILE_ACCESS_HINT_FREQUENT_ACCESS | RFILE_HINT_LENT_MAP)))
+   {
+      if (len)
+         *len = (int64_t)stream->mapsize;
+      return stream->mapped;
+   }
+   if (stream->mapped || retro_vfs_file_size_impl(stream) <= 0)
+      return NULL;
+   /* Its size now: a stable open's is as opened */
+   size = (uint64_t)stream->size;
+   if (size > (uint64_t)(size_t)-1)
+      return NULL;
+#if defined(HAVE_MMAP)
+   {
+      void *p = mmap(NULL, (size_t)size, PROT_READ, MAP_SHARED,
+            stream->fd, 0);
+      if (p == MAP_FAILED)
+         return NULL;
+      stream->mapped = (uint8_t*)p;
+   }
+#else
+   {
+      HANDLE fh = (HANDLE)_get_osfhandle(stream->fd);
+      HANDLE mh;
+      if (fh == INVALID_HANDLE_VALUE
+            || !(mh = CreateFileMapping(fh, NULL, PAGE_READONLY, 0, 0, NULL)))
+         return NULL;
+      if (!(stream->mapped = (uint8_t*)MapViewOfFile(mh, FILE_MAP_READ,
+                  0, 0, (SIZE_T)size)))
+      {
+         CloseHandle(mh);
+         return NULL;
+      }
+      stream->map_handle = mh;
+   }
+#endif
+   stream->mapsize = size;
+   stream->hints  |= RFILE_HINT_LENT_MAP;
+   if (len)
+      *len = (int64_t)size;
+   return stream->mapped;
+#else
+   (void)stream;
+   return NULL;
+#endif
+}
+
 #if defined(_WIN32) && !defined(VITA) && !defined(__PSL1GHT__) && !defined(__PS3__)
 #if defined(LEGACY_WIN32) || defined(LEGACY_WIN32_RUNTIME)
 /* Use _stat64 explicitly to match the struct _stat64 buffer the caller
@@ -3772,7 +4841,7 @@ const uint8_t *retro_vfs_file_get_mapped_ptr_impl(
 /* GetFileAttributesEx rather than GetFileAttributes: same availability
  * (Win98/NT4+), and it also hands back the last-write FILETIME, which
  * unlike the CRT's st_mtime can represent dates before 1970. */
-static int vfs_stat_win32_ansi(const char *path,
+static int vfs_stat_win32_ansi(const char *path, size_t trim,
       struct _stat64 *stat_buf, DWORD *file_info, FILETIME *mtime_ft)
 {
    WIN32_FILE_ATTRIBUTE_DATA ad;
@@ -3780,6 +4849,17 @@ static int vfs_stat_win32_ansi(const char *path,
 
    if (!path_local)
       return 0;
+
+   if (trim)
+   {
+      size_t length = strlen(path_local);
+      if (length < trim)
+      {
+         free(path_local);
+         return 0;
+      }
+      path_local[length - trim] = 0;
+   }
 
    if (!GetFileAttributesExA(path_local, GetFileExInfoStandard, &ad))
    {
@@ -3805,31 +4885,48 @@ static int vfs_stat_win32_ansi(const char *path,
 #endif
 
 #if !defined(LEGACY_WIN32) || defined(LEGACY_WIN32_RUNTIME)
-static int vfs_stat_win32_wide(const char *path,
+static int vfs_stat_win32_wide(const char *path, size_t trim,
       struct _stat64 *stat_buf, DWORD *file_info, FILETIME *mtime_ft)
 {
    WIN32_FILE_ATTRIBUTE_DATA ad;
-   wchar_t *path_wide = utf8_to_utf16_string_alloc(path);
+   /* The wide path on the stack where it fits - every path but a long
+    * one - instead of an allocation for each stat */
+   wchar_t  path_buf[VFS_WIDE_STACK];
+   wchar_t *path_wide = vfs_wide(path, path_buf, VFS_WIDE_STACK);
+   int      ok        = 1;
 
    if (!path_wide)
       return 0;
 
+   if (trim)
+   {
+      size_t length = wcslen(path_wide);
+      if (length < trim)
+      {
+         vfs_wide_free(path_wide, path_buf);
+         return 0;
+      }
+      path_wide[length - trim] = 0;
+   }
+
    if (!GetFileAttributesExW(path_wide, GetFileExInfoStandard, &ad))
+      ok = 0;
+   else
    {
-      free(path_wide);
-      return 0;
+      *file_info = ad.dwFileAttributes;
+      *mtime_ft  = ad.ftLastWriteTime;
+      /* The size from the same query: a second one (_wstat64) for it
+       * opened the path again. Only a link's own size is not its
+       * target's, so a reparse point still asks for the target. */
+      if (ad.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)
+         ok = _wstat64(path_wide, stat_buf) == 0;
+      else
+         stat_buf->st_size = (__int64)(((uint64_t)ad.nFileSizeHigh << 32)
+               | ad.nFileSizeLow);
    }
-   *file_info = ad.dwFileAttributes;
-   *mtime_ft  = ad.ftLastWriteTime;
 
-   if (_wstat64(path_wide, stat_buf) != 0)
-   {
-      free(path_wide);
-      return 0;
-   }
-
-   free(path_wide);
-   return 1;
+   vfs_wide_free(path_wide, path_buf);
+   return ok;
 }
 #endif
 #endif
@@ -3917,41 +5014,40 @@ static int retro_vfs_stat_full(const char *path, int64_t *size, int64_t *mtime)
        * with a trailing backslash */
       struct _stat64 stat_buf;
       FILETIME       mtime_ft;
-      char path_buf[PATH_MAX_LENGTH];
-      const char *stat_path = path;
       DWORD file_info;
-      size_t _len = strlcpy(path_buf, path, sizeof(path_buf));
+      size_t length = strlen(path);
+      size_t end = length;
 
-      if (_len > 0 && _len < sizeof(path_buf))
+      if (length < PATH_MAX_LENGTH)
       {
-         while (_len > 0 && 
-               (path_buf[_len - 1] == '\\' || path_buf[_len - 1] == '/'))
+         while (end > 0 && (path[end - 1] == '\\' || path[end - 1] == '/'))
          {
-            /* Keep drive roots like "C:\" intact */
-            if (_len == 3 &&
-                  ((((path_buf[0] >= 'A') && (path_buf[0] <= 'Z')) ||
-                    ((path_buf[0] >= 'a') && (path_buf[0] <= 'z'))) &&
-                   path_buf[1] == ':' && path_buf[2] == '\\'))
+            /* Keep drive roots intact. */
+            if (end == 3 &&
+                  ((((path[0] >= 'A') && (path[0] <= 'Z')) ||
+                    ((path[0] >= 'a') && (path[0] <= 'z'))) &&
+                   path[1] == ':' && path[2] == '\\'))
                break;
-
-            path_buf[--_len] = '\0';
+            end--;
          }
-
-         stat_path = path_buf;
       }
+      if (!end)
+         return 0;
+      /* Trim the owned converted path, not a second UTF-8 staging copy.
+       * Count separators before conversion: a DBCS trail byte may be 0x5c. */
 #if defined(LEGACY_WIN32_RUNTIME)
       if (win32_needs_local_encoding())
       {
-         if (!vfs_stat_win32_ansi(stat_path, &stat_buf, &file_info, &mtime_ft))
+         if (!vfs_stat_win32_ansi(path, length - end, &stat_buf, &file_info, &mtime_ft))
             return 0;
       }
-      else if (!vfs_stat_win32_wide(stat_path, &stat_buf, &file_info, &mtime_ft))
+      else if (!vfs_stat_win32_wide(path, length - end, &stat_buf, &file_info, &mtime_ft))
          return 0;
 #elif defined(LEGACY_WIN32)
-      if (!vfs_stat_win32_ansi(stat_path, &stat_buf, &file_info, &mtime_ft))
+      if (!vfs_stat_win32_ansi(path, length - end, &stat_buf, &file_info, &mtime_ft))
          return 0;
 #else
-      if (!vfs_stat_win32_wide(stat_path, &stat_buf, &file_info, &mtime_ft))
+      if (!vfs_stat_win32_wide(path, length - end, &stat_buf, &file_info, &mtime_ft))
          return 0;
 #endif
 

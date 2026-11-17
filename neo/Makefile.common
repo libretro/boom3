@@ -442,7 +442,7 @@ SOURCES_C	:=\
 	$(CORE_DIR)/renderer/range_alloc.c \
 	$(CORE_DIR)/renderer/gles_pack.c \
 	$(SRC_VULKAN) \
-	$(LIBRETRO_COMM_DIR)/formats/data_transfer.c \
+	$(LIBRETRO_COMM_DIR)/formats/data_transfer.c $(LIBRETRO_COMM_DIR)/streams/data_transfer_file.c \
 	$(LIBRETRO_COMM_DIR)/memmap/memmap.c \
 	$(SRC_GLAD) \
 	$(SRC_LIBRETRO) \

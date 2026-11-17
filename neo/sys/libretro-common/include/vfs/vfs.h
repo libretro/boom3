@@ -98,9 +98,20 @@ typedef struct
  * Listed rather than assumed: the descriptor path compiles everywhere
  * but has only ever run on the mapping targets, so a platform joins
  * this list once its open()/read()/lseek() have been exercised.  A
- * target that is not listed keeps the behaviour it has today. */
+ * target that is not listed keeps the behaviour it has today.
+ *
+ * The POSIX desktops are listed for themselves too: RetroArch reaches
+ * the path on them with HAVE_MMAP, and a core built without it (most
+ * are) gets the same descriptor reads, and with them the identity,
+ * volume and fs-verity answers a stream needs a descriptor for. */
 #ifndef VFS_HAVE_DESCRIPTOR_IO
 #if defined(VFS_HAVE_FILE_MAPPING) \
+ || ((defined(__linux__) || defined(__APPLE__) || defined(__FreeBSD__) \
+      || defined(__NetBSD__) || defined(__OpenBSD__) \
+      || defined(__DragonFly__)) \
+     && !defined(ORBIS) && !defined(PS2) && !defined(PSP) \
+     && !defined(VITA) && !defined(__SWITCH__) && !defined(GEKKO) \
+     && !defined(_3DS) && !defined(WIIU)) \
  || defined(VITA) \
  || defined(_3DS) \
  || (defined(WIIU) && defined(HAVE_WIIU_DESCRIPTOR_IO)) \
@@ -256,6 +267,9 @@ struct libretro_vfs_implementation_file
     * its own on the file, with a position of its own, made at the first
     * positional call; NULL until then. */
    retro_atomic_size_t append_end;
+   /* Set by a positional write that wrote, so the size is asked of the
+    * file next time it is wanted; cleared by the query before it asks */
+   retro_atomic_int_t  size_grown;
 #ifdef VFS_HAVE_AT_HANDLE
    retro_atomic_ptr_t  at_handle;
    /* at_handle is synchronous - Windows' cached-read fast path - and
