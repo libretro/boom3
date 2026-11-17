@@ -36,7 +36,7 @@ extern "C" {
 }
 
 #include "../libretro-common/include/glsym/glsym.h"
-#include "../libretro-common/include/glsm/glsm.h"
+#include "glsm/glsm.h"
 /* before the idlib headers: retro_atomic.h reaches <atomic>, and Str.h's
  * strcmp macros break libc++'s <cstring> */
 #include "../libretro-common/include/retro_atomic.h"
@@ -157,7 +157,7 @@ static void lr_lut_r16( GLsizei w, const unsigned short *v ) {
 }
 #endif
 
-#include <glsm/glsm.h>
+#include "glsm/glsm.h"
 
 #if defined(BOOM3_VR)
 #include "renderer/vr.h"

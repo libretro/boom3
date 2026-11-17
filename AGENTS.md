@@ -345,3 +345,6 @@ ever edited in this core.
 The resampler's `state()` came that way: what the core needed of the
 module went into RetroArch's interface first and arrived here by
 resync.
+
+glsm, the GL state tracker RetroArch no longer ships, is this core's
+own: it lives in `neo/sys/libretro/glsm/`, not in libretro-common.

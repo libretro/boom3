@@ -23,7 +23,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <glsym/glsym.h>
-#include <glsm/glsm.h>
+#include "glsm.h"
 
 #ifndef GL_DEPTH_CLAMP
 #define GL_DEPTH_CLAMP                    0x864F
